@@ -8,7 +8,7 @@
 # tools the agent needs at runtime: tmux, bubblewrap, socat, git, ripgrep,
 # notify-send, ast-grep (sg) and a pinned typescript-language-server.
 
-ARG NODE_VERSION=26.8.2
+ARG NODE_VERSION=26.10.0
 ARG BUN_VERSION=1.4.2
 ARG AST_GREP_VERSION=0.45.3
 
