@@ -11,6 +11,8 @@
 | Auto-fix lint+format | `npm run lint:fix` |
 | Full gate | `./make.sh check` (typecheck + lint + test + smoke) |
 | Build binary | `./make.sh build` |
+| Build container image | `./make.sh image` |
+| Test container image | `./make.sh image-test` |
 
 ## Layout
 | Area | Purpose | Entry point |

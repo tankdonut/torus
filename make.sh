@@ -25,6 +25,14 @@ case "$cmd" in
 	build)
 		./scripts/build-binary.sh "${2:-}" ${3:+--target "$3"}
 		;;
+	image)
+		NODE_VERSION="$(awk '$1=="nodejs"{print $2}' .tool-versions)"
+		BUN_VERSION="$(awk '$1=="bun"{print $2}' .tool-versions)"
+		docker build --build-arg NODE_VERSION="$NODE_VERSION" --build-arg BUN_VERSION="$BUN_VERSION" -t "${2:-torus:dev}" .
+		;;
+	image-test)
+		TORUS_CONTAINER_TESTS=1 TORUS_IMAGE="${2:-torus:dev}" node --experimental-strip-types --import ./tests/resolve-ts-hook.mjs --test tests/container.test.mjs
+		;;
 	link)
 		npm link
 		which torus || true
@@ -64,6 +72,8 @@ commands:
   test      node test suite (tests/)
   smoke     keyless engine load through the launcher
   build     build the single-file binary (scripts/build-binary.sh [dist-dir] [--target t])
+  image     build the container image from Dockerfile (pins from .tool-versions)
+  image-test run the container test suite (TORUS_IMAGE=<tag> to override)
   link      npm link the torus bin
   check     typecheck + test + smoke
   help      show this help
