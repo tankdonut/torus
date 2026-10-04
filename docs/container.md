@@ -32,7 +32,7 @@ Keyless runs (CI, `--list-models`) stay clean; real agent use needs provider aut
 
 (or `--privileged`).
 
-Caveat verified on the dev host: rootless podman nests its own user namespace and cannot mount a fresh devpts inside it, so bwrap sandboxing degrades there regardless of flags; real Docker runs the sandbox fine.
+Caveats verified on real hosts: rootless podman cannot mount a fresh devpts inside its nested user namespace, and hosts that restrict unprivileged user namespaces (GitHub runners; Ubuntu 24.04+ with `apparmor_restrict_unprivileged_userns=1`) deny bwrap's uid-map setup even with both flags. On such hosts the sandbox needs `--privileged`; on hosts that allow unprivileged user namespaces (most Docker Desktop setups, typical Debian hosts) the two flags above suffice. The image ships bwrap + socat either way; `torus /doctor` reports the live sandbox state.
 
 ## Local build & test
 

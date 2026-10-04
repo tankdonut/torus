@@ -289,18 +289,20 @@ test("container: bwrap can construct a sandbox (docker-gated)", (t) => {
 		],
 		120_000,
 	);
-	// Nested-userns runtimes (rootless podman) cannot mount a fresh devpts instance
-	// inside their own user namespace — an environment limit, not an image defect.
-	// Skip with a warning on that exact signature only; any other failure stays a
-	// hard failure (real docker, as in CI, runs this probe strictly).
-	const nestedUserns =
+	// Whether the host permits bwrap's user-namespace dance is host policy, not an
+	// image property. Two verified environment denials skip with a warning:
+	// rootless podman cannot mount a fresh devpts inside its nested userns, and
+	// hosts restricting unprivileged user namespaces (apparmor_restrict_unprivileged
+	// _userns=1 — GitHub runners, Ubuntu 24.04+) deny the uid-map write. Any other
+	// failure stays a hard failure; permissive hosts pass strictly.
+	const out = `${run.stdout ?? ""}${run.stderr ?? ""}`;
+	const usernsRestricted =
 		run.status !== 0 &&
-		/Can't mount devpts on .*: (Permission denied|Operation not permitted)/.test(
-			`${run.stdout ?? ""}${run.stderr ?? ""}`,
-		);
-	if (nestedUserns) {
+		(/Can't mount devpts on .*: (Permission denied|Operation not permitted)/.test(out) ||
+			/setting up (uid|gid) map: (Permission denied|Operation not permitted)/.test(out));
+	if (usernsRestricted) {
 		t.skip(
-			"bwrap smoke: nested-userns runtime (rootless podman?) cannot mount a new devpts; passes under real docker / --privileged",
+			"bwrap smoke: host restricts unprivileged user namespaces (nested userns / apparmor_restrict_unprivileged_userns) — sandbox needs --privileged or a permissive host; image ships bwrap+socat (presence asserted by inventory)",
 		);
 		return;
 	}
