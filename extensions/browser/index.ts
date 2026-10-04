@@ -615,7 +615,10 @@ class FleetBrowser implements Component {
 
 	private renderDetail(item: FleetItem, theme: Theme, width: number): string[] {
 		const rows = process.stdout.rows ?? 40;
-		const visible = Math.max(1, rows - 4);
+		// rows - 4 feeds the outer frame (top rule, bottom rule, two blank rows);
+		// one more row stays blank between the transcript and the footer rule — the
+		// same breathing room the main session window keeps above the editor border.
+		const visible = Math.max(1, rows - 5);
 		const body =
 			item.kind === "delegation"
 				? this.delegationDetailBody(item.record, theme, width)
@@ -626,9 +629,9 @@ class FleetBrowser implements Component {
 		const page = body.slice(this.scroll, this.scroll + visible);
 		const canSteer = item.kind === "delegation" && item.record.status === "running";
 		const stopPrompt = this.stopConfirm && canSteer;
-		// Footer rows under the transcript: rule + status line; the steer box and
-		// the y/n stop prompt each claim one extra row.
-		const reserved = this.steerMode && canSteer ? 4 : stopPrompt ? 3 : 2;
+		// Footer rows under the transcript: one blank padding row + rule + status
+		// line; the steer box and the y/n stop prompt each claim one extra row.
+		const reserved = this.steerMode && canSteer ? 5 : stopPrompt ? 4 : 3;
 		const filler = Math.max(0, visible - page.length - reserved);
 		const steerColor = entityColor(
 			item.kind === "delegation"
@@ -657,9 +660,12 @@ class FleetBrowser implements Component {
 		} else {
 			footer = [frameRule, header];
 		}
-		const result = [...page, ...new Array<string>(filler).fill(""), ...footer, ""];
+		// One blank row keeps the transcript clear of the footer rule.
+		const gap = [""];
+		const result = [...page, ...new Array<string>(filler).fill(""), ...gap, ...footer, ""];
 		// Status line is the last footer row; the outer render() adds one rule above it.
-		if (this.footerButtons) this.footerButtons.y = 1 + page.length + filler + footer.length - 1;
+		if (this.footerButtons)
+			this.footerButtons.y = 1 + page.length + filler + gap.length + footer.length - 1;
 		return result;
 	}
 
