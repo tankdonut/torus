@@ -90,6 +90,8 @@ export function childExtensionArgs(root: string): string[] {
 		"--extension",
 		path.join(root, "extensions", "sessions", "index.ts"),
 		"--extension",
+		path.join(root, "extensions", "work", "index.ts"),
+		"--extension",
 		path.join(root, "node_modules", "cc-safety-net", "dist", "pi", "index.js"),
 		"--extension",
 		path.join(root, "node_modules", "pi-web-access", "dist"),

@@ -32,6 +32,7 @@
       "./extensions/memory",
       "./extensions/goal",
       "./extensions/todo",
+      "./extensions/work",
       "./extensions/worktrees",
       "./extensions/exit",
       "./extensions/session-title",

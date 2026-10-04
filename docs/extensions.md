@@ -123,6 +123,12 @@ Session-scoped todo list at `~/.torus/todo/<session>.json`. The write-only tool 
 Tools: `torus_todowrite` (content/status/priority, ≤30 items).
 Hooks: `session_start` (restore chip), `context` (inject todo block).
 
+### `work`
+Plan-execution state binding a torus-plan plan file to a session so execution survives compaction and restarts. State at `~/.torus/work/<slug>.json` (plan↔session binding, status, elapsed); evidence in an append-only `~/.torus/work/<slug>.ledger.jsonl`. Progress is never cached — it is parsed live from the plan's column-zero checkbox rows (`- [ ]` / `- [x]`), so the plan file stays the single source of truth. While active, every turn injects a work block (plan path, done/total, next unchecked task, ledger tail).
+Tools: `work_start` (plan: absolute path or unique stem/prefix under `~/.torus/plans`; creates or rebinds — rebinding resumes, elapsed spans runs; parent sessions only), `work_note` (event: task-done|verified|blocked|wave-gate|note, + wave/task/verification/evidence/verifiedBy; appends a typed ledger row, returns the tail; with an explicit `slug` any session appends — delegated builders journal gotchas this way, and rows carry the writer's session id), `work_complete` (summary; machine gate — refuses while any column-zero checkbox is unchecked or the plan is missing, then records elapsed and stops the per-turn block; parent sessions only).
+Hooks: `context` (inject work block for the newest active binding of the session). Delegated child engines load the extension but get only `work_note` — `work_start`/`work_complete` skip registration when `TORUS_ENGINE_CHILD=1`, so children can journal into a plan's ledger but never rebind or complete work.
+Companion skill: `torus-execute` (writes checkboxes in the plan, journals via `work_note`, ends via `work_complete`).
+
 ### `worktrees`
 Git-worktree lifecycle under one canonical root outside the repo (`~/.torus/worktrees/<repo>/<branch>`). Create sets up dependencies (explicit command or detected: go/npm/cargo/uv/pip); merge = rebase → squash (or opt-in ff) → tree-identity proof → only then branch delete, with clean conflict aborts; remove never deletes the branch. A `torus:worktree` statusline chip shows the active branch.
 Tools: `worktree_create` (branch, base, setupCommand), `worktree_merge` (branch, subject, strategy squash|ff, keep, mainBranch), `worktree_remove` (branch, force, teardownCommand).
