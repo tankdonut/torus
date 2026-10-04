@@ -258,7 +258,8 @@ export function spawnMember(
 		status: "starting" | "working" | "idle" | "stopped";
 		sessionId: string | null;
 	}) => void,
-	onReport: (text: string) => void,
+	/** Outbox delta; `handshake` marks a pre-mail bootstrap write ("ready"). */
+	onReport: (text: string, handshake: boolean) => void,
 	onStats?: (stats: {
 		turns: number;
 		tokensIn: number;
@@ -370,12 +371,15 @@ export function spawnMember(
 	};
 	const inboxCursorRef = seedInboxCursor();
 	const outboxCursorRef = loadCursor(outboxCursorFile);
+	// Outbox writes drained before the member's first mail delivery are the
+	// bootstrap handshake ("ready"), not work products.
+	let sawMail = false;
 
 	const drainOutbox = (): void => {
 		const delta = readDelta(outboxFile, outboxCursorRef, outboxCursorFile);
 		if (delta) {
 			appendLog(`report from ${spec.name}:\n${delta}`);
-			onReport(delta);
+			onReport(delta, !sawMail);
 		}
 	};
 
@@ -488,6 +492,9 @@ export function spawnMember(
 			while (!stopped) {
 				const mail = readDelta(inboxFile, inboxCursorRef, inboxCursorFile);
 				if (mail) {
+					// Set before the mail run: reports drained mid-turn (waitSettled
+					// polls) must already count as work, not handshake.
+					sawMail = true;
 					onState({ status: "working", sessionId });
 					let settledRun = false;
 					try {

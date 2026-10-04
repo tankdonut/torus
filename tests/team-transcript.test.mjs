@@ -138,7 +138,7 @@ test("member crash emits ok:false result and fails the record with the last repo
 	const { teamId, customs } = await createTeam("bravo", [{ name: "sentry", agent: "builder" }]);
 	const memberId = `${teamId}/sentry`;
 
-	spawner.spawned.at(-1).onReport("found 3 issues\nqueued fixes");
+	spawner.spawned.at(-1).onReport("found 3 issues\nqueued fixes", false);
 	spawner.spawned.at(-1).onState({ status: "stopped", sessionId: "sess-bravo-sentry" });
 
 	const record = memberRecord(memberId);

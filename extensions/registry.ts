@@ -186,37 +186,18 @@ export function setCustomSender(sender: TorusCustomSender): void {
 	senderState.sender = sender;
 }
 
-const USER_MESSAGE_SENDER_KEY = Symbol.for("torus.user-message-sender");
-
-type UserMessageSender = (text: string, options?: { deliverAs?: "steer" | "followUp" }) => void;
-
 /**
- * Session user-message sender, globalThis-hosted for the same module-instance
- * reason as the custom sender: team registers it from its extension init, but
- * module-scope helpers (idle wake-ups) must reach the live session.
+ * Emit a torus custom message into the live session (transcript marker +
+ * model context). Returns false when no session sender is registered (tests
+ * without one, or engine-child sessions).
  */
-const userSenderState = sharedState<{ sender?: UserMessageSender }>(
-	USER_MESSAGE_SENDER_KEY,
-	() => ({}),
-);
-
-export function setUserMessageSender(sender: UserMessageSender): void {
-	userSenderState.sender = sender;
-}
-
-/**
- * Queue a synthetic user message as a follow-up: it starts a new turn once the
- * session is idle (mid-stream it waits for turn end). Returns false when no
- * session sender is registered (tests without one, or engine-child sessions).
- */
-export function sendTorusFollowUp(text: string): boolean {
-	if (!userSenderState.sender) return false;
-	userSenderState.sender(text, { deliverAs: "followUp" });
+export function emitTorusCustom(
+	message: TorusCustomMessage,
+	options?: TorusCustomOptions,
+): boolean {
+	if (!senderState.sender) return false;
+	senderState.sender(message, options);
 	return true;
-}
-
-export function emitTorusCustom(message: TorusCustomMessage, options?: TorusCustomOptions): void {
-	senderState.sender?.(message, options);
 }
 
 export function currentSessionId(): string | null {

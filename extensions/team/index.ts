@@ -17,8 +17,6 @@ import {
 	listTeams,
 	publishExternalRun,
 	registerTeam as registerTeamRecord,
-	sendTorusFollowUp,
-	setUserMessageSender,
 	sharedState,
 	startDelegation,
 	type TeamRecord,
@@ -393,7 +391,10 @@ const memberGenerations = sharedState(
  * Per-member wake-up state: teams are pull-based, so nothing pushes member
  * reports into the parent session. Exactly one follow-up user message fires
  * per member episode — the member goes idle (or stops non-deliberately)
- * while holding an unread report. The news latch re-arms on the next report.
+ * while holding an unread report. The news latch re-arms on the next report;
+ * bootstrap "ready" handshakes never arm it (team-runtime passes the phase).
+ * The wake itself is a torus.team-wake marker with triggerTurn: true — a
+ * queued user follow-up alone strands pending when a turn is interrupted.
  */
 const memberHasNews = sharedState(
 	Symbol.for("torus.member-has-news.v1"),
@@ -425,8 +426,30 @@ function notifyMemberEpisode(teamId: string, memberId: string): void {
 			: member.status === "stopped"
 				? "stopped unexpectedly (no report read)"
 				: "new report waiting";
-	const delivered = sendTorusFollowUp(
-		`[torus] team ${record.name}: @${member.name} (${member.agent}) is ${member.status} — ${reason}. Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.`,
+	// Wake via a triggerTurn marker (the monitor pattern), never a bare user
+	// follow-up: a queued follow-up is only consumed by a run, so an
+	// interrupted turn strands it pending until the next user input.
+	// triggerTurn forces a run when the session is idle, and that run also
+	// drains any follow-ups orphaned before it (verified against pi 1.0.2).
+	const delivered = emitTorusCustom(
+		{
+			customType: "torus.team-wake",
+			content: [
+				{
+					type: "text",
+					text: `[torus] team ${record.name}: @${member.name} (${member.agent}) is ${member.status} — ${reason}. Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.`,
+				},
+			],
+			display: true,
+			details: {
+				team: record.name,
+				member: member.name,
+				agent: member.agent,
+				status: member.status,
+				reason,
+			},
+		},
+		{ triggerTurn: true, deliverAs: "followUp" },
 	);
 	if (!delivered) {
 		try {
@@ -596,7 +619,7 @@ function attachMember(
 					notifyMemberEpisode(teamId, memberId);
 				}
 			},
-			(report) => {
+			(report, handshake) => {
 				lastReport = report;
 				try {
 					appendFileSync(
@@ -607,6 +630,10 @@ function attachMember(
 				} catch {
 					// team dir gone — best-effort log
 				}
+				// The bootstrap "ready" write is a handshake, not a report: the
+				// settled spawn turn already proved liveness, so it must not arm
+				// the per-member wake-up latch.
+				if (handshake) return;
 				memberHasNews.set(memberId, true);
 				notifyMemberEpisode(teamId, memberId);
 			},
@@ -1170,11 +1197,6 @@ function rehydrateAllTeams(): void {
 
 export function registerTeam(pi: ExtensionAPI): void {
 	rehydrateAllTeams();
-	// Minimal test harnesses pass a bare { registerTool } fake; the wake-up
-	// sender registers only when a real session API is present.
-	if (typeof pi.sendUserMessage === "function") {
-		setUserMessageSender((text, options) => pi.sendUserMessage(text, options));
-	}
 	pi.registerTool(fanoutTool);
 	pi.registerTool(chainTool);
 	pi.registerTool(teamCreateTool);

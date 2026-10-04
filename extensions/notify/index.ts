@@ -141,6 +141,25 @@ export function registerNotify(pi: ExtensionAPI): void {
 			0,
 		);
 	});
+
+	pi.registerMessageRenderer("torus.team-wake", (message, _options, theme) => {
+		const details = (message.details ?? {}) as Record<string, unknown>;
+		const team = typeof details["team"] === "string" ? sanitizeRender(details["team"]) : "team";
+		const member = typeof details["member"] === "string" ? sanitizeRender(details["member"]) : "?";
+		const status = typeof details["status"] === "string" ? details["status"] : "idle";
+		const reason = sanitizeRender(flattenPreview(details["reason"], 70));
+		return new Text(
+			delegationLine(
+				status === "stopped" ? "✗" : "☾",
+				status === "stopped" ? "error" : "warning",
+				`team ${team}: @${member} ${status}`,
+				reason,
+				theme,
+			),
+			0,
+			0,
+		);
+	});
 }
 
 export default function notifyExtension(pi: ExtensionAPI): void {
