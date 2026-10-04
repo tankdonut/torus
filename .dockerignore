@@ -1,0 +1,10 @@
+.git
+node_modules
+dist
+.tmp
+*.log
+.husky
+.github
+tests
+docs
+.npmrc
