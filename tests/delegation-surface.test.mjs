@@ -328,7 +328,11 @@ test("fan-out emits one combined start marker instead of per-run markers", async
 	assert.equal(results[0].details.agent, "fan-out");
 	assert.equal(results[0].details.handle, undefined, "combined marker carries no handle");
 	assert.equal(results[0].details.runs, 2);
-	assert.match(results[0].content[0].text, /fan-out @alpha ✓, @beta ✓/);
+	assert.match(
+		results[0].content[0].text,
+		/^fan-out (@alpha ✓, @beta ✓|@beta ✓, @alpha ✓)$/,
+		"combined marker lists runs in completion order",
+	);
 	registry.setCustomSender(() => {});
 });
 
