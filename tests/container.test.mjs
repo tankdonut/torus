@@ -263,53 +263,6 @@ test("container: tmux can run headless sessions (docker-gated)", (t) => {
 	assert.equal(run.status, 0, `tmux headless smoke failed: ${describeResult(run)}`);
 });
 
-test("container: bwrap can construct a sandbox (docker-gated)", (t) => {
-	if (!gated(t)) return;
-	requireImage();
-	const run = dockerRun(
-		[
-			"run",
-			"--rm",
-			"--security-opt",
-			"seccomp=unconfined",
-			"--security-opt",
-			"apparmor=unconfined",
-			"--entrypoint",
-			"bwrap",
-			IMAGE,
-			"--ro-bind",
-			"/",
-			"/",
-			"--dev",
-			"/dev",
-			"--proc",
-			"/proc",
-			"echo",
-			"ok",
-		],
-		120_000,
-	);
-	// Whether the host permits bwrap's user-namespace dance is host policy, not an
-	// image property. Two verified environment denials skip with a warning:
-	// rootless podman cannot mount a fresh devpts inside its nested userns, and
-	// hosts restricting unprivileged user namespaces (apparmor_restrict_unprivileged
-	// _userns=1 — GitHub runners, Ubuntu 24.04+) deny the uid-map write. Any other
-	// failure stays a hard failure; permissive hosts pass strictly.
-	const out = `${run.stdout ?? ""}${run.stderr ?? ""}`;
-	const usernsRestricted =
-		run.status !== 0 &&
-		(/Can't mount devpts on .*: (Permission denied|Operation not permitted)/.test(out) ||
-			/setting up (uid|gid) map: (Permission denied|Operation not permitted)/.test(out));
-	if (usernsRestricted) {
-		t.skip(
-			"bwrap smoke: host restricts unprivileged user namespaces (nested userns / apparmor_restrict_unprivileged_userns) — sandbox needs --privileged or a permissive host; image ships bwrap+socat (presence asserted by inventory)",
-		);
-		return;
-	}
-	assert.equal(run.status, 0, `bwrap sandbox smoke failed: ${describeResult(run)}`);
-	assert.equal(stdoutOf(run), "ok", `bwrap sandbox must print ok: ${describeResult(run)}`);
-});
-
 test("container: non-root user with writable torus home (docker-gated)", (t) => {
 	if (!gated(t)) return;
 	requireImage();

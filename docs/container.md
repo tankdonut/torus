@@ -22,17 +22,9 @@ Keyless runs (CI, `--list-models`) stay clean; real agent use needs provider aut
 -v ~/.pi/agent/auth.json:/home/torus/.pi/agent/auth.json:ro
 ```
 
-## Sandbox flags
+## Sandboxing
 
-`TORUS_SANDBOX=full` routes bash through bwrap, which needs user namespaces — and Docker's default seccomp/apparmor profiles block those. Run with:
-
-```sh
---security-opt seccomp=unconfined --security-opt apparmor=unconfined
-```
-
-(or `--privileged`).
-
-Caveats verified on real hosts: rootless podman cannot mount a fresh devpts inside its nested user namespace, and hosts that restrict unprivileged user namespaces (GitHub runners; Ubuntu 24.04+ with `apparmor_restrict_unprivileged_userns=1`) deny bwrap's uid-map setup even with both flags. On such hosts the sandbox needs `--privileged`; on hosts that allow unprivileged user namespaces (most Docker Desktop setups, typical Debian hosts) the two flags above suffice. The image ships bwrap + socat either way; `torus /doctor` reports the live sandbox state.
+Not supported inside the container. `TORUS_SANDBOX` defaults to off and should stay off there — the container itself is the isolation boundary, and bwrap's nested user namespaces conflict with container-runtime policy on most hosts (verified: rootless podman, GitHub runners, and Ubuntu 24.04+ hosts with `apparmor_restrict_unprivileged_userns=1`). `torus /doctor` reports the live sandbox state. The image still ships bwrap + socat as part of the full-toolkit inventory below; they are simply not exercised in-container.
 
 ## Local build & test
 
