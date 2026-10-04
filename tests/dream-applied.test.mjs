@@ -89,3 +89,40 @@ test("sessionActivityLogs scopes idle reflection to the invoking session only", 
 		"/logs/a3.log",
 	]);
 });
+
+test("reflectDecision matrix: trigger × threshold × settles × inFlight", () => {
+	const decide = (trigger, settlesSinceLastReflect, threshold, inFlight) =>
+		memory.reflectDecision({ trigger, settlesSinceLastReflect, threshold, inFlight }).reflect;
+
+	for (const trigger of ["idle", "turns"]) {
+		for (const threshold of [0, 2, 12]) {
+			const settleCases = [
+				...new Set([0, 1, ...(threshold > 1 ? [threshold - 1] : []), threshold]),
+			];
+			for (const settles of settleCases) {
+				for (const inFlight of [false, true]) {
+					const label = `${trigger}/threshold ${threshold}/settles ${settles}/inFlight ${inFlight}`;
+					if (inFlight) assert.equal(decide(trigger, settles, threshold, true), false, label);
+					else if (trigger === "idle")
+						assert.equal(decide("idle", settles, threshold, false), settles >= 1, label);
+					else if (threshold <= 0)
+						assert.equal(decide("turns", settles, threshold, false), false, label);
+					else
+						assert.equal(decide("turns", settles, threshold, false), settles >= threshold, label);
+				}
+			}
+		}
+	}
+
+	assert.equal(decide("turns", 2, 2, false), true, "turns/2/2 → true");
+	assert.equal(decide("turns", 1, 2, false), false, "turns/2/1 → false");
+	assert.equal(decide("turns", 5, 0, false), false, "turns/0/anything → false");
+	assert.equal(decide("turns", 11, 12, false), false, "turns/12/11 → false");
+	assert.equal(decide("turns", 12, 12, false), true, "turns/12/12 → true");
+	assert.equal(decide("idle", 0, 12, false), false, "idle/any/0 → false");
+	assert.equal(decide("idle", 0, 2, false), false, "idle/any/0 → false");
+	assert.equal(decide("idle", 1, 0, false), true, "idle/any/1 → true");
+	assert.equal(decide("idle", 1, 12, false), true, "idle/any/1 → true");
+	assert.equal(decide("idle", 12, 12, true), false, "inFlight short-circuits");
+	assert.equal(decide("turns", 12, 12, true), false, "inFlight short-circuits");
+});

@@ -15,6 +15,12 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { parseFrontmatter } from "../frontmatter.js";
 import { readJson, splitList, torusHome, writeJson } from "../fsutil.js";
+import {
+	gcReflectState,
+	readReflectState,
+	unlinkLegacyReflectState,
+	writeReflectState,
+} from "../reflect-state.js";
 import { currentSessionId, emitTorusCustom, logsDir, recentLogFiles } from "../registry.js";
 import { gitEnv } from "../worktrees/index.js";
 
@@ -733,27 +739,36 @@ export const forgetTool = defineTool({
 const DREAM_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const DREAM_STATE_FILE = path.join(MEMORY_ROOT, ".dream-state");
 const REFLECT_IDLE_MS = 10 * 60 * 1000;
-const REFLECT_STATE_FILE = path.join(MEMORY_ROOT, ".reflect-state");
-
-function sessionAlreadyReflected(sessionId: string): boolean {
-	const state = readJson<Record<string, string[]> | null>(REFLECT_STATE_FILE, null);
-	return (state?.["sessions"] ?? []).includes(sessionId);
-}
-
-function markSessionReflected(sessionId: string): void {
-	const state = readJson<Record<string, string[]> | null>(REFLECT_STATE_FILE, null);
-	const sessions = (state?.["sessions"] ?? []).concat(sessionId).slice(-50);
-	writeJson(REFLECT_STATE_FILE, { sessions });
-}
 
 let reflectTimer: ReturnType<typeof setTimeout> | null = null;
+let settleCount = 0;
+let reflectInFlight = false;
+
+function reflectTurnThreshold(): number {
+	const raw = Number(process.env["TORUS_REFLECT_TURNS"] ?? "12");
+	return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
+export function reflectDecision(input: {
+	trigger: "idle" | "turns";
+	settlesSinceLastReflect: number;
+	threshold: number;
+	inFlight: boolean;
+}): { reflect: boolean } {
+	if (input.inFlight) return { reflect: false };
+	if (input.trigger === "turns") {
+		if (input.threshold <= 0) return { reflect: false };
+		return { reflect: input.settlesSinceLastReflect >= input.threshold };
+	}
+	return { reflect: input.settlesSinceLastReflect >= 1 };
+}
 
 function scheduleIdleReflection(pi: ExtensionAPI, sessionId: string | null): void {
 	if (process.env["TORUS_REFLECTION"] === "0") return;
 	if (reflectTimer) clearTimeout(reflectTimer);
 	reflectTimer = setTimeout(() => {
 		reflectTimer = null;
-		void runIdleReflection(pi, sessionId).catch((error) => {
+		void runIdleReflection(pi, sessionId, "idle").catch((error) => {
 			try {
 				appendFileSync(
 					path.join(MEMORY_ROOT, "reflection-error.log"),
@@ -784,35 +799,57 @@ export function sessionActivityLogs(
 		.slice(0, cap);
 }
 
-async function runIdleReflection(_pi: ExtensionAPI, sessionId: string | null): Promise<void> {
-	if (!sessionId || sessionAlreadyReflected(sessionId)) return;
-	const { listDelegations } = await import("../registry.js");
-	const delegations = listDelegations();
-	if (delegations.some((record) => record.status === "running")) return;
-	const { findSessionFile } = await import("../sessions/index.js");
-	const transcript = findSessionFile(sessionId);
-	const recentLogs = sessionActivityLogs(delegations, sessionId).join(" ");
-	if (!transcript && !recentLogs) return;
-	const task = [
-		"You are reflecting on a just-idled torus session: distill its activity into durable memory.",
-		`Store: ${MEMORY_ROOT} (entries/*.md with frontmatter: topic, tags, project: ${projectSlug(process.cwd())} or global, created) — read existing entries first. Profile file: ${PROFILE_FILE}.`,
-		"Use PROFILE: lines for stable facts about the USER, not the work; entries for durable lessons/decisions/facts. Prefer proposing nothing over noise.",
-		transcript
-			? `Session transcript: ${transcript} (JSONL, one record per line — read the END for the latest turns; user messages and final assistant text matter, tool chatter does not)`
-			: "",
-		recentLogs ? `Session delegation logs: ${recentLogs}` : "",
-		"You have read-only tools. READ the store, transcript, and logs, then return your proposal using the exact ENTRY:/DELETE:/PROFILE: format from your role prompt. Do not attempt to write anything.",
-	]
-		.filter(Boolean)
-		.join("\n");
-	const { runDelegation } = await import("../roster/index.js");
-	const outcome = await runDelegation("dreamer", task, undefined, undefined, null, "reflect");
-	if (outcome.ok) {
-		emitMemoryApplied(
-			applyDreamProposal(parseDreamOutput(outcome.text), undefined, sessionId ?? undefined),
-			"reflect",
-		);
-		markSessionReflected(sessionId);
+async function runIdleReflection(
+	_pi: ExtensionAPI,
+	sessionId: string | null,
+	trigger: "idle" | "turns",
+): Promise<void> {
+	if (!sessionId || reflectInFlight) return;
+	reflectInFlight = true;
+	try {
+		const settlesSinceLastReflect = settleCount - readReflectState(sessionId).lastReflectSettles;
+		if (
+			!reflectDecision({
+				trigger,
+				settlesSinceLastReflect,
+				threshold: reflectTurnThreshold(),
+				inFlight: false,
+			}).reflect
+		)
+			return;
+		const { listDelegations } = await import("../registry.js");
+		const delegations = listDelegations();
+		if (delegations.some((record) => record.status === "running")) return;
+		const { findSessionFile } = await import("../sessions/index.js");
+		const transcript = findSessionFile(sessionId);
+		const recentLogs = sessionActivityLogs(delegations, sessionId).join(" ");
+		if (!transcript && !recentLogs) return;
+		const task = [
+			"You are reflecting on a just-idled torus session: distill its activity into durable memory.",
+			`Store: ${MEMORY_ROOT} (entries/*.md with frontmatter: topic, tags, project: ${projectSlug(process.cwd())} or global, created) — read existing entries first. Profile file: ${PROFILE_FILE}.`,
+			"Use PROFILE: lines for stable facts about the USER, not the work; entries for durable lessons/decisions/facts. Prefer proposing nothing over noise.",
+			transcript
+				? `Session transcript: ${transcript} (JSONL, one record per line — read the END for the latest turns; user messages and final assistant text matter, tool chatter does not)`
+				: "",
+			recentLogs ? `Session delegation logs: ${recentLogs}` : "",
+			"You have read-only tools. READ the store, transcript, and logs, then return your proposal using the exact ENTRY:/DELETE:/PROFILE: format from your role prompt. Do not attempt to write anything.",
+		]
+			.filter(Boolean)
+			.join("\n");
+		const { runDelegation } = await import("../roster/index.js");
+		const outcome = await runDelegation("dreamer", task, undefined, undefined, null, "reflect");
+		if (outcome.ok) {
+			emitMemoryApplied(
+				applyDreamProposal(parseDreamOutput(outcome.text), undefined, sessionId ?? undefined),
+				"reflect",
+			);
+			writeReflectState(sessionId, {
+				lastReflectSettles: settleCount,
+				lastReflectAt: Date.now(),
+			});
+		}
+	} finally {
+		reflectInFlight = false;
 	}
 }
 
@@ -911,6 +948,7 @@ export function latestUserQuery(messages: readonly LooseMessage[]): string {
 const injectedSessions = new Set<string>();
 
 export function registerMemory(pi: ExtensionAPI): void {
+	unlinkLegacyReflectState();
 	ensureStore();
 	pi.registerTool(rememberTool);
 	pi.registerTool(recallTool);
@@ -972,7 +1010,15 @@ export function registerMemory(pi: ExtensionAPI): void {
 		},
 	});
 
+	// stale reflect-state GC is best-effort — it must never break session start
+	pi.on("session_start", () => {
+		try {
+			gcReflectState(30 * 24 * 60 * 60 * 1000);
+		} catch {}
+	});
+
 	pi.on("agent_settled", () => {
+		settleCount += 1;
 		void dream(pi).catch((error) => {
 			try {
 				appendFileSync(
@@ -983,6 +1029,26 @@ export function registerMemory(pi: ExtensionAPI): void {
 			} catch {}
 		});
 		scheduleIdleReflection(pi, currentSessionId());
+		const sessionId = currentSessionId();
+		if (sessionId) {
+			const decision = reflectDecision({
+				trigger: "turns",
+				settlesSinceLastReflect: settleCount - readReflectState(sessionId).lastReflectSettles,
+				threshold: reflectTurnThreshold(),
+				inFlight: reflectInFlight,
+			});
+			if (decision.reflect) {
+				void runIdleReflection(pi, sessionId, "turns").catch((error) => {
+					try {
+						appendFileSync(
+							path.join(MEMORY_ROOT, "reflection-error.log"),
+							`[${new Date().toISOString()}] ${String(error)}\n`,
+							"utf8",
+						);
+					} catch {}
+				});
+			}
+		}
 	});
 
 	// context-event mutations are request-scoped (never persisted into the
