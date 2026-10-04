@@ -87,7 +87,7 @@ Full-text search *inside* historical pi session transcripts (not just filenames)
 Tools: `torus_sessions` (query, limit). Default root `~/.pi/agent/sessions`. `findSessionFile(sessionId)` export resolves a session's transcript path (memory's idle reflection uses it to feed the current session's own activity).
 
 ### `monitor`
-Periodic command watcher: runs a shell command on an interval, hashes its output, and desktop-notifies + stops when the output changes (`stopOn: change`) or the command fails (`stopOn: fail`). History lands in `~/.torus/monitors/<name>.log`; max 5 concurrent monitors (oldest evicted). When a monitor fires, a `torus.monitor-fired` transcript notification also lands in the session (name, reason, exit code, output tail).
+Periodic command watcher: runs a shell command on an interval, hashes its output, and desktop-notifies + stops when the output changes (`stopOn: change`) or the command fails (`stopOn: fail`). History lands in `~/.torus/monitors/<name>.log`; max 5 concurrent monitors (oldest evicted). When a monitor fires, a `torus.monitor-fired` transcript notification also lands in the session (name, reason, exit code, output tail; rendered like the fleet markers) and wakes the model — an idle session starts a turn, a streaming one gets it queued as a follow-up.
 Tools: `torus_monitor` (name, command, intervalSec ≥5, stopOn), `torus_monitor_stop` (name).
 Hooks: `session_shutdown` (stop all). Env: `TORUS_MONITOR=0` disables.
 

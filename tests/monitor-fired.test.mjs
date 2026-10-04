@@ -22,7 +22,7 @@ after(() => {
 
 function captureCustoms() {
 	const customs = [];
-	registry.setCustomSender((message) => customs.push(message));
+	registry.setCustomSender((message, options) => customs.push({ message, options }));
 	return customs;
 }
 
@@ -50,12 +50,17 @@ test("stopOn change: first check records the hash, changed output fires torus.mo
 	monitor.runMonitorCheck(entry);
 
 	assert.equal(customs.length, 1);
-	const fired = customs[0];
+	const { message: fired, options } = customs[0];
 	assert.equal(fired.customType, "torus.monitor-fired");
 	assert.equal(fired.display, true);
-	assert.deepEqual(fired.details, { name: "ci-probe", reason: "change", exit: 0 });
-	assert.match(fired.content[0].text, /monitor "ci-probe" fired \(change, exit 0\)/);
+	assert.deepEqual(fired.details, { name: "ci-probe", reason: "change", exit: 0, tail: "two" });
+	assert.match(fired.content[0].text, /monitor "ci-probe" output changed \(exit 0\)/);
 	assert.match(fired.content[0].text, /two/, "output tail must ride along");
+	assert.deepEqual(
+		options,
+		{ triggerTurn: true, deliverAs: "followUp" },
+		"fired monitor must wake the model without steering a running turn",
+	);
 });
 
 test("stopOn fail: non-zero exit fires torus.monitor-fired on the first check", () => {
@@ -65,10 +70,10 @@ test("stopOn fail: non-zero exit fires torus.monitor-fired on the first check", 
 	monitor.runMonitorCheck(entry);
 
 	assert.equal(customs.length, 1);
-	const fired = customs[0];
+	const fired = customs[0].message;
 	assert.equal(fired.customType, "torus.monitor-fired");
-	assert.deepEqual(fired.details, { name: "fail-probe", reason: "fail", exit: 3 });
-	assert.match(fired.content[0].text, /monitor "fail-probe" fired \(fail, exit 3\)/);
+	assert.deepEqual(fired.details, { name: "fail-probe", reason: "fail", exit: 3, tail: "oops" });
+	assert.match(fired.content[0].text, /monitor "fail-probe" failed \(exit 3\)/);
 	assert.match(fired.content[0].text, /oops/);
 });
 
@@ -88,5 +93,10 @@ test("torus_monitor tool fires the transcript marker on its immediate first chec
 
 	assert.match(result.content[0].text, /boom-probe/);
 	assert.equal(customs.length, 1, "fired monitor must land in the transcript");
-	assert.deepEqual(customs[0].details, { name: "boom-probe", reason: "fail", exit: 9 });
+	assert.deepEqual(customs[0].message.details, {
+		name: "boom-probe",
+		reason: "fail",
+		exit: 9,
+		tail: "bad",
+	});
 });

@@ -70,17 +70,24 @@ function emitMonitorFired(
 	output: string,
 ): void {
 	const tail = output.trim().replace(/\s+/g, " ").slice(0, 200);
-	emitTorusCustom({
-		customType: "torus.monitor-fired",
-		content: [
-			{
-				type: "text",
-				text: `monitor "${entry.name}" fired (${reason}${exit !== null ? `, exit ${exit}` : ""})${tail.length > 0 ? `: ${tail}` : ""}`,
-			},
-		],
-		display: true,
-		details: { name: entry.name, reason, exit },
-	});
+	const what = reason === "fail" ? "failed" : "output changed";
+	emitTorusCustom(
+		{
+			customType: "torus.monitor-fired",
+			content: [
+				{
+					type: "text",
+					text: `monitor "${entry.name}" ${what}${exit !== null ? ` (exit ${exit})` : ""}${tail.length > 0 ? `: ${tail}` : ""}`,
+				},
+			],
+			display: true,
+			details: { name: entry.name, reason, exit, tail },
+		},
+		// Wake the model so it reacts to the fired monitor: an idle session starts
+		// a turn; a streaming one gets the marker queued as a follow-up instead of
+		// steering mid-generation.
+		{ triggerTurn: true, deliverAs: "followUp" },
+	);
 }
 
 /** Run one check cycle: log every result, fire (toast + transcript + stop) on the stopOn outcome. */

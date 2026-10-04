@@ -122,6 +122,25 @@ export function registerNotify(pi: ExtensionAPI): void {
 			undefined,
 		);
 	});
+
+	pi.registerMessageRenderer("torus.monitor-fired", (message, _options, theme) => {
+		const details = (message.details ?? {}) as Record<string, unknown>;
+		const name = typeof details["name"] === "string" ? sanitizeRender(details["name"]) : "monitor";
+		const failed = details["reason"] === "fail";
+		const exit = typeof details["exit"] === "number" ? `exit ${details["exit"]}` : "";
+		const tail = sanitizeRender(flattenPreview(details["tail"], 70));
+		return new Text(
+			delegationLine(
+				failed ? "✗" : "≈",
+				failed ? "error" : "warning",
+				`monitor ${name} ${failed ? "failed" : "output changed"}`,
+				[exit, tail].filter(Boolean).join(" · "),
+				theme,
+			),
+			0,
+			0,
+		);
+	});
 }
 
 export default function notifyExtension(pi: ExtensionAPI): void {
