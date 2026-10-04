@@ -315,7 +315,7 @@ test("strip: team members show a badge + idle state; overflow row appears past M
 	}
 });
 
-test("detail footer: [steer]/[stop] buttons render, stop needs y/n, hover bolds rows", () => {
+test("detail footer: [steer]/[stop] ride the status line, stop needs y/n, hover bolds rows", () => {
 	registry.resetRegistryForTesting();
 	const theme = { fg: (_c, t) => t, bold: (t) => `*${t}*` };
 	let stops = 0;
@@ -332,17 +332,34 @@ test("detail footer: [steer]/[stop] buttons render, stop needs y/n, hover bolds 
 	globalThis[registry.FLEET_OPENER]("w5-run");
 	const component = driver.component();
 	try {
-		const buttonRow = () => {
+		const buttonLine = () => {
 			const lines = component.render(120);
 			const y = lines.findIndex((l) => l.includes("[s] steer"));
-			assert.ok(y >= 0, "footer action row with steer button rendered");
+			assert.ok(y >= 0, "footer status line with steer button rendered");
+			assert.ok(lines[y]?.includes("torus fleet"), "buttons ride the footer status line");
 			assert.ok(lines[y]?.includes("[x] stop"), "stop button rendered beside steer");
-			return y;
+			assert.ok(!lines[y]?.includes("s/[s]"), "grey steer/stop tips replaced by colored buttons");
+			const buttons = component.footerButtons;
+			assert.ok(buttons, "footer button hit-boxes registered");
+			assert.equal(buttons.y, y, "hit-box y tracks the rendered footer line");
+			return buttons;
 		};
 
-		// Clicking steer opens the inline steer box.
+		// Hover bolds the steer button inside the footer line.
+		const hoverBox = buttonLine();
 		assert.deepEqual(
-			component.handleMouse({ type: "click", button: "left", x: 3, y: buttonRow() }),
+			component.handleMouse({ type: "move", button: "none", x: hoverBox.steer[0], y: hoverBox.y }),
+			undefined,
+		);
+		assert.ok(
+			component.render(120).some((l) => l.includes("*[s] steer*")),
+			"hovered steer button renders bold",
+		);
+
+		// Clicking steer opens the inline steer box.
+		const steerBox = buttonLine();
+		assert.deepEqual(
+			component.handleMouse({ type: "click", button: "left", x: steerBox.steer[0], y: steerBox.y }),
 			{ handled: true },
 		);
 		assert.ok(
@@ -352,7 +369,11 @@ test("detail footer: [steer]/[stop] buttons render, stop needs y/n, hover bolds 
 		component.handleInput(ESC);
 
 		// Clicking stop arms the y/n guard; n cancels, y stops exactly once.
-		component.handleMouse({ type: "click", button: "left", x: 16, y: buttonRow() });
+		const stopBox = buttonLine();
+		assert.deepEqual(
+			component.handleMouse({ type: "click", button: "left", x: stopBox.stop[0], y: stopBox.y }),
+			{ handled: true },
+		);
 		assert.ok(
 			component.render(120).some((l) => l.includes("stop @scout? y/n")),
 			"stop click arms the y/n prompt",

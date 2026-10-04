@@ -22,6 +22,7 @@ import {
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 	truncateToWidth,
+	visibleWidth,
 } from "@earendil-works/pi-tui";
 import {
 	entityColor,
@@ -230,7 +231,7 @@ class FleetBrowser implements Component {
 	/** Hovered list row index / footer button for bold-on-hover; null = none. */
 	private hoverRow: number | null = null;
 	private hoverButton: "steer" | "stop" | null = null;
-	/** Screen-space hit-boxes for the running-detail [steer]/[stop] action row. */
+	/** Screen-space hit-boxes for the [steer]/[stop] buttons in the detail footer line. */
 	private footerButtons: { y: number; steer: [number, number]; stop: [number, number] } | null =
 		null;
 	private timer: ReturnType<typeof setInterval> | null = null;
@@ -624,7 +625,10 @@ class FleetBrowser implements Component {
 		this.detailMaxScroll = Math.max(0, body.length - visible);
 		const page = body.slice(this.scroll, this.scroll + visible);
 		const canSteer = item.kind === "delegation" && item.record.status === "running";
-		const reserved = this.steerMode && canSteer ? 4 : 3;
+		const stopPrompt = this.stopConfirm && canSteer;
+		// Footer rows under the transcript: rule + status line; the steer box and
+		// the y/n stop prompt each claim one extra row.
+		const reserved = this.steerMode && canSteer ? 4 : stopPrompt ? 3 : 2;
 		const filler = Math.max(0, visible - page.length - reserved);
 		const steerColor = entityColor(
 			item.kind === "delegation"
@@ -632,50 +636,43 @@ class FleetBrowser implements Component {
 				: (item.run.handle ?? item.run.label),
 		);
 		const frameRule = rule(theme, Math.max(0, width), steerColor);
-		const actionRow = this.detailActionRow(item, theme);
+		const header =
+			item.kind === "delegation"
+				? this.delegationHeader(
+						item.record,
+						theme,
+						width,
+						canSteer && !this.steerMode && !stopPrompt,
+					)
+				: this.externalHeader(item.run, theme, width);
 		let footer: string[];
 		if (this.steerMode && canSteer) {
 			this.footerButtons = null;
-			footer = [frameRule, ` ${theme.fg(steerColor, `steer> ${this.steerText}█`)}`];
+			const input = ` ${theme.fg(steerColor, `steer> ${this.steerText}█`)}`;
+			footer = [frameRule, input, frameRule, header];
+		} else if (stopPrompt && item.kind === "delegation") {
+			this.footerButtons = null;
+			const who = item.record.handle ? `@${item.record.handle}` : item.record.agent;
+			footer = [` ${theme.fg("error", theme.bold(`stop ${who}? y/n`))}`, frameRule, header];
 		} else {
-			footer = [actionRow];
+			footer = [frameRule, header];
 		}
-		footer.push(
-			frameRule,
-			item.kind === "delegation"
-				? this.delegationHeader(item.record, theme, width)
-				: this.externalHeader(item.run, theme, width),
-		);
 		const result = [...page, ...new Array<string>(filler).fill(""), ...footer, ""];
-		if (this.footerButtons) this.footerButtons.y = 1 + page.length + filler;
+		// Status line is the last footer row; the outer render() adds one rule above it.
+		if (this.footerButtons) this.footerButtons.y = 1 + page.length + filler + footer.length - 1;
 		return result;
 	}
 
-	/** Footer action row: y/n prompt when armed, [steer]/[stop] buttons on running
-	 * records. Also records the buttons' screen-space hit-box for click routing. */
-	private detailActionRow(item: FleetItem, theme: Theme): string {
-		if (item.kind !== "delegation" || item.record.status !== "running") {
-			this.footerButtons = null;
-			return "";
-		}
-		if (this.stopConfirm) {
-			this.footerButtons = null;
-			const who = item.record.handle ? `@${item.record.handle}` : item.record.agent;
-			return ` ${theme.fg("error", theme.bold(`stop ${who}? y/n`))}`;
-		}
-		const steer = this.hoverButton === "steer" ? theme.bold("[s] steer") : "[s] steer";
-		const stop = this.hoverButton === "stop" ? theme.bold("[x] stop") : "[x] stop";
-		const steerStart = 1;
-		const stopStart = steerStart + "[s] steer".length + 3;
-		this.footerButtons = {
-			y: 0,
-			steer: [steerStart, steerStart + "[s] steer".length],
-			stop: [stopStart, stopStart + "[x] stop".length],
-		};
-		return ` ${theme.fg("accent", steer)}   ${theme.fg("error", stop)}`;
-	}
-
-	private delegationHeader(record: DelegationRecord, theme: Theme, width: number): string {
+	/** Detail footer status line. With `buttons`, the colored [steer]/[stop] pair
+	 * renders inline where the grey key tips used to sit and records its
+	 * screen-space hit-box for click routing; the tail absorbs truncation so the
+	 * buttons stay intact while they fit. */
+	private delegationHeader(
+		record: DelegationRecord,
+		theme: Theme,
+		width: number,
+		buttons: boolean,
+	): string {
 		const statusIcon =
 			record.status === "running"
 				? theme.fg("warning", `${SPINNER[this.tick % SPINNER.length] ?? "•"} live`)
@@ -684,13 +681,32 @@ class FleetBrowser implements Component {
 					: theme.fg("error", "✗ failed");
 		const stats = `turn ${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} tok`;
 		const who = record.handle ? `@${record.handle} (${record.agent})` : record.agent;
-		return truncateToWidth(
-			`${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(record.handle ?? record.agent), who)} ${theme.fg("dim", record.model)} ${statusIcon} ${stats} ${theme.fg("dim", `· j/k scroll · g/G ends · ${record.status === "running" ? "s/[s] steer · x/[x] stop · " : ""}esc back · ${record.sessionId ?? "no session"}`)}`,
-			width,
-		);
+		const head = `${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(record.handle ?? record.agent), who)} ${theme.fg("dim", record.model)} ${statusIcon} ${stats}${theme.fg("dim", " · j/k scroll · g/G ends")}`;
+		const tail = theme.fg("dim", ` · esc back · ${record.sessionId ?? "no session"}`);
+		if (!buttons) {
+			this.footerButtons = null;
+			return truncateToWidth(head + tail, width);
+		}
+		const steer = this.hoverButton === "steer" ? theme.bold("[s] steer") : "[s] steer";
+		const stop = this.hoverButton === "stop" ? theme.bold("[x] stop") : "[x] stop";
+		const mid = `${theme.fg("dim", " · ")}${theme.fg("accent", steer)}${theme.fg("dim", " · ")}${theme.fg("error", stop)}`;
+		const lead = head + mid;
+		if (visibleWidth(lead) > width) {
+			this.footerButtons = null; // buttons clipped — drop the click zones with them
+			return truncateToWidth(lead, width);
+		}
+		const steerStart = visibleWidth(head) + 3; // the dim " · " separator before the button
+		const stopStart = steerStart + "[s] steer".length + 3;
+		this.footerButtons = {
+			y: 0,
+			steer: [steerStart, steerStart + "[s] steer".length - 1],
+			stop: [stopStart, stopStart + "[x] stop".length - 1],
+		};
+		return lead + truncateToWidth(tail, width - visibleWidth(lead));
 	}
 
 	private externalHeader(run: ExternalRun, theme: Theme, width: number): string {
+		this.footerButtons = null; // external runs have no steer/stop controls
 		const statusIcon =
 			run.state === "running"
 				? theme.fg("warning", `${SPINNER[this.tick % SPINNER.length] ?? "•"} live`)
