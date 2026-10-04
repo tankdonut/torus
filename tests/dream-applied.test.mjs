@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -125,4 +125,93 @@ test("reflectDecision matrix: trigger × threshold × settles × inFlight", () =
 	assert.equal(decide("idle", 1, 12, false), true, "idle/any/1 → true");
 	assert.equal(decide("idle", 12, 12, true), false, "inFlight short-circuits");
 	assert.equal(decide("turns", 12, 12, true), false, "inFlight short-circuits");
+});
+
+test("applyDreamProposal updates the existing file in place on an exact topic match", () => {
+	const entriesDir = path.join(home, "memory", "entries");
+	rmSync(entriesDir, { recursive: true, force: true });
+	const seed = memory.applyDreamProposal({
+		entries: [{ topic: "X", body: "alpha body", tags: [], project: "global" }],
+		deletes: [],
+		profiles: [],
+	});
+	assert.equal(seed.entries, 1);
+	const seeded = readdirSync(entriesDir).filter((f) => f.endsWith(".md"));
+	assert.equal(seeded.length, 1, "seed entry written");
+
+	const counts = memory.applyDreamProposal({
+		entries: [{ topic: "X", body: "beta body", tags: [], project: "global" }],
+		deletes: [],
+		profiles: [],
+	});
+
+	assert.equal(counts.entries, 1, "updated entry still counted as applied");
+	const files = readdirSync(entriesDir).filter((f) => f.endsWith(".md"));
+	assert.deepEqual(files, seeded, "existing file updated — no second file");
+	const updated = readFileSync(path.join(entriesDir, files[0] ?? ""), "utf8");
+	assert.ok(updated.includes("beta body"), "body B present");
+	assert.ok(!updated.includes("alpha body"), "body A replaced");
+});
+
+test("applyDreamProposal updates a high-overlap near-duplicate in place (score >= 8)", () => {
+	const entriesDir = path.join(home, "memory", "entries");
+	// seed tags make the cased variant deterministically clear the score-8 threshold (bare word overlap alone scores 4)
+	rmSync(entriesDir, { recursive: true, force: true });
+	memory.applyDreamProposal({
+		entries: [
+			{
+				topic: "Container build gotchas",
+				body: "alpha body",
+				tags: ["container", "build", "gotchas"],
+				project: "global",
+			},
+		],
+		deletes: [],
+		profiles: [],
+	});
+	const seeded = readdirSync(entriesDir).filter((f) => f.endsWith(".md"));
+	assert.equal(seeded.length, 1, "seed entry written");
+
+	const counts = memory.applyDreamProposal({
+		entries: [
+			{
+				topic: "container build gotchas and lessons",
+				body: "beta body",
+				tags: [],
+				project: "global",
+			},
+		],
+		deletes: [],
+		profiles: [],
+	});
+
+	assert.equal(counts.entries, 1);
+	const files = readdirSync(entriesDir).filter((f) => f.endsWith(".md"));
+	assert.deepEqual(files, seeded, "seeded file updated — no second file");
+	const updated = readFileSync(path.join(entriesDir, files[0] ?? ""), "utf8");
+	assert.ok(updated.includes("beta body"), "body B present");
+	assert.ok(
+		updated.includes("topic: container build gotchas and lessons"),
+		"topic frontmatter carries the proposal's topic",
+	);
+});
+
+test("applyDreamProposal writes a new file when no near-duplicate exists", () => {
+	const entriesDir = path.join(home, "memory", "entries");
+	rmSync(entriesDir, { recursive: true, force: true });
+	memory.applyDreamProposal({
+		entries: [{ topic: "X", body: "alpha body", tags: [], project: "global" }],
+		deletes: [],
+		profiles: [],
+	});
+
+	const counts = memory.applyDreamProposal({
+		entries: [{ topic: "Z", body: "beta body", tags: [], project: "global" }],
+		deletes: [],
+		profiles: [],
+	});
+
+	assert.equal(counts.entries, 1);
+	const files = readdirSync(entriesDir).filter((f) => f.endsWith(".md"));
+	assert.equal(files.length, 2, "unrelated topic gets its own file");
 });

@@ -368,7 +368,19 @@ export function applyDreamProposal(
 ): DreamApplied {
 	const counts = emptyApplied();
 	for (const entry of proposal.entries.slice(0, cap)) {
-		writeEntry(entry.topic, entry.body, entry.tags, entry.project, { session });
+		// unscoped on purpose (unlike the remember tool): dreamer proposals may be
+		// global, and cross-project near-duplicates dilute the same injection slots
+		const duplicate = scoreEntries(entry.topic, listEntries()).find(
+			(r) => r.entry.topic.toLowerCase() === entry.topic.toLowerCase() || r.score >= 8,
+		);
+		if (duplicate) {
+			writeEntry(entry.topic, entry.body, entry.tags, entry.project, {
+				existingFile: duplicate.entry.file,
+				session,
+			});
+		} else {
+			writeEntry(entry.topic, entry.body, entry.tags, entry.project, { session });
+		}
 		counts.entries += 1;
 		counts.entryTopics.push(entry.topic.replace(/\n/g, " "));
 	}
@@ -832,6 +844,7 @@ async function runIdleReflection(
 				? `Session transcript: ${transcript} (JSONL, one record per line — read the END for the latest turns; user messages and final assistant text matter, tool chatter does not)`
 				: "",
 			recentLogs ? `Session delegation logs: ${recentLogs}` : "",
+			"If a lesson extends an existing entry, propose the SAME topic — near-duplicate proposals update the existing entry in place rather than creating a second file.",
 			"You have read-only tools. READ the store, transcript, and logs, then return your proposal using the exact ENTRY:/DELETE:/PROFILE: format from your role prompt. Do not attempt to write anything.",
 		]
 			.filter(Boolean)
@@ -896,6 +909,7 @@ async function dream(_pi: ExtensionAPI): Promise<void> {
 		`Store: ${MEMORY_ROOT} (entries/*.md with frontmatter: topic, tags, project: ${projectSlug(process.cwd())} or global, created) — read recent entries first to see existing coverage.`,
 		"Consolidate genuine duplicates (new ENTRY plus DELETE for the absorbed files) and add only durable lessons/decisions/facts future sessions need. Prefer proposing no change over noise.",
 		`Activity since last dream: ${recentLogs}`,
+		"If a lesson extends an existing entry, propose the SAME topic — near-duplicate proposals update the existing entry in place rather than creating a second file.",
 		"You have read-only tools. READ the store and logs, then return your proposal using the exact ENTRY:/DELETE:/PROFILE: format from your role prompt. Do not attempt to write anything.",
 	].join("\n");
 	const { runDelegation } = await import("../roster/index.js");
@@ -966,6 +980,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 				"Use PROFILE: lines for stable facts about the USER, not the work. Only lessons/decisions/facts that future sessions genuinely need — prefer proposing none over noise.",
 				recentLogs ? `Recent activity logs to reflect on: ${recentLogs}` : "",
 				focus ? `Focus: ${focus}` : "",
+				"If a lesson extends an existing entry, propose the SAME topic — near-duplicate proposals update the existing entry in place rather than creating a second file.",
 				"You have read-only tools. READ the store and logs, then return your proposal using the exact ENTRY:/DELETE:/PROFILE: format from your role prompt. Do not attempt to write anything.",
 			]
 				.filter(Boolean)
