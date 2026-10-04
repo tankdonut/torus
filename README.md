@@ -17,6 +17,16 @@ npm install          # installs everything incl. the engine, pinned via package.
 
 The engine pin lives in `package.json` (`devDependencies`, `@earendil-works/pi-coding-agent`); the launcher drift-checks the spawned binary against it and warns on mismatch. Override the binary with `TORUS_PI_BIN`. Or run without the launcher: `pi --extension /path/to/torus`. For the self-bootstrapping compiled binary, see [Binary distribution](#binary-distribution).
 
+## Container
+
+A prebuilt image ships on GHCR — full agent toolchain, no host install:
+
+```sh
+docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus
+```
+
+First run bootstraps the engine over the network; `--list-models` works keyless. Run flags, sandbox caveats, and the version policy: [docs/container.md](docs/container.md).
+
 ## Configuration (environment)
 
 `TORUS_OCGO_API_KEY` + `TORUS_OCGO_BASE_URL` register the `opencode-go` tail-fallback provider; `TORUS_PI_BIN` overrides the engine binary. The full switch set (tmux panes, guards, notifications, monitors, worktree root, ambient machinery kill switches) is catalogued in [docs/extensions.md](docs/extensions.md#environment-variables).
