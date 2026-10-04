@@ -25,7 +25,7 @@ A prebuilt image ships on GHCR — full agent toolchain, no host install:
 docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus
 ```
 
-First run bootstraps the engine over the network; `--list-models` works keyless. Run flags, sandbox caveats, and the version policy: [docs/container.md](docs/container.md).
+The image bakes the payload with the pinned engine pre-installed (`/opt/torus`, `TORUS_ROOT` set) — containers boot instantly with no network access, and `--list-models` works keyless. Run flags, sandbox caveats, and the version policy: [docs/container.md](docs/container.md).
 
 ## Configuration (environment)
 

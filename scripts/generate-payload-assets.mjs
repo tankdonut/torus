@@ -9,9 +9,9 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computePayloadHash } from "../runtime/bin/payload-extract.mjs";
+import { PAYLOAD_DIRS, payloadNpmrc, payloadPackageJson } from "./payload-manifest.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const payloadDirs = ["extensions", "agents", "skills"];
 
 function walk(dir, relPrefix, out) {
 	for (const name of readdirSync(path.join(root, dir)).sort()) {
@@ -27,39 +27,19 @@ function walk(dir, relPrefix, out) {
 }
 
 const payloadFiles = [];
-for (const dir of payloadDirs) {
+for (const dir of PAYLOAD_DIRS) {
 	walk(dir, dir, payloadFiles);
 }
 
 const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
-const payloadPackageJson = `${JSON.stringify(
-	{
-		name: "torus-payload",
-		private: true,
-		type: "module",
-		pi: pkg.pi,
-		dependencies: {
-			// mirror every runtime dependency — extensions import them directly
-			// (e.g. @anthropic-ai/sandbox-runtime); a curated list drifts
-			...pkg.dependencies,
-			"@earendil-works/pi-coding-agent": pkg.devDependencies["@earendil-works/pi-coding-agent"],
-		},
-	},
-	null,
-	2,
-)}\n`;
+const generatedPackageJson = payloadPackageJson(pkg);
 
-let payloadNpmrc = null;
-try {
-	payloadNpmrc = readFileSync(path.join(root, ".npmrc"), "utf8");
-} catch {
-	// .npmrc is optional; the launcher only writes it when present.
-}
+const payloadNpmrcValue = payloadNpmrc();
 
 const hashInput = [
 	...payloadFiles,
-	{ path: "package.json", bytes: Buffer.from(payloadPackageJson, "utf8") },
-	{ path: ".npmrc", bytes: Buffer.from(payloadNpmrc ?? "", "utf8") },
+	{ path: "package.json", bytes: Buffer.from(generatedPackageJson, "utf8") },
+	{ path: ".npmrc", bytes: Buffer.from(payloadNpmrcValue ?? "", "utf8") },
 ];
 const payloadHash = computePayloadHash(hashInput);
 
@@ -72,8 +52,8 @@ for (const [i, file] of payloadFiles.entries()) {
 }
 lines.push(`export const PAYLOAD_HASH = ${JSON.stringify(payloadHash)};`);
 lines.push('export const OWNED_TOP_LEVELS = ["extensions", "agents", "skills"];');
-lines.push(`export const PAYLOAD_PACKAGE_JSON = ${JSON.stringify(payloadPackageJson)};`);
-lines.push(`export const PAYLOAD_NPMRC = ${JSON.stringify(payloadNpmrc)};`);
+lines.push(`export const PAYLOAD_PACKAGE_JSON = ${JSON.stringify(generatedPackageJson)};`);
+lines.push(`export const PAYLOAD_NPMRC = ${JSON.stringify(payloadNpmrcValue)};`);
 lines.push("export const payloadFiles = [");
 for (const [i, file] of payloadFiles.entries()) {
 	lines.push(`\t{ path: ${JSON.stringify(file.path)}, virtual: f${i} },`);

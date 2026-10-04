@@ -2,10 +2,13 @@
 #
 # build stage: compile the single-file bun binary from a source snapshot
 # (COPY . . pruned by .dockerignore; the payload .npmrc is generated inside
-# the stage via ./make.sh npmrc and never committed).
-# runtime stage: node-slim base (the launcher npm-bootstraps the pinned pi
-# engine into ~/.torus/runtime on first run, so node+npm must ship) plus the
-# tools the agent needs at runtime: tmux, bubblewrap, socat, git, ripgrep,
+# the stage via ./make.sh npmrc and never committed), then bake the payload
+# tree + its npm dependencies (pinned pi engine included) into /out/torus.
+#
+# runtime stage: node-slim base plus the baked payload at /opt/torus — the
+# launcher resolves TORUS_ROOT and boots without extracting to
+# ~/.torus/runtime or npm-installing over the network — plus the tools the
+# agent needs at runtime: tmux, bubblewrap, socat, git, ripgrep,
 # notify-send, ast-grep (sg) and a pinned typescript-language-server.
 
 ARG NODE_VERSION=26.10.0
@@ -40,6 +43,16 @@ RUN set -eux; \
     esac; \
     ./make.sh npmrc \
     && ./scripts/build-binary.sh dist/torus --target "$BUN_TARGET"
+
+# Bake the payload tree and npm-install its dependencies (pinned engine
+# included) so the runtime image never bootstraps over the network. The
+# trailing pi --version fails the build if the engine did not land in the
+# tree.
+RUN set -eux; \
+    node scripts/bake-payload.mjs /out/torus; \
+    cd /out/torus; \
+    npm install --no-fund --no-audit --omit=dev --legacy-peer-deps; \
+    node_modules/.bin/pi --version
 
 FROM node:${NODE_VERSION}-slim
 
@@ -87,7 +100,13 @@ RUN userdel --remove node \
 
 COPY --from=build --chown=torus:torus /build/dist/torus/bin/torus /usr/local/bin/torus
 
+# Baked payload + node_modules; owned by torus so a degraded bootstrap
+# (engine manually wiped, TORUS_ROOT overridden to a bad root) can still
+# npm-install in place.
+COPY --from=build --chown=torus:torus /out/torus /opt/torus
+
 ENV TERM=xterm-256color
+ENV TORUS_ROOT=/opt/torus
 WORKDIR /workspace
 USER torus
 ENTRYPOINT ["torus"]

@@ -1,6 +1,6 @@
 # Container image
 
-torus ships as a prebuilt image on GHCR: `ghcr.io/tankdonut/torus`, built by the `container` CI job from the multi-stage `Dockerfile` — the build stage compiles the single-file bun launcher from a source snapshot; the runtime stage is `node:26.8.2-slim` plus the agent runtime tools. Images are multi-arch (`linux/amd64` + `linux/arm64`); `latest` is published on merges to main, `X.Y.Z` and `X.Y` on version tags. The image runs as the non-root user `torus` (uid 1000), with `WORKDIR /workspace`, `TERM=xterm-256color`, and `ENTRYPOINT torus`.
+torus ships as a prebuilt image on GHCR: `ghcr.io/tankdonut/torus`, built by the `container` CI job from the multi-stage `Dockerfile` — the build stage compiles the single-file bun launcher from a source snapshot and bakes the payload tree with its npm dependencies (the pinned pi engine included) installed; the runtime stage is `node:26.8.2-slim` plus the agent runtime tools, with the baked payload at `/opt/torus` (`TORUS_ROOT`) so containers boot without network access. Images are multi-arch (`linux/amd64` + `linux/arm64`); `latest` is published on merges to main, `X.Y.Z` and `X.Y` on version tags. The image runs as the non-root user `torus` (uid 1000), with `WORKDIR /workspace`, `TERM=xterm-256color`, and `ENTRYPOINT torus`.
 
 ## Quick start
 
@@ -8,7 +8,7 @@ torus ships as a prebuilt image on GHCR: `ghcr.io/tankdonut/torus`, built by the
 docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus
 ```
 
-Anything after the image name goes to torus as argv. On first run the launcher extracts its embedded payload to `~/.torus/runtime` and npm-installs the pinned pi engine there — this needs network access and takes ~25–60 s; subsequent runs in the same container are instant. `--list-models` works with no credentials:
+Anything after the image name goes to torus as argv. The payload and its npm dependencies (the pinned pi engine included) are baked into the image at `/opt/torus`, and `TORUS_ROOT` points the launcher there — containers boot instantly, never extract to `~/.torus/runtime`, and need no network access. `--list-models` works with no credentials:
 
 ```sh
 docker run --rm ghcr.io/tankdonut/torus --list-models
@@ -33,7 +33,7 @@ Not supported inside the container. `TORUS_SANDBOX` defaults to off and should s
 ./make.sh image-test   # container test suite against torus:dev (TORUS_IMAGE=<tag> to override)
 ```
 
-The suite's static drift guards (Dockerfile ARG pins, runtime deps, entrypoint/user, CI job shape) run in plain `npm test` with no docker; the dynamic smokes — engine boots keyless, tool inventory, tmux, bwrap — need a docker daemon.
+The suite's static drift guards (Dockerfile ARG pins, runtime deps, entrypoint/user, baked payload wiring, CI job shape) run in plain `npm test` with no docker; the dynamic smokes — engine boots keyless (also verified offline via `--network none`), tool inventory, tmux, bwrap — need a docker daemon.
 
 ## Versions & updating
 
@@ -50,6 +50,7 @@ Full-toolkit flavor:
 | Tool | Version / source |
 |------|------------------|
 | node + npm | 26.8.2 (base image `node:26.8.2-slim`) |
+| torus payload + pi engine | baked at `/opt/torus` from the repo payload manifest (engine pin promoted from devDependencies) |
 | ast-grep — both the `sg` shim and `ast-grep` | 0.45.3 (GitHub release) |
 | typescript-language-server / typescript | 5.3.0 / 7.0.2 (global npm) |
 | tmux, bubblewrap, socat, git, ripgrep, notify-send (libnotify) | apt (distro packages) |

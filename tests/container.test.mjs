@@ -107,6 +107,32 @@ test("container: .dockerignore excludes .git, node_modules, dist", () => {
 	}
 });
 
+test("container: image bakes payload deps — no first-run npm bootstrap", () => {
+	const runtimeStage = dockerfile.slice(dockerfile.lastIndexOf("FROM "));
+	assert.ok(
+		runtimeStage.includes("COPY --from=build --chown=torus:torus /out/torus /opt/torus"),
+		"runtime stage must ship the baked payload tree (node_modules incl. engine) at /opt/torus",
+	);
+	assert.ok(
+		/^ENV TORUS_ROOT=\/opt\/torus$/m.test(dockerfile),
+		"Dockerfile must set ENV TORUS_ROOT=/opt/torus so the launcher skips extraction + bootstrap",
+	);
+	const bakeAt = dockerfile.indexOf("scripts/bake-payload.mjs");
+	const installAt = dockerfile.indexOf(
+		"npm install --no-fund --no-audit --omit=dev --legacy-peer-deps",
+	);
+	assert.ok(
+		bakeAt !== -1 && installAt !== -1 && bakeAt < installAt,
+		"build stage must bake the payload tree before npm-installing into it",
+	);
+	// the bake installs with the same flags as the launcher bootstrap, so the
+	// baked tree matches what a network bootstrapped ~/.torus/runtime would hold
+	const installCmd = dockerfile.slice(installAt, installAt + 120);
+	for (const flag of ["--omit=dev", "--legacy-peer-deps"]) {
+		assert.ok(installCmd.includes(flag), `bake npm install must keep ${flag}`);
+	}
+});
+
 test("container: ci.yml container job builds, tests, and publishes multi-arch (ref-gated)", () => {
 	assert.ok(
 		/^ {2}container:$/m.test(ciWorkflow),
@@ -185,11 +211,21 @@ test("container: default entrypoint boots the engine (docker-gated)", (t) => {
 	if (!gated(t)) return;
 	requireImage();
 	// No --entrypoint override here: this is the one probe exercising the
-	// image default. A fresh container re-extracts the payload and npm-
-	// bootstraps the engine on first run, so allow a generous timeout.
+	// image default. The payload + engine are baked into the image
+	// (TORUS_ROOT=/opt/torus), so boot does no extraction and no npm install.
 	// Keyless "No models available" on stdout is success (exit 0).
 	const run = dockerRun(["run", "--rm", IMAGE, "--list-models"], 240_000);
 	assert.equal(run.status, 0, `torus --list-models failed: ${describeResult(run)}`);
+});
+
+test("container: engine boots fully offline — deps baked, no first-run npm install (docker-gated)", (t) => {
+	if (!gated(t)) return;
+	requireImage();
+	// The image ships the payload + engine node_modules at /opt/torus and
+	// points the launcher there via TORUS_ROOT; with networking disabled
+	// nothing can be downloaded, so a clean boot proves the bake.
+	const run = dockerRun(["run", "--rm", "--network", "none", IMAGE, "--list-models"], 120_000);
+	assert.equal(run.status, 0, `offline torus --list-models failed: ${describeResult(run)}`);
 });
 
 test("container: node runtime matches .tool-versions pin (docker-gated)", (t) => {
