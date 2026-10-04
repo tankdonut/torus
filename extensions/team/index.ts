@@ -46,6 +46,14 @@ const AGENT_NAMES = DELEGATABLE.map((a) => a.name).join(", ");
 const MAX_PARALLEL = 8;
 const CHAIN_CONTEXT_LIMIT = 4000;
 
+/** Fan-out result coalescing window (see flushBatch); module-level for test overriding. */
+let fanoutCoalesceMs = 5_000;
+
+/** Test seam: shrink the window to force staggered single-run flushes in tests. */
+export function setFanoutCoalesceForTesting(ms: number): void {
+	fanoutCoalesceMs = ms;
+}
+
 const fanoutTool = defineTool({
 	name: "torus_fanout",
 	label: "Torus Fan-out",
@@ -110,9 +118,11 @@ const fanoutTool = defineTool({
 		// into one combined torus.delegation-result (per-run markers would trickle
 		// into the transcript one turn boundary apart); the whole batch finishing
 		// flushes early instead of waiting out the window.
-		const COALESCE_MS = 5_000;
+		const COALESCE_MS = fanoutCoalesceMs;
 		type FanoutEntry = {
 			label: string;
+			/** Bare handle (no "@") for the result marker; null for handleless runs. */
+			handle: string | null;
 			agent: string;
 			ok: boolean;
 			delegationId: string | null;
@@ -141,8 +151,10 @@ const fanoutTool = defineTool({
 					],
 					display: true,
 					details: {
-						agent: "fan-out",
-						handle: entries.map((e) => e.label).join(", "),
+						// Bare handle: the notify renderer prepends "@"; combined batches
+						// have no single handle and fall back to agent "fan-out".
+						agent: single ? single.agent : "fan-out",
+						handle: single?.handle ?? undefined,
 						ok: entries.every((e) => e.ok),
 						delegationId: single?.delegationId ?? undefined,
 						delegationIds: entries
@@ -206,6 +218,7 @@ const fanoutTool = defineTool({
 					const usage = outcome.details.usage as { turns?: number } | undefined;
 					coalesce({
 						label,
+						handle,
 						agent: run.agent,
 						ok: outcome.ok,
 						delegationId: outcome.delegationId,
@@ -221,6 +234,7 @@ const fanoutTool = defineTool({
 				} catch (error) {
 					coalesce({
 						label,
+						handle,
 						agent: run.agent,
 						ok: false,
 						delegationId: null,

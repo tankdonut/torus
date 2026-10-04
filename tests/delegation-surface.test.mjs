@@ -22,6 +22,15 @@ writeFileSync(
 );
 chmodSync(SILENT_ENGINE, 0o755);
 chmodSync(EVENT_ENGINE, 0o755);
+// Sleeps 1s when the prompt argv carries "slow stagger" so a two-run fan-out
+// settles its runs far past any test-shrunk coalesce window.
+const STAGGER_ENGINE = path.join(ENGINE_DIR, "stagger-engine.sh");
+writeFileSync(
+	STAGGER_ENGINE,
+	'#!/bin/sh\ncase "$*" in *"slow stagger"*) sleep 1 ;; esac\necho \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":10,"output":20}}}\'\nexit 0\n',
+	"utf8",
+);
+chmodSync(STAGGER_ENGINE, 0o755);
 
 const registry = await import("../extensions/registry.ts");
 const roster = await import("../extensions/roster/index.ts");
@@ -314,6 +323,66 @@ test("fan-out emits one combined start marker instead of per-run markers", async
 		!starts.some((m) => typeof m.details.delegationId === "string"),
 		"no per-run start markers may leak",
 	);
+	const results = customs.filter((m) => m.customType === "torus.delegation-result");
+	assert.equal(results.length, 1, "simultaneous completions flush as one combined marker");
+	assert.equal(results[0].details.agent, "fan-out");
+	assert.equal(results[0].details.handle, undefined, "combined marker carries no handle");
+	assert.equal(results[0].details.runs, 2);
+	assert.match(results[0].content[0].text, /fan-out @alpha ✓, @beta ✓/);
+	registry.setCustomSender(() => {});
+});
+
+test("fan-out staggered completions flush per-run markers carrying the bare handle", async () => {
+	registry.resetRegistryForTesting();
+	const customs = [];
+	captureCustoms(customs);
+	const fanoutTool = registeredTools().find((t) => t.name === "torus_fanout");
+	assert.ok(fanoutTool, "torus_fanout not registered");
+	const ctx = {
+		sessionManager: { getSessionId: () => "sess-fanout-staggered" },
+		ui: { setStatus: () => {} },
+	};
+
+	// Shrink the coalesce window so the 1s-staggered second completion misses it
+	// and flushes as its own single-run marker (the user-visible "finished" line).
+	team.setFanoutCoalesceForTesting(150);
+	try {
+		await withEngine(STAGGER_ENGINE, async () => {
+			const result = await fanoutTool.execute(
+				"call",
+				{
+					runs: [
+						{ agent: "builder", task: "fast stagger probe", handle: "alpha" },
+						{ agent: "builder", task: "slow stagger probe", handle: "beta" },
+					],
+				},
+				undefined,
+				undefined,
+				ctx,
+			);
+			assert.equal(result.details.ok, 2, "both runs succeed under the fake engine");
+		});
+	} finally {
+		team.setFanoutCoalesceForTesting(5_000);
+	}
+	// The last single-run flush rides a 150ms timer that outlives execute().
+	await new Promise((resolve) => setTimeout(resolve, 400));
+
+	const results = customs.filter((m) => m.customType === "torus.delegation-result");
+	assert.equal(results.length, 2, "completions past the coalesce window flush separately");
+	assert.deepEqual(
+		results.map((m) => m.details.handle).sort(),
+		["alpha", "beta"],
+		"each single-run marker carries its run's bare handle",
+	);
+	for (const marker of results) {
+		assert.ok(
+			!marker.details.handle.startsWith("@"),
+			"handles must be bare — the notify renderer prepends the @",
+		);
+		assert.equal(marker.details.agent, "builder");
+		assert.equal(marker.details.runs, 1);
+	}
 	registry.setCustomSender(() => {});
 });
 

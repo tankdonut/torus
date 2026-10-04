@@ -261,6 +261,7 @@ test("fan-out coalesces near-simultaneous completions into one combined result m
 	const entry = results[0];
 	assert.equal(entry.message.details.runs, 2);
 	assert.equal(entry.message.details.delegationIds.length, 2, "combined marker lists every run id");
+	assert.equal(entry.message.details.handle, undefined, "combined marker carries no handle");
 	assert.equal(entry.options?.triggerTurn, false, "combined marker defers to the turn boundary");
 	registry.setCustomSender(() => {});
 });
