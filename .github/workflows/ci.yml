@@ -1,0 +1,67 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Load torus under stock pi (no credentials — providers skip, factory must load clean)
+        run: |
+          npm ci
+          node runtime/bin/torus.mjs --list-models
+
+  build:
+    runs-on: ubuntu-latest
+    name: build (${{ matrix.artifact }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: bun-linux-x64
+            artifact: torus-linux-x64
+          - target: bun-linux-arm64
+            artifact: torus-linux-arm64
+          - target: bun-darwin-x64
+            artifact: torus-darwin-x64
+          - target: bun-darwin-arm64
+            artifact: torus-darwin-arm64
+          - target: bun-windows-x64
+            artifact: torus-windows-x64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - name: Create .npmrc for the payload (release-age filter + legacy-peer-deps on first-run bootstrap)
+        run: ./make.sh npmrc
+      - name: Cross-compile launcher
+        run: ./scripts/build-binary.sh dist/torus --target "${{ matrix.target }}"
+      - name: Smoke the compiled launcher (x64 Linux runs natively on this runner)
+        if: matrix.target == 'bun-linux-x64'
+        run: |
+          test -x dist/torus/bin/torus
+          TORUS_PI_BIN="$PWD/node_modules/.bin/pi" dist/torus/bin/torus --list-models
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/torus
+          if-no-files-found: error
