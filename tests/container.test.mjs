@@ -14,6 +14,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
 const toolVersions = readFileSync(path.join(root, ".tool-versions"), "utf8");
 const dockerignore = readFileSync(path.join(root, ".dockerignore"), "utf8");
+const ciWorkflow = readFileSync(path.join(root, ".github", "workflows", "ci.yml"), "utf8");
 
 function dockerfileArg(name) {
 	const match = dockerfile.match(new RegExp(`^ARG ${name}=(\\S+)$`, "m"));
@@ -104,6 +105,29 @@ test("container: .dockerignore excludes .git, node_modules, dist", () => {
 	for (const entry of [".git", "node_modules", "dist"]) {
 		assert.ok(entries.has(entry), `.dockerignore must list ${entry}`);
 	}
+});
+
+test("container: ci.yml container job builds, tests, and publishes multi-arch (ref-gated)", () => {
+	assert.ok(
+		/^ {2}container:$/m.test(ciWorkflow),
+		"ci.yml must define a container: job (2-space indent)",
+	);
+	assert.ok(
+		ciWorkflow.includes("./make.sh image torus:ci"),
+		"container job must build the image via ./make.sh image torus:ci",
+	);
+	assert.ok(
+		ciWorkflow.includes("./make.sh image-test torus:ci"),
+		"container job must run the container suite via ./make.sh image-test torus:ci",
+	);
+	assert.ok(
+		ciWorkflow.includes("platforms: linux/amd64,linux/arm64"),
+		"container job must publish linux/amd64,linux/arm64",
+	);
+	const pushLine = ciWorkflow.split("\n").find((line) => line.trim().startsWith("push: ${{"));
+	assert.ok(pushLine, "container job must set a push: expression on build-push-action");
+	assert.ok(pushLine.includes("refs/heads/main"), "push must be gated on refs/heads/main");
+	assert.ok(pushLine.includes("refs/tags/v"), "push must be gated on refs/tags/v");
 });
 
 const GATED = process.env.TORUS_CONTAINER_TESTS === "1";
