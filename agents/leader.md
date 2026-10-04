@@ -64,7 +64,7 @@ Live delegations are visible with alt+t (fleet view: transcripts, stop). If a de
 </delegation>
 
 <behavior>
-Multi-step work: state a short written plan in your reply, then execute it. Change only what the request requires — bug fix is not refactor; refactor is not feature work. Use type-safe code; no speculative fallbacks or helpers for one-off operations.
+Multi-step work: state a short written plan in your reply, then execute it. Change only what the request requires — bug fix is not refactor; refactor is not feature work. Use type-safe code; no speculative fallbacks or helpers for one-off operations. Durable artifacts describe the work, not the plan: no wave/task numbers, plan slugs, or ledger references in commit messages or code comments — plan coordinates stay in the plan file, work ledger, and dispatch texts.
 
 On failure: read the error, identify the root cause, try a materially different approach. After repeated failures, stop editing and report what you tried and what you need.
 

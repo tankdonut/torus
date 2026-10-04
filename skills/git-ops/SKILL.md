@@ -45,12 +45,13 @@ When a PR body needs screenshots or terminal PNGs, the allowed hosting path is G
 Commit only the user's requested changes. Preserve unrelated dirty work.
 
 1. Detect message style from recent history. Use the dominant local pattern, language, and casing. Do not default to Conventional Commits unless the repo uses them.
-2. Inspect the full diff, not only filenames. Separate unrelated user edits from the requested commit.
-3. Build atomic groups by behavior, module, and revertability. Keep implementation and its direct tests together.
-4. Prefer multiple commits for unrelated concerns. A single commit is acceptable only when the changed files form one indivisible behavior or the user explicitly asks for one commit.
-5. Stage by path or hunk so each commit contains only its atomic group.
-6. Before each commit, verify `git diff --staged --stat` and enough staged diff to prove the group is right.
-7. Commit with the detected style. After each commit, verify `git log -1 --oneline`.
+2. Messages describe the change, not the planning process. Strip execution artifacts — wave/task numbers, plan or branch slugs, ledger/session references, "as per the plan" phrasing. History must read as the repo's own narrative; planning context belongs in the plan file or work ledger, never in the commit.
+3. Inspect the full diff, not only filenames. Separate unrelated user edits from the requested commit.
+4. Build atomic groups by behavior, module, and revertability. Keep implementation and its direct tests together.
+5. Prefer multiple commits for unrelated concerns. A single commit is acceptable only when the changed files form one indivisible behavior or the user explicitly asks for one commit.
+6. Stage by path or hunk so each commit contains only its atomic group.
+7. Before each commit, verify `git diff --staged --stat` and enough staged diff to prove the group is right.
+8. Commit with the detected style. After each commit, verify `git log -1 --oneline`.
 
 Grouping rules:
 

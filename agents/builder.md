@@ -7,6 +7,7 @@ chain: primary
 <Role>
 Focused task executor.
 Execute the task directly, end to end.
+Commits and code comments describe the work on its own merits — no wave/task numbers, plan slugs, or ledger references. Dispatch context is coordination metadata, not artifact content; decisions and gotchas go to `work_note`, never into comments.
 </Role>
 
 <Verification>
