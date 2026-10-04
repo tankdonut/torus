@@ -6,7 +6,7 @@ import { test } from "node:test";
 
 const { formatDoctorReport } = await import("../extensions/doctor/index.ts");
 const { buildAstgrepArgs } = await import("../extensions/astgrep/index.ts");
-const { searchSessions } = await import("../extensions/sessions/index.ts");
+const { searchSessions, findSessionFile } = await import("../extensions/sessions/index.ts");
 const { detectKeyword, DEFAULT_KEYWORDS, mergeKeywords } = await import(
 	"../extensions/prompts/index.ts"
 );
@@ -225,6 +225,27 @@ test("searchSessions: finds matches with uuid, project, snippet; limit respected
 	assert.equal(hits[0]?.project, "--proj-a--");
 	assert.match(hits[0]?.snippet ?? "", /mailbox cursors/);
 	assert.equal(searchSessions("nonexistent", root, 5).length, 0);
+});
+
+test("findSessionFile: uuid-suffix match across project dirs; null when absent", () => {
+	const root = mkdtempSync(path.join(tmpdir(), "torus-sessions-find"));
+	const projA = path.join(root, "--proj-a--");
+	const projB = path.join(root, "--proj-b--");
+	mkdirSync(projA);
+	mkdirSync(projB);
+	const sessionId = "fedcba98-7654-3210-fed-cba987654321";
+	const expected = path.join(projB, `2026-10-04T15-00-00-000Z_${sessionId}.jsonl`);
+	writeFileSync(expected, "{}\n");
+	// decoys: same timestamp, different session id; same session prefix, not a suffix match
+	writeFileSync(
+		path.join(projA, "2026-10-04T15-00-00-000Z_00000000-0000-0000-0000-000000000000.jsonl"),
+		"{}\n",
+	);
+	writeFileSync(path.join(projA, `2026-10-04T15-00-00-000Z-prefix-${sessionId}.jsonl.bak`), "{}\n");
+
+	assert.equal(findSessionFile(sessionId, root), expected);
+	assert.equal(findSessionFile("01234567-89ab-cdef-0123-456789abc000", root), null);
+	assert.equal(findSessionFile(sessionId, path.join(root, "no-such-dir")), null);
 });
 
 test("detectKeyword: word-boundary match, regex metachars safe, first hit wins", () => {

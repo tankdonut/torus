@@ -789,15 +789,22 @@ async function runIdleReflection(_pi: ExtensionAPI, sessionId: string | null): P
 	const { listDelegations } = await import("../registry.js");
 	const delegations = listDelegations();
 	if (delegations.some((record) => record.status === "running")) return;
+	const { findSessionFile } = await import("../sessions/index.js");
+	const transcript = findSessionFile(sessionId);
 	const recentLogs = sessionActivityLogs(delegations, sessionId).join(" ");
-	if (!recentLogs) return;
+	if (!transcript && !recentLogs) return;
 	const task = [
 		"You are reflecting on a just-idled torus session: distill its activity into durable memory.",
 		`Store: ${MEMORY_ROOT} (entries/*.md with frontmatter: topic, tags, project: ${projectSlug(process.cwd())} or global, created) — read existing entries first. Profile file: ${PROFILE_FILE}.`,
 		"Use PROFILE: lines for stable facts about the USER, not the work; entries for durable lessons/decisions/facts. Prefer proposing nothing over noise.",
-		`Session activity: ${recentLogs}`,
-		"You have read-only tools. READ the store and logs, then return your proposal using the exact ENTRY:/DELETE:/PROFILE: format from your role prompt. Do not attempt to write anything.",
-	].join("\n");
+		transcript
+			? `Session transcript: ${transcript} (JSONL, one record per line — read the END for the latest turns; user messages and final assistant text matter, tool chatter does not)`
+			: "",
+		recentLogs ? `Session delegation logs: ${recentLogs}` : "",
+		"You have read-only tools. READ the store, transcript, and logs, then return your proposal using the exact ENTRY:/DELETE:/PROFILE: format from your role prompt. Do not attempt to write anything.",
+	]
+		.filter(Boolean)
+		.join("\n");
 	const { runDelegation } = await import("../roster/index.js");
 	const outcome = await runDelegation("dreamer", task, undefined, undefined, null, "reflect");
 	if (outcome.ok) {

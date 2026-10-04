@@ -72,6 +72,22 @@ export function searchSessions(query: string, root: string, limit: number): Sess
 	return hits;
 }
 
+/** Locate the transcript file for a session id (uuid-suffix match) under root. */
+export function findSessionFile(sessionId: string, root: string = DEFAULT_ROOT): string | null {
+	const suffix = `_${sessionId}.jsonl`;
+	try {
+		for (const entry of readdirSync(root, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			const dir = path.join(root, entry.name);
+			try {
+				const hit = readdirSync(dir).find((file) => file.endsWith(suffix));
+				if (hit) return path.join(dir, hit);
+			} catch {}
+		}
+	} catch {}
+	return null;
+}
+
 const sessionsTool = defineTool({
 	name: "torus_sessions",
 	label: "Torus Sessions",
