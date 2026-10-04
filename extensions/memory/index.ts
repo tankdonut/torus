@@ -766,11 +766,30 @@ function scheduleIdleReflection(pi: ExtensionAPI, sessionId: string | null): voi
 	reflectTimer.unref();
 }
 
+/**
+ * Idle reflection is scoped to the invoking session: the shared logs dir holds
+ * every session's delegations, and feeding foreign logs to the dreamer produced
+ * cross-session reflection entries. Null-parent runs (the reflect dreamer
+ * itself) never match.
+ */
+export function sessionActivityLogs(
+	delegations: Array<{ parentSession: string | null; startedAt: number; logFile: string }>,
+	sessionId: string,
+	cap = 3,
+): string[] {
+	return delegations
+		.filter((record) => record.parentSession === sessionId)
+		.sort((a, b) => b.startedAt - a.startedAt)
+		.map((record) => record.logFile)
+		.slice(0, cap);
+}
+
 async function runIdleReflection(_pi: ExtensionAPI, sessionId: string | null): Promise<void> {
 	if (!sessionId || sessionAlreadyReflected(sessionId)) return;
 	const { listDelegations } = await import("../registry.js");
-	if (listDelegations().some((record) => record.status === "running")) return;
-	const recentLogs = recentLogFiles(3).join(" ");
+	const delegations = listDelegations();
+	if (delegations.some((record) => record.status === "running")) return;
+	const recentLogs = sessionActivityLogs(delegations, sessionId).join(" ");
 	if (!recentLogs) return;
 	const task = [
 		"You are reflecting on a just-idled torus session: distill its activity into durable memory.",
