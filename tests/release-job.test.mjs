@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+	accessSync,
 	chmodSync,
+	constants,
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
@@ -81,7 +83,8 @@ function buildFixture(dir, refName) {
 		mkdirSync(path.join(dir, "dist", "release", name, "bin"), { recursive: true });
 		const binPath = path.join(dir, "dist", "release", name, "bin", bin);
 		writeFileSync(binPath, "#!/usr/bin/env bash\necho 'torus 0.3.0 (pi@1.0.2)'\n");
-		chmodSync(binPath, 0o755);
+		// artifact downloads come back 0644 — the workflow must restore exec bits itself
+		chmodSync(binPath, 0o644);
 	}
 	writeFileSync(path.join(dir, "package.json"), JSON.stringify({ version: "0.3.0" }, null, 2));
 	return { env: { ...process.env, GITHUB_REF_NAME: refName } };
@@ -112,6 +115,11 @@ test("release job: staging step stages, checksums, and passes a consistent versi
 		.trim()
 		.split("\n");
 	assert.equal(sums.length, 5, "sha256sums.txt must cover exactly the five binaries");
+
+	for (const bin of ["torus-linux-x64", "torus-darwin-arm64"]) {
+		accessSync(path.join(dir, "dist", "stage", bin), constants.X_OK);
+	}
+	assert.ok(true, "staged binaries must be executable — artifact download strips the bit");
 });
 
 test("release job: staging step fails on tag/package/binary version skew", (t) => {

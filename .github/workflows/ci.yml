@@ -141,6 +141,7 @@ jobs:
             mv "$src" "../stage/$dest"
           done
           cd ../stage
+          chmod +x torus-*
           sha256sum torus-* > sha256sums.txt
           cd ../..
           tag_ver="${GITHUB_REF_NAME#v}"
