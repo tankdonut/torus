@@ -1,8 +1,8 @@
 /**
  * torus — /doctor.
  *
- * One command answering "is anything broken?": engine pin drift, provider
- * auth, MCP wiring, LSP binary, tmux, git identity, and torus state-dir
+ * One command answering "is anything broken?": torus version, engine pin drift,
+ * provider auth, MCP wiring, LSP binary, tmux, git identity, and torus state-dir
  * writability, each with a concrete ok/warn/fail line.
  */
 
@@ -62,12 +62,36 @@ export function sandboxCheck(): CheckResult {
 	};
 }
 
+export function torusVersionCheck(pinnedVersion: string): CheckResult {
+	const root = process.env["TORUS_ROOT"];
+	try {
+		if (!root) {
+			throw new Error("TORUS_ROOT unset");
+		}
+		const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
+			version?: string;
+		};
+		if (!pkg.version) {
+			throw new Error("package.json has no version");
+		}
+		return { name: "torus", status: "ok", detail: `torus ${pkg.version} (pi@${pinnedVersion})` };
+	} catch {
+		return {
+			name: "torus",
+			status: "ok",
+			detail: "torus version unknown (no TORUS_ROOT package.json)",
+		};
+	}
+}
+
 export function runDoctorChecks(
 	repoRoot: string,
 	engineBin: string,
 	pinnedVersion: string,
 ): CheckResult[] {
 	const checks: CheckResult[] = [];
+
+	checks.push(torusVersionCheck(pinnedVersion));
 
 	const version = spawnSync(engineBin, ["--version"], { encoding: "utf8", timeout: 15000 });
 	const actual = (version.stdout ?? "").trim();
