@@ -29,6 +29,7 @@
 | Need | File |
 |------|------|
 | Install, env config, extension composition, personas | `README.md` |
+| Releases, versioning, bump rules, changelog semantics | `docs/release-workflow.md` |
 
 ## Conventions
 - Quality gates: Biome lint/format (`biome.json`) + strict `tsc --noEmit` + `node:test`, enforced by husky pre-commit (typecheck + lint + test); CI (`.github/workflows/ci.yml`) runs lint + typecheck + smoke.
@@ -39,3 +40,18 @@
 - `.npmrc` is agent-blocked by `cc-safety-net` by design; humans create it via `./make.sh npmrc`.
 - Guarded writes and reads: bare `cat`/`head`/`tail` of an absolute path is blocked — use the read tool; overwriting an existing similar file via `write` is blocked — use `edit` (`extensions/guards/index.ts`).
 - The engine is pinned in `package.json` (`@earendil-works/pi-coding-agent`); `TORUS_PI_BIN` overrides the binary path.
+
+## Commit convention
+
+Commit subjects are release-mechanical — release-please maps them to version bumps and changelog entries (see `docs/release-workflow.md`).
+
+| Subject | Effect |
+|---------|--------|
+| `feat:` | minor bump, Features in changelog |
+| `fix:` | patch bump, Bug Fixes in changelog |
+| `!` or `BREAKING CHANGE:` footer | minor while 0.x (`bump-minor-pre-major`), major after 1.0 |
+| `chore:`, `ci:`, `docs:`, `test:` | no bump, no changelog entry |
+
+- Engine-pin bumps (`@earendil-works/pi-*` in `package.json`) land as `feat(deps):` — every shipped binary carries the pin, so they are user-visible. Renovate applies this automatically (`renovate.json` `packageRules`); hand-bumped pins keep the same subject.
+- Squash-merges keep the PR title verbatim as the commit subject — get the subject right at merge time.
+- No plan coordinates (wave/task numbers, plan slugs, ledger paths) in commit messages or code comments; history reads as the repo's own work.
