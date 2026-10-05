@@ -28,7 +28,12 @@ function delegationLine(
 /** Single hovered marker across the transcript: a move over one clears the last. */
 let hoveredMarker: { hovered: boolean } | null = null;
 
-function clickable(lines: Component[], delegationId: string | undefined): Component {
+/**
+ * Mouse-region wrapper shared by every delegation surface in the transcript
+ * (markers here, the torus_delegate tool block in roster): left-click opens
+ * the fleet browser on that delegation (list view when no id), hover bolds.
+ */
+export function clickable(lines: Component[], delegationId: string | undefined): Component {
 	const state = { hovered: false };
 	const inner = new (class implements Component {
 		render(width: number): string[] {

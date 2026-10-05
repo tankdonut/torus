@@ -477,9 +477,12 @@ test("delegate leads with a live start signal before the first child turn", asyn
 	assert.ok(delegate, "torus_delegate not registered");
 	const updates = [];
 	const paints = [];
+	const customs = [];
+	captureCustoms(customs);
+	let outcome = null;
 
 	await withEngine(EVENT_ENGINE, async () => {
-		await delegate.execute(
+		outcome = await delegate.execute(
 			"c1",
 			{ agent: "builder", task: "live probe", handle: "scout" },
 			undefined,
@@ -503,5 +506,77 @@ test("delegate leads with a live start signal before the first child turn", asyn
 	assert.ok(
 		paints.some(([k]) => /^torus:scout:[0-9a-f]{8}$/.test(k)),
 		"turn chip keyed by delegation id",
+	);
+	assert.ok(
+		!customs.some((m) => m.customType === "torus.delegation-start"),
+		"no start marker for tool-driven delegate — the tool block is the surface",
+	);
+	assert.ok(
+		customs.some((m) => m.customType === "torus.delegation-result"),
+		"result marker still emitted on completion",
+	);
+	assert.equal(typeof outcome?.details?.turns, "number", "result details carry the turn count");
+	assert.equal(
+		outcome?.details?.turns,
+		outcome?.details?.usage?.turns,
+		"top-level turns matches usage.turns",
+	);
+	assert.equal(typeof outcome?.details?.delegationId, "string", "result details carry the run id");
+	registry.setCustomSender(() => {});
+});
+
+test("delegate tool block renders turns and is mouse-clickable", () => {
+	const tools = [];
+	roster.registerRoster({
+		registerTool: (t) => tools.push(t),
+		registerCommand: () => {},
+		on: () => {},
+		sendMessage: () => {},
+	});
+	const delegate = tools.find((t) => t.name === "torus_delegate");
+	assert.ok(delegate, "torus_delegate not registered");
+	const theme = { fg: (_color, text) => text, bold: (text) => text };
+
+	const call = delegate.renderCall(
+		{ agent: "reviewer", task: "probe", handle: "plan-review" },
+		theme,
+	);
+	assert.equal(typeof call.handleMouse, "function", "call line is a mouse region");
+
+	const usage = { input: 35850, output: 13234, turns: 7 };
+	const result = delegate.renderResult(
+		{
+			content: [{ type: "text", text: "done" }],
+			details: {
+				agent: "reviewer",
+				model: "zai/glm-5.3",
+				exitCode: 0,
+				delegationId: "run-1",
+				turns: usage.turns,
+				usage,
+			},
+		},
+		{ expanded: false, isPartial: false },
+		theme,
+	);
+	const headline = result.render(200).join("\n");
+	assert.match(headline, /7 turns/, "turn count rendered");
+	assert.doesNotMatch(headline, /\? turns/, "no placeholder turn count");
+	assert.equal(typeof result.handleMouse, "function", "result line is a mouse region");
+
+	const legacyDetails = {
+		content: [{ type: "text", text: "done" }],
+		details: {
+			agent: "reviewer",
+			model: "zai/glm-5.3",
+			exitCode: 0,
+			usage: { input: 1, output: 2, turns: 3 },
+		},
+	};
+	const legacy = delegate.renderResult(legacyDetails, { expanded: false, isPartial: false }, theme);
+	assert.match(
+		legacy.render(200)[0],
+		/3 turns/,
+		"turns fall back to usage when top-level is absent",
 	);
 });

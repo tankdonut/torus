@@ -35,6 +35,7 @@ import {
 import { flattenPreview, shortModel } from "../fleet/theme-kit.js";
 import { parseFrontmatter, stripFrontmatter } from "../frontmatter.js";
 import { sleep, splitList } from "../fsutil.js";
+import { clickable } from "../notify/index.js";
 import { MODEL_CHAINS, providerAvailabilities } from "../providers/index.js";
 import {
 	AGENT_NAME_RE,
@@ -805,6 +806,8 @@ export async function runDelegation(
 				model: usedModel,
 				exitCode: finalResult.exitCode,
 				sessionId: finalResult.sessionId,
+				delegationId,
+				turns: finalResult.usage.turns,
 				usage: finalResult.usage,
 			},
 		};
@@ -890,31 +893,47 @@ const delegateTool = defineTool({
 		const skillsBadge = args.skills?.length
 			? theme.fg("dim", ` [+${args.skills.length} skill${args.skills.length > 1 ? "s" : ""}]`)
 			: "";
-		return new Text(
-			theme.fg("toolTitle", theme.bold("delegate ")) +
-				(handle ? theme.fg("accent", `@${handle} `) : "") +
-				theme.fg("accent", args.agent) +
-				skillsBadge +
-				theme.fg("dim", ` "${flattenPreview(args.task, 60)}"`),
-			0,
-			0,
+		return clickable(
+			[
+				new Text(
+					theme.fg("toolTitle", theme.bold("delegate ")) +
+						(handle ? theme.fg("accent", `@${handle} `) : "") +
+						theme.fg("accent", args.agent) +
+						skillsBadge +
+						theme.fg("dim", ` "${flattenPreview(args.task, 60)}"`),
+					0,
+					0,
+				),
+			],
+			// No delegation id exists at call time — click opens the fleet list.
+			undefined,
 		);
 	},
 	renderResult(result, { expanded, isPartial }, theme) {
 		const details = (result.details ?? {}) as Record<string, unknown>;
 		const agent = typeof details["agent"] === "string" ? details["agent"] : "?";
 		const model = typeof details["model"] === "string" ? shortModel(details["model"]) : "?";
-		const turns = typeof details["turns"] === "number" ? details["turns"] : undefined;
+		const usage = (details["usage"] ?? {}) as Record<string, unknown>;
+		const delegationId =
+			typeof details["delegationId"] === "string" ? details["delegationId"] : undefined;
+		const turns =
+			typeof details["turns"] === "number"
+				? details["turns"]
+				: typeof usage["turns"] === "number"
+					? usage["turns"]
+					: undefined;
 
 		if (isPartial) {
 			const streaming = result.content.some(
 				(block) => block.type === "text" && block.text.trim().length > 0,
 			);
 			const state = streaming ? `working · turn ${turns ?? 1}` : "starting";
-			return new Text(theme.fg("warning", `delegate ${agent} (${model}): ${state}`), 0, 0);
+			return clickable(
+				[new Text(theme.fg("warning", `delegate ${agent} (${model}): ${state}`), 0, 0)],
+				delegationId,
+			);
 		}
 
-		const usage = (details["usage"] ?? {}) as Record<string, unknown>;
 		const exitCode = typeof details["exitCode"] === "number" ? details["exitCode"] : 0;
 		const inTok = typeof usage["input"] === "number" ? usage["input"] : 0;
 		const outTok = typeof usage["output"] === "number" ? usage["output"] : 0;
@@ -925,13 +944,13 @@ const delegateTool = defineTool({
 			theme.fg("accent", agent) +
 			theme.fg("dim", ` (${model}) · ${status} · ${turns ?? "?"} turns · ${inTok}/${outTok} tok`);
 
-		if (!expanded) return new Text(headline, 0, 0);
+		if (!expanded) return clickable([new Text(headline, 0, 0)], delegationId);
 		const body = result.content
 			.filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
 			.map((block) => block.text)
 			.join("\n")
 			.slice(0, 2000);
-		return new Text(`${headline}\n${theme.fg("dim", body)}`, 0, 0);
+		return clickable([new Text(`${headline}\n${theme.fg("dim", body)}`, 0, 0)], delegationId);
 	},
 	async execute(_toolCallId, params, _signal, onUpdate, ctx) {
 		const handle = params.handle?.trim().replace(/^@+/, "") ?? null;
@@ -969,12 +988,20 @@ const delegateTool = defineTool({
 						snapshot.text.length > 1500 ? `${snapshot.text.slice(0, 1500)}...` : snapshot.text;
 					onUpdate({
 						content: [{ type: "text", text: preview || "(working...)" }],
-						details: { agent: params.agent, turns: snapshot.turns, usage: snapshot.usage },
+						details: {
+							agent: params.agent,
+							delegationId: snapshot.delegationId,
+							turns: snapshot.turns,
+							usage: snapshot.usage,
+						},
 					});
 				},
 				ctx.sessionManager.getSessionId(),
 				handle,
 				params.skills ?? null,
+				// No start marker: it defers until this call returns and would land
+				// as a duplicate of the call line above. The tool block is the surface.
+				false,
 			);
 		} finally {
 			ctx.ui.setStatus(statusKey, undefined);
