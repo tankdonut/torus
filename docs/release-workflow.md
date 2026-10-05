@@ -1,6 +1,6 @@
 # Release workflow — semantic versioning for torus
 
-Status: **draft for sign-off**. This document designs torus's release workflow from first principles. Items marked **[DECISION]** are recommendations awaiting maintainer sign-off; §10 lists the genuinely open questions. Nothing here is implemented yet.
+Status: **implemented**. This document laid out torus's release workflow from first principles; the design is now live — release-please automation (§4), the tag-gated release job (§5), and version stamping all ship in-repo, and the first live release will be `v0.1.0` via the documented `Release-As` bootstrap. Items marked **[DECISION]** record settled choices and their reasoning; §10 lists the questions still genuinely open.
 
 ## 1. First principles
 
@@ -19,10 +19,10 @@ A single version `X.Y.Z` flows from one source of truth to every artifact:
 | Surface | Form | Mechanism |
 |---|---|---|
 | `package.json` `version` | `X.Y.Z` | **Source of truth** — moved only by the release flow (§4), never hand-edited |
-| Git tag | `vX.Y.Z` (annotated) | Created by release automation; anchors the GitHub Release |
+| Git tag | `vX.Y.Z` | Created by release automation via the GitHub API (not annotated — the Release carries the notes); anchors the GitHub Release |
 | GitHub Release | notes + 5 platform binaries + `sha256sums.txt` | CI release job attaches binaries built from the tag's SHA |
 | Container image | `ghcr.io/tankdonut/torus:X.Y.Z` + `:X.Y` | Already wired: CI `docker/metadata-action` derives both from a `v*` tag |
-| Binary self-report | `torus --version` → `X.Y.Z (+ engine pin + payload hash)` | Version stamped into the payload manifest at build time (§5) |
+| Binary self-report | `torus --version` → `X.Y.Z (+ engine pin)` | Version stamped into the payload manifest at build time (§5) |
 
 The `v`-prefix tag convention is fixed by what already exists: `metadata-action`'s `type=semver` expects `vX.Y.Z` and the current CI push gate (`main || refs/tags/v*`) keys on it.
 
@@ -70,7 +70,7 @@ Inside that tag-ref run, one new job completes it, gated `if: startsWith(github.
 3. **Version consistency assertion:** verify `tag == package.json version == torus --version from the built linux binary == image tag pushed by the container job`. A mismatch fails the release loudly (this is the anti-version-skew tripwire).
 4. **[DECISION] Attestation from day one:** `actions/attest-build-provenance` (needs `id-token: write`) for binaries + image — one step, no keys, verifiable by anyone via `gh attestation verify`. Cutting it saves one workflow line; not worth it.
 
-**Version stamping prerequisite** (release-blocking gap today): the binary carries no torus version, and `torus --version` currently passes through to the engine and reports *pi's* version — misleading. Fix: `scripts/payload-manifest.mjs` includes the repo `package.json` version in the payload manifest (folded into the payload hash, so version changes re-extract and self-heal `~/.torus/runtime` on next launch), and `runtime/bin/torus.mjs` intercepts `--version` before engine passthrough, printing torus version + engine pin + payload hash. The `/doctor` extension gains the same torus-version line.
+**Version stamping** (implemented): `runtime/bin/torus.mjs` intercepts `--version` before engine passthrough, printing torus version + engine pin; `scripts/payload-manifest.mjs` includes the repo `package.json` version in the payload manifest (folded into the payload hash, so version changes re-extract and self-heal `~/.torus/runtime` on next launch). The `/doctor` extension reports the same torus-version line.
 
 ## 6. Channels
 
@@ -89,7 +89,6 @@ Inside that tag-ref run, one new job completes it, gated `if: startsWith(github.
 
 - Only `linux-x64` binaries are smoke-executed in CI; darwin/windows/arm64 are cross-compiled, not run. Accepted explicitly. Adding macos/windows runners is a §10 question, not a blocker.
 - Locally built images (`./make.sh image`) differ from CI-built published ones (builder, cache, base resolution). **CI is the only publisher**; local builds are dev-only. (This also sidesteps the local podman-shim vs runner divergence entirely.)
-- `docs/container.md` has a stale node-pin line (says 26.8.2, actual 26.10.0) — fix alongside the release docs.
 
 ## 9. Implementation checklist (on sign-off)
 

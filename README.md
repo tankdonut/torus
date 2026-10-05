@@ -27,6 +27,12 @@ docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus
 
 The image bakes the payload with the pinned engine pre-installed (`/opt/torus`, `TORUS_ROOT` set) — containers boot instantly with no network access, and `--list-models` works keyless. Run flags, sandbox caveats, and the version policy: [docs/container.md](docs/container.md).
 
+## Releases
+
+Prebuilt binaries ship on [GitHub Releases](https://github.com/tankdonut/torus/releases), one per platform (`torus-<os>-<arch>[.exe]`): download, `chmod +x`, run. The first launch extracts the embedded payload to `~/.torus/runtime` and `npm install`s the pinned pi engine there (one-time, network required). Upgrade = replace the binary — the payload-hash change re-extracts and self-heals the runtime; rollback = the previous tag's binary. If the engine-pin drift warning fires after a switch, `rm -rf ~/.torus/runtime` resets it. Building your own instead: [Binary distribution](#binary-distribution).
+
+Want the extension pack without the harness? `pi install git:github.com/tankdonut/torus@vX.Y.Z` loads torus's extensions and skills into a stock pi at a pinned tag.
+
 ## Configuration (environment)
 
 `TORUS_OCGO_API_KEY` + `TORUS_OCGO_BASE_URL` register the `opencode-go` tail-fallback provider; `TORUS_PI_BIN` overrides the engine binary. The full switch set (tmux panes, guards, notifications, monitors, worktree root, ambient machinery kill switches) is catalogued in [docs/extensions.md](docs/extensions.md#environment-variables).
