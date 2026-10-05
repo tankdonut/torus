@@ -299,6 +299,8 @@ interface SpawnResult {
 	stderr: string;
 	sessionId: string | null;
 	usage: { input: number; output: number; turns: number };
+	seenToolCalls: Set<string>;
+	seenToolResults: Set<string>;
 }
 
 export interface DelegationSnapshot {
@@ -325,6 +327,8 @@ async function runEngineRpc(
 		stderr: "",
 		sessionId: null,
 		usage: { input: 0, output: 0, turns: 0 },
+		seenToolCalls: new Set(),
+		seenToolResults: new Set(),
 	};
 	let settleResolve: (() => void) | null = null;
 	const settled = new Promise<void>((resolve) => {
@@ -413,6 +417,8 @@ async function runEngineJson(
 		stderr: "",
 		sessionId: null,
 		usage: { input: 0, output: 0, turns: 0 },
+		seenToolCalls: new Set(),
+		seenToolResults: new Set(),
 	};
 	let sessionReported = false;
 	const reportSession = (): void => {
@@ -478,7 +484,7 @@ async function runEngineJson(
 	return result;
 }
 
-function consumeEventLine(
+export function consumeEventLine(
 	record: Record<string, unknown>,
 	result: SpawnResult,
 	onAction?: (line: string) => void,
@@ -487,22 +493,7 @@ function consumeEventLine(
 		result.sessionId = record["id"];
 		return;
 	}
-	if (
-		onAction &&
-		record["type"] === "message_end" &&
-		typeof record["message"] === "object" &&
-		record["message"] !== null
-	) {
-		const message = record["message"] as Record<string, unknown>;
-		if (message["role"] === "assistant" && Array.isArray(message["content"])) {
-			for (const block of message["content"]) {
-				if (typeof block !== "object" || block === null) continue;
-				const b = block as Record<string, unknown>;
-				if (b["type"] === "tool_call") onAction(`→ ${summarizeToolCall(b)}`);
-				else if (b["type"] === "tool_result") onAction(`← ${summarizeToolResult(b)}`);
-			}
-		}
-	}
+	if (onAction) emitToolActions(record, result, onAction);
 	const tally: EngineTally = {
 		turns: result.usage.turns,
 		tokensIn: result.usage.input,
@@ -516,24 +507,85 @@ function consumeEventLine(
 	result.finalText = tally.text;
 }
 
-function summarizeToolCall(block: Record<string, unknown>): string {
-	const name = typeof block["name"] === "string" ? block["name"] : "tool";
-	const input = block["input"];
-	if (typeof input === "object" && input !== null) {
-		const args = input as Record<string, unknown>;
+function summarizeToolCall(name: unknown, args: unknown): string {
+	const tool = typeof name === "string" && name.length > 0 ? name : "tool";
+	if (typeof args === "object" && args !== null) {
+		const argMap = args as Record<string, unknown>;
 		for (const key of ["path", "file_path", "command", "pattern", "url", "query"]) {
-			const value = args[key];
+			const value = argMap[key];
 			if (typeof value === "string" && value.length > 0) {
-				return redactSecrets(`${name} ${key}=${flattenPreview(value, 60)}`);
+				return redactSecrets(`${tool} ${key}=${flattenPreview(value, 60)}`);
 			}
 		}
 	}
-	return name;
+	return tool;
 }
 
-function summarizeToolResult(block: Record<string, unknown>): string {
-	const isError = block["is_error"] === true || block["isError"] === true;
+function summarizeToolResult(isError: boolean): string {
 	return isError ? "result (error)" : "result";
+}
+
+const callId = (value: unknown): string | null =>
+	typeof value === "string" && value.length > 0 ? value : null;
+
+/**
+ * Tool-call action lines for the delegation log. The engine reports tool
+ * activity twice — dedicated tool_execution_* events (RPC mode only) and
+ * camelCase toolCall blocks / toolResult-role messages inside message_end
+ * (both modes) — so each direction is deduped per toolCallId.
+ */
+function emitToolActions(
+	record: Record<string, unknown>,
+	result: SpawnResult,
+	onAction: (line: string) => void,
+): void {
+	if (record["type"] === "tool_execution_start") {
+		const id = callId(record["toolCallId"]);
+		if (id) {
+			if (result.seenToolCalls.has(id)) return;
+			result.seenToolCalls.add(id);
+		}
+		onAction(`→ ${summarizeToolCall(record["toolName"], record["args"])}`);
+		return;
+	}
+	if (record["type"] === "tool_execution_end") {
+		const id = callId(record["toolCallId"]);
+		if (id) {
+			if (result.seenToolResults.has(id)) return;
+			result.seenToolResults.add(id);
+		}
+		onAction(`← ${summarizeToolResult(record["isError"] === true)}`);
+		return;
+	}
+	if (
+		record["type"] !== "message_end" ||
+		typeof record["message"] !== "object" ||
+		record["message"] === null
+	)
+		return;
+	const message = record["message"] as Record<string, unknown>;
+	if (message["role"] === "assistant" && Array.isArray(message["content"])) {
+		for (const block of message["content"]) {
+			if (typeof block !== "object" || block === null) continue;
+			const b = block as Record<string, unknown>;
+			if (b["type"] !== "toolCall") continue;
+			const id = callId(b["id"]);
+			if (id) {
+				if (result.seenToolCalls.has(id)) continue;
+				result.seenToolCalls.add(id);
+			}
+			onAction(`→ ${summarizeToolCall(b["name"], b["arguments"])}`);
+		}
+		return;
+	}
+	if (message["role"] === "toolResult") {
+		const id = callId(message["toolCallId"]);
+		if (id) {
+			if (result.seenToolResults.has(id)) return;
+			result.seenToolResults.add(id);
+		}
+		onAction(`← ${summarizeToolResult(message["isError"] === true)}`);
+	}
 }
 
 export interface DelegationOutcome {
@@ -713,6 +765,8 @@ export async function runDelegation(
 			stderr: "no chain model attempted",
 			sessionId: null,
 			usage: { input: 0, output: 0, turns: 0 },
+			seenToolCalls: new Set(),
+			seenToolResults: new Set(),
 		};
 		const text =
 			finalResult.finalText ||
