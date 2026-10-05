@@ -92,7 +92,7 @@ tools: read, bash    # optional child tool whitelist
 <system prompt body — {{AGENTS}}/{{TOOLS}}/{{SKILLS}} markers substituted at spawn>
 ```
 
-Every agent works as a persona and as a delegatable child; `mode: session` excludes an agent from child delegation (currently lead). Adding an agent = dropping a file in `agents/`; commands, roster, delegation policy, and fleet colors all follow.
+Every agent works as a persona and as a delegatable child; `mode: session` excludes an agent from child delegation (currently lead). Adding an agent = dropping a file in `agents/`; commands, roster, delegation policy, and fleet colors all follow. The structure contract — frontmatter schema, body skeleton, tool-truth rules, enforcement test — lives in [docs/agents.md](docs/agents.md).
 
 ### Trust & safety
 

@@ -23,7 +23,7 @@
 | `tests/` | `node:test` suites (`.test.mjs`) + TS import hook | `tests/resolve-ts-hook.mjs` |
 | `runtime/bin/` | Launcher that spawns the pinned pi engine | `runtime/bin/torus.mjs` |
 | `scripts/` | Binary build + payload-bake scripts | `scripts/build-binary.sh` |
-| `docs/` | Reference docs (`docs/extensions.md`, coverage-tested; `docs/smoke-checklist.md`, manual TTY smokes) | `docs/extensions.md` |
+| `docs/` | Reference docs (`docs/extensions.md`, coverage-tested; `docs/agents.md`, agent-file contract + enforcement; `docs/smoke-checklist.md`, manual TTY smokes) | `docs/extensions.md` |
 
 ## External References
 | Need | File |
