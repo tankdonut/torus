@@ -752,6 +752,23 @@ const DREAM_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const DREAM_STATE_FILE = path.join(MEMORY_ROOT, ".dream-state");
 const REFLECT_IDLE_MS = 10 * 60 * 1000;
 
+/**
+ * Start-marker text for background memory runs. Custom messages reach the
+ * parent model as user messages, so these stay neutral third-person — the
+ * dreamer-directed task text ("You are reflecting…") nudged main sessions
+ * into performing reflection themselves.
+ */
+export const REFLECT_ANNOUNCE =
+	"background reflection started — dreamer handles it, no action needed";
+export const DREAM_ANNOUNCE = "background dream started — dreamer handles it, no action needed";
+
+/** Opening line of the reflection task, accurate to how it was triggered. */
+export function reflectOpening(trigger: "idle" | "turns"): string {
+	return trigger === "turns"
+		? "You are reflecting on a torus session that just crossed its turn threshold: distill its activity into durable memory."
+		: "You are reflecting on a just-idled torus session: distill its activity into durable memory.";
+}
+
 let reflectTimer: ReturnType<typeof setTimeout> | null = null;
 let settleCount = 0;
 let reflectInFlight = false;
@@ -837,7 +854,7 @@ async function runIdleReflection(
 		const recentLogs = sessionActivityLogs(delegations, sessionId).join(" ");
 		if (!transcript && !recentLogs) return;
 		const task = [
-			"You are reflecting on a just-idled torus session: distill its activity into durable memory.",
+			reflectOpening(trigger),
 			`Store: ${MEMORY_ROOT} (entries/*.md with frontmatter: topic, tags, project: ${projectSlug(process.cwd())} or global, created) — read existing entries first. Profile file: ${PROFILE_FILE}.`,
 			"Use PROFILE: lines for stable facts about the USER, not the work; entries for durable lessons/decisions/facts. Prefer proposing nothing over noise.",
 			transcript
@@ -850,7 +867,16 @@ async function runIdleReflection(
 			.filter(Boolean)
 			.join("\n");
 		const { runDelegation } = await import("../roster/index.js");
-		const outcome = await runDelegation("dreamer", task, undefined, undefined, null, "reflect");
+		const outcome = await runDelegation(
+			"dreamer",
+			task,
+			undefined,
+			undefined,
+			null,
+			"reflect",
+			null,
+			REFLECT_ANNOUNCE,
+		);
 		if (outcome.ok) {
 			emitMemoryApplied(
 				applyDreamProposal(parseDreamOutput(outcome.text), undefined, sessionId ?? undefined),
@@ -913,7 +939,16 @@ async function dream(_pi: ExtensionAPI): Promise<void> {
 		"You have read-only tools. READ the store and logs, then return your proposal using the exact ENTRY:/DELETE:/PROFILE: format from your role prompt. Do not attempt to write anything.",
 	].join("\n");
 	const { runDelegation } = await import("../roster/index.js");
-	const outcome = await runDelegation("dreamer", task, undefined, undefined, null, "dream");
+	const outcome = await runDelegation(
+		"dreamer",
+		task,
+		undefined,
+		undefined,
+		null,
+		"dream",
+		null,
+		DREAM_ANNOUNCE,
+	);
 	const proposal = parseDreamOutput(outcome.text);
 	const counts = outcome.ok ? applyDreamProposal(proposal) : emptyApplied();
 	if (outcome.ok) {
@@ -994,6 +1029,8 @@ export function registerMemory(pi: ExtensionAPI): void {
 				undefined,
 				ctx.sessionManager.getSessionId(),
 				"reflect",
+				null,
+				REFLECT_ANNOUNCE,
 			);
 			const counts = outcome.ok
 				? applyDreamProposal(

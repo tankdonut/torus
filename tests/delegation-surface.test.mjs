@@ -140,6 +140,44 @@ test("successful delegation surfaces its delegationId and finished marker", asyn
 	registry.setCustomSender(() => {});
 });
 
+test("announceText: true previews the task, false suppresses, string passes through", () => {
+	assert.equal(roster.announceText(false, "task text"), null);
+	assert.equal(roster.announceText(true, "task text"), "task text");
+	assert.equal(roster.announceText(true, "x".repeat(500)).length, 400);
+	assert.equal(roster.announceText("neutral note", "task text"), "neutral note");
+});
+
+test("string announce replaces the task preview in the start marker", async () => {
+	registry.resetRegistryForTesting();
+	const customs = [];
+	captureCustoms(customs);
+
+	await withEngine(EVENT_ENGINE, async () => {
+		const outcome = await roster.runDelegation(
+			"builder",
+			"You are reflecting on a just-idled torus session: distill its activity into durable memory.",
+			undefined,
+			undefined,
+			"sess-announce",
+			"quiet",
+			null,
+			"background reflection started — dreamer handles it, no action needed",
+		);
+		assert.equal(outcome.ok, true);
+	});
+
+	const started = customs.find((m) => m.customType === "torus.delegation-start");
+	assert.ok(started, "start marker must be emitted");
+	assert.deepEqual(started.content, [
+		{ type: "text", text: "background reflection started — dreamer handles it, no action needed" },
+	]);
+	assert.ok(
+		!JSON.stringify(started).includes("You are reflecting"),
+		"task text must not leak into the start marker",
+	);
+	registry.setCustomSender(() => {});
+});
+
 test("pre-flight rejection carries no delegationId and emits no markers", async () => {
 	registry.resetRegistryForTesting();
 	const customs = [];

@@ -544,6 +544,17 @@ export interface DelegationOutcome {
 	delegationId: string | null;
 }
 
+/**
+ * Content for a delegation's start marker: null suppresses it, true previews
+ * the task text, and a caller-supplied string is used verbatim so background
+ * runs can announce themselves without leaking dreamer-directed task text
+ * into the parent model's context.
+ */
+export function announceText(announce: boolean | string, task: string): string | null {
+	if (announce === false) return null;
+	return (typeof announce === "string" ? announce : task).slice(0, 400);
+}
+
 export async function runDelegation(
 	agentName: string,
 	task: string,
@@ -552,7 +563,14 @@ export async function runDelegation(
 	parentSession: string | null = null,
 	handle: string | null = null,
 	skills: string[] | null = null,
-	announce = true,
+	/**
+	 * Start-marker policy: true previews the task text, false emits no start
+	 * marker, and a string is used verbatim — background runs (dream, idle or
+	 * turn-triggered reflection) pass neutral text because custom messages
+	 * reach the parent model's context as user messages, where a dreamer-
+	 * directed task ("You are reflecting…") reads as an instruction.
+	 */
+	announce: boolean | string = true,
 	emitResult = true,
 ): Promise<DelegationOutcome> {
 	const agent = firstDelegatable(agentName);
@@ -606,11 +624,12 @@ export async function runDelegation(
 	startDelegation(delegationId, agent.name, firstModel, parentSession, handle);
 	// Batch callers (fan-out, teams) pass announce=false and emit one combined
 	// marker instead of N per-run events staggering across turn boundaries.
-	if (announce) {
+	const announcement = announceText(announce, task);
+	if (announcement !== null) {
 		emitTorusCustom(
 			{
 				customType: "torus.delegation-start",
-				content: [{ type: "text", text: task.slice(0, 400) }],
+				content: [{ type: "text", text: announcement }],
 				display: true,
 				details: { agent: agent.name, delegationId, handle },
 			},
