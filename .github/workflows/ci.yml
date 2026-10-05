@@ -2,6 +2,7 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   lint-typecheck:
@@ -104,8 +105,54 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
+          provenance: mode=max
           push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint-typecheck, smoke, build, container]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .tool-versions
+      - run: npm ci
+      - name: Stage release binaries
+        uses: actions/download-artifact@v7
+        with:
+          path: dist/release
+      - name: Stage, checksum, and verify version consistency
+        run: |
+          mkdir -p dist/stage
+          cd dist/release
+          for d in torus-*; do
+            src="$d/bin/torus"
+            dest="torus-${d#torus-}"
+            if [ -f "$d/bin/torus.exe" ]; then src="$d/bin/torus.exe"; dest="$dest.exe"; fi
+            mv "$src" "../stage/$dest"
+          done
+          cd ../stage
+          sha256sum torus-* > sha256sums.txt
+          cd ../..
+          tag_ver="${GITHUB_REF_NAME#v}"
+          pkg_ver="$(node -p "require('./package.json').version")"
+          bin_ver="$(TORUS_PI_BIN="$PWD/node_modules/.bin/pi" dist/stage/torus-linux-x64 --version | awk '{print $2}')"
+          echo "tag=$tag_ver pkg=$pkg_ver bin=$bin_ver"
+          [ "$tag_ver" = "$pkg_ver" ] && [ "$tag_ver" = "$bin_ver" ]
+      - name: Attach binaries and checksums to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/stage/torus-* dist/stage/sha256sums.txt --clobber
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/stage/torus-*
