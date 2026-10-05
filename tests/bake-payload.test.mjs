@@ -30,6 +30,7 @@ test("bake-payload: writes the payload tree carrying the shared runtime manifest
 	const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 	const manifest = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
 	assert.deepEqual(manifest.pi, pkg.pi, "payload manifest must mirror the repo pi manifest");
+	assert.equal(manifest.version, pkg.version, "payload manifest must carry the repo version");
 	assert.deepEqual(
 		manifest.dependencies,
 		{

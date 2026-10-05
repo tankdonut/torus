@@ -112,6 +112,11 @@ const pin =
 	pkg.devDependencies?.["@earendil-works/pi-coding-agent"];
 const argv = process.argv.slice(2);
 
+if (argv[0] === "--version") {
+	process.stdout.write(`torus ${pkg.version}${pin ? ` (pi@${pin})` : ""}\n`);
+	process.exit(0);
+}
+
 function resolveBinary() {
 	const envBin = process.env["TORUS_PI_BIN"];
 	if (envBin) return envBin;

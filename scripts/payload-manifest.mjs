@@ -23,6 +23,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export function payloadManifest(pkg) {
 	return {
 		name: "torus-payload",
+		version: pkg.version,
 		private: true,
 		type: "module",
 		pi: pkg.pi,
