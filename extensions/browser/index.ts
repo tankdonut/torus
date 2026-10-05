@@ -754,8 +754,10 @@ class FleetBrowser implements Component {
 		const body: string[] = [];
 		for (const item of transcriptItems(sessionId, 60)) {
 			const component = this.componentForItem(sessionId, item);
+			// No separator: components carry their own leading spacers, matching the
+			// main session's back-to-back chat stacking; tool-only assistant items
+			// render zero lines and must not earn a blank either.
 			if (component) {
-				if (body.length > 0) body.push("");
 				body.push(...component.render(width));
 			}
 		}
