@@ -229,13 +229,37 @@ export function completionBlocker(markdown: string): string | null {
 }
 
 /**
+ * Resolve a slug the way a dispatch text carries it: exact, else unique
+ * prefix, else unique substring (leads paraphrase dated stems —
+ * "release-workflow-implementation" for "2026-10-04-release-workflow-
+ * implementation"). Ambiguity and misses list candidates so one retry fixes it.
+ */
+export function resolveLedgerSlug(slug: string): { slug: string } | { error: string } {
+	const known = [...new Set(listWorkStates().map((state) => state.slug))];
+	if (known.includes(slug)) return { slug };
+	const matches = known.filter((s) => s.includes(slug));
+	if (matches.length === 1) return { slug: matches[0] ?? slug };
+	if (matches.length > 1) {
+		return { error: `ambiguous work slug "${slug}" — candidates: ${matches.join(", ")}` };
+	}
+	return {
+		error: `no work state for slug "${slug}" — known works: ${
+			known.slice(-8).join(", ") || "(none)"
+		} (the lead passes the exact slug in the dispatch text)`,
+	};
+}
+
+/**
  * Validation for cross-session ledger appends (delegated builders writing to
  * a work they were told about by slug): the work must exist and be active.
  */
 export function ledgerAppendError(slug: string): string | null {
-	const state = readWorkState(slug);
-	if (!state) return `no work state for slug "${slug}" — the lead passes it in the dispatch text`;
-	if (state.status !== "active") return `work "${slug}" is ${state.status} — its ledger is closed`;
+	const resolved = resolveLedgerSlug(slug);
+	if ("error" in resolved) return resolved.error;
+	const state = readWorkState(resolved.slug);
+	if (!state) return `no work state for slug "${resolved.slug}"`;
+	if (state.status !== "active")
+		return `work "${resolved.slug}" is ${state.status} — its ledger is closed`;
 	return null;
 }
 
@@ -408,11 +432,15 @@ export function registerWork(pi: ExtensionAPI): void {
 				let slug: string;
 				let touch: WorkState | null = null;
 				if (params.slug !== undefined) {
-					const error = ledgerAppendError(params.slug);
+					const resolved = resolveLedgerSlug(params.slug);
+					if ("error" in resolved) {
+						return { content: [{ type: "text", text: resolved.error }], details: {} };
+					}
+					const error = ledgerAppendError(resolved.slug);
 					if (error) {
 						return { content: [{ type: "text", text: error }], details: {} };
 					}
-					slug = params.slug;
+					slug = resolved.slug;
 				} else {
 					const active = requireActive();
 					if ("error" in active) {

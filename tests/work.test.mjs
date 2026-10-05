@@ -16,6 +16,7 @@ const {
 	appendLedgerEntry,
 	readLedger,
 	ledgerAppendError,
+	resolveLedgerSlug,
 	listWorkStates,
 	activeWorkFor,
 	workContextBlock,
@@ -172,6 +173,39 @@ test("ledgerAppendError: unknown slug errors, closed work refuses, active work a
 	assert.match(ledgerAppendError("done-w"), /its ledger is closed/);
 	plantState({ slug: "open-w" });
 	assert.equal(ledgerAppendError("open-w"), null);
+});
+
+test("resolveLedgerSlug: paraphrased dispatch slugs resolve; ambiguity and misses name candidates", () => {
+	plantState({ slug: "2026-10-04-fix-widget-thing" });
+	assert.deepEqual(resolveLedgerSlug("2026-10-04-fix-widget-thing"), {
+		slug: "2026-10-04-fix-widget-thing",
+	});
+	// the churn case: a lead paraphrases the dated stem in a dispatch text
+	assert.deepEqual(resolveLedgerSlug("fix-widget-thing"), {
+		slug: "2026-10-04-fix-widget-thing",
+	});
+	assert.deepEqual(resolveLedgerSlug("2026-10-04-fix-widget"), {
+		slug: "2026-10-04-fix-widget-thing",
+	});
+
+	plantState({ slug: "2026-10-05-fix-widget" });
+	const ambiguous = resolveLedgerSlug("fix-widget");
+	assert.ok(
+		"error" in ambiguous &&
+			/ambiguous/.test(ambiguous.error) &&
+			/2026-10-04-fix-widget-thing/.test(ambiguous.error) &&
+			/2026-10-05-fix-widget/.test(ambiguous.error),
+	);
+
+	const miss = resolveLedgerSlug("ghost-xyz");
+	assert.ok(
+		"error" in miss &&
+			/no work state for slug "ghost-xyz"/.test(miss.error) &&
+			/known works/.test(miss.error),
+	);
+
+	// ledgerAppendError rides the same resolution, so a paraphrased slug journals fine
+	assert.equal(ledgerAppendError("fix-widget-thing"), null);
 });
 
 test("workContextBlock: injects plan path, progress, next task; missing plan surfaces; complete is silent", () => {
