@@ -389,16 +389,31 @@ const memberGenerations = sharedState(
 
 /**
  * Per-member wake-up state: teams are pull-based, so nothing pushes member
- * reports into the parent session. Exactly one follow-up user message fires
- * per member episode — the member goes idle (or stops non-deliberately)
- * while holding an unread report. The news latch re-arms on the next report;
- * bootstrap "ready" handshakes never arm it (team-runtime passes the phase).
- * The wake itself is a torus.team-wake marker with triggerTurn: true — a
- * queued user follow-up alone strands pending when a turn is interrupted.
+ * reports into the parent session. A member that goes idle (or stops
+ * non-deliberately) while holding an unread report queues one wake episode.
+ * The news latch re-arms on the next report; bootstrap "ready" handshakes
+ * never arm it (team-runtime passes the phase).
  */
 const memberHasNews = sharedState(
 	Symbol.for("torus.member-has-news.v1"),
 	() => new Map<string, boolean>(),
+);
+
+/**
+ * Wake coalescing: episodes collect per team and flush as ONE combined
+ * torus.team-wake marker after a short window. N members finishing within
+ * minutes would otherwise queue N triggerTurn follow-ups that drain one turn
+ * boundary apart — each a wasted model turn, all stale by the time they land
+ * (same rationale as team_create's combined delegation-start marker).
+ */
+const TEAM_WAKE_COALESCE_MS = 10_000;
+const pendingTeamWakes = sharedState(
+	Symbol.for("torus.team-wake-pending.v1"),
+	() => new Map<string, Set<string>>(),
+);
+const pendingWakeTimers = sharedState(
+	Symbol.for("torus.team-wake-timers.v1"),
+	() => new Map<string, ReturnType<typeof setTimeout>>(),
 );
 
 function notifyMemberEpisode(teamId: string, memberId: string): void {
@@ -408,24 +423,74 @@ function notifyMemberEpisode(teamId: string, memberId: string): void {
 	if (!record || !member || record.status !== "active") return;
 	if (member.status !== "idle" && member.status !== "stopped") return;
 	if (!memberHasNews.get(memberId)) return;
-	memberHasNews.delete(memberId);
-	let tail = "";
+	let pending = pendingTeamWakes.get(teamId);
+	if (!pending) {
+		pending = new Set();
+		pendingTeamWakes.set(teamId, pending);
+	}
+	pending.add(memberId);
+	if (!pendingWakeTimers.has(teamId)) {
+		const timer = setTimeout(() => {
+			pendingWakeTimers.delete(teamId);
+			flushTeamWake(teamId);
+		}, TEAM_WAKE_COALESCE_MS);
+		timer.unref();
+		pendingWakeTimers.set(teamId, timer);
+	}
+}
+
+/** Newest outbox content: outboxes are append-only, so the file tail is the
+ * freshest entry regardless of the heading format each member writes. */
+function outboxTail(member: { mailboxDir: string }): string {
 	try {
 		const outbox = readFileSync(path.join(member.mailboxDir, "outbox.md"), "utf8");
-		const last = outbox
-			.split(/\n(?=\[)/)
-			.filter((b) => b.trim().length > 0)
-			.at(-1);
-		if (last) tail = last.replace(/\s+/g, " ").slice(0, 200);
+		const squashed = outbox.replace(/\s+/g, " ").trim();
+		return squashed.length > 200 ? squashed.slice(-200) : squashed;
 	} catch {
 		// no outbox yet — the status line alone still carries the signal
+		return "";
 	}
-	const reason =
-		tail.length > 0
-			? `report: ${tail}`
-			: member.status === "stopped"
-				? "stopped unexpectedly (no report read)"
-				: "new report waiting";
+}
+
+function flushTeamWake(teamId: string): void {
+	const pending = pendingTeamWakes.get(teamId);
+	pendingTeamWakes.delete(teamId);
+	const timer = pendingWakeTimers.get(teamId);
+	if (timer) {
+		clearTimeout(timer);
+		pendingWakeTimers.delete(teamId);
+	}
+	if (!pending || pending.size === 0) return;
+	const record = getTeam(teamId);
+	if (record?.status !== "active") return;
+	const episodes: { member: string; agent: string; status: string; reason: string }[] = [];
+	for (const memberId of pending) {
+		const member = record.members.find((m) => m.id === memberId);
+		// A member back to working (respawn, new task) defers to its next idle
+		// episode: leave the latch armed and drop this stale queue entry.
+		if (!member || (member.status !== "idle" && member.status !== "stopped")) continue;
+		if (!memberHasNews.get(memberId)) continue;
+		memberHasNews.delete(memberId);
+		const tail = outboxTail(member);
+		episodes.push({
+			member: member.name,
+			agent: member.agent,
+			status: member.status,
+			reason:
+				tail.length > 0
+					? `report: ${tail}`
+					: member.status === "stopped"
+						? "stopped unexpectedly (no report read)"
+						: "new report waiting",
+		});
+	}
+	if (episodes.length === 0) return;
+	const lines = episodes.map((e) => `@${e.member} (${e.agent}) is ${e.status} — ${e.reason}`);
+	const first = episodes[0];
+	const text =
+		episodes.length === 1
+			? `[torus] team ${record.name}: ${lines[0]}. Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.`
+			: `[torus] team ${record.name}: ${episodes.length} members finished — ${lines.join("; ")}. Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.`;
 	// Wake via a triggerTurn marker (the monitor pattern), never a bare user
 	// follow-up: a queued follow-up is only consumed by a run, so an
 	// interrupted turn strands it pending until the next user input.
@@ -434,19 +499,14 @@ function notifyMemberEpisode(teamId: string, memberId: string): void {
 	const delivered = emitTorusCustom(
 		{
 			customType: "torus.team-wake",
-			content: [
-				{
-					type: "text",
-					text: `[torus] team ${record.name}: @${member.name} (${member.agent}) is ${member.status} — ${reason}. Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.`,
-				},
-			],
+			content: [{ type: "text", text }],
 			display: true,
 			details: {
 				team: record.name,
-				member: member.name,
-				agent: member.agent,
-				status: member.status,
-				reason,
+				members: episodes,
+				...(episodes.length === 1 && first
+					? { member: first.member, agent: first.agent, status: first.status, reason: first.reason }
+					: {}),
 			},
 		},
 		{ triggerTurn: true, deliverAs: "followUp" },
@@ -455,7 +515,7 @@ function notifyMemberEpisode(teamId: string, memberId: string): void {
 		try {
 			appendFileSync(
 				path.join(teamDir(teamId), "team.log"),
-				`[${new Date().toISOString()}] wake-up for @${member.name} not delivered (no session sender)\n`,
+				`[${new Date().toISOString()}] wake-up for ${episodes.map((e) => `@${e.member}`).join(", ")} not delivered (no session sender)\n`,
 				"utf8",
 			);
 		} catch {
@@ -472,6 +532,11 @@ const spawnerState = sharedState(Symbol.for("torus.member-spawner.v1"), () => ({
 /** Test-only: substitute the member spawner (null restores the real engine spawner). */
 export function setMemberSpawnerForTesting(spawn: MemberSpawner | null): void {
 	spawnerState.spawn = spawn ?? spawnMember;
+}
+
+/** Test-only: flush every pending team wake-up immediately. */
+export function flushTeamWakesForTesting(): void {
+	for (const teamId of [...pendingTeamWakes.keys()]) flushTeamWake(teamId);
 }
 
 /**
@@ -1012,6 +1077,12 @@ const teamDeleteTool = defineTool({
 		record.status = "shutdown";
 		dropTeam(record.id);
 		for (const member of record.members) memberHasNews.delete(member.id);
+		pendingTeamWakes.delete(record.id);
+		const pendingWakeTimer = pendingWakeTimers.get(record.id);
+		if (pendingWakeTimer) {
+			clearTimeout(pendingWakeTimer);
+			pendingWakeTimers.delete(record.id);
+		}
 		for (const member of record.members) {
 			memberControls.delete(member.id);
 			// Safety pass: a member whose supervisor never delivered its stopped

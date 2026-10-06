@@ -150,20 +150,25 @@ export function registerNotify(pi: ExtensionAPI): void {
 	pi.registerMessageRenderer("torus.team-wake", (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		const team = typeof details["team"] === "string" ? sanitizeRender(details["team"]) : "team";
-		const member = typeof details["member"] === "string" ? sanitizeRender(details["member"]) : "?";
-		const status = typeof details["status"] === "string" ? details["status"] : "idle";
-		const reason = sanitizeRender(flattenPreview(details["reason"], 70));
-		return new Text(
-			delegationLine(
+		const episodeLine = (entry: Record<string, unknown>): string => {
+			const member = typeof entry["member"] === "string" ? sanitizeRender(entry["member"]) : "?";
+			const status = typeof entry["status"] === "string" ? entry["status"] : "idle";
+			const reason = sanitizeRender(flattenPreview(entry["reason"], 70));
+			return delegationLine(
 				status === "stopped" ? "✗" : "☾",
 				status === "stopped" ? "error" : "warning",
 				`team ${team}: @${member} ${status}`,
 				reason,
 				theme,
-			),
-			0,
-			0,
-		);
+			);
+		};
+		if (Array.isArray(details["members"])) {
+			const lines = details["members"]
+				.filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null)
+				.map(episodeLine);
+			if (lines.length > 0) return new Text(lines.join("\n"), 0, 0);
+		}
+		return new Text(episodeLine(details), 0, 0);
 	});
 }
 

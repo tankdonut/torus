@@ -5,9 +5,9 @@ import path from "node:path";
 import { after, test } from "node:test";
 
 // The per-member wake-up: when a member finishes an episode — goes idle (or
-// stops non-deliberately) while holding an unread outbox report — exactly one
-// torus.team-wake marker (triggerTurn) is queued, regardless of sibling
-// member states.
+// stops non-deliberately) while holding an unread outbox report — its episode
+// queues; pending episodes flush as ONE combined torus.team-wake marker per
+// team after a short coalescing window (tests flush it explicitly).
 // Sandbox envs land before any extension import; the spawner is faked so no
 // engine runs.
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-team-idle-notify-test-"));
@@ -97,7 +97,8 @@ test("per-member wake-up fires on a member's finished episode, independent of si
 	assert.equal(wakes.length, 0, "no wake-up while the member is still working");
 
 	member("two").onState({ status: "idle", sessionId: "s2" });
-	assert.equal(wakes.length, 1, "episode fires immediately even though one is still working");
+	team.flushTeamWakesForTesting();
+	assert.equal(wakes.length, 1, "episode fires on flush even though one is still working");
 	const wake = wakes[0];
 	assert.match(wakeText(wake), /\[torus\] team alpha: @two \(builder\) is idle/);
 	assert.match(wakeText(wake), /report: .*found 3 issues/);
@@ -106,10 +107,12 @@ test("per-member wake-up fires on a member's finished episode, independent of si
 	assert.equal(wake.options?.triggerTurn, true);
 
 	member("two").onState({ status: "idle", sessionId: "s2" });
+	team.flushTeamWakesForTesting();
 	assert.equal(wakes.length, 1, "repeat idle ticks must not re-fire the latch");
 
 	member("one").onReport("more findings", false);
 	member("one").onState({ status: "idle", sessionId: "s1" });
+	team.flushTeamWakesForTesting();
 	assert.equal(wakes.length, 2, "second member episode fires its own wake-up");
 	assert.match(wakeText(wakes[1]), /@one/);
 });
@@ -133,12 +136,14 @@ test("bootstrap 'ready' handshake never wakes the session; the first real report
 	member("fresh").onReport("ready", true);
 	seedOutbox("fresh", "ready");
 	member("fresh").onState({ status: "idle", sessionId: "s" });
+	team.flushTeamWakesForTesting();
 	assert.equal(wakes.length, 0, "handshake report must not arm the wake-up latch");
 
 	member("fresh").onState({ status: "working", sessionId: "s" });
 	member("fresh").onReport("task done", false);
 	seedOutbox("fresh", "task done");
 	member("fresh").onState({ status: "idle", sessionId: "s" });
+	team.flushTeamWakesForTesting();
 	assert.equal(wakes.length, 1, "first real report after mail still wakes the session");
 	assert.match(wakeText(wakes[0]), /report: .*task done/);
 });
@@ -151,6 +156,7 @@ test("non-deliberate crash of the last member wakes the session; team_delete nev
 	member("sentry").onState({ status: "working", sessionId: "s" });
 	member("sentry").onState({ status: "idle", sessionId: "s" });
 	member("sentry").onState({ status: "stopped", sessionId: "s" });
+	team.flushTeamWakesForTesting();
 	assert.equal(wakes.length, 1, "a crashed member is news even without a report");
 	assert.match(wakeText(wakes[0]), /@sentry \(builder\) is stopped/);
 	assert.match(wakeText(wakes[0]), /stopped unexpectedly/);
@@ -159,6 +165,7 @@ test("non-deliberate crash of the last member wakes the session; team_delete nev
 	const tools = [];
 	team.registerTeam({ registerTool: (tool) => tools.push(tool) });
 	await tools.find((t) => t.name === "team_delete").execute("call", { team: deltaId });
+	team.flushTeamWakesForTesting();
 	assert.equal(
 		wakes.length,
 		1,
@@ -166,6 +173,91 @@ test("non-deliberate crash of the last member wakes the session; team_delete nev
 	);
 
 	void teamId;
+});
+
+test("episodes within one coalescing window flush as a single combined wake", async () => {
+	registry.resetRegistryForTesting();
+	wakes.length = 0;
+	await createTeam("golf", [
+		{ name: "scan-a", agent: "builder" },
+		{ name: "scan-b", agent: "builder" },
+	]);
+
+	for (const name of ["scan-a", "scan-b"]) {
+		member(name).onState({ status: "working", sessionId: `s-${name}` });
+		member(name).onReport(`${name} done`, false);
+		seedOutbox(name, `${name} done`);
+		member(name).onState({ status: "idle", sessionId: `s-${name}` });
+	}
+	team.flushTeamWakesForTesting();
+	assert.equal(wakes.length, 1, "two episodes in one window flush as one wake");
+	const text = wakeText(wakes[0]);
+	assert.match(text, /2 members finished/);
+	assert.match(text, /@scan-a/);
+	assert.match(text, /@scan-b/);
+	assert.match(text, /scan-a done/);
+	assert.match(text, /scan-b done/);
+	assert.ok(
+		Array.isArray(wakes[0].message.details?.members),
+		"combined wake carries a members array",
+	);
+});
+
+test("a member back to working before the flush defers to its next episode", async () => {
+	registry.resetRegistryForTesting();
+	wakes.length = 0;
+	await createTeam("hotel", [{ name: "flip", agent: "builder" }]);
+
+	member("flip").onState({ status: "working", sessionId: "s" });
+	member("flip").onReport("first report", false);
+	seedOutbox("flip", "first report");
+	member("flip").onState({ status: "idle", sessionId: "s" });
+	member("flip").onState({ status: "working", sessionId: "s" });
+	team.flushTeamWakesForTesting();
+	assert.equal(wakes.length, 0, "a member back to working is not woken mid-flight");
+
+	member("flip").onState({ status: "idle", sessionId: "s" });
+	team.flushTeamWakesForTesting();
+	assert.equal(wakes.length, 1, "the still-armed latch fires on the next idle episode");
+	assert.match(wakeText(wakes[0]), /@flip/);
+});
+
+test("team_delete before the flush drops pending wake-ups", async () => {
+	registry.resetRegistryForTesting();
+	wakes.length = 0;
+	const teamId = await createTeam("india", [{ name: "ghost", agent: "builder" }]);
+
+	member("ghost").onState({ status: "working", sessionId: "s" });
+	member("ghost").onReport("final report", false);
+	seedOutbox("ghost", "final report");
+	member("ghost").onState({ status: "idle", sessionId: "s" });
+	const tools = [];
+	team.registerTeam({ registerTool: (tool) => tools.push(tool) });
+	await tools.find((t) => t.name === "team_delete").execute("call", { team: teamId });
+	team.flushTeamWakesForTesting();
+	assert.equal(wakes.length, 0, "shutting the team down must not wake the session");
+});
+
+test("wake tail quotes the newest outbox entry regardless of heading format", async () => {
+	registry.resetRegistryForTesting();
+	wakes.length = 0;
+	await createTeam("juliet", [{ name: "scribe", agent: "builder" }]);
+
+	member("scribe").onState({ status: "working", sessionId: "s" });
+	member("scribe").onReport("first entry", false);
+	seedOutbox("scribe", `first entry ${"x".repeat(220)}`);
+	const dir = member("scribe").mailboxDir;
+	appendFileSync(
+		path.join(dir, "outbox.md"),
+		"\n## 2026-10-06T22:00:00Z — t9 COMPLETE\n\n- Report: NEWEST-FINDING-XYZ done\n",
+		"utf8",
+	);
+	member("scribe").onState({ status: "idle", sessionId: "s" });
+	team.flushTeamWakesForTesting();
+	assert.equal(wakes.length, 1);
+	const text = wakeText(wakes[0]);
+	assert.match(text, /NEWEST-FINDING-XYZ/, "tail must quote the newest entry");
+	assert.doesNotMatch(text, /first entry/, "tail must not quote the oldest entry");
 });
 
 test("TORUS_TEAM_NOTIFY=0 suppresses the wake-up", async () => {
@@ -177,6 +269,7 @@ test("TORUS_TEAM_NOTIFY=0 suppresses the wake-up", async () => {
 		member("solo").onState({ status: "working", sessionId: "s" });
 		member("solo").onReport("findings", false);
 		member("solo").onState({ status: "idle", sessionId: "s" });
+		team.flushTeamWakesForTesting();
 		assert.equal(wakes.length, 0, "kill switch must silence the wake-up");
 	} finally {
 		delete process.env.TORUS_TEAM_NOTIFY;
