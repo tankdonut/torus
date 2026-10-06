@@ -20,6 +20,23 @@ const render = (markdown, options = {}) =>
 
 const mainOf = (html) => /<main[\s\S]*?<\/main>/.exec(html)?.[0] ?? "";
 
+const mediaPrintBlock = (css) => {
+	const start = css.indexOf("@media print");
+	assert.ok(start !== -1, "no @media print block");
+	let depth = 0;
+	for (let i = start; i < css.length; i++) {
+		if (css[i] === "{") {
+			depth++;
+		} else if (css[i] === "}") {
+			depth--;
+			if (depth === 0) {
+				return css.slice(start, i + 1);
+			}
+		}
+	}
+	assert.fail("unbalanced braces in @media print");
+};
+
 test("slugifyGithub: github-compatible ids for authored anchors", () => {
 	assert.equal(slugifyGithub("1. Landscape overview"), "1-landscape-overview");
 	assert.equal(slugifyGithub("torus × pi engine"), "torus--pi-engine");
@@ -133,6 +150,7 @@ test("theme token pairs clear 4.5:1 in both themes", () => {
 			["ink", "paper"],
 			["muted", "paper"],
 			["accent", "paper"],
+			["accent-ink", "accent"],
 		]) {
 			const ratio = contrastRatio(tokens[fg], tokens[bg]);
 			assert.ok(
@@ -140,6 +158,66 @@ test("theme token pairs clear 4.5:1 in both themes", () => {
 				`${theme}: ${fg} ${tokens[fg]} on ${bg} ${tokens[bg]} = ${ratio.toFixed(2)}`,
 			);
 		}
+	}
+});
+
+test("print stylesheet carries the pagination rules", () => {
+	const print = mediaPrintBlock(cssText);
+	assert.ok(print.includes("@page"));
+	assert.ok(print.includes("margin: 18mm 16mm"));
+	assert.ok(print.includes("display: table-header-group"));
+	assert.ok(print.includes("break-inside: avoid"));
+	assert.ok(print.includes("orphans: 3"));
+	assert.ok(print.includes("widows: 3"));
+	assert.ok(print.includes("font-size: 11pt"));
+	assert.ok(print.includes("font-size: 9.5pt"));
+	assert.ok(print.includes("overflow-wrap: anywhere"));
+	assert.ok(/\.theme-toggle[\s\S]{0,120}display:\s*none/.test(print));
+	assert.ok(cssText.includes("ul:has(> li > strong:first-child)"));
+	assert.ok(
+		/ul:has\(> li > strong:first-child\) > li\s*\{[^}]*break-inside:\s*avoid/.test(cssText),
+	);
+});
+
+test("evidence and citation selectors match the emitted markup", () => {
+	const markdown = [
+		"# Fixture report",
+		"",
+		"**Owner**: scout",
+		"",
+		"## Findings",
+		"",
+		"| Key | Says |",
+		"|---|---|",
+		"| [S3] | holds [S3] |",
+		"",
+		"- **Claim**: the pin holds.",
+		"- **Evidence**: the feed confirms it.",
+		"- **Explanation**: keep the pin.",
+		"",
+		"Plain bullet without a label stays out of the group when alone.",
+	].join("\n");
+	const html = render(markdown, { date: "2026-10-06", sourcePath: "/j/REPORT.md" });
+
+	assert.ok(cssText.includes("ul:has(> li > strong:first-child)"));
+	assert.ok(/<ul>\s*<li><strong>Claim<\/strong>: the pin holds\.<\/li>/.test(html));
+	assert.ok(html.includes("<li><strong>Evidence</strong>: the feed confirms it.</li>"));
+
+	assert.ok(cssText.includes(".cite"));
+	assert.ok(html.includes('<span class="cite">[S3]</span>'));
+
+	assert.ok(cssText.includes("thead"));
+	assert.ok(html.includes("<thead>"));
+
+	const styledClasses = [
+		...new Set([...cssText.matchAll(/\.([a-z][a-z0-9-]+)/g)].map((m) => m[1])),
+	];
+	assert.ok(styledClasses.length >= 8, styledClasses.join(" "));
+	for (const cls of styledClasses) {
+		assert.ok(
+			new RegExp(`class="[^"]*\\b${cls}\\b`).test(html),
+			`css class .${cls} matches nothing in the rendered output`,
+		);
 	}
 });
 

@@ -1,15 +1,18 @@
 /*
-	Registry-dossier baseline for rendered research reports.
+	Registry-dossier stylesheet for rendered research reports.
 	Theme tokens live on html[data-theme="..."]; the template's pre-paint
 	script sets the attribute before first paint. Monospace is reserved for
-	genuine data tokens: code, citation keys, dates, paths.
+	genuine data tokens: code, citation keys, dates, paths. The accent color
+	belongs to the evidence apparatus alone — the bordered evidence groups,
+	the ledger rule under table headers, links, and focus; every other
+	surface stays ink on paper with hairline rules.
 */
 
 html[data-theme="light"] {
 	color-scheme: light;
 	--paper: #F5F7F3;
 	--ink: #1C2521;
-	--muted: #5A6862;
+	--muted: #52615B;
 	--rule: #D9DED5;
 	--accent: #16544D;
 	--accent-ink: #F5F7F3;
@@ -81,10 +84,16 @@ p {
 
 a {
 	color: var(--accent);
+	text-decoration-line: underline;
+	text-decoration-style: dotted;
+	text-decoration-color: color-mix(in srgb, var(--accent) 55%, var(--paper));
 	text-underline-offset: 0.2em;
 }
 
-a:hover {
+a:hover,
+a:focus-visible {
+	text-decoration-style: solid;
+	text-decoration-color: currentColor;
 	text-decoration-thickness: 2px;
 }
 
@@ -112,7 +121,7 @@ pre code {
 }
 
 .cite {
-	font-size: 0.82em;
+	font-size: 0.8em;
 	color: var(--muted);
 	white-space: nowrap;
 }
@@ -123,8 +132,9 @@ pre code {
 
 .report-title {
 	margin: 0 0 0.35em;
-	font-size: 1.9rem;
-	letter-spacing: -0.01em;
+	font-size: 2.05rem;
+	line-height: 1.18;
+	letter-spacing: -0.012em;
 }
 
 .meta {
@@ -207,6 +217,25 @@ hr {
 	text-decoration: underline;
 }
 
+/*
+	Evidence apparatus: a list whose bullets open with a bold run-in label
+	(Claim:, Evidence:, …) renders as one bordered group — accent edge, faint
+	accent field, no markers. The label itself is plain bold serif; no caps,
+	no numbering. Each item is kept whole when the page breaks.
+*/
+ul:has(> li > strong:first-child) {
+	margin: 1.7rem 0;
+	padding: 0.2rem 1.2rem 0.4rem 1.3rem;
+	background: var(--evidence-bg);
+	border-left: 3px solid var(--accent);
+	list-style: none;
+}
+
+ul:has(> li > strong:first-child) > li {
+	margin: 0.6em 0;
+	break-inside: avoid;
+}
+
 .table-wrap {
 	margin: 1.6rem 0;
 	overflow-x: auto;
@@ -236,7 +265,7 @@ td + td {
 }
 
 thead th {
-	border-bottom: 2px solid var(--rule);
+	border-bottom: 2px solid var(--accent);
 	font-weight: 700;
 }
 
@@ -261,6 +290,7 @@ thead th {
 
 .colophon code {
 	font-size: 0.9em;
+	overflow-wrap: anywhere;
 }
 
 .theme-toggle {
@@ -293,8 +323,9 @@ thead th {
 	left: 0.8rem;
 	z-index: 20;
 	padding: 0.4rem 0.8rem;
-	background: var(--paper);
-	border: 1px solid var(--accent);
+	background: var(--accent);
+	color: var(--accent-ink);
+	text-decoration: none;
 }
 
 :focus-visible {
@@ -344,6 +375,15 @@ thead th {
 		display: table-header-group;
 	}
 
+	table {
+		font-size: 9.5pt;
+	}
+
+	th,
+	td {
+		overflow-wrap: anywhere;
+	}
+
 	p,
 	li {
 		orphans: 3;
@@ -352,6 +392,7 @@ thead th {
 
 	a {
 		color: inherit;
+		text-decoration-color: inherit;
 	}
 
 	.table-wrap {
