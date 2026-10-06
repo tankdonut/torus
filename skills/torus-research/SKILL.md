@@ -49,6 +49,12 @@ Contested or load-bearing assertions get settled, not narrated:
 
 Write `REPORT.md` in the journal: executive summary, findings by theme (each with `[S<n>]` citations), contradictions and resolutions, gaps, and the wave trace. The final chat answer carries the answer itself — a few sentences, the numbers that matter, and the REPORT.md path.
 
+## Rendering
+
+After writing `REPORT.md`, render it: `node skills/torus-research/bin/render-report.mjs <journal-dir>` (a markdown file path also works; output defaults to `<stem>.html` next to the input). Mention the emitted HTML in the final chat answer alongside the REPORT.md path.
+
+The HTML is standalone — it opens offline, defaults to the reader's `prefers-color-scheme`, and carries a dark/light toggle. Print to PDF from the browser; light theme recommended.
+
 ## Rules
 
 - The user's steering mid-run reshapes every live wave immediately; record it in the journal.

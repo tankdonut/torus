@@ -19,7 +19,7 @@
 |------|---------|-------------|
 | `extensions/` | All source: one extension dir each plus shared modules | `extensions/registry.ts` |
 | `agents/` | Roster persona prompts (frontmatter: name/description/chain/mode) | `agents/leader.md` |
-| `skills/` | Packaged skills, one `SKILL.md` per dir | `skills/torus-plan/SKILL.md` |
+| `skills/` | Packaged skills: a `SKILL.md` per dir, may also ship assets (`assets/`, `bin/` — torus-research ships a report renderer) | `skills/torus-plan/SKILL.md` |
 | `tests/` | `node:test` suites (`.test.mjs`) + TS import hook | `tests/resolve-ts-hook.mjs` |
 | `runtime/bin/` | Launcher that spawns the pinned pi engine | `runtime/bin/torus.mjs` |
 | `scripts/` | Binary build + payload-bake scripts | `scripts/build-binary.sh` |
