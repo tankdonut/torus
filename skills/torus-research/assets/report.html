@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title><!--SLOT:TITLE--></title>
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#F5F7F3">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111714">
+<script>
+(() => {
+	"use strict";
+	const KEY = "torus-report-theme";
+	let saved = null;
+	try {
+		saved = localStorage.getItem(KEY);
+	} catch {
+		saved = null;
+	}
+	let theme = "light";
+	if (saved === "light" || saved === "dark") {
+		theme = saved;
+	} else if (window.matchMedia?.("(prefers-color-scheme: dark)")?.matches) {
+		theme = "dark";
+	}
+	document.documentElement.setAttribute("data-theme", theme);
+})();
+</script>
+<!--SLOT:PREPAINT-->
+<!--SLOT:CSS-->
+</head>
+<body>
+<a class="skip-link" href="#report-content">Skip to content</a>
+<button class="theme-toggle" type="button" id="theme-toggle" aria-pressed="false" aria-label="Switch to dark theme">Theme</button>
+<header class="masthead">
+<!--SLOT:MASTHEAD-->
+<p class="date"><!--SLOT:DATE--></p>
+</header>
+<!--SLOT:TOC-->
+<main id="report-content">
+<!--SLOT:CONTENT-->
+</main>
+<footer class="colophon">
+<!--SLOT:FOOTER-->
+</footer>
+<script>
+(() => {
+	"use strict";
+	const KEY = "torus-report-theme";
+	const root = document.documentElement;
+	const button = document.getElementById("theme-toggle");
+	if (!button) {
+		return;
+	}
+	const sync = () => {
+		const dark = root.getAttribute("data-theme") === "dark";
+		button.setAttribute("aria-pressed", String(dark));
+		button.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+	};
+	button.addEventListener("click", () => {
+		const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+		root.setAttribute("data-theme", next);
+		try {
+			localStorage.setItem(KEY, next);
+		} catch {
+			/* storage unavailable — the theme still applies for this view */
+		}
+		sync();
+	});
+	sync();
+})();
+</script>
+</body>
+</html>
