@@ -61,9 +61,9 @@ export function reduceEngineEvent(record: Record<string, unknown>, tally: Engine
 		const b = block as Record<string, unknown>;
 		if (b["type"] === "text" && typeof b["text"] === "string") {
 			tally.text = b["text"];
-			tally.turns += 1;
 		}
 	}
+	tally.turns += 1;
 	const usage = message["usage"];
 	if (typeof usage === "object" && usage !== null) {
 		const u = usage as Record<string, unknown>;

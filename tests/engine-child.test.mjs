@@ -51,6 +51,45 @@ test("reduceEngineEvent tallies text blocks, turns, and cumulative usage", () =>
 	assert.equal(tally.tokensOut, 26);
 });
 
+test("reduceEngineEvent counts tool-only assistant turns and their usage", () => {
+	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "tool_call", id: "t1", name: "bash", arguments: {} }],
+				usage: { input: 100, output: 5 },
+			},
+		},
+		tally,
+	);
+	assert.equal(tally.turns, 1, "a turn without text blocks still counts");
+	assert.equal(tally.tokensIn, 100, "usage from tool-only turns is tallied");
+	assert.equal(tally.tokensOut, 5);
+	assert.equal(tally.text, "", "no text captured from a tool-only turn");
+});
+
+test("reduceEngineEvent counts one turn per assistant message, not per text block", () => {
+	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "text", text: "part one" },
+					{ type: "text", text: "part two" },
+				],
+				usage: { input: 1, output: 2 },
+			},
+		},
+		tally,
+	);
+	assert.equal(tally.turns, 1, "one assistant message = one turn");
+	assert.equal(tally.text, "part two", "last text block still wins");
+});
+
 test("reduceEngineEvent ignores non-assistant and non-message_end events", () => {
 	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
 	reduceEngineEvent({ type: "session", id: "abc" }, tally);
