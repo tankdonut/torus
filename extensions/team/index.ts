@@ -26,13 +26,16 @@ import {
 } from "../registry.js";
 import { AGENTS, type DelegationOutcome, runDelegation } from "../roster/index.js";
 import {
+	blockedTasks,
 	deliverMail,
+	dependencyCycle,
 	listTeamIds,
 	type MemberHandle,
 	markTeamStatus,
 	readTasksFile,
 	readTeamSpec,
 	spawnMember,
+	type Task,
 	tasksFile,
 	teamDir,
 	updateTasksFile,
@@ -956,19 +959,27 @@ const teamStatusTool = defineTool({
 		// Durability surfacing: a task left in_progress under a member that has
 		// since stopped can never be finished by itself — name it so the lead can
 		// reassign or close it. Read-only: no task is mutated here.
+		const tasks = readTasksFile(record.id).tasks;
 		const orphans: string[] = [];
-		for (const task of readTasksFile(record.id).tasks) {
+		for (const task of tasks) {
 			if (task.status !== "in_progress" || task.assignee === null) continue;
 			if (!record.members.some((m) => m.name === task.assignee && m.status === "stopped")) continue;
 			orphans.push(
 				`orphaned: ${task.id} (${task.subject}) was in-progress under @${task.assignee} (stopped) — reassign or complete via team_task_update`,
 			);
 		}
+		const blockedLines: string[] = [];
+		const blockers = blockedTasks(tasks);
+		for (const task of tasks) {
+			const deps = blockers.get(task.id);
+			if (deps)
+				blockedLines.push(`blocked: ${task.id} (${task.subject}) waiting on ${deps.join(",")}`);
+		}
 		return {
 			content: [
 				{
 					type: "text",
-					text: `team ${record.name} [${record.status}] — ${record.objective}\n${reports.concat(orphans).join("\n")}`,
+					text: `team ${record.name} [${record.status}] — ${record.objective}\n${reports.concat(orphans, blockedLines).join("\n")}`,
 				},
 			],
 			details: { teamId: record.id },
@@ -1012,23 +1023,53 @@ const teamTaskCreateTool = defineTool({
 		team: Type.String(),
 		subject: Type.String(),
 		assignee: Type.Optional(Type.String({ description: "Member name (default: unassigned)" })),
+		dependsOn: Type.Optional(
+			Type.Array(Type.String(), {
+				description: "Task ids that must complete before this task can be claimed",
+			}),
+		),
 	}),
 	async execute(_toolCallId, params) {
 		const record = getTeam(params.team);
 		if (!record || !AGENT_NAME_RE.test(params.team))
 			return { content: [{ type: "text", text: "No such team." }], details: {}, isError: true };
 		let created = "";
+		let refusal: string | null = null;
 		updateTasksFile(record.id, (file) => {
-			const task = {
-				id: `t${file.nextId}`,
+			// Validation lives inside the mutator so it sees the freshest file
+			// under the lock; a refusal returns the file untouched, which keeps
+			// the mutator idempotent across CAS retries.
+			const deps = [...new Set(params.dependsOn ?? [])];
+			const id = `t${file.nextId}`;
+			if (deps.includes(id)) {
+				refusal = `task ${id} cannot depend on itself`;
+				return file;
+			}
+			const known = new Set(file.tasks.map((t) => t.id));
+			const unknown = deps.filter((dep) => !known.has(dep));
+			if (unknown.length > 0) {
+				refusal = `unknown task id(s) in dependsOn: ${unknown.join(",")} — known: ${[...known].join(",") || "(none)"}`;
+				return file;
+			}
+			const task: Task = {
+				id,
 				subject: params.subject,
 				assignee: params.assignee ?? null,
 				status: "pending",
 				updatedAt: new Date().toISOString(),
 			};
+			if (deps.length > 0) task.dependsOn = deps;
+			const cycle = dependencyCycle([...file.tasks, task]);
+			if (cycle) {
+				refusal = `dependency cycle: ${cycle.join(" -> ")} — no task in that chain could ever complete`;
+				return file;
+			}
+			refusal = null;
 			created = `task ${task.id} created${task.assignee ? ` for ${task.assignee}` : ""}`;
 			return { tasks: [...file.tasks, task], nextId: file.nextId + 1 };
 		});
+		if (refusal !== null)
+			return { content: [{ type: "text", text: refusal }], details: {}, isError: true };
 		return { content: [{ type: "text", text: created }], details: {} };
 	},
 });
@@ -1043,13 +1084,15 @@ const teamTaskListTool = defineTool({
 		if (!record || !AGENT_NAME_RE.test(params.team))
 			return { content: [{ type: "text", text: "No such team." }], details: {}, isError: true };
 		const tasks = readTasksFile(record.id).tasks;
+		const blockers = blockedTasks(tasks);
 		const text =
 			tasks.length === 0
 				? "(no tasks)"
 				: tasks
-						.map(
-							(t) => `- ${t.id} [${t.status}] ${t.assignee ? `@${t.assignee} ` : ""}${t.subject}`,
-						)
+						.map((t) => {
+							const deps = blockers.get(t.id);
+							return `- ${t.id} [${t.status}]${deps ? ` [blocked by ${deps.join(",")}]` : ""} ${t.assignee ? `@${t.assignee} ` : ""}${t.subject}`;
+						})
 						.join("\n");
 		return { content: [{ type: "text", text }], details: {} };
 	},
@@ -1078,9 +1121,18 @@ const teamTaskUpdateTool = defineTool({
 		if (!record || !AGENT_NAME_RE.test(params.team))
 			return { content: [{ type: "text", text: "No such team." }], details: {}, isError: true };
 		let outcome = `no task ${params.task}`;
+		let refusal: string | null = null;
 		updateTasksFile(record.id, (file) => {
 			const task = file.tasks.find((t) => t.id === params.task);
 			if (!task) return;
+			if (params.status === "in_progress") {
+				const deps = blockedTasks(file.tasks).get(task.id);
+				if (deps) {
+					refusal = `task ${task.id} is blocked by ${deps.join(",")} — complete ${deps.length === 1 ? "it" : "them"} first`;
+					return;
+				}
+			}
+			refusal = null;
 			if (params.status === "deleted") {
 				outcome = `task ${params.task} deleted`;
 				return { tasks: file.tasks.filter((t) => t.id !== params.task), nextId: file.nextId };
@@ -1090,6 +1142,8 @@ const teamTaskUpdateTool = defineTool({
 			task.updatedAt = new Date().toISOString();
 			outcome = `task ${params.task} -> ${task.status}`;
 		});
+		if (refusal !== null)
+			return { content: [{ type: "text", text: refusal }], details: {}, isError: true };
 		return { content: [{ type: "text", text: outcome }], details: {} };
 	},
 });

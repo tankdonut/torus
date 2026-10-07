@@ -110,14 +110,18 @@ export function tasksFile(teamId: string): string {
 	return path.join(teamDir(teamId), "tasks.json");
 }
 
+export interface Task {
+	id: string;
+	subject: string;
+	assignee: string | null;
+	status: string;
+	updatedAt: string;
+	/** Task ids that must complete before this task can be claimed (in_progress). */
+	dependsOn?: string[];
+}
+
 interface TasksFile {
-	tasks: Array<{
-		id: string;
-		subject: string;
-		assignee: string | null;
-		status: string;
-		updatedAt: string;
-	}>;
+	tasks: Task[];
 	nextId: number;
 }
 
@@ -135,7 +139,12 @@ function maxTaskId(tasks: TasksFile["tasks"]): number {
 
 export function readTasksFile(teamId: string): TasksFile {
 	const parsed = readJson<Partial<TasksFile>>(tasksFile(teamId), {});
-	const tasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+	// A member hand-editing tasks.json can leave dependsOn as anything — only
+	// an array is a dependency list; anything else reads as "no dependencies".
+	const tasks = (Array.isArray(parsed.tasks) ? parsed.tasks : []).map((task) => ({
+		...task,
+		dependsOn: Array.isArray(task.dependsOn) ? task.dependsOn : undefined,
+	}));
 	return {
 		tasks,
 		nextId: typeof parsed.nextId === "number" ? parsed.nextId : 1 + maxTaskId(tasks),
@@ -144,6 +153,62 @@ export function readTasksFile(teamId: string): TasksFile {
 
 export function writeTasksFile(teamId: string, file: TasksFile): void {
 	writeJson(tasksFile(teamId), { tasks: file.tasks, nextId: file.nextId });
+}
+
+/**
+ * Derive which tasks are blocked by unmet dependencies. A task is blocked
+ * when its dependsOn names at least one OTHER task that exists on the list
+ * and is not completed; the map carries the blocking ids per blocked task.
+ * Unknown dependency ids never block: they cannot complete, but a raw member
+ * edit can leave one behind (a typo must not become a permanent lock) —
+ * unknown ids are surfaced by create-time validation instead. A
+ * self-reference is likewise not blocking (create rejects it). Pure: no I/O.
+ */
+export function blockedTasks(tasks: Task[]): Map<string, string[]> {
+	const byId = new Map(tasks.map((task) => [task.id, task]));
+	const blocked = new Map<string, string[]>();
+	for (const task of tasks) {
+		if (!task.dependsOn || task.dependsOn.length === 0) continue;
+		const blockers = task.dependsOn.filter(
+			(dep) => dep !== task.id && byId.has(dep) && byId.get(dep)?.status !== "completed",
+		);
+		if (blockers.length > 0) blocked.set(task.id, blockers);
+	}
+	return blocked;
+}
+
+/**
+ * Find a dependency cycle: walk dependsOn edges depth-first from every
+ * task; the first revisit of a node on the current walk yields the chain
+ * (e.g. ["t2", "t4", "t2"]). Unknown ids are leaves — they cannot form a
+ * cycle. Pure: no I/O.
+ */
+export function dependencyCycle(tasks: Task[]): string[] | null {
+	const byId = new Map(tasks.map((task) => [task.id, task]));
+	const settled = new Set<string>();
+	for (const start of tasks) {
+		if (settled.has(start.id)) continue;
+		const path: string[] = [];
+		const onPath = new Set<string>();
+		const visit = (id: string): string[] | null => {
+			if (onPath.has(id)) return [...path.slice(path.indexOf(id)), id];
+			const task = byId.get(id);
+			if (!task || settled.has(id)) return null;
+			onPath.add(id);
+			path.push(id);
+			for (const dep of task.dependsOn ?? []) {
+				const cycle = visit(dep);
+				if (cycle) return cycle;
+			}
+			path.pop();
+			onPath.delete(id);
+			settled.add(id);
+			return null;
+		};
+		const cycle = visit(start.id);
+		if (cycle) return cycle;
+	}
+	return null;
 }
 
 /**
