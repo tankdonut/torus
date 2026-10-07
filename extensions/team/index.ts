@@ -24,7 +24,12 @@ import {
 	updateDelegation,
 	updateExternalRun,
 } from "../registry.js";
-import { AGENTS, type DelegationOutcome, runDelegation } from "../roster/index.js";
+import {
+	AGENTS,
+	type DelegationOutcome,
+	resolveRequestedModel,
+	runDelegation,
+} from "../roster/index.js";
 import {
 	blockedTasks,
 	deliverMail,
@@ -648,6 +653,17 @@ function finishMemberDelegation(
 }
 
 /**
+ * Resolve a member's model override the way delegations do: "primary"/"fast"
+ * shorthands become their chain heads so fleet rows, run records, and beacons
+ * carry a real id instead of the shorthand the engine resolves on its own.
+ * Exact ids pass through; unset falls back to the member default.
+ */
+function normalizeMemberModel(model: string | undefined): string {
+	if (!model) return DEFAULT_MEMBER_MODEL;
+	return resolveRequestedModel(model) ?? model;
+}
+
+/**
  * Spawn a member with the full create-tool callback semantics: state changes
  * update the team record and publish the session id, reports land in team.log,
  * and stats flow to the fleet run entry. The member is also onboarded into the
@@ -668,13 +684,8 @@ function attachMember(
 	const isCurrentGeneration = () => memberGenerations.get(memberId) === generation;
 	deliberateStops.delete(memberId);
 	memberHasNews.delete(memberId);
-	startDelegation(
-		memberId,
-		spec.agent,
-		spec.model ?? DEFAULT_MEMBER_MODEL,
-		parentSession,
-		spec.name,
-	);
+	const model = normalizeMemberModel(spec.model);
+	startDelegation(memberId, spec.agent, model, parentSession, spec.name);
 	// Publish only after the registry record exists: a startDelegation throw
 	// must not strand a phantom running external run in the fleet.
 	publishExternalRun({
@@ -682,7 +693,7 @@ function attachMember(
 		source: `torus-team:${teamId}`,
 		label: spec.name,
 		handle: spec.name,
-		model: spec.model ?? DEFAULT_MEMBER_MODEL,
+		model,
 		logFile: path.join(teamDir(teamId), `${spec.name}.log`),
 		state: "running",
 	});
@@ -694,7 +705,7 @@ function attachMember(
 	try {
 		handle = spawnerState.spawn(
 			teamId,
-			spec,
+			{ ...spec, model },
 			objective,
 			(state) => {
 				const entry = getTeam(teamId)?.members.find((m) => m.id === memberId);
@@ -916,7 +927,7 @@ const teamCreateTool = defineTool({
 				id: memberId,
 				name: spec.name,
 				agent: spec.agent,
-				model: spec.model ?? DEFAULT_MEMBER_MODEL,
+				model: normalizeMemberModel(spec.model),
 				status: "starting" as const,
 				sessionId: null as string | null,
 				startedAt: Date.now(),
@@ -1499,7 +1510,7 @@ const teamRespawnTool = defineTool({
 					id: memberId,
 					name: member.name,
 					agent: member.agent,
-					model: member.model ?? DEFAULT_MEMBER_MODEL,
+					model: normalizeMemberModel(member.model),
 					status: "starting",
 					sessionId: null,
 					startedAt: Date.now(),
@@ -1559,7 +1570,7 @@ function rehydrateTeam(teamId: string): TeamRecord | null {
 			id: `${teamId}/${member.name}`,
 			name: member.name,
 			agent: member.agent,
-			model: member.model ?? DEFAULT_MEMBER_MODEL,
+			model: normalizeMemberModel(member.model),
 			status: "stopped",
 			sessionId: null,
 			startedAt: 0,
