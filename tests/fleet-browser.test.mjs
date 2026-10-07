@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -10,11 +10,19 @@ import { after, test } from "node:test";
 // import — it derives the logs dir at module load.
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-fleet-browser-test-"));
 process.env.TORUS_HOME = HOME;
+// Hermetic sessions root for detail-transcript rendering; transcript.ts reads it at import.
+const SESSIONS = mkdtempSync(path.join(tmpdir(), "torus-fleet-sessions-test-"));
+process.env.PI_CODING_AGENT_SESSION_DIR = SESSIONS;
 
 const registry = await import("../extensions/registry.ts");
 const browser = await import("../extensions/browser/index.ts");
 const team = await import("../extensions/team/index.ts");
 const fleet = await import("../extensions/fleet/index.ts");
+
+// Detail-transcript rendering drives engine ToolExecutionComponents, which
+// need the shared theme initialized before their first render.
+const { initTheme } = await import("@earendil-works/pi-coding-agent");
+initTheme();
 
 const ENGINE_DIR = mkdtempSync(path.join(tmpdir(), "torus-fleet-fake-engines-"));
 const EVENT_ENGINE = path.join(ENGINE_DIR, "event-engine.sh");
@@ -44,6 +52,7 @@ after(() => {
 	registry.resetRegistryForTesting();
 	rmSync(HOME, { recursive: true, force: true });
 	rmSync(ENGINE_DIR, { recursive: true, force: true });
+	rmSync(SESSIONS, { recursive: true, force: true });
 });
 
 function registerExtension() {
@@ -441,6 +450,77 @@ test("detail footer: [steer]/[stop] ride the status line, stop needs y/n, hover 
 		assert.ok(
 			component.render(120).some((l) => l.startsWith("*")),
 			"hovered list row renders bold",
+		);
+	} finally {
+		component.dispose();
+	}
+});
+
+test("detail transcript: edit success renders its diff from persisted result details", () => {
+	registry.resetRegistryForTesting();
+	const sid = "0f0e0d0c-aaaa-4bbb-8ccc-444455559999";
+	mkdirSync(path.join(SESSIONS, "proj"), { recursive: true });
+	const lines = [
+		JSON.stringify({ type: "session", id: sid, timestamp: Date.now(), cwd: "/tmp" }),
+		JSON.stringify({
+			type: "message",
+			id: "m1",
+			message: { role: "user", content: [{ type: "text", text: "fix the flag" }] },
+		}),
+		JSON.stringify({
+			type: "message",
+			id: "m2",
+			message: {
+				role: "assistant",
+				content: [
+					{
+						type: "toolCall",
+						id: "tc9",
+						name: "edit",
+						arguments: {
+							path: "src/a.ts",
+							edits: [{ oldText: "const FLAG = 1;", newText: "const FLAG = 2;" }],
+						},
+					},
+				],
+			},
+		}),
+		JSON.stringify({
+			type: "message",
+			id: "m3",
+			message: {
+				role: "toolResult",
+				toolCallId: "tc9",
+				content: [{ type: "text", text: "Successfully replaced 1 block(s) in src/a.ts." }],
+				details: {
+					diff: "   1 function f() {\n-  2 \tconst FLAG = 1;\n+  2 \tconst FLAG = 2;\n   3 }",
+					firstChangedLine: 2,
+					patch: "@@ -1,3 +1,3 @@",
+				},
+			},
+		}),
+	];
+	writeFileSync(
+		path.join(SESSIONS, "proj", `2026-09-30T00-00-00-000Z_${sid}.jsonl`),
+		`${lines.join("\n")}\n`,
+		"utf8",
+	);
+	registry.startDelegation("fb-edit-1", "builder", "zai/glm-5.3", null, "edity");
+	registry.finishDelegation("fb-edit-1", true, "done", sid, { toast: false });
+	const { hooks } = registerExtension();
+	const driver = makeCtx("fullscreen", { fg: (_color, text) => text, bold: (text) => text });
+	hooks.get("session_start")(undefined, driver.ctx);
+	globalThis[registry.FLEET_OPENER]("fb-edit-1");
+	const component = driver.component();
+	try {
+		const rendered = component
+			.render(100)
+			.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""))
+			.join("\n");
+		assert.ok(rendered.includes("edit src/a.ts"), "edit call header renders");
+		assert.ok(
+			rendered.includes("const FLAG = 2;"),
+			"edit success diff must render from persisted details, not sit on a pending header",
 		);
 	} finally {
 		component.dispose();

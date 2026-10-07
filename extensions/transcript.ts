@@ -16,6 +16,8 @@ export type TranscriptItem =
 			args: unknown;
 			output?: string;
 			isError?: boolean;
+			/** Structured result payload (e.g. an edit's diff) — tool renderers key on it. */
+			details?: unknown;
 	  };
 
 interface TranscriptCache {
@@ -190,6 +192,7 @@ export function transcriptItems(sessionId: string, maxItems: number): Transcript
 		} else if (role === "toolResult") {
 			const output = textBlocks(content).join("\n");
 			const isError = message["isError"] === true;
+			const details = message["details"];
 			const toolCallId =
 				typeof message["toolCallId"] === "string" ? message["toolCallId"] : undefined;
 			const target = toolCallId
@@ -200,6 +203,7 @@ export function transcriptItems(sessionId: string, maxItems: number): Transcript
 			if (target && target.kind === "tool") {
 				target.output = output;
 				target.isError = isError;
+				if (details !== undefined) target.details = details;
 			}
 		}
 	}

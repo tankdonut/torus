@@ -142,6 +142,42 @@ test("error tool results flag isError", () => {
 	assert.ok(tool && tool.kind === "tool" && tool.isError === true);
 });
 
+test("toolResult details surface on the paired tool item", () => {
+	const id = `${UUID}-e`;
+	plantSession(id, [
+		JSON.stringify({
+			type: "message",
+			id: "d1",
+			message: {
+				role: "assistant",
+				content: [
+					{
+						type: "toolCall",
+						id: "tcD",
+						name: "edit",
+						arguments: { path: "a.ts", edits: [{ oldText: "x", newText: "y" }] },
+					},
+				],
+			},
+		}),
+		JSON.stringify({
+			type: "message",
+			id: "d2",
+			message: {
+				role: "toolResult",
+				toolCallId: "tcD",
+				content: [{ type: "text", text: "Successfully replaced 1 block(s) in a.ts." }],
+				details: { diff: "- x\n+ y", firstChangedLine: 1, patch: "@@ -1 +1 @@" },
+			},
+		}),
+	]);
+	const tool = transcriptItems(id, 40).find((i) => i.kind === "tool" && i.toolCallId === "tcD");
+	assert.ok(tool && tool.kind === "tool", "edit toolCall item missing");
+	if (tool && tool.kind === "tool") {
+		assert.deepEqual(tool.details, { diff: "- x\n+ y", firstChangedLine: 1, patch: "@@ -1 +1 @@" });
+	}
+});
+
 test("liveTail returns non-empty tail lines from a real log", () => {
 	const log = path.join(tmpdir(), `torus-test-livetail-${Date.now()}.log`);
 	writeFileSync(

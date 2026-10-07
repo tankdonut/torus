@@ -606,6 +606,7 @@ class FleetBrowser implements Component {
 		if (item.output !== undefined && !cached.resultApplied) {
 			component.updateResult({
 				content: [{ type: "text", text: item.output }],
+				details: item.details,
 				isError: item.isError === true,
 			});
 			cached.resultApplied = true;
