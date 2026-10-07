@@ -27,6 +27,7 @@ import {
 import {
 	entityColor,
 	flattenPreview,
+	formatDuration,
 	formatTokens,
 	rule,
 	SPINNER,
@@ -181,10 +182,14 @@ function headerLine(record: DelegationRecord, theme: Theme, tick: number, width:
 	const name = theme.fg(color, theme.bold(who));
 	const model = theme.fg("dim", sanitizeRender(shortModel(record.model)));
 	const age = Math.round((Date.now() - record.startedAt) / 1000);
+	const ran =
+		record.status !== "running" && record.finishedAt !== undefined
+			? ` · ${formatDuration(record.finishedAt - record.startedAt)}`
+			: "";
 	const stats =
 		record.status === "running"
 			? `turn ${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} tok · ${age}s`
-			: `${record.turns} turns · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} tok`;
+			: `${record.turns} turns · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} tok${ran}`;
 	return truncateToWidth(`${icon} ${name} ${model} — ${stats}`, width);
 }
 
@@ -198,10 +203,11 @@ export function splitMouseBuffer(
 		else if (code === WHEEL_DOWN) wheel(1);
 		return "";
 	});
-	// A mouse-shaped prefix followed by more content is a dead fragment (a
-	// complete sequence would have consumed it) — dropping it keeps a split
-	// read from swallowing the next key, e.g. ESC after a split wheel event.
-	rest = rest.replace(/\x1b\[(?:<)?\d*(?:;\d*){0,2}(?=[^\d;Mm<])/g, "");
+	// A mouse-shaped prefix followed by content that can neither finish a CSI
+	// sequence (final byte 0x40–0x7e, e.g. the A/B of arrow keys) nor continue
+	// its parameter run (0x30–0x3f) is a dead fragment — dropping it keeps a
+	// split read from swallowing the next key, e.g. ESC after a split wheel event.
+	rest = rest.replace(/\x1b\[(?:<)?[\d;]*(?=[^\x30-\x7e])/g, "");
 	if (PARTIAL_SGR_MOUSE.test(rest)) return { keys: "", held: rest };
 	return { keys: rest, held: "" };
 }
@@ -227,6 +233,8 @@ class FleetBrowser implements Component {
 	private cursor = 0;
 	private mode: "list" | "detail" = "list";
 	private scroll = 0;
+	/** Top row of the list window; follows the cursor so every item stays reachable. */
+	private listScroll = 0;
 	private follow = true;
 	private detailMaxScroll = 0;
 	private pendingMouse = "";
@@ -545,28 +553,26 @@ class FleetBrowser implements Component {
 		this.listRows.clear();
 		const mouse = this.tui.mode === "fullscreen";
 		const bar = theme.fg("dim", "─".repeat(Math.max(0, Math.min(width - 2, 72))));
-		const lines = [
+		const lines: string[] = [
 			`${theme.bold("torus fleet")} ${theme.fg("dim", `· ↑↓ move · enter${mouse ? "/click" : ""} open · x stop (y/n) · esc close`)}`,
 			bar,
 		];
+		/** items index → row in `lines`, for click routing and cursor windowing. */
+		const itemRow = new Map<number, number>();
 
 		if (records.length === 0) {
 			lines.push(theme.fg("dim", "no delegations yet · try /explorer <task>"));
 		}
-		const maxRows = 10;
-		records.slice(0, maxRows).forEach((record, index) => {
+		for (const [index, record] of records.entries()) {
 			const pointer = index === this.cursor ? theme.fg("accent", "❯ ") : "  ";
-			this.listRows.set(lines.length + 1, index);
+			itemRow.set(index, lines.length);
 			const row = `${pointer}${headerLine(record, theme, this.tick, width)}`;
 			lines.push(index === this.hoverRow ? theme.bold(row) : row);
-		});
-		if (records.length > maxRows) {
-			lines.push(theme.fg("dim", `+${records.length - maxRows} more`));
 		}
 
 		if (externals.length > 0) {
 			lines.push(bar, theme.fg("dim", `team members / external runs (${externals.length}):`));
-			externals.slice(0, 8).forEach((run, index) => {
+			for (const [index, run] of externals.entries()) {
 				const pointer = this.cursor === records.length + index ? theme.fg("accent", "❯ ") : "  ";
 				const age = Math.round((Date.now() - run.startedAt) / 1000);
 				const icon = theme.fg("warning", SPINNER[this.tick % SPINNER.length] ?? "•");
@@ -577,10 +583,34 @@ class FleetBrowser implements Component {
 				const model = theme.fg("dim", run.model ? sanitizeRender(shortModel(run.model)) : "");
 				const body = `${icon} ${who} ${model} — turn ${run.turns ?? 0} · ${formatTokens(run.tokensIn ?? 0)}→${formatTokens(run.tokensOut ?? 0)} tok`;
 				const tail = theme.fg("dim", ` · [${run.source}] ${age}s`);
-				this.listRows.set(lines.length + 1, records.length + index);
+				itemRow.set(records.length + index, lines.length);
 				const row = `  ${pointer}${truncateToWidth(body + tail, width - 4)}`;
 				lines.push(this.hoverRow === records.length + index ? theme.bold(row) : row);
-			});
+			}
+		}
+
+		// The list shows the whole fleet: window the rows around the cursor so
+		// every item stays reachable by key, wheel, and click no matter how many
+		// runs exist. Frame rules, the scroll hint, the stop prompt, and the
+		// trailing blank live outside the window.
+		const available = Math.max(3, (process.stdout.rows ?? 40) - 5 - (this.stopConfirm ? 1 : 0));
+		this.listScroll = Math.max(0, Math.min(this.listScroll, lines.length - available));
+		const cursorRow = itemRow.get(this.cursor) ?? 0;
+		if (cursorRow < this.listScroll) this.listScroll = cursorRow;
+		else if (cursorRow >= this.listScroll + available) this.listScroll = cursorRow - available + 1;
+		const above = this.listScroll;
+		const below = lines.length - Math.min(lines.length, this.listScroll + available);
+		for (const [item, row] of itemRow) {
+			if (row >= this.listScroll && row < this.listScroll + available) {
+				this.listRows.set(row - this.listScroll + 1, item); // +1: top frame rule
+			}
+		}
+		const out = lines.slice(this.listScroll, this.listScroll + available);
+		if (above > 0 || below > 0) {
+			const parts = [`↑↓/j/k ${this.cursor + 1}/${this.items.length}`];
+			if (above > 0) parts.push(`↑${above} above`);
+			if (below > 0) parts.push(`+${below} more`);
+			out.push(theme.fg("dim", parts.join(" · ")));
 		}
 		if (this.stopConfirm) {
 			const selected = this.items[this.cursor];
@@ -590,10 +620,10 @@ class FleetBrowser implements Component {
 						? `@${selected.record.handle}`
 						: selected.record.agent
 					: "?";
-			lines.push(` ${theme.fg("error", theme.bold(`stop ${who}? y/n`))}`);
+			out.push(` ${theme.fg("error", theme.bold(`stop ${who}? y/n`))}`);
 		}
-		lines.push("");
-		return lines;
+		out.push("");
+		return out;
 	}
 
 	private componentForItem(sessionId: string, item: TranscriptItem): Component | null {
@@ -719,7 +749,11 @@ class FleetBrowser implements Component {
 				: record.status === "done"
 					? theme.fg("success", "✓ done")
 					: theme.fg("error", "✗ failed");
-		const stats = `turn ${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} tok`;
+		const stats = `turn ${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} tok${
+			record.status !== "running" && record.finishedAt !== undefined
+				? ` · ${formatDuration(record.finishedAt - record.startedAt)}`
+				: ""
+		}`;
 		const who = record.handle ? `@${record.handle} (${record.agent})` : record.agent;
 		const head = `${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(record.handle ?? record.agent), who)} ${theme.fg("dim", record.model)} ${statusIcon} ${stats}${theme.fg("dim", " · j/k scroll · g/G ends")}`;
 		const back = this.hoverButton === "back" ? theme.bold(BACK_LABEL) : BACK_LABEL;

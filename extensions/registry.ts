@@ -26,6 +26,8 @@ export interface DelegationRecord {
 	handle: string | null;
 	status: "running" | "done" | "failed";
 	startedAt: number;
+	/** Wall-clock completion time, set once the run leaves "running". */
+	finishedAt?: number;
 	turns: number;
 	tokensIn: number;
 	tokensOut: number;
@@ -589,6 +591,7 @@ export function listDelegations(): DelegationRecord[] {
 export function resetRegistryForTesting(): void {
 	registry.clear();
 	controls.clear();
+	externalRuns().length = 0;
 }
 
 function tmuxPaneFor(logFile: string, agent: string, handle: string | null): string | null {
@@ -790,6 +793,7 @@ export function finishDelegation(
 	const record = registry.get(id);
 	if (!record) return undefined;
 	record.status = ok ? "done" : "failed";
+	record.finishedAt = Date.now();
 	record.text = finalText;
 	record.sessionId = sessionId;
 	controls.delete(id);

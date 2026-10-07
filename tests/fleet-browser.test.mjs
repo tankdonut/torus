@@ -544,6 +544,132 @@ test("detail footer: back label is colored, hoverable, and click-routed", () => 
 	}
 });
 
+test("splitMouseBuffer: arrow keys pass through; dead mouse fragments still stripped", () => {
+	const wheels = [];
+	assert.deepEqual(
+		browser.splitMouseBuffer("\x1b[A", (d) => wheels.push(d)),
+		{
+			keys: "\x1b[A",
+			held: "",
+		},
+	);
+	assert.deepEqual(
+		browser.splitMouseBuffer("\x1b[B", (d) => wheels.push(d)),
+		{
+			keys: "\x1b[B",
+			held: "",
+		},
+	);
+	assert.deepEqual(
+		browser.splitMouseBuffer("\x1b[1;5A", (d) => wheels.push(d)),
+		{
+			keys: "\x1b[1;5A",
+			held: "",
+		},
+	);
+	assert.deepEqual(
+		browser.splitMouseBuffer("\x1b[<64\x1b", (d) => wheels.push(d)),
+		{ keys: "\x1b", held: "" },
+		"dead mouse fragment before esc is stripped",
+	);
+	assert.deepEqual(
+		browser.splitMouseBuffer("\x1b[<64;2;3", (d) => wheels.push(d)),
+		{
+			keys: "",
+			held: "\x1b[<64;2;3",
+		},
+	);
+	assert.deepEqual(
+		browser.splitMouseBuffer("\x1b[<64;2;3M", (d) => wheels.push(d)),
+		{
+			keys: "",
+			held: "",
+		},
+	);
+	assert.deepEqual(wheels, [-1], "complete wheel sequence still routes to the wheel handler");
+});
+
+test("list: windows past ten rows, arrow keys drive the cursor, clicks track the window", () => {
+	registry.resetRegistryForTesting();
+	for (let i = 0; i < 37; i += 1) {
+		registry.startDelegation(`w-${i}`, "builder", "zai/glm-5.3", null, `w${i}`);
+	}
+	const { shortcuts } = registerExtension();
+	const driver = makeCtx("regular", { fg: (_c, t) => t, bold: (t) => t });
+	shortcuts.get("alt+t").handler(driver.ctx);
+	const component = driver.component();
+	try {
+		let lines = component.render(200);
+		const available = Math.max(3, (process.stdout.rows ?? 40) - 5);
+		const rowRe = /@w\d+ \(/;
+		assert.equal(
+			lines.filter((l) => rowRe.test(l)).length,
+			available - 2,
+			"window fills with item rows (header and bar ride the window)",
+		);
+		assert.ok(
+			lines.some((l) => l.includes("+4 more")),
+			"overflow beyond the window is counted",
+		);
+
+		// Arrow keys (the raw CSI sequences the splitter used to eat) reach the
+		// list and move the cursor to the very last item.
+		for (let i = 0; i < 36; i += 1) component.handleInput("\x1b[B");
+		lines = component.render(200);
+		const lastHandle = component.items[36]?.record?.handle;
+		assert.ok(lastHandle, "cursor landed on a real item");
+		assert.ok(
+			lines.some((l) => l.includes("❯") && l.includes(`@${lastHandle} (`)),
+			"window follows the cursor to the last item",
+		);
+		assert.ok(
+			lines.some((l) => l.includes("37/37") && l.includes(`↑${2 + 37 - available} above`)),
+			"scroll hint reports position and rows above",
+		);
+
+		// Clicking a row that only exists thanks to windowing opens its detail.
+		const y = lines.findIndex((l) => l.includes(`@${lastHandle} (`));
+		assert.ok(y >= 1, "last row rendered inside the overlay");
+		assert.ok(component.listRows.get(y) === 36, "click hit-box tracks the scrolled window");
+		assert.deepEqual(component.handleMouse({ type: "click", button: "left", x: 3, y }), {
+			handled: true,
+		});
+		assert.ok(
+			component.render(200).some((l) => l.includes("[esc] back")),
+			"click on the scrolled row opened its detail",
+		);
+	} finally {
+		component.dispose();
+	}
+});
+
+test("list and detail show the run duration once complete", () => {
+	registry.resetRegistryForTesting();
+	registry.startDelegation("dur-1", "builder", "zai/glm-5.3", null, "timing");
+	registry.updateDelegation("dur-1", {
+		text: "working",
+		turns: 2,
+		usage: { input: 100, output: 200 },
+	});
+	registry.finishDelegation("dur-1", true, "done", null, { toast: false });
+	const { shortcuts } = registerExtension();
+	const driver = makeCtx("regular", { fg: (_c, t) => t, bold: (t) => t });
+	shortcuts.get("alt+t").handler(driver.ctx);
+	const component = driver.component();
+	try {
+		const row = component.render(200).find((l) => l.includes("@timing ("));
+		assert.ok(row, "finished delegation row rendered");
+		assert.match(row, /2 turns · 100→200 tok · \d+s/, "list row shows the run duration");
+
+		component.handleInput(ENTER);
+		const footer = component.render(200).find((l) => l.includes("torus fleet"));
+		assert.ok(footer, "detail footer rendered");
+		assert.match(footer, /turn 2 · 100→200 tok · \d+s/, "detail footer shows the run duration");
+	} finally {
+		component.dispose();
+	}
+});
+
 test("detail transcript: edit success renders its diff from persisted result details", () => {
 	registry.resetRegistryForTesting();
 	const sid = "0f0e0d0c-aaaa-4bbb-8ccc-444455559999";

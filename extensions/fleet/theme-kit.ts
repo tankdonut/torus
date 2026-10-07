@@ -40,6 +40,17 @@ export function shortModel(model: string): string {
 	return model.split("/")[1] ?? model;
 }
 
+/** 42000 → "42s", 62000 → "1m 02s", 3700000 → "1h 01m" — run durations. */
+export function formatDuration(ms: number): string {
+	const total = Math.max(0, Math.round(ms / 1000));
+	const hours = Math.floor(total / 3600);
+	const minutes = Math.floor((total % 3600) / 60);
+	const seconds = total % 60;
+	if (hours > 0) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+	if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+	return `${seconds}s`;
+}
+
 /** Spinner/check/cross icon colored by status. */
 export function statusIcon(
 	theme: Theme,
