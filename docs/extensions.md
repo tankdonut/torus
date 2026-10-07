@@ -200,6 +200,17 @@ Where torus itself spends model calls (and where it looks like it might but does
 
 Decision: no-op. No ambient call site is a genuine classification, so `TORUS_CLASSIFY_MODEL` is deliberately read nowhere and behavior is unchanged; revisit when a call site with a genuinely closed label set appears.
 
+## Engine config surfaces
+
+Engine-owned configuration torus users can ride directly; torus's own code touches none of it, so behavior follows the engine's docs (`mcp.md`, `models.md`, and the engine changelog under `node_modules/@earendil-works/pi-coding-agent/`). Sibling of [Ambient model calls](#ambient-model-calls).
+
+| Surface | What it gives |
+|---|---|
+| Project MCP overrides | A file-configured server (project `.pi/mcp.json`, read only after project trust; user-level `~/.pi/agent/mcp.json` likewise) takes precedence over torus's in-session `registerMcpServer` registrations — context7 and grep_app can be replaced or disabled per-project without code; `/mcp` lists the overridden registration and `/reload` picks up file changes |
+| MCP OAuth `clientRegistration: "cimd"` | Identifies pi by its Client ID Metadata Document on pi.dev instead of dynamic client registration, for authorization servers that allow-list clients by that URL; cannot be combined with `clientId` or `clientName` |
+| `samplingParamsByThinkingLevel` | models.json per-model map of sampling parameters keyed by pi thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), merged over the model's `samplingParams` per key; applies only to the `openai-completions`, `openai-responses`, and `azure-openai-responses` APIs. Torus's registered gateway models set none, so a user-supplied entry has full effect |
+| Azure provider rename | The engine renamed `azure-openai-responses` to `azure` (engine changelog 1.0.3, inside torus's pin): rename the provider key in `auth.json`, `models.json`, and `settings.json` (`defaultProvider`, `enabledModels`, `modelThinkingLevels`); `AZURE_OPENAI_*` env vars are unchanged |
+
 ## Environment variables
 
 | Variable | Consumer | Purpose |

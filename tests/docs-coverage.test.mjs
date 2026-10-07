@@ -135,3 +135,12 @@ test("ambient model calls map covers every site and records the no-op decision",
 		"no-op violated: extensions/ reads TORUS_CLASSIFY_MODEL",
 	);
 });
+test("engine config surfaces section documents all four pinned-engine levers", () => {
+	const start = doc.indexOf("## Engine config surfaces");
+	assert.ok(start !== -1, "docs/extensions.md missing the Engine config surfaces section");
+	const end = doc.indexOf("\n## ", start + 1);
+	const section = doc.slice(start, end === -1 ? undefined : end);
+	for (const token of [".pi/mcp.json", "cimd", "samplingParamsByThinkingLevel", "azure"]) {
+		assert.ok(section.includes(token), `engine config surfaces section missing token: ${token}`);
+	}
+});
