@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -46,5 +46,14 @@ test("every TORUS_* env read in extensions/ appears in docs/extensions.md", () =
 	assert.ok(vars.length > 15, `env-var extraction looks broken (found ${vars.length})`);
 	for (const v of new Set(vars)) {
 		assert.ok(doc.includes(v), `docs/extensions.md missing env var: ${v}`);
+	}
+});
+
+test("docs/skills.md exists and documents Agent Skills portability", () => {
+	const skillsDocPath = path.join(root, "docs/skills.md");
+	assert.ok(existsSync(skillsDocPath), "docs/skills.md does not exist");
+	const skillsDoc = readFileSync(skillsDocPath, "utf8");
+	for (const token of ["~/.agents/skills/", "~/.claude/skills/", "agentskills.io"]) {
+		assert.ok(skillsDoc.includes(token), `docs/skills.md missing token: ${token}`);
 	}
 });

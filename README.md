@@ -53,6 +53,8 @@ Every tool, command, hook, and env var is catalogued in [docs/extensions.md](doc
 
 **Keyword intent gates** (built in): saying `ultrawork` (full-precision contract), `hyperplan` (plan-first gate), or `team` (orchestrate, don't serialize) in a message injects that execution mode into the next turn's system prompt. Add or override via `~/.torus/keywords.json` (`{"word": "mode text"}`).
 
+torus skills follow the [Agent Skills](https://agentskills.io) open standard — they install into Claude Code and Codex unchanged, and external standard skills drop into `~/.agents/skills/` for torus to use ([details](docs/skills.md)).
+
 ## Personas
 
 The main session runs a persona: its agent prompt is injected into the system prompt. Sessions start on `lead`, and the choice persists per session id.
