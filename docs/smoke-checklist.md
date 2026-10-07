@@ -25,3 +25,8 @@ remainder exercise pi/TUI behavior composed by torus.
 | 13 | Container boots keyless and offline | `docker run --rm --network none torus:dev --list-models` (image from `./make.sh image`, or substitute `ghcr.io/tankdonut/torus`) | Engine loads and the model list prints instantly — payload + engine node_modules are baked at `/opt/torus`, nothing is extracted or installed on boot; exit 0 |
 | 14 | Container test suite green | `./make.sh image-test` | Static drift guards pass in plain `npm test`; docker-gated engine/tmux/tool smokes pass under docker |
 | 15 | Stateless stdio MCP server | Write a minimal stateless stdio MCP server fixture — a small node script that answers `tools/list` with one tool and `tools/call` with a canned result, holding no session state; register it under `mcpServers` in a project `.pi/mcp.json` (`command`: `node`, `args`: the script path); boot `torus`, check `/mcp`, invoke the tool once from the session; then remove the fixture + config entry and `/reload` | `/mcp` lists the server connected with its tool; the statusline MCP count includes it; the single invocation returns the canned result; after removal the server disappears from `/mcp` and the count drops |
+
+Row 15's fixture server and handshake are pinned by the automated
+engine-side test `tests/mcp-stateless.test.mjs` (connected tool + round-trip
++ unresponsive-server timeout); the manual row additionally covers `/mcp`
+visibility, the statusline count, and removal via `/reload`.

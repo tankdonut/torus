@@ -100,6 +100,15 @@ test("MCP spec status and stateless-server smoke are documented", () => {
 	assert.ok(smokeDoc.includes("stateless"), "docs/smoke-checklist.md missing stateless MCP smoke");
 });
 
+test("release workflow pins the mcp-audit engine-pin bump step", () => {
+	const releaseDocPath = path.join(root, "docs/release-workflow.md");
+	assert.ok(existsSync(releaseDocPath), "docs/release-workflow.md does not exist");
+	const releaseDoc = readFileSync(releaseDocPath, "utf8");
+	for (const token of ["mcp-audit", "tests/mcp-stateless.test.mjs"]) {
+		assert.ok(releaseDoc.includes(token), `docs/release-workflow.md missing token: ${token}`);
+	}
+});
+
 test("docs/efficiency.md documents the overhead bench method", () => {
 	const benchDocPath = path.join(root, "docs/efficiency.md");
 	assert.ok(existsSync(benchDocPath), "docs/efficiency.md does not exist");
