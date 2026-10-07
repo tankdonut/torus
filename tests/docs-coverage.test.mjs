@@ -66,3 +66,12 @@ test("docs/instructions.md exists and documents AGENTS.md discovery and preceden
 		assert.ok(instructionsDoc.includes(token), `docs/instructions.md missing token: ${token}`);
 	}
 });
+
+test("SECURITY.md exists and documents trust handoffs and disclosure", () => {
+	const securityDocPath = path.join(root, "SECURITY.md");
+	assert.ok(existsSync(securityDocPath), "SECURITY.md does not exist");
+	const securityDoc = readFileSync(securityDocPath, "utf8");
+	for (const token of ["keywords.json", "Disclosure"]) {
+		assert.ok(securityDoc.includes(token), `SECURITY.md missing token: ${token}`);
+	}
+});

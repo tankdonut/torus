@@ -131,6 +131,10 @@ The payload (extensions, agents, skills, .npmrc, a runtime package.json carrying
 
 `extensions/*` imports only the public pi ExtensionAPI; no engine-specific code. CI typechecks and smoke-loads against the pinned engine (stock pi). Diverging = CI failure, not a surprise.
 
+## Security
+
+torus runs an agent with file, shell, and network access on your machine. The threat model, guard inventory, and trust-handoff audit live in [SECURITY.md](SECURITY.md) — read it before pointing torus at untrusted repositories.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
