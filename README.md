@@ -32,7 +32,7 @@ In a container — full toolchain, no host install:
 docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus
 ```
 
-As a single binary — download from [releases](https://github.com/tankdonut/torus/releases) (`torus-<os>-<arch>`, `chmod +x`); the first launch self-bootstraps the runtime. Or load just the extension pack into a stock pi: `pi install git:github.com/tankdonut/torus@vX.Y.Z`.
+As a single binary — download from [releases](https://github.com/tankdonut/torus/releases) (`torus-<os>-<arch>`, `chmod +x`); the first launch self-bootstraps the runtime. Or load just the extension pack into a stock pi: `pi install git:github.com/tankdonut/torus@vX.Y.Z` — take only part of it via consume-time filtering; see [docs/pi-packages.md](docs/pi-packages.md).
 
 ## First five minutes
 

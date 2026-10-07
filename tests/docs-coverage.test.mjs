@@ -167,3 +167,12 @@ test("torus serve section documents routes, auth, config, and the kill switch", 
 		assert.ok(section.includes(token), `serve section missing token: ${token}`);
 	}
 });
+
+test("docs/pi-packages.md exists and documents the pi-package distribution channel", () => {
+	const piPackagesDocPath = path.join(root, "docs", "pi-packages.md");
+	assert.ok(existsSync(piPackagesDocPath), "docs/pi-packages.md does not exist");
+	const piPackagesDoc = readFileSync(piPackagesDocPath, "utf8");
+	for (const token of ["pi install git:", "+path", "pi-package"]) {
+		assert.ok(piPackagesDoc.includes(token), `docs/pi-packages.md missing token: ${token}`);
+	}
+});
