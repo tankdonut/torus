@@ -64,7 +64,7 @@ registerHooks({
 });
 
 const runtime = await import(new URL("../../extensions/team-runtime.ts", import.meta.url).href);
-const { blockedTasks, readTasksFile, updateTasksFile } = runtime;
+const { blockedTasks, readTasksFile, teamDir, updateTasksFile } = runtime;
 
 const argv = process.argv.slice(2);
 const [subcommand, teamId, taskId] = argv;
@@ -96,6 +96,14 @@ function run() {
 			"usage: team-task.mjs <list|claim|complete|release> <teamId> [--as <memberName>] [<taskId>] [--force]",
 		);
 	}
+	// Writers need the team directory to exist — a typo'd team id refuses fast
+	// here instead of spinning on lock acquisition against a missing parent.
+	// list stays tolerant: an absent team is an empty board, exit 0.
+	if (
+		(subcommand === "claim" || subcommand === "complete" || subcommand === "release") &&
+		!existsSync(teamDir(teamId))
+	)
+		refuse(`team "${teamId}" not found — no team directory at ${teamDir(teamId)}`);
 	switch (subcommand) {
 		case "list":
 			return list(teamId);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -546,4 +546,52 @@ test("task tools emit structuredContent on success only", async () => {
 		assignee: "solo",
 		status: "deleted",
 	});
+});
+
+test("CLI writers on a nonexistent team refuse fast instead of hanging", async () => {
+	const ghost = `ghost-${Date.now().toString(36)}`;
+	for (const args of [
+		["claim", ghost, "--as", "solo"],
+		["complete", ghost, "t1", "--as", "solo"],
+		["release", ghost, "t1", "--as", "solo"],
+	]) {
+		const began = Date.now();
+		const refused = await teamTask(args);
+		const elapsed = Date.now() - began;
+		assert.equal(refused.code, 1, `${args[0]} on a missing team must refuse`);
+		assert.match(
+			firstJsonLine(refused.stdout).error,
+			new RegExp(`team "${ghost}" not found — no team directory at `),
+		);
+		assert.ok(
+			elapsed < 2000,
+			`${args[0]} must refuse fast, took ${elapsed}ms — the lock hang returned`,
+		);
+	}
+
+	// list stays tolerant: an absent team is an empty board, exit 0, no lines.
+	const listing = await teamTask(["list", ghost]);
+	assert.equal(listing.code, 0);
+	assert.equal(listing.stdout, "");
+});
+
+test("updateTasksFile throws a bounded error when the lock can never be created", () => {
+	const teamId = `blocked-${Date.now().toString(36)}`;
+	const teamsRoot = path.join(HOME, ".torus", "teams");
+	mkdirSync(teamsRoot, { recursive: true });
+	// A regular FILE where the team directory would go: every lock mkdir fails
+	// forever, which used to spin the lock loop without bound.
+	const impostor = path.join(teamsRoot, teamId);
+	writeFileSync(impostor, "not a directory", "utf8");
+	try {
+		const began = Date.now();
+		assert.throws(
+			() => runtime.updateTasksFile(teamId, () => {}),
+			/tasklist lock not acquirable at .* after \d+ms — check the team directory exists and is writable/,
+		);
+		const elapsed = Date.now() - began;
+		assert.ok(elapsed < 15_000, `lock bound must be seconds, took ${elapsed}ms`);
+	} finally {
+		rmSync(impostor, { force: true });
+	}
 });

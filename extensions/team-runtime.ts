@@ -222,10 +222,15 @@ export function dependencyCycle(tasks: Task[]): string[] | null {
  * compares the file's mtime before read and before write: a change means
  * someone wrote underneath us and the mutation re-runs against a fresh read
  * (bounded to CAS_RETRIES, then last-writer-wins). Mutators must therefore be
- * re-runnable — they may execute more than once.
+ * re-runnable — they may execute more than once. Lock acquisition is itself
+ * bounded: past the stale deadline only a counted tail of force-takeover
+ * retries remains, then the helper throws — a lock path that can never be
+ * created (missing team directory) must not spin the caller forever.
  */
 const STALE_LOCK_MS = 5_000;
 const CAS_RETRIES = 3;
+const LOCK_TAIL_RETRIES = 25;
+const LOCK_POLL_MS = 20;
 
 function mtimeOf(file: string): number | null {
 	try {
@@ -241,7 +246,9 @@ export function updateTasksFile(
 	mutate: (file: TasksFile) => TasksFile | void,
 ): TasksFile {
 	const lockDir = `${tasksFile(teamId)}.lock`;
-	const deadline = Date.now() + STALE_LOCK_MS;
+	const start = Date.now();
+	const deadline = start + STALE_LOCK_MS;
+	let tail = 0;
 	for (;;) {
 		try {
 			mkdirSync(lockDir);
@@ -254,8 +261,14 @@ export function updateTasksFile(
 			} catch {
 				// lock vanished between stat and now — retry immediately
 			}
-			if (Date.now() > deadline) rmSync(lockDir, { recursive: true, force: true });
-			sleepSync(20);
+			if (Date.now() > deadline) {
+				rmSync(lockDir, { recursive: true, force: true });
+				if (++tail > LOCK_TAIL_RETRIES)
+					throw new Error(
+						`tasklist lock not acquirable at ${lockDir} after ${Date.now() - start}ms — check the team directory exists and is writable`,
+					);
+			}
+			sleepSync(LOCK_POLL_MS);
 		}
 	}
 	try {
