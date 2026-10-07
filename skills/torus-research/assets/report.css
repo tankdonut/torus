@@ -42,13 +42,13 @@ html {
 
 body {
 	margin: 0 auto;
-	max-width: 78ch;
+	max-width: 52rem;
 	padding: 3rem 1.25rem 4rem;
 	background: var(--paper);
 	color: var(--ink);
 	font-family:
 		Charter, "Bitstream Charter", "Iowan Old Style", Georgia, "Times New Roman", serif;
-	font-size: 1.0625rem;
+	font-size: 1.125rem;
 	line-height: 1.65;
 	transition: background-color 0.2s ease, color 0.2s ease;
 }
@@ -269,10 +269,10 @@ thead th {
 	font-weight: 700;
 }
 
-/* Wide tables break out of the 78ch body measure once the viewport allows. */
-@media (min-width: 110ch) {
+/* Wide tables break out of the 52rem body column once the viewport allows. */
+@media (min-width: 72rem) {
 	.table-wrap {
-		margin-inline: -7ch;
+		margin-inline: -6rem;
 	}
 }
 
