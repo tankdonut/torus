@@ -298,14 +298,15 @@ test("strip: team members show a badge + idle state; overflow row appears past M
 		model: "zai/glm-5.3-flash",
 		state: "running",
 		memberStatus: "idle",
-		activeSeconds: 42,
+		activeSeconds: 5000,
 		activeUpdatedAt: Date.now(),
 	});
 	const strip = factory(tui, theme);
 	try {
 		const lines = strip.render(200).join("\n");
 		assert.match(lines, /⧉myteam/, "team badge carries the short team name");
-		assert.match(lines, /idle 42s/, "idle member shows banked time, not a ticking age");
+		assert.match(lines, /· idle\b/, "idle member renders an idle marker");
+		assert.doesNotMatch(lines, /idle \d/, "idle must not borrow the banked work clock");
 	} finally {
 		strip.dispose();
 	}

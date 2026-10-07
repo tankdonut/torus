@@ -19,6 +19,7 @@ import {
 } from "../registry.js";
 import {
 	entityColor,
+	formatDuration,
 	formatTokens,
 	rule,
 	SPINNER,
@@ -93,10 +94,10 @@ function formatRow(
 	if (record.status === "running") {
 		const stats =
 			run?.memberStatus === "idle"
-				? theme.fg("dim", `t${record.turns} · idle ${Math.round(externalRunAgeSeconds(run))}s`)
+				? theme.fg("dim", `t${record.turns} · idle`)
 				: theme.fg(
 						"dim",
-						`t${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)}${costSeg} · ${Math.round((Date.now() - record.startedAt) / 1000)}s`,
+						`t${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)}${costSeg} · ${formatDuration(Date.now() - record.startedAt)}`,
 					);
 		return truncateToWidth(`${prefix} ${icon} ${name} ${badge} ${model} ${stats}`, width);
 	}
@@ -179,7 +180,7 @@ class FleetStrip implements Component {
 			const runCost = formatCost(run.cost, (run.tokensIn ?? 0) + (run.tokensOut ?? 0) > 0);
 			const stats = this.theme.fg(
 				"dim",
-				`t${run.turns ?? 0} · ${formatTokens(run.tokensIn ?? 0)}→${formatTokens(run.tokensOut ?? 0)}${runCost ? ` · ${runCost}` : ""} · ${age}s`,
+				`t${run.turns ?? 0} · ${formatTokens(run.tokensIn ?? 0)}→${formatTokens(run.tokensOut ?? 0)}${runCost ? ` · ${runCost}` : ""} · ${formatDuration(age * 1000)}`,
 			);
 			const who = this.theme.fg(
 				entityColor(run.handle ?? run.label),
