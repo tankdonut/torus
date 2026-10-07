@@ -347,6 +347,11 @@ test("a trigger fires a srv-tagged delegation and persists lastFired state", asy
 	try {
 		assert.equal(runtime.fireNow("hourly-build"), true, "fresh trigger fires immediately");
 		assert.ok(existsSync(triggersStateFile()), "state file written after the fire attempt");
+		assert.equal(
+			statSync(triggersStateFile()).mode & 0o777,
+			0o600,
+			"triggers-state holds webhook secrets — user-only perms",
+		);
 		const state = JSON.parse(readFileSync(triggersStateFile(), "utf8"));
 		const lastFired = state["hourly-build"]?.lastFired;
 		assert.equal(typeof lastFired, "number", "state records a numeric lastFired");

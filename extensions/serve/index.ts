@@ -290,6 +290,7 @@ function loadOrMintWebhookSecrets(triggers: ServeTrigger[]): {
 		changed = true;
 	}
 	if (changed) writeJson(triggersStatePath(), state);
+	chmodSync(triggersStatePath(), 0o600);
 	return { secrets, created };
 }
 
@@ -764,6 +765,7 @@ export function startTriggers(
 			}
 		}
 		writeJson(triggersStatePath(), out);
+		chmodSync(triggersStatePath(), 0o600);
 	};
 	const attemptFire = (entry: TriggerEntry): boolean => {
 		const now = Date.now();
