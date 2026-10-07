@@ -42,7 +42,7 @@ html {
 
 body {
 	margin: 0 auto;
-	max-width: 72ch;
+	max-width: 78ch;
 	padding: 3rem 1.25rem 4rem;
 	background: var(--paper);
 	color: var(--ink);
@@ -269,10 +269,10 @@ thead th {
 	font-weight: 700;
 }
 
-/* Wide tables break out of the 72ch body measure once the viewport allows. */
+/* Wide tables break out of the 78ch body measure once the viewport allows. */
 @media (min-width: 110ch) {
 	.table-wrap {
-		margin-inline: -14ch;
+		margin-inline: -7ch;
 	}
 }
 
