@@ -104,4 +104,3 @@ Measured 2026-10-07, torus 0.3.0 + engine pin 1.0.4, single run per task per con
 - Single-run, cold-cache, self-reported — directional, not benchmark-grade. Re-run with `--runs 3` for tighter numbers.
 
 
-Pending — to be filled in by a benchmark run.
