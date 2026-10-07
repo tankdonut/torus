@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0](https://github.com/tankdonut/torus/compare/v0.5.0...v0.6.0) (2026-10-07)
+
+
+### Features
+
+* add scheduled triggers to torus serve ([6d419d9](https://github.com/tankdonut/torus/commit/6d419d9206678cb38a5e88921db19923e2462662))
+* add torus serve with authenticated delegation API ([9e957aa](https://github.com/tankdonut/torus/commit/9e957aa171e05b5373976cab473da41136a6f8dd))
+* add webhook triggers to torus serve ([8391c5a](https://github.com/tankdonut/torus/commit/8391c5ab513f06213cff19cec9886dc6f3062012))
+* surface model errors from delegated runs ([2c04917](https://github.com/tankdonut/torus/commit/2c0491711c6d0daf1b95776b6e82b909526e1543))
+
+
+### Bug Fixes
+
+* restrict triggers-state file permissions ([7d4d711](https://github.com/tankdonut/torus/commit/7d4d7117322954e92c779e559706666b8c57a711))
+
 ## [0.5.0](https://github.com/tankdonut/torus/compare/v0.4.0...v0.5.0) (2026-10-07)
 
 
