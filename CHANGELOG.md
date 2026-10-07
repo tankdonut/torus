@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.3.0](https://github.com/tankdonut/torus/compare/v0.2.0...v0.3.0) (2026-10-07)
+
+
+### Features
+
+* enforce injection-defense clauses in agent prompts ([53526da](https://github.com/tankdonut/torus/commit/53526da4a46ce7e66f1ad64ab26ac4abf224e6d5))
+* render research reports to themed standalone HTML ([1831834](https://github.com/tankdonut/torus/commit/1831834f46d63d80807bf37b01f3c549626563c5))
+* style research reports as a print-ready dossier ([bad5583](https://github.com/tankdonut/torus/commit/bad5583fe33259a447b5f21254ee7bec5ba483bd))
+* surface orphaned team tasks in team_status ([edb7211](https://github.com/tankdonut/torus/commit/edb7211463b5b177a32384bd5af3fbfec4d71577))
+
+
+### Bug Fixes
+
+* block symlinked paths in file guards ([da7af23](https://github.com/tankdonut/torus/commit/da7af23a8e5d09042afbb5fa2327e73c81928969))
+* coalesce team wake-ups and quote the newest outbox tail ([f395c77](https://github.com/tankdonut/torus/commit/f395c770c12eeb0a715d295bed047fd7417d7f04))
+* count every assistant turn in delegation tallies ([059a5c4](https://github.com/tankdonut/torus/commit/059a5c49956a1c3568ac3c958d2caec5f1544eda))
+* flag custom tool failures with isError so refusals paint red ([bf2ac39](https://github.com/tankdonut/torus/commit/bf2ac39f758c172306357242ee08791b511144de))
+* guard keywords.json against agent writes ([b63c8ca](https://github.com/tankdonut/torus/commit/b63c8cac9c56e8e761e09f01efda38f9171f0525))
+* keep tables inside the report content column ([57570e2](https://github.com/tankdonut/torus/commit/57570e214f4cdbe1f956c9b11614ca4e68a5ef82))
+* render edit success diffs in replayed fleet transcripts ([8a02ce4](https://github.com/tankdonut/torus/commit/8a02ce40f598c4b17b4097872b519e9c65c31849))
+* show input tokens in fleet member lines ([8529b1c](https://github.com/tankdonut/torus/commit/8529b1c0beddab70283a051222e735d9091fae4c))
+* widen report column to a fixed measure with larger body text ([532b459](https://github.com/tankdonut/torus/commit/532b459c38abf88018d8731d6642be1c86cd8949))
+* widen report text measure and narrow the table breakout ([1315342](https://github.com/tankdonut/torus/commit/131534213fc1b7ab9e547d62c8e277a143e4ba81))
+
 ## [0.2.0](https://github.com/tankdonut/torus/compare/v0.1.0...v0.2.0) (2026-10-06)
 
 
