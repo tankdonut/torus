@@ -13,6 +13,7 @@
 | Build binary | `./make.sh build` |
 | Build container image | `./make.sh image` |
 | Test container image | `./make.sh image-test` |
+| Overhead bench (spawns engine, costs tokens) | `npm run bench:overhead` |
 
 ## Layout
 | Area | Purpose | Entry point |
@@ -22,7 +23,7 @@
 | `skills/` | Packaged skills: a `SKILL.md` per dir, may also ship assets (`assets/`, `bin/` — torus-research ships a report renderer) | `skills/torus-plan/SKILL.md` |
 | `tests/` | `node:test` suites (`.test.mjs`) + TS import hook | `tests/resolve-ts-hook.mjs` |
 | `runtime/bin/` | Launcher that spawns the pinned pi engine | `runtime/bin/torus.mjs` |
-| `scripts/` | Binary build + payload-bake scripts | `scripts/build-binary.sh` |
+| `scripts/` | Bench framework, binary build + payload-bake scripts | `scripts/bench.mjs` |
 | `docs/` | Reference docs (`docs/extensions.md`, coverage-tested; `docs/agents.md`, agent-file contract + enforcement; `docs/smoke-checklist.md`, manual TTY smokes) | `docs/extensions.md` |
 
 ## External References
@@ -40,7 +41,7 @@
 - `.npmrc` is agent-blocked by `cc-safety-net` by design; humans create it via `./make.sh npmrc`.
 - Guarded writes and reads: bare `cat`/`head`/`tail` of an absolute path is blocked — use the read tool; overwriting an existing similar file via `write` is blocked — use `edit` (`extensions/guards/index.ts`).
 - The engine is pinned in `package.json` (`@earendil-works/pi-coding-agent`); `TORUS_PI_BIN` overrides the binary path.
-- Repo docs (README, CONTRIBUTING, docs/) make no hand-written numerical claims that duplicate a machine source of truth — tool/skill/agent counts, version floors, model context sizes. They go stale silently; reference the authoritative file (`package.json`, `agents/`, `docs/extensions.md`) instead. Regenerated benchmark output (`docs/efficiency.md`) is exempt.
+- Repo docs (README, CONTRIBUTING, docs/) make no hand-written numerical claims that duplicate a machine source of truth — tool/skill/agent counts, version floors, model context sizes. They go stale silently; reference the authoritative file (`package.json`, `agents/`, `docs/extensions.md`) instead. Regenerated benchmark output (`docs/efficiency.md`, `docs/efficiency.html`, `docs/bench-records.json`) is exempt.
 
 ## Commit convention
 

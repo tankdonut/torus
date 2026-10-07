@@ -1,0 +1,1969 @@
+{
+  "meta": {
+    "generatedAt": "2026-10-07T21:49:34.141Z",
+    "models": [
+      "zai/glm-5.3-flash",
+      "zai/glm-5.3"
+    ],
+    "engineBin": "node_modules/.bin/pi",
+    "enginePin": "1.0.4",
+    "torusVersion": "0.6.0",
+    "commit": "1c7256e",
+    "runs": 3,
+    "warmup": 1,
+    "timeoutSec": 600,
+    "taskCount": 6,
+    "tasks": [
+      {
+        "id": "readme-name",
+        "tier": "trivial"
+      },
+      {
+        "id": "agents-doc-headings",
+        "tier": "trivial"
+      },
+      {
+        "id": "register-tool-count",
+        "tier": "aggregate"
+      },
+      {
+        "id": "skills-inventory",
+        "tier": "aggregate"
+      },
+      {
+        "id": "extension-registration",
+        "tier": "reason"
+      },
+      {
+        "id": "engine-pin-report",
+        "tier": "reason"
+      }
+    ],
+    "configs": [
+      "stock",
+      "torus"
+    ]
+  },
+  "records": [
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "readme-name",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 7236,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 4291,
+        "tokensOut": 62,
+        "cacheRead": 4992,
+        "cacheWrite": 0,
+        "cost": 0.0008244099999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "readme-name",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 12375,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 12760,
+        "tokensOut": 96,
+        "cacheRead": 12928,
+        "cacheWrite": 0,
+        "cost": 0.0023498399999999997,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "readme-name",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 5032,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 67,
+        "tokensOut": 75,
+        "cacheRead": 9216,
+        "cacheWrite": 0,
+        "cost": 0.00032402999999999995,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "readme-name",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 12805,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 1178,
+        "tokensOut": 110,
+        "cacheRead": 24320,
+        "cacheWrite": 0,
+        "cost": 0.0009612999999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "readme-name",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 13923,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 15214,
+        "tokensOut": 121,
+        "cacheRead": 10368,
+        "cacheWrite": 0,
+        "cost": 0.0026536399999999996,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "readme-name",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 6091,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 6956,
+        "tokensOut": 110,
+        "cacheRead": 2432,
+        "cacheWrite": 0,
+        "cost": 0.0011713599999999998,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "readme-name",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 5402,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 3644,
+        "tokensOut": 81,
+        "cacheRead": 5888,
+        "cacheWrite": 0,
+        "cost": 0.00076374,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "readme-name",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 11607,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 3949,
+        "tokensOut": 89,
+        "cacheRead": 21824,
+        "cacheWrite": 0,
+        "cost": 0.0012915699999999997,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "agents-doc-headings",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 9463,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 2411,
+        "tokensOut": 405,
+        "cacheRead": 8448,
+        "cacheWrite": 0,
+        "cost": 0.00081759,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "agents-doc-headings",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 18711,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 5563,
+        "tokensOut": 487,
+        "cacheRead": 21760,
+        "cacheWrite": 0,
+        "cost": 0.0017307499999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "agents-doc-headings",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 7616,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 5865,
+        "tokensOut": 237,
+        "cacheRead": 4992,
+        "cacheWrite": 0,
+        "cost": 0.00114801,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "agents-doc-headings",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 19689,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 14364,
+        "tokensOut": 521,
+        "cacheRead": 12928,
+        "cacheWrite": 0,
+        "cost": 0.0028029399999999994,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "agents-doc-headings",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 17335,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 2908,
+        "tokensOut": 405,
+        "cacheRead": 24384,
+        "cacheWrite": 0,
+        "cost": 0.00137022,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "agents-doc-headings",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 8257,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 107,
+        "tokensOut": 384,
+        "cacheRead": 10752,
+        "cacheWrite": 0,
+        "cost": 0.0005306099999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "agents-doc-headings",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 8583,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 2411,
+        "tokensOut": 370,
+        "cacheRead": 8448,
+        "cacheWrite": 0,
+        "cost": 0.0008000899999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "agents-doc-headings",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 16351,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 2844,
+        "tokensOut": 384,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.0013520399999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "register-tool-count",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 4508,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 179,
+        "tokensOut": 74,
+        "cacheRead": 8448,
+        "cacheWrite": 0,
+        "cost": 0.00031728999999999997,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "register-tool-count",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 12576,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 147,
+        "tokensOut": 108,
+        "cacheRead": 24384,
+        "cacheWrite": 0,
+        "cost": 0.0008075699999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "register-tool-count",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 4471,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 121,
+        "tokensOut": 64,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.00030551,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "register-tool-count",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 12227,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 19,
+        "tokensOut": 93,
+        "cacheRead": 24512,
+        "cacheWrite": 0,
+        "cost": 0.0007847099999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "register-tool-count",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 12386,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 19,
+        "tokensOut": 96,
+        "cacheRead": 24512,
+        "cacheWrite": 0,
+        "cost": 0.0007862099999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "register-tool-count",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 7832,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 145,
+        "tokensOut": 88,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.00032111,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "register-tool-count",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 4558,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 115,
+        "tokensOut": 65,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.00030510999999999993,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "register-tool-count",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 11457,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 87,
+        "tokensOut": 62,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.0007774899999999998,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "skills-inventory",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 8900,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 226,
+        "tokensOut": 103,
+        "cacheRead": 8448,
+        "cacheWrite": 0,
+        "cost": 0.00033884,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "skills-inventory",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 12769,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 198,
+        "tokensOut": 139,
+        "cacheRead": 24384,
+        "cacheWrite": 0,
+        "cost": 0.0008307199999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "skills-inventory",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 4730,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 222,
+        "tokensOut": 99,
+        "cacheRead": 8448,
+        "cacheWrite": 0,
+        "cost": 0.00033623999999999997,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "skills-inventory",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 11695,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 126,
+        "tokensOut": 99,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.0008018399999999998,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "skills-inventory",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 11939,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 131,
+        "tokensOut": 108,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.0008070899999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "skills-inventory",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 8292,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 158,
+        "tokensOut": 99,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.00032856,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "skills-inventory",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 5375,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 94,
+        "tokensOut": 122,
+        "cacheRead": 8576,
+        "cacheWrite": 0,
+        "cost": 0.00033237999999999996,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "skills-inventory",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 12088,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 62,
+        "tokensOut": 99,
+        "cacheRead": 24512,
+        "cacheWrite": 0,
+        "cost": 0.0007941599999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "extension-registration",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 10083,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 10980,
+        "tokensOut": 436,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.00212036,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "extension-registration",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 27857,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 5839,
+        "tokensOut": 633,
+        "cacheRead": 38144,
+        "cacheWrite": 0,
+        "cost": 0.00233667,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "extension-registration",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 16718,
+      "aggregate": {
+        "turns": 4,
+        "tokensIn": 7698,
+        "tokensOut": 709,
+        "cacheRead": 25152,
+        "cacheWrite": 0,
+        "cost": 0.00226376,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "extension-registration",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 33399,
+      "aggregate": {
+        "turns": 4,
+        "tokensIn": 7073,
+        "tokensOut": 772,
+        "cacheRead": 58368,
+        "cacheWrite": 0,
+        "cost": 0.00319799,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "extension-registration",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 20700,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 5596,
+        "tokensOut": 469,
+        "cacheRead": 41600,
+        "cacheWrite": 0,
+        "cost": 0.0023218999999999996,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "extension-registration",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 12335,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 5455,
+        "tokensOut": 484,
+        "cacheRead": 17792,
+        "cacheWrite": 0,
+        "cost": 0.0015940099999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "extension-registration",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 20296,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 8763,
+        "tokensOut": 787,
+        "cacheRead": 20992,
+        "cacheWrite": 0,
+        "cost": 0.00233771,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "extension-registration",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 35844,
+      "aggregate": {
+        "turns": 4,
+        "tokensIn": 7648,
+        "tokensOut": 908,
+        "cacheRead": 54592,
+        "cacheWrite": 0,
+        "cost": 0.0032389599999999995,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "engine-pin-report",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 8291,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 923,
+        "tokensOut": 84,
+        "cacheRead": 13120,
+        "cacheWrite": 0,
+        "cost": 0.00057405,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "engine-pin-report",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 15586,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 1411,
+        "tokensOut": 81,
+        "cacheRead": 37440,
+        "cacheWrite": 0,
+        "cost": 0.0013753499999999998,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "engine-pin-report",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 6406,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 539,
+        "tokensOut": 84,
+        "cacheRead": 13504,
+        "cacheWrite": 0,
+        "cost": 0.00052797,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "engine-pin-report",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 13649,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 1441,
+        "tokensOut": 139,
+        "cacheRead": 37504,
+        "cacheWrite": 0,
+        "cost": 0.0014107699999999998,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "engine-pin-report",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 12885,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 515,
+        "tokensOut": 81,
+        "cacheRead": 38336,
+        "cacheWrite": 0,
+        "cost": 0.00126783,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "engine-pin-report",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 5417,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 553,
+        "tokensOut": 79,
+        "cacheRead": 13504,
+        "cacheWrite": 0,
+        "cost": 0.0005275699999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "engine-pin-report",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 5129,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 91,
+        "tokensOut": 84,
+        "cacheRead": 13952,
+        "cacheWrite": 0,
+        "cost": 0.00047421,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3-flash",
+      "taskId": "engine-pin-report",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 16401,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 1403,
+        "tokensOut": 118,
+        "cacheRead": 37312,
+        "cacheWrite": 0,
+        "cost": 0.0013888099999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "readme-name",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 6728,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 4390,
+        "tokensOut": 65,
+        "cacheRead": 4992,
+        "cacheWrite": 0,
+        "cost": 0.0077299199999999995,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "readme-name",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 11152,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 12584,
+        "tokensOut": 70,
+        "cacheRead": 12992,
+        "cacheWrite": 0,
+        "cost": 0.02130352,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "readme-name",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 3576,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 742,
+        "tokensOut": 52,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.00348072,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "readme-name",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 10978,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 694,
+        "tokensOut": 64,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.007609680000000001,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "readme-name",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 11182,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 40,
+        "tokensOut": 83,
+        "cacheRead": 25536,
+        "cacheWrite": 0,
+        "cost": 0.0070605600000000004,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "readme-name",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 4372,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 877,
+        "tokensOut": 71,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.0037533199999999997,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "readme-name",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 4110,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 551,
+        "tokensOut": 63,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.0032617199999999996,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "readme-name",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 10853,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 1123,
+        "tokensOut": 76,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.00826308,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "agents-doc-headings",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 7400,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 2400,
+        "tokensOut": 364,
+        "cacheRead": 8448,
+        "cacheWrite": 0,
+        "cost": 0.00715808,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "agents-doc-headings",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 14960,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 2915,
+        "tokensOut": 431,
+        "cacheRead": 24384,
+        "cacheWrite": 0,
+        "cost": 0.012317239999999998,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "agents-doc-headings",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 7970,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 2355,
+        "tokensOut": 374,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.007155720000000001,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "agents-doc-headings",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 14236,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 2843,
+        "tokensOut": 386,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.01203508,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "agents-doc-headings",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 25587,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 3108,
+        "tokensOut": 466,
+        "cacheRead": 36800,
+        "cacheWrite": 0,
+        "cost": 0.0159696,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "agents-doc-headings",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 5004,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 2374,
+        "tokensOut": 128,
+        "cacheRead": 8448,
+        "cacheWrite": 0,
+        "cost": 0.00608328,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "agents-doc-headings",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 9304,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 2663,
+        "tokensOut": 365,
+        "cacheRead": 14976,
+        "cacheWrite": 0,
+        "cost": 0.00922796,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "agents-doc-headings",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 12808,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 2840,
+        "tokensOut": 173,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.01109368,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "register-tool-count",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 10342,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 179,
+        "tokensOut": 187,
+        "cacheRead": 8448,
+        "cacheWrite": 0,
+        "cost": 0.00326988,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "register-tool-count",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 17525,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 283,
+        "tokensOut": 206,
+        "cacheRead": 36672,
+        "cacheWrite": 0,
+        "cost": 0.010837320000000001,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "register-tool-count",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 7154,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 206,
+        "tokensOut": 177,
+        "cacheRead": 8448,
+        "cacheWrite": 0,
+        "cost": 0.0032636799999999997,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "register-tool-count",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 12399,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 113,
+        "tokensOut": 128,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.00707788,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "register-tool-count",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 9259,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 80,
+        "tokensOut": 116,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.00697888,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "register-tool-count",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 4878,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 115,
+        "tokensOut": 143,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.00300332,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "register-tool-count",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 5453,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 177,
+        "tokensOut": 150,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.00312092,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "register-tool-count",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 10587,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 163,
+        "tokensOut": 158,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.007279880000000001,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "skills-inventory",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 4740,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 239,
+        "tokensOut": 141,
+        "cacheRead": 8448,
+        "cacheWrite": 0,
+        "cost": 0.00315148,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "skills-inventory",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 12080,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 195,
+        "tokensOut": 135,
+        "cacheRead": 24384,
+        "cacheWrite": 0,
+        "cost": 0.007206840000000001,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "skills-inventory",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 6333,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 168,
+        "tokensOut": 150,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.0031083199999999995,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "skills-inventory",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 11782,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 136,
+        "tokensOut": 117,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.007061680000000001,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "skills-inventory",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 12175,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 135,
+        "tokensOut": 157,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.00723628,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "skills-inventory",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 4396,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 237,
+        "tokensOut": 125,
+        "cacheRead": 8448,
+        "cacheWrite": 0,
+        "cost": 0.00307828,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "skills-inventory",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 5051,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 168,
+        "tokensOut": 136,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.0030467199999999997,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "skills-inventory",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 13214,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 125,
+        "tokensOut": 123,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.00707268,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "extension-registration",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 9646,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 19334,
+        "tokensOut": 511,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.03152912,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "extension-registration",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 22900,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 8816,
+        "tokensOut": 923,
+        "cacheRead": 24384,
+        "cacheWrite": 0,
+        "cost": 0.022743439999999997,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "extension-registration",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 12936,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 19270,
+        "tokensOut": 719,
+        "cacheRead": 8576,
+        "cacheWrite": 0,
+        "cost": 0.032371359999999995,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "extension-registration",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 19495,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 8756,
+        "tokensOut": 732,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.02183568,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "extension-registration",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 26930,
+      "aggregate": {
+        "turns": 4,
+        "tokensIn": 9469,
+        "tokensOut": 592,
+        "cacheRead": 66624,
+        "cacheWrite": 0,
+        "cost": 0.03318364,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "extension-registration",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 11288,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 19273,
+        "tokensOut": 679,
+        "cacheRead": 8576,
+        "cacheWrite": 0,
+        "cost": 0.032199559999999995,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "extension-registration",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 9193,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 19274,
+        "tokensOut": 450,
+        "cacheRead": 8576,
+        "cacheWrite": 0,
+        "cost": 0.031193359999999996,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "extension-registration",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 18124,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 8749,
+        "tokensOut": 644,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.021438679999999998,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "engine-pin-report",
+      "config": "stock",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 5019,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 865,
+        "tokensOut": 99,
+        "cacheRead": 8512,
+        "cacheWrite": 0,
+        "cost": 0.0038597199999999996,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "engine-pin-report",
+      "config": "torus",
+      "run": 0,
+      "warmup": true,
+      "ok": true,
+      "ms": 6738,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 1376,
+        "tokensOut": 96,
+        "cacheRead": 24384,
+        "cacheWrite": 0,
+        "cost": 0.008688640000000001,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "engine-pin-report",
+      "config": "stock",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 8757,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 870,
+        "tokensOut": 141,
+        "cacheRead": 13376,
+        "cacheWrite": 0,
+        "cost": 0.0053161599999999995,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "engine-pin-report",
+      "config": "torus",
+      "run": 1,
+      "warmup": false,
+      "ok": true,
+      "ms": 15225,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 1316,
+        "tokensOut": 127,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.00875768,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "engine-pin-report",
+      "config": "torus",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 9311,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 1313,
+        "tokensOut": 103,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "cost": 0.00864788,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "engine-pin-report",
+      "config": "stock",
+      "run": 2,
+      "warmup": false,
+      "ok": true,
+      "ms": 6717,
+      "aggregate": {
+        "turns": 3,
+        "tokensIn": 354,
+        "tokensOut": 140,
+        "cacheRead": 13888,
+        "cacheWrite": 0,
+        "cost": 0.004722479999999999,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "engine-pin-report",
+      "config": "stock",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 4317,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 779,
+        "tokensOut": 77,
+        "cacheRead": 8576,
+        "cacheWrite": 0,
+        "cost": 0.00365916,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    },
+    {
+      "model": "zai/glm-5.3",
+      "taskId": "engine-pin-report",
+      "config": "torus",
+      "run": 3,
+      "warmup": false,
+      "ok": true,
+      "ms": 11702,
+      "aggregate": {
+        "turns": 2,
+        "tokensIn": 36,
+        "tokensOut": 123,
+        "cacheRead": 25728,
+        "cacheWrite": 0,
+        "cost": 0.00728088,
+        "malformed": 0
+      },
+      "stderr": "",
+      "failure": "no assistant turn in event stream"
+    }
+  ]
+}

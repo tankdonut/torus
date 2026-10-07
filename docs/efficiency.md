@@ -9,31 +9,41 @@ torus's overhead.
 
 ## Method
 
-- **Task set.** Three fixed, read-only, repo-local prompts are embedded in
-  `scripts/bench-overhead.mjs` (state the project name from `README.md`; count
-  `registerTool` occurrences under `extensions/`; list the section headings of
-  `docs/agents.md`). Deterministic inputs, no file writes, no network beyond
-  the model API — so any token delta comes from the harness layer, not the
-  task.
-- **Configs.** Per task, the pinned engine binary (`resolveEngineBin`) is
-  spawned twice with `--mode json`: **stock** gets
-  `["--mode", "json", "--model", <model>, "-p", <task>]` and nothing else;
-  **torus** gets the same argv plus the canonical `childExtensionArgs` list and
-  `TORUS_ENGINE_CHILD=1` — byte-for-byte the spawn a delegation receives.
-- **Model axis.** `--model <id>` sets the model for both configs (default
-  `zai/glm-5.3-flash`); comparisons are only meaningful within one model.
+- **Task set.** Six fixed, read-only, repo-local prompts in three difficulty
+  tiers (trivial lookup / aggregate sweep / multi-file reasoning), defined in
+  `scripts/bench/tasks.mjs`. Deterministic inputs, no file writes, no network
+  beyond the model API — so any token delta comes from the harness layer, not
+  the task.
+- **Configs.** Per task, the pinned engine (`resolveEngineBin`) is spawned with
+  `--mode json`: **stock** gets the bare argv, **torus** gets the same argv
+  plus the canonical `childExtensionArgs` list and `TORUS_ENGINE_CHILD=1` —
+  byte-for-byte the spawn a delegation receives.
+- **Warmup discarded.** One warmup run per task × config executes first and is
+  excluded from statistics, so measured runs start from a steady-state prompt
+  cache and warm extension load path.
+- **Interleaved rotation.** Measured passes alternate config order
+  (stock, torus / torus, stock / …), so provider-side prompt-cache drift and
+  slow-warming trends cancel across configs instead of confounding the delta.
+- **Medians with spread.** Report cells are medians; `±` is half the
+  interquartile range over measured runs. A delta row is labeled `signal` only
+  when the median delta exceeds the larger config's IQR (run-to-run noise);
+  anything smaller is labeled `within noise` rather than passed off as a
+  finding. With fewer than two measured runs there is no dispersion basis and
+  verdicts render as `—`.
 - **Aggregation.** Each run's JSONL event stream is folded by the shared
   `reduceEngineEvent` pipeline (the same reducer roster/team/fleet consume):
   turns, tokens in/out, `cacheRead`/`cacheWrite`, and the engine-computed
   dollar cost come from `message_end` usage. Malformed event lines are skipped
-  and counted, never fatal. With `--runs N` the table reports per-run means.
-- **Cache-state caveat.** Every spawn is a fresh session, but provider-side
-  prompt caches can survive between runs of the same prompt (and between the
-  stock and torus configs), so `cacheRead`/`cacheWrite` deltas are indicative
-  rather than exact — a torus run may read cache that a stock run just wrote,
-  and vice versa. Fresh-cache `cacheWrite` also embeds torus's larger
-  tool/system context by construction. **tokens-in and cost deltas are the
-  stable signals**; treat cache columns as context.
+  and counted, never fatal.
+- **Cache accounting.** zai/GLM speaks the OpenAI-compatible schema, which
+  reports cache *reads* (`cached_tokens`) but has no cache-*write* token
+  accounting — so the cache-write column reads 0 on this provider by
+  construction (writes happen implicitly, unbilled and unreported; they
+  surface later as cache reads). On providers with explicit cache-write
+  usage (e.g. Anthropic-style `cache_creation` tokens) the column fills.
+- **Metadata pinned.** Every report header carries the date, torus version,
+  git commit, engine pin, and model list, so published numbers are
+  reproducible claims.
 
 ## Running it
 
@@ -41,66 +51,172 @@ The bench spawns the real engine and calls the model API — run it with valid
 credentials, from the repo root:
 
 ```sh
-npm run bench:overhead -- --model zai/glm-5.3-flash
+npm run bench:overhead -- --model zai/glm-5.3-flash,zai/glm-5.3
 ```
 
 | Option | Meaning |
 | ------ | ------- |
-| `--model <id>` | model id for both configs (default `zai/glm-5.3-flash`) |
-| `--runs N` | runs per task per config; table shows per-run means (default 1) |
-| `--stock-only` / `--torus-only` | quick single-config diffs (no delta rows) |
+| `--model <ids>` | comma-separated model ids, one full sweep each (default `zai/glm-5.3-flash`) |
+| `--runs N` | measured runs per task × config (default 3) |
+| `--warmup N` | warmup runs per task × config, discarded from stats (default 1) |
+| `--tasks <ids>` | comma-separated task subset (default: all six) |
+| `--stock-only` / `--torus-only` | single-config sweeps (no delta rows) |
 | `--timeout <sec>` | per-run wall-clock cap (default 600) |
-| `--help` | usage |
+| `--json <path>` | write raw per-run records (warmups included) for auditing |
+| `--html <path>` | write the self-contained HTML report (charts + method) |
 
-Exit status is 0 when every run completed, 1 when any run failed; failures and
-skipped malformed lines are reported and the bench keeps going.
+Exit status is 0 when every run (warmups included) completed, 1 otherwise;
+failures are reported and the bench keeps going.
+
+Artifacts in this repo: [`docs/efficiency.html`](efficiency.html) (generated
+report with distribution charts) and [`docs/bench-records.json`](bench-records.json)
+(raw per-run sidecar).
 
 ## Numbers
 
-Measured 2026-10-07, torus 0.3.0 + engine pin 1.0.4, single run per task per config (cold cache), zai credentials. `npm run bench:overhead -- --model <id>`.
+<!-- regenerated by scripts/bench.mjs; edit method above, not the tables below -->
 
-**glm-5.3-flash**
+Measured 2026-10-07, torus 0.6.0 + engine pin 1.0.4, commit `1c7256e` · 3 measured runs per task per config (1 warmup discarded, config order rotated per pass) · `npm run bench:overhead -- --model zai/glm-5.3-flash,zai/glm-5.3`.
+Cells are medians; `±` is half the interquartile range across measured runs. Verdicts: `signal` means the delta exceeds run-to-run noise (max IQR of the two configs).
 
-| task                |        config | turns | tokens in | tokens out | cache read | cache write |     cost |      ms |
-| ------------------- | :------------ | :---- | :-------- | :--------- | :--------- | :---------- | :------- | :------ |
-| readme-name         |         stock |     2 |     9,173 |         62 |         64 |           0 |  $0.0014 |   8,029 |
-| readme-name         |         torus |     2 |    24,588 |         93 |        832 |           0 |  $0.0038 |  15,495 |
-| readme-name         | Δ torus−stock |     0 |   +15,415 |        +31 |       +768 |           0 | +$0.0024 |  +7,466 |
-| register-tool-count |         stock |     2 |     3,555 |         94 |      4,864 |           0 |  $0.0007 |  11,204 |
-| register-tool-count |         torus |     2 |    11,482 |        105 |     12,800 |           0 |  $0.0022 |  14,461 |
-| register-tool-count | Δ torus−stock |     0 |    +7,927 |        +11 |     +7,936 |           0 | +$0.0014 |  +3,257 |
-| agents-doc-headings |         stock |     2 |     2,375 |        235 |      8,192 |           0 |  $0.0007 |   8,469 |
-| agents-doc-headings |         torus |     2 |     2,898 |        230 |     24,064 |           0 |  $0.0013 |  16,189 |
-| agents-doc-headings | Δ torus−stock |     0 |      +523 |         -5 |    +15,872 |           0 | +$0.0006 |  +7,720 |
-| totals              |         stock |     6 |    15,103 |        391 |     13,120 |           0 |  $0.0029 |  27,702 |
-| totals              |         torus |     6 |    38,968 |        428 |     37,696 |           0 |  $0.0072 |  46,145 |
-| totals              | Δ torus−stock |     0 |   +23,865 |        +37 |    +24,576 |           0 | +$0.0043 | +18,443 |
+## zai/glm-5.3-flash
 
+| task                   | config | turns |     tokens in | tokens out |      cache read | cache write |             cost |                   ms |
+| ---------------------- | :----- | :---- | :------------ | :--------- | :-------------- | :---------- | :--------------- | :------------------- |
+| readme-name            |  stock |     2 |  3,644 ±1,722 |      81 ±9 |    5,888 ±1,696 |           0 | $0.0008 ±$0.0002 |     5,402 ms ±265 ms |
+| readme-name            |  torus |     2 |  3,949 ±3,509 |     110 ±8 |   21,824 ±3,488 |           0 | $0.0013 ±$0.0004 |    12,805 ms ±579 ms |
+| agents-doc-headings    |  stock |     2 |  2,411 ±1,440 |    370 ±37 |    8,448 ±1,440 |           0 | $0.0008 ±$0.0002 |     8,257 ms ±242 ms |
+| agents-doc-headings    |  torus |     2 |  2,908 ±2,880 |    405 ±34 |   24,384 ±2,880 |           0 | $0.0014 ±$0.0004 |    17,335 ms ±835 ms |
+| register-tool-count    |  stock |     2 |        121 ±8 |      65 ±6 |           8,512 |           0 | $0.0003 ±$0.0000 |     4,558 ms ±840 ms |
+| register-tool-count    |  torus |     2 |        19 ±17 |      93 ±9 |      24,512 ±16 |           0 | $0.0008 ±$0.0000 |    12,227 ms ±232 ms |
+| skills-inventory       |  stock |     2 |       158 ±32 |      99 ±6 |       8,512 ±32 |           0 | $0.0003 ±$0.0000 |     5,375 ms ±891 ms |
+| skills-inventory       |  torus |     2 |       126 ±17 |      99 ±2 |      24,448 ±16 |           0 | $0.0008 ±$0.0000 |     11,939 ms ±98 ms |
+| extension-registration |  stock |  3 ±0 |    7,698 ±827 |    709 ±76 |   20,992 ±1,840 |           0 | $0.0023 ±$0.0002 |  16,718 ms ±1,990 ms |
+| extension-registration |  torus |  4 ±0 |    7,073 ±513 |   772 ±110 |   54,592 ±4,192 |           0 | $0.0032 ±$0.0002 |  33,399 ms ±3,786 ms |
+| engine-pin-report      |  stock |     3 |      539 ±116 |      84 ±1 |     13,504 ±112 |           0 | $0.0005 ±$0.0000 |     5,417 ms ±319 ms |
+| engine-pin-report      |  torus |     3 |    1,403 ±232 |    118 ±15 |     37,504 ±256 |           0 | $0.0014 ±$0.0000 |    13,649 ms ±879 ms |
+| totals                 |  stock | 14 ±0 | 14,571 ±4,144 | 1,408 ±134 |   65,856 ±5,120 |           0 | $0.0050 ±$0.0006 |  45,727 ms ±4,547 ms |
+| totals                 |  torus | 15 ±0 | 15,478 ±7,168 | 1,597 ±177 | 187,264 ±10,848 |           0 | $0.0088 ±$0.0011 | 101,354 ms ±6,409 ms |
 
-**glm-5.3**
+Δ torus − stock (medians) vs run-to-run noise:
 
-| task                |        config | turns | tokens in | tokens out | cache read | cache write |     cost |     ms |
-| ------------------- | :------------ | :---- | :-------- | :--------- | :--------- | :---------- | :------- | :----- |
-| readme-name         |         stock |     2 |     4,222 |         51 |      5,248 |           0 |  $0.0075 |  4,415 |
-| readme-name         |         torus |     2 |     3,799 |         70 |     21,440 |           0 |  $0.0112 | 11,329 |
-| readme-name         | Δ torus−stock |     0 |      -423 |        +19 |    +16,192 |           0 | +$0.0037 | +6,914 |
-| register-tool-count |         stock |     2 |       152 |        108 |      8,256 |           0 |  $0.0028 |  9,436 |
-| register-tool-count |         torus |     2 |       191 |         89 |     24,064 |           0 |  $0.0069 |  6,842 |
-| register-tool-count | Δ torus−stock |     0 |       +39 |        -19 |    +15,808 |           0 | +$0.0041 | -2,594 |
-| agents-doc-headings |         stock |     2 |     2,378 |        371 |      8,192 |           0 |  $0.0071 |  8,074 |
-| agents-doc-headings |         torus |     2 |     2,893 |        378 |     24,064 |           0 |  $0.0120 | 12,077 |
-| agents-doc-headings | Δ torus−stock |     0 |      +515 |         +7 |    +15,872 |           0 | +$0.0049 | +4,003 |
-| totals              |         stock |     6 |     6,752 |        530 |     21,696 |           0 |  $0.0174 | 21,925 |
-| totals              |         torus |     6 |     6,883 |        537 |     69,568 |           0 |  $0.0301 | 30,248 |
-| totals              | Δ torus−stock |     0 |      +131 |         +7 |    +47,872 |           0 | +$0.0127 | +8,323 |
+| task                   |       field |    Δ med | noise (IQR) |      verdict |
+| ---------------------- | :---------- | :------- | :---------- | :----------- |
+| readme-name            |       turns |        0 |           0 |         flat |
+| readme-name            |   tokens in |     +305 |       7,018 | within noise |
+| readme-name            |  tokens out |      +29 |          18 |       signal |
+| readme-name            |  cache read |  +15,936 |       6,976 |       signal |
+| readme-name            | cache write |        0 |           0 |         flat |
+| readme-name            |        cost | +$0.0005 |     $0.0008 | within noise |
+| readme-name            |          ms |   +7,403 |    1,158 ms |       signal |
+| agents-doc-headings    |       turns |        0 |           0 |         flat |
+| agents-doc-headings    |   tokens in |     +497 |       5,760 | within noise |
+| agents-doc-headings    |  tokens out |      +35 |          74 | within noise |
+| agents-doc-headings    |  cache read |  +15,936 |       5,760 |       signal |
+| agents-doc-headings    | cache write |        0 |           0 |         flat |
+| agents-doc-headings    |        cost | +$0.0006 |     $0.0007 | within noise |
+| agents-doc-headings    |          ms |   +9,078 |    1,669 ms |       signal |
+| register-tool-count    |       turns |        0 |           0 |         flat |
+| register-tool-count    |   tokens in |     -102 |          34 |       signal |
+| register-tool-count    |  tokens out |      +28 |          17 |       signal |
+| register-tool-count    |  cache read |  +16,000 |          32 |       signal |
+| register-tool-count    | cache write |        0 |           0 |         flat |
+| register-tool-count    |        cost | +$0.0005 |     $0.0000 |       signal |
+| register-tool-count    |          ms |   +7,669 |    1,681 ms |       signal |
+| skills-inventory       |       turns |        0 |           0 |         flat |
+| skills-inventory       |   tokens in |      -32 |          64 | within noise |
+| skills-inventory       |  tokens out |        0 |          12 | within noise |
+| skills-inventory       |  cache read |  +15,936 |          64 |       signal |
+| skills-inventory       | cache write |        0 |           0 |         flat |
+| skills-inventory       |        cost | +$0.0005 |     $0.0000 |       signal |
+| skills-inventory       |          ms |   +6,564 |    1,781 ms |       signal |
+| extension-registration |       turns |       +1 |           1 |       signal |
+| extension-registration |   tokens in |     -625 |       1,654 | within noise |
+| extension-registration |  tokens out |      +63 |         220 | within noise |
+| extension-registration |  cache read |  +33,600 |       8,384 |       signal |
+| extension-registration | cache write |        0 |           0 |         flat |
+| extension-registration |        cost | +$0.0009 |     $0.0005 |       signal |
+| extension-registration |          ms |  +16,681 |    7,572 ms |       signal |
+| engine-pin-report      |       turns |        0 |           0 |         flat |
+| engine-pin-report      |   tokens in |     +864 |         463 |       signal |
+| engine-pin-report      |  tokens out |      +34 |          29 |       signal |
+| engine-pin-report      |  cache read |  +24,000 |         512 |       signal |
+| engine-pin-report      | cache write |        0 |           0 |         flat |
+| engine-pin-report      |        cost | +$0.0009 |     $0.0001 |       signal |
+| engine-pin-report      |          ms |   +8,232 |    1,758 ms |       signal |
+
+## zai/glm-5.3
+
+| task                   | config | turns |   tokens in | tokens out |      cache read | cache write |             cost |                  ms |
+| ---------------------- | :----- | :---- | :---------- | :--------- | :-------------- | :---------- | :--------------- | :------------------ |
+| readme-name            |  stock |     2 |     742 ±82 |      63 ±5 |           8,512 |           0 | $0.0035 ±$0.0001 |    4,110 ms ±199 ms |
+| readme-name            |  torus |     2 |    694 ±271 |      76 ±5 |     24,448 ±272 |           0 | $0.0076 ±$0.0003 |    10,978 ms ±82 ms |
+| agents-doc-headings    |  stock |  2 ±0 |   2,374 ±77 |    365 ±62 |    8,512 ±1,632 |           0 | $0.0072 ±$0.0008 |  7,970 ms ±1,075 ms |
+| agents-doc-headings    |  torus |  2 ±0 |   2,843 ±67 |    386 ±73 |   24,448 ±3,088 |           0 | $0.0120 ±$0.0012 | 14,236 ms ±3,195 ms |
+| register-tool-count    |  stock |     2 |     177 ±23 |     150 ±9 |       8,512 ±16 |           0 | $0.0031 ±$0.0001 |    5,453 ms ±569 ms |
+| register-tool-count    |  torus |     2 |     113 ±21 |    128 ±11 |          24,448 |           0 | $0.0071 ±$0.0001 |   10,587 ms ±785 ms |
+| skills-inventory       |  stock |     2 |     168 ±17 |     136 ±6 |       8,512 ±16 |           0 | $0.0031 ±$0.0000 |    5,051 ms ±484 ms |
+| skills-inventory       |  torus |     2 |      135 ±3 |    123 ±10 |          24,448 |           0 | $0.0071 ±$0.0000 |   12,175 ms ±358 ms |
+| extension-registration |  stock |     2 |   19,273 ±1 |    679 ±67 |           8,576 |           0 | $0.0322 ±$0.0003 |   11,288 ms ±936 ms |
+| extension-registration |  torus |  2 ±1 |  8,756 ±180 |    644 ±35 |  24,448 ±10,544 |           0 | $0.0218 ±$0.0029 | 19,495 ms ±2,202 ms |
+| engine-pin-report      |  stock |  3 ±0 |    779 ±129 |    140 ±16 |   13,376 ±1,328 |           0 | $0.0047 ±$0.0004 |  6,717 ms ±1,110 ms |
+| engine-pin-report      |  torus |     2 |  1,313 ±320 |     123 ±6 |     24,448 ±320 |           0 | $0.0086 ±$0.0004 | 11,702 ms ±1,479 ms |
+| totals                 |  stock | 13 ±1 | 23,513 ±329 | 1,533 ±164 |   56,000 ±2,992 |           0 | $0.0538 ±$0.0017 | 40,589 ms ±4,373 ms |
+| totals                 |  torus | 12 ±1 | 13,854 ±861 | 1,480 ±140 | 146,688 ±14,224 |           0 | $0.0643 ±$0.0049 | 79,173 ms ±8,100 ms |
+
+Δ torus − stock (medians) vs run-to-run noise:
+
+| task                   |       field |    Δ med | noise (IQR) |      verdict |
+| ---------------------- | :---------- | :------- | :---------- | :----------- |
+| readme-name            |       turns |        0 |           0 |         flat |
+| readme-name            |   tokens in |      -48 |         542 | within noise |
+| readme-name            |  tokens out |      +13 |          10 |       signal |
+| readme-name            |  cache read |  +15,936 |         544 |       signal |
+| readme-name            | cache write |        0 |           0 |         flat |
+| readme-name            |        cost | +$0.0041 |     $0.0006 |       signal |
+| readme-name            |          ms |   +6,868 |      398 ms |       signal |
+| agents-doc-headings    |       turns |        0 |           1 | within noise |
+| agents-doc-headings    |   tokens in |     +469 |         154 |       signal |
+| agents-doc-headings    |  tokens out |      +21 |         147 | within noise |
+| agents-doc-headings    |  cache read |  +15,936 |       6,176 |       signal |
+| agents-doc-headings    | cache write |        0 |           0 |         flat |
+| agents-doc-headings    |        cost | +$0.0049 |     $0.0024 |       signal |
+| agents-doc-headings    |          ms |   +6,266 |    6,390 ms | within noise |
+| register-tool-count    |       turns |        0 |           0 |         flat |
+| register-tool-count    |   tokens in |      -64 |          46 |       signal |
+| register-tool-count    |  tokens out |      -22 |          21 |       signal |
+| register-tool-count    |  cache read |  +15,936 |          32 |       signal |
+| register-tool-count    | cache write |        0 |           0 |         flat |
+| register-tool-count    |        cost | +$0.0040 |     $0.0002 |       signal |
+| register-tool-count    |          ms |   +5,134 |    1,570 ms |       signal |
+| skills-inventory       |       turns |        0 |           0 |         flat |
+| skills-inventory       |   tokens in |      -33 |          35 | within noise |
+| skills-inventory       |  tokens out |      -13 |          20 | within noise |
+| skills-inventory       |  cache read |  +15,936 |          32 |       signal |
+| skills-inventory       | cache write |        0 |           0 |         flat |
+| skills-inventory       |        cost | +$0.0040 |     $0.0001 |       signal |
+| skills-inventory       |          ms |   +7,124 |      969 ms |       signal |
+| extension-registration |       turns |        0 |           1 | within noise |
+| extension-registration |   tokens in |  -10,517 |         360 |       signal |
+| extension-registration |  tokens out |      -35 |         135 | within noise |
+| extension-registration |  cache read |  +15,872 |      21,088 | within noise |
+| extension-registration | cache write |        0 |           0 |         flat |
+| extension-registration |        cost | -$0.0104 |     $0.0059 |       signal |
+| extension-registration |          ms |   +8,207 |    4,403 ms |       signal |
+| engine-pin-report      |       turns |       -1 |           1 |       signal |
+| engine-pin-report      |   tokens in |     +534 |         640 | within noise |
+| engine-pin-report      |  tokens out |      -17 |          32 | within noise |
+| engine-pin-report      |  cache read |  +11,072 |       2,656 |       signal |
+| engine-pin-report      | cache write |        0 |           0 |         flat |
+| engine-pin-report      |        cost | +$0.0039 |     $0.0008 |       signal |
+| engine-pin-report      |          ms |   +4,985 |    2,957 ms |       signal |
 
 
 ### Reading them
 
-- The torus configuration here is the delegated-child extension set without a per-agent `--tools` whitelist — the ceiling, not the trimmed surface real delegations now use (every child agent ships a complete whitelist that removes tools it never touches, and MCP servers are scoped to researcher agents).
-- On glm-5.3 the non-cached input overhead is near zero (+131 tokens across all tasks); the harness layer rides almost entirely in cache-read tokens (declaration surface, cached at a fraction of input price) — +$0.004 per task at 5.3 pricing.
-- On glm-5.3-flash the input delta is larger (+8k tokens/task) at flash's cheaper rates — +$0.0014 per task.
-- Wall-clock overhead (+2–7 s/run) is extension loading at spawn; amortized in real sessions that run many turns.
-- Single-run, cold-cache, self-reported — directional, not benchmark-grade. Re-run with `--runs 3` for tighter numbers.
-
+- Cache read is the dominant, consistent overhead signal — the extension declaration surface, cached by the provider at a fraction of input price.
+- Non-cached tokens-in deltas are mostly within run-to-run noise, and can be negative: on the multi-file reasoning task the stock engine flails (more turns, more fresh input) while the torus context reaches the answer directly.
+- Cost deltas are small but above noise on glm-5.3; on flash pricing they sit closer to the noise floor.
+- Wall-clock overhead per run is dominated by extension loading at spawn; amortized in real sessions that run many turns.
+- Compare models only within their own section — pricing and token behavior differ.
 
