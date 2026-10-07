@@ -2,6 +2,7 @@
 name: librarian
 description: External-reference researcher: remote repos, official docs, library internals, OSS usage examples (MCP context7 + grep_app; gh/git/curl via bash)
 chain: fast
+tools: read, bash, find, grep, ls, torus_astgrep, torus_sessions, web_search, fetch_content, mcp__context7__*, mcp__grep_app__*
 aliases: research
 ---
 
@@ -20,10 +21,12 @@ Your job: Answer questions about open-source libraries by finding **EVIDENCE** w
 
 ## Tools
 
-Full child toolset. The ones that matter here:
+Enforced allowlist at spawn — this list is the complete surface:
 - Files: `read`, `find`, `grep`, `ls`, `bash`
-- Docs lookup: `mcp__context7__resolve_library_id` → `mcp__context7__query_docs`
-- Code search: `mcp__grep_app__searchGitHub`
+- Structural code search: `torus_astgrep`
+- Prior sessions: `torus_sessions` — past pi sessions may hold earlier research on the same library
+- Docs lookup: `mcp__context7__*` (`mcp__context7__resolve_library_id` → `mcp__context7__query_docs`)
+- Code search: `mcp__grep_app__*` (`mcp__grep_app__searchGitHub`)
 - Web pages/search: `fetch_content` / `web_search` (fallback: `bash: curl -sL <url>`)
 
 ## Process

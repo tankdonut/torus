@@ -5,9 +5,10 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 // docs/agents.md contract, machine-enforced subset: frontmatter schema,
-// name=filename, whitelist validity + body coupling, retired-name denylist,
-// marker allowlist, body presence, skeleton order, injection defense. The
-// loader is silent on malformed files — this test is the error message.
+// name=filename, universal tool whitelists + entry validity + body coupling,
+// retired-name denylist, marker allowlist, body presence, skeleton order,
+// injection defense. The loader is silent on malformed files — this test is
+// the error message.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const agentsDir = path.join(root, "agents");
@@ -15,33 +16,87 @@ const agentsDir = path.join(root, "agents");
 const { parseAgentFile } = await import("../extensions/roster/index.ts");
 const { parseFrontmatter } = await import("../extensions/frontmatter.ts");
 
-// Real tool names a `tools:` whitelist may name. Verified against a spawned
-// child's actual system prompt (see docs/agents.md); extend only after a live
-// spawn proves a new name.
+// Static inventory of real tool names a `tools:` entry may name. Built from
+// what the repo actually registers: engine built-ins (pi docs), the torus
+// extension registerTool set, pi-web-access + pi-lsp-client (both in the
+// child extension list, extensions/engine-child.ts), and the direct-exposure
+// MCP servers. Drift fails loudly here, mirroring the phantom-tool denylist:
+// extend only after a live spawn proves a new name.
 const KNOWN_TOOLS = new Set([
-	// pi built-ins
+	// pi engine built-ins (docs/cli.md)
 	"read",
 	"bash",
+	"powershell",
 	"edit",
 	"write",
-	"find",
 	"grep",
+	"find",
 	"ls",
-	// torus extension tools
-	"look_at",
+	// built-in extension tools (off by default, but nameable)
+	"codemode",
+	"tool_search",
+	// torus extension registrations (extensions/*/index.ts)
+	"goal_complete",
 	"hashline_edit",
+	"interactive_bash",
+	"look_at",
+	"team_create",
+	"team_delete",
+	"team_msg",
+	"team_respawn",
+	"team_status",
+	"team_task_create",
+	"team_task_list",
+	"team_task_update",
+	"torus_ask",
 	"torus_astgrep",
+	"torus_chain",
+	"torus_delegate",
+	"torus_fanout",
+	"torus_forget",
+	"torus_memories",
+	"torus_monitor",
+	"torus_monitor_stop",
+	"torus_recall",
+	"torus_remember",
+	"torus_roster",
+	"torus_sessions",
+	"torus_todowrite",
+	"work_complete",
 	"work_note",
+	"work_start",
+	"worktree_create",
+	"worktree_merge",
+	"worktree_remove",
 	// pi-web-access
 	"web_search",
 	"fetch_content",
 	"get_search_content",
 	"source_check",
+	// pi-lsp-client
+	"lsp_diagnostics",
+	"lsp_goto_definition",
+	"lsp_find_references",
+	"lsp_symbols",
+	"lsp_prepare_rename",
+	"lsp_rename",
 	// MCP direct exposure (mcp__<server>__<tool>)
 	"mcp__context7__resolve_library_id",
 	"mcp__context7__query_docs",
 	"mcp__grep_app__searchGitHub",
 ]);
+
+// Entries that need no inventory match: a per-server glob ("every tool of
+// this MCP server") and a bare lsp grant (the lsp client's whole tool set).
+const MCP_SERVER_GLOB = /^mcp__[a-z0-9_]+__\*$/;
+const LSP_GRANT = /^lsp_[a-z_]+$/;
+
+function toolEntryProblem(entry) {
+	if (KNOWN_TOOLS.has(entry)) return null;
+	if (MCP_SERVER_GLOB.test(entry)) return null;
+	if (LSP_GRANT.test(entry)) return null;
+	return "is not a name in the inventory and not an allowed pattern (mcp__<server>__* or lsp_*) — verify in a live child, then extend KNOWN_TOOLS";
+}
 
 const KNOWN_FIELDS = new Set(["name", "description", "chain", "mode", "tools", "aliases", "model"]);
 
@@ -110,10 +165,8 @@ test("frontmatter schema: known fields only, valid values, name = filename stem"
 			assert.match(alias, /^[a-z0-9-]+$/, `${file}: alias "${alias}" must match ^[a-z0-9-]+$`);
 		}
 		for (const tool of def.tools ?? []) {
-			assert.ok(
-				KNOWN_TOOLS.has(tool),
-				`${file}: tools entry "${tool}" is not a real tool name — verify in a live child, then extend KNOWN_TOOLS`,
-			);
+			const problem = toolEntryProblem(tool);
+			assert.ok(!problem, `${file}: tools entry "${tool}" ${problem}`);
 		}
 	}
 });
@@ -129,6 +182,24 @@ test("whitelisted agents teach every granted tool in the body", () => {
 				body.includes(tool),
 				`${file}: tool "${tool}" is granted by the whitelist but never mentioned in the body — teach it or drop it`,
 			);
+		}
+	}
+});
+
+test("every child agent declares a complete tools: whitelist", () => {
+	for (const { file, raw } of files) {
+		const parsed = parseFrontmatter(raw);
+		assert.ok(parsed);
+		if (parsed.fields.get("mode") === "session") continue; // leader: session persona, exempt
+		const def = parseAgentFile(file, raw);
+		assert.ok(def);
+		assert.ok(
+			def.tools && def.tools.length > 0,
+			`${file}: child agent must declare tools: — the engine's --tools replaces the whole selection, so the whitelist is the complete spawn surface; absent means full-surface bloat, and any tool it fails to name is uncallable`,
+		);
+		for (const tool of def.tools ?? []) {
+			const problem = toolEntryProblem(tool);
+			assert.ok(!problem, `${file}: tools entry "${tool}" ${problem}`);
 		}
 	}
 });
