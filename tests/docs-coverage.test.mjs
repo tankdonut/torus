@@ -75,3 +75,14 @@ test("SECURITY.md exists and documents trust handoffs and disclosure", () => {
 		assert.ok(securityDoc.includes(token), `SECURITY.md missing token: ${token}`);
 	}
 });
+
+test("MCP spec status and stateless-server smoke are documented", () => {
+	for (const token of ["2025-11-25", "2026-07-28"]) {
+		assert.ok(doc.includes(token), `docs/extensions.md missing MCP spec revision: ${token}`);
+	}
+	assert.ok(doc.includes("MCP spec status"), "docs/extensions.md missing the MCP spec status note");
+	const smokeDocPath = path.join(root, "docs/smoke-checklist.md");
+	assert.ok(existsSync(smokeDocPath), "docs/smoke-checklist.md does not exist");
+	const smokeDoc = readFileSync(smokeDocPath, "utf8");
+	assert.ok(smokeDoc.includes("stateless"), "docs/smoke-checklist.md missing stateless MCP smoke");
+});
