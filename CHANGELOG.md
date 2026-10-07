@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/tankdonut/torus/compare/v0.4.0...v0.5.0) (2026-10-07)
+
+
+### Features
+
+* add converge rows and the lens-review skill ([45b8118](https://github.com/tankdonut/torus/commit/45b8118cb271e001a66972214f5db7fa19745cdd))
+* add opt-in member task self-claim ([12375bc](https://github.com/tankdonut/torus/commit/12375bcf36d0a6ec148f4d27c5580acb3dbde33b))
+* block task claims on unmet dependencies ([9869b4d](https://github.com/tankdonut/torus/commit/9869b4d476b650c5726c5880533fb538273d63f6))
+* emit structured results from core tools ([f2b7e33](https://github.com/tankdonut/torus/commit/f2b7e332749f72d430542496c934bb81966a6407))
+* mirror work-ledger rows into session entries ([55f1635](https://github.com/tankdonut/torus/commit/55f1635e4054b8f33b71fdf6a244c82eb2d929a4))
+* require plan approval before work binding ([ff347b4](https://github.com/tankdonut/torus/commit/ff347b4caee106e47c887ff59c59c615c3256f3a))
+* surface stale in-progress team tasks ([f310cc2](https://github.com/tankdonut/torus/commit/f310cc236581b960df8eb56ec173a296100c4ef2))
+
+
+### Bug Fixes
+
+* refuse tasklist writes on missing teams instead of hanging ([82c9af0](https://github.com/tankdonut/torus/commit/82c9af0bc1fbdc5232f81d329ea7f9d10c0acf0f))
+
 ## [0.4.0](https://github.com/tankdonut/torus/compare/v0.3.0...v0.4.0) (2026-10-07)
 
 
