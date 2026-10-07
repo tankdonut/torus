@@ -910,11 +910,22 @@ const teamStatusTool = defineTool({
 			}
 			return `- ${m.name} (${m.agent}) · ${m.status} — ${tail}`;
 		});
+		// Durability surfacing: a task left in_progress under a member that has
+		// since stopped can never be finished by itself — name it so the lead can
+		// reassign or close it. Read-only: no task is mutated here.
+		const orphans: string[] = [];
+		for (const task of readTasksFile(record.id).tasks) {
+			if (task.status !== "in_progress" || task.assignee === null) continue;
+			if (!record.members.some((m) => m.name === task.assignee && m.status === "stopped")) continue;
+			orphans.push(
+				`orphaned: ${task.id} (${task.subject}) was in-progress under @${task.assignee} (stopped) — reassign or complete via team_task_update`,
+			);
+		}
 		return {
 			content: [
 				{
 					type: "text",
-					text: `team ${record.name} [${record.status}] — ${record.objective}\n${reports.join("\n")}`,
+					text: `team ${record.name} [${record.status}] — ${record.objective}\n${reports.concat(orphans).join("\n")}`,
 				},
 			],
 			details: { teamId: record.id },
