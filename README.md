@@ -54,6 +54,7 @@ Every tool, command, hook, and env var is catalogued in [docs/extensions.md](doc
 **Keyword intent gates** (built in): saying `ultrawork` (full-precision contract), `hyperplan` (plan-first gate), or `team` (orchestrate, don't serialize) in a message injects that execution mode into the next turn's system prompt. Add or override via `~/.torus/keywords.json` (`{"word": "mode text"}`).
 
 torus skills follow the [Agent Skills](https://agentskills.io) open standard — they install into Claude Code and Codex unchanged, and external standard skills drop into `~/.agents/skills/` for torus to use ([details](docs/skills.md)).
+The harness layer's token and cost overhead against stock pi is measured and published in [docs/efficiency.md](docs/efficiency.md) — re-run it yourself with `npm run bench:overhead`.
 
 ## Personas
 

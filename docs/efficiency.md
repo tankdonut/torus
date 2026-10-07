@@ -57,4 +57,51 @@ skipped malformed lines are reported and the bench keeps going.
 
 ## Numbers
 
+Measured 2026-10-07, torus 0.3.0 + engine pin 1.0.4, single run per task per config (cold cache), zai credentials. `npm run bench:overhead -- --model <id>`.
+
+**glm-5.3-flash**
+
+| task                |        config | turns | tokens in | tokens out | cache read | cache write |     cost |      ms |
+| ------------------- | :------------ | :---- | :-------- | :--------- | :--------- | :---------- | :------- | :------ |
+| readme-name         |         stock |     2 |     9,173 |         62 |         64 |           0 |  $0.0014 |   8,029 |
+| readme-name         |         torus |     2 |    24,588 |         93 |        832 |           0 |  $0.0038 |  15,495 |
+| readme-name         | Δ torus−stock |     0 |   +15,415 |        +31 |       +768 |           0 | +$0.0024 |  +7,466 |
+| register-tool-count |         stock |     2 |     3,555 |         94 |      4,864 |           0 |  $0.0007 |  11,204 |
+| register-tool-count |         torus |     2 |    11,482 |        105 |     12,800 |           0 |  $0.0022 |  14,461 |
+| register-tool-count | Δ torus−stock |     0 |    +7,927 |        +11 |     +7,936 |           0 | +$0.0014 |  +3,257 |
+| agents-doc-headings |         stock |     2 |     2,375 |        235 |      8,192 |           0 |  $0.0007 |   8,469 |
+| agents-doc-headings |         torus |     2 |     2,898 |        230 |     24,064 |           0 |  $0.0013 |  16,189 |
+| agents-doc-headings | Δ torus−stock |     0 |      +523 |         -5 |    +15,872 |           0 | +$0.0006 |  +7,720 |
+| totals              |         stock |     6 |    15,103 |        391 |     13,120 |           0 |  $0.0029 |  27,702 |
+| totals              |         torus |     6 |    38,968 |        428 |     37,696 |           0 |  $0.0072 |  46,145 |
+| totals              | Δ torus−stock |     0 |   +23,865 |        +37 |    +24,576 |           0 | +$0.0043 | +18,443 |
+
+
+**glm-5.3**
+
+| task                |        config | turns | tokens in | tokens out | cache read | cache write |     cost |     ms |
+| ------------------- | :------------ | :---- | :-------- | :--------- | :--------- | :---------- | :------- | :----- |
+| readme-name         |         stock |     2 |     4,222 |         51 |      5,248 |           0 |  $0.0075 |  4,415 |
+| readme-name         |         torus |     2 |     3,799 |         70 |     21,440 |           0 |  $0.0112 | 11,329 |
+| readme-name         | Δ torus−stock |     0 |      -423 |        +19 |    +16,192 |           0 | +$0.0037 | +6,914 |
+| register-tool-count |         stock |     2 |       152 |        108 |      8,256 |           0 |  $0.0028 |  9,436 |
+| register-tool-count |         torus |     2 |       191 |         89 |     24,064 |           0 |  $0.0069 |  6,842 |
+| register-tool-count | Δ torus−stock |     0 |       +39 |        -19 |    +15,808 |           0 | +$0.0041 | -2,594 |
+| agents-doc-headings |         stock |     2 |     2,378 |        371 |      8,192 |           0 |  $0.0071 |  8,074 |
+| agents-doc-headings |         torus |     2 |     2,893 |        378 |     24,064 |           0 |  $0.0120 | 12,077 |
+| agents-doc-headings | Δ torus−stock |     0 |      +515 |         +7 |    +15,872 |           0 | +$0.0049 | +4,003 |
+| totals              |         stock |     6 |     6,752 |        530 |     21,696 |           0 |  $0.0174 | 21,925 |
+| totals              |         torus |     6 |     6,883 |        537 |     69,568 |           0 |  $0.0301 | 30,248 |
+| totals              | Δ torus−stock |     0 |      +131 |         +7 |    +47,872 |           0 | +$0.0127 | +8,323 |
+
+
+### Reading them
+
+- The torus configuration here is the delegated-child extension set without a per-agent `--tools` whitelist — the ceiling, not the trimmed surface real delegations now use (every child agent ships a complete whitelist that removes tools it never touches, and MCP servers are scoped to researcher agents).
+- On glm-5.3 the non-cached input overhead is near zero (+131 tokens across all tasks); the harness layer rides almost entirely in cache-read tokens (declaration surface, cached at a fraction of input price) — +$0.004 per task at 5.3 pricing.
+- On glm-5.3-flash the input delta is larger (+8k tokens/task) at flash's cheaper rates — +$0.0014 per task.
+- Wall-clock overhead (+2–7 s/run) is extension loading at spawn; amortized in real sessions that run many turns.
+- Single-run, cold-cache, self-reported — directional, not benchmark-grade. Re-run with `--runs 3` for tighter numbers.
+
+
 Pending — to be filled in by a benchmark run.
