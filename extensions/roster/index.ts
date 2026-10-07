@@ -134,6 +134,21 @@ function resolveModel(chain: keyof typeof MODEL_CHAINS): string | undefined {
 	return resolveModels(chain)[0];
 }
 
+/** Model ids a delegation may run on right now: every chain candidate whose provider is credentialed. */
+export function availableModels(): string[] {
+	return [...new Set([...resolveModels("primary"), ...resolveModels("fast")])];
+}
+
+/**
+ * Resolve a per-run model override: "primary"/"fast" name a chain (resolved to
+ * its first credentialed candidate), anything else must be an exact id in the
+ * available set. Returns the concrete id, or undefined when nothing matches.
+ */
+export function resolveRequestedModel(requested: string): string | undefined {
+	if (requested === "primary" || requested === "fast") return resolveModel(requested);
+	return availableModels().includes(requested) ? requested : undefined;
+}
+
 export function personaModel(name: string): string | null {
 	const agent = AGENTS.find((a) => a.name === name);
 	if (!agent) return null;
@@ -646,6 +661,13 @@ export async function runDelegation(
 	 */
 	announce: boolean | string = true,
 	emitResult = true,
+	/**
+	 * Per-run overrides. `model` starts the chain walk at a specific model:
+	 * "primary"/"fast" (chain shorthands) or an exact available id — validated
+	 * before any spawn, invalid values reject pre-flight. Older call sites
+	 * (memory background runs) pass announce positionally, so the bag trails.
+	 */
+	options?: { model?: string | null },
 ): Promise<DelegationOutcome> {
 	const agent = firstDelegatable(agentName);
 	if (!agent) {
@@ -657,8 +679,8 @@ export async function runDelegation(
 		};
 	}
 	const chainModels = resolveModels(agent.chain);
-	const firstModel = chainModels[0];
-	if (!firstModel) {
+	const chainHead = chainModels[0];
+	if (!chainHead) {
 		return {
 			ok: false,
 			text: "No credentialed model in chain. Authenticate zai (/login zai) or set the opencode-go env.",
@@ -666,6 +688,28 @@ export async function runDelegation(
 			delegationId: null,
 		};
 	}
+	const requestedModel = options?.model?.trim() || null;
+	let firstModel = chainHead;
+	if (requestedModel) {
+		const resolved = resolveRequestedModel(requestedModel);
+		if (!resolved) {
+			return {
+				ok: false,
+				text: `Invalid model "${requestedModel}". Valid: primary, fast (chain shorthands), ${availableModels().join(", ")}`,
+				details: { error: "invalid-model", model: requestedModel },
+				delegationId: null,
+			};
+		}
+		// Shorthands resolve here so the registry record carries a real id.
+		firstModel = resolved;
+	} else if (agent.model && availableModels().includes(agent.model)) {
+		// Frontmatter pin; a pin whose provider is unavailable defers to the chain head.
+		firstModel = agent.model;
+	}
+	const attemptModels =
+		firstModel === chainHead
+			? chainModels
+			: [firstModel, ...chainModels.filter((m) => m !== firstModel)];
 	const workingDir = cwd ?? process.cwd();
 	const resolvedSkills = resolveSkillPaths(skills ?? [], workingDir);
 	if (resolvedSkills.rejected.length > 0) {
@@ -733,7 +777,7 @@ export async function runDelegation(
 		// JSON-mode fallback child via its abort listener (rpc children are
 		// stopped directly through their control).
 		const stopController = new AbortController();
-		for (const candidate of chainModels) {
+		for (const candidate of attemptModels) {
 			usedModel = candidate;
 			if (candidate !== firstModel) {
 				setDelegationModel(delegationId, candidate);
@@ -773,7 +817,7 @@ export async function runDelegation(
 			})();
 			result = attempt;
 			if (attempt.exitCode === 0 || attempt.usage.turns > 0) break;
-			const isLast = candidate === chainModels[chainModels.length - 1];
+			const isLast = candidate === attemptModels[attemptModels.length - 1];
 			if (!isLast) {
 				appendAction(
 					delegationId,
@@ -908,6 +952,12 @@ const delegateTool = defineTool({
 		cwd: Type.Optional(
 			Type.String({ description: "Working directory for the subagent (default: current)" }),
 		),
+		model: Type.Optional(
+			Type.String({
+				description:
+					"Model for this run: 'primary' or 'fast' (chain shorthands) or an exact id like zai/glm-5.3 — starts the chain walk there, falls back down the agent's chain on no-work failures",
+			}),
+		),
 	}),
 	renderCall(args, theme) {
 		const handle = args.handle?.trim().replace(/^@+/, "");
@@ -1032,6 +1082,8 @@ const delegateTool = defineTool({
 				// No start marker: it defers until this call returns and would land
 				// as a duplicate of the call line above. The tool block is the surface.
 				false,
+				undefined,
+				{ model: params.model ?? null },
 			);
 		} finally {
 			ctx.ui.setStatus(statusKey, undefined);

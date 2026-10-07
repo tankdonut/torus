@@ -29,7 +29,7 @@ A session persona is excluded from child delegation; it orchestrates and never r
 | `mode` | no | `child` \| `session`. Omit unless session persona. Unknown values silently default to `child` — test rejects |
 | `tools` | no | Comma list; becomes the engine `--tools` allowlist, matched **strictly** against real tool names. Absent = full child toolset. Every listed tool must (a) exist, (b) be taught in the body — a granted-but-untaught tool is a contract violation |
 | `aliases` | no | Extra slash-command names, `^[a-z0-9-]+$` each |
-| `model` | no | Explicit model id overriding the chain head |
+| `model` | no | Explicit model id steering both the session persona and the agent's own delegations: the chain walk starts at it and still falls back down the agent's chain on no-work failures. A pin whose provider is unavailable defers to the chain head |
 
 Unknown frontmatter fields are rejected by the test: the loader ignores them silently, which is how `tool:`/`chains:` typos die undiscovered.
 

@@ -76,6 +76,12 @@ const fanoutTool = defineTool({
 					),
 				),
 				cwd: Type.Optional(Type.String({ description: "Working directory (default: current)" })),
+				model: Type.Optional(
+					Type.String({
+						description:
+							"Model for this run: 'primary' or 'fast' (chain shorthands) or an exact id like zai/glm-5.3",
+					}),
+				),
 			}),
 			{ minItems: 2, maxItems: MAX_PARALLEL },
 		),
@@ -223,6 +229,7 @@ const fanoutTool = defineTool({
 						run.skills ?? null,
 						false,
 						false,
+						{ model: run.model ?? null },
 					);
 					const usage = outcome.details.usage as { turns?: number; cost?: number } | undefined;
 					coalesce({
@@ -304,6 +311,12 @@ const chainTool = defineTool({
 					),
 				),
 				cwd: Type.Optional(Type.String({ description: "Working directory (default: current)" })),
+				model: Type.Optional(
+					Type.String({
+						description:
+							"Model for this step: 'primary' or 'fast' (chain shorthands) or an exact id like zai/glm-5.3",
+					}),
+				),
 			}),
 			{ minItems: 2, maxItems: 6 },
 		),
@@ -359,6 +372,9 @@ const chainTool = defineTool({
 					parentSession,
 					handle,
 					step.skills ?? null,
+					undefined,
+					undefined,
+					{ model: step.model ?? null },
 				);
 			} finally {
 				ctx.ui.setStatus(statusKey, undefined);
