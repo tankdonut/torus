@@ -57,3 +57,12 @@ test("docs/skills.md exists and documents Agent Skills portability", () => {
 		assert.ok(skillsDoc.includes(token), `docs/skills.md missing token: ${token}`);
 	}
 });
+
+test("docs/instructions.md exists and documents AGENTS.md discovery and precedence", () => {
+	const instructionsDocPath = path.join(root, "docs/instructions.md");
+	assert.ok(existsSync(instructionsDocPath), "docs/instructions.md does not exist");
+	const instructionsDoc = readFileSync(instructionsDocPath, "utf8");
+	for (const token of ["{{AGENTS}}", "CLAUDE.md", "subdirector"]) {
+		assert.ok(instructionsDoc.includes(token), `docs/instructions.md missing token: ${token}`);
+	}
+});
