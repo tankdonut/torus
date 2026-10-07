@@ -144,3 +144,23 @@ test("engine config surfaces section documents all four pinned-engine levers", (
 		assert.ok(section.includes(token), `engine config surfaces section missing token: ${token}`);
 	}
 });
+
+test("torus serve section documents routes, auth, config, and the kill switch", () => {
+	const start = doc.indexOf("## `torus serve`");
+	assert.ok(start !== -1, "docs/extensions.md missing the torus serve section");
+	const end = doc.indexOf("\n## ", start + 1);
+	const section = doc.slice(start, end === -1 ? undefined : end);
+	for (const token of [
+		"/health",
+		"/run",
+		"/runs",
+		"TORUS_SERVE",
+		"auth.json",
+		"serve.json",
+		"Bearer",
+		"0600",
+		"timingSafeEqual",
+	]) {
+		assert.ok(section.includes(token), `serve section missing token: ${token}`);
+	}
+});

@@ -155,6 +155,25 @@ Tools: `torus_ask` (questions[] with question/header/options/allowCustom).
 The `torus` statusline segment: brand, identity block (persona, shortened model id, thinking effort — all in the persona's truecolor RGB), dim provider availability; the engine tag appears only when `TORUS_ENGINE` is overridden. Health and objective follow: the MCP connected count (`MCP N`, success/warning) polled on `session_start`/`turn_start` with a settle-poll that repaints while startup connections are still coming up, and the session goal as a compact chip (`▶ <48-char head>` warning while active, `⏸` dim while paused, absent when unset or complete — pushed by the goal extension). Model and effort are event-tracked module state, so every writer renders the same line. Plus a warning `delegate ×N` chip while `torus_delegate` executions are in flight (ref-counted), and a persistent session-cost chip on its own `torus:cost` statusline key beside the torus segment: assistant `message_end` usage is folded through the shared engine-child tally reducer and rendered with `formatCost` — `$0` shows only once tokens were spent, and the chip stays absent until something measurable happens. Source of the persona color map used by persona-theming.
 Hooks: `session_start`, `turn_start`, `model_select`, `message_end`, `tool_execution_start`, `tool_execution_end` (torus_delegate only). Env: `TORUS_ENGINE` (display only); `TORUS_STATUSLINE_COST=0` disables the session-cost chip.
 
+## `torus serve`
+
+`torus serve` boots an authenticated HTTP server over the delegation core (`extensions/serve/index.ts`): session-free `runDelegation()` calls with `parentSession: null` — the same production path memory reflect/dream and team respawn use — so every run lands in the shared registry (record + run beacon) and is fleet-visible like any other delegation. The launcher intercepts the subcommand before the pi passthrough (`runtime/bin/torus.mjs`); the server is the process, never a pi manifest extension, and never starts implicitly — only the subcommand calls `startServe()`, and `TORUS_SERVE=0` refuses startup (exit 1).
+
+Routes (plain `node:http`, no framework):
+
+| Route | Auth | Behavior |
+|---|---|---|
+| `GET /health` | none | `{ok: true, version}` |
+| `POST /run` | bearer | `{agent, task, model?, cwd?, wait?}` — default responds `{delegationId}` immediately; `wait: true` awaits the outcome (10-min cap → 504) and returns `{ok, text, usage, model, delegationId, error?}`. Agent/model validation is roster's own pre-flight (invalid agent or model → 400 naming the reason, no engine spawned). Each run carries a unique `srv-` handle — the correlation tag that also labels it in fleet views |
+| `GET /runs` | bearer | delegation list from the shared registry (id, agent, model, handle, status, usage counters, `parentSession`) |
+| anything else | — | 404 JSON |
+
+Config at `~/.torus/serve.json` (read-with-fallback to defaults): `{"port": 4747, "bind": "127.0.0.1", "tokenPath": …}` — defaults shown; `EADDRINUSE` fails startup with a clean error naming the port and the serve.json override.
+
+Auth: bearer token in `~/.torus/serve/auth.json` (`{token, createdAt}`, mode 0600). First start mints 32 random bytes (hex) and prints `serve token: <token>` exactly once to stdout; subsequent starts read silently. Every `/run` and `/runs` request requires `Authorization: Bearer <token>`, compared constant-time (`crypto.timingSafeEqual` over sha256 digests); anything missing or wrong is 401 JSON.
+
+Trust boundary: delegations inherit the serve process environment — provider credentials included — so the bearer token is the entire boundary; anyone holding it can spend the account's models. Bind stays loopback by default.
+
 ## Shared modules
 
 | Module | Provides | Consumers |
@@ -240,3 +259,4 @@ Engine-owned configuration torus users can ride directly; torus's own code touch
 | `TORUS_REFLECT_TURNS=<n>` | memory | Reflect after N settles since the last reflect (0 = idle-only; default 12) |
 | `TORUS_DREAMING=0` | memory | Disable dream consolidation |
 | `TORUS_THEME_DEBUG` | persona-theme | Theme debugging |
+| `TORUS_SERVE=0` | serve | Kill switch: `torus serve` refuses to start (exit 1) |

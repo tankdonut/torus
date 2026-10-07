@@ -24,7 +24,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { extractPayload, readMarker } from "./payload-extract.mjs";
 
 function isTorusRoot(candidate) {
@@ -111,6 +111,59 @@ const pin =
 	pkg.dependencies?.["@earendil-works/pi-coding-agent"] ??
 	pkg.devDependencies?.["@earendil-works/pi-coding-agent"];
 const argv = process.argv.slice(2);
+
+// torus serve — the authenticated delegation API (extensions/serve/index.ts).
+// Intercepted before the pi passthrough: the server process IS the surface,
+// not an extension inside an engine session. The serve module is TypeScript
+// with .js import specifiers, so this plain .mjs launcher uses the same
+// bootstrap as team-task.mjs: a .js→.ts resolve hook after an optional
+// one-shot strip-types re-exec on older Node.
+if (argv[0] === "serve") {
+	if (!process.features.typescript && !process.env["TORUS_SERVE_BOOTSTRAPPED"]) {
+		const reexec = spawnSync(
+			process.execPath,
+			["--experimental-strip-types", "--no-warnings", process.argv[1], ...argv],
+			{ stdio: "inherit", env: { ...process.env, TORUS_SERVE_BOOTSTRAPPED: "1" } },
+		);
+		process.exit(reexec.status ?? 1);
+	}
+	const { registerHooks } = await import("node:module");
+	registerHooks({
+		resolve(specifier, context, nextResolve) {
+			if (specifier.endsWith(".js") && !specifier.includes("node_modules") && context.parentURL) {
+				try {
+					const tsPath = fileURLToPath(new URL(specifier, context.parentURL)).replace(
+						/\.js$/,
+						".ts",
+					);
+					if (existsSync(tsPath)) {
+						return nextResolve(pathToFileURL(tsPath).href, context);
+					}
+				} catch {
+					// fall through to default resolution
+				}
+			}
+			return nextResolve(specifier, context);
+		},
+	});
+	process.env["TORUS_ROOT"] = root;
+	if (!process.env["TORUS_ENGINE_BIN"]) process.env["TORUS_ENGINE_BIN"] = resolveBinary();
+	const serve = await import(new URL("../../extensions/serve/index.ts", import.meta.url).href);
+	try {
+		const handle = await serve.startServe();
+		const shutdown = () => {
+			void handle.close().then(() => process.exit(0));
+		};
+		process.on("SIGINT", shutdown);
+		process.on("SIGTERM", shutdown);
+	} catch (err) {
+		process.stderr.write(`torus: serve failed to start: ${err?.message ?? err}\n`);
+		process.exit(1);
+	}
+	// The listening socket keeps the process alive; nothing below (engine
+	// passthrough) applies to serve.
+	await new Promise(() => {});
+}
 
 if (argv[0] === "--version") {
 	process.stdout.write(`torus ${pkg.version}${pin ? ` (pi@${pin})` : ""}\n`);
