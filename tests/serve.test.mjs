@@ -62,11 +62,15 @@ async function waitForRunDone(delegationId) {
 }
 
 async function captureStdout(fn) {
+	// Tee, not mute: the node:test child pipes reporter events through this
+	// same stream, and a write swallowed here is a test result the parent
+	// runner never receives (a queued event can land in the next test's
+	// capture window). Record for assertions, always forward.
 	const chunks = [];
 	const orig = process.stdout.write;
 	process.stdout.write = (chunk) => {
 		chunks.push(typeof chunk === "string" ? chunk : chunk.toString());
-		return true;
+		return orig.call(process.stdout, chunk);
 	};
 	try {
 		return { result: await fn(), output: chunks.join("") };
@@ -476,6 +480,200 @@ test("restart with persisted lastFired does not re-fire within the interval, but
 		} finally {
 			await past.close();
 		}
+	} finally {
+		clearServeConfig();
+	}
+});
+
+// ---- webhooks ----
+
+function spawnArgsText() {
+	return readdirSync(ARGS_DIR)
+		.map((f) => readFileSync(path.join(ARGS_DIR, f), "utf8"))
+		.join("\n");
+}
+
+function webhookSecretFromState(name) {
+	const state = JSON.parse(readFileSync(triggersStateFile(), "utf8"));
+	return state[name]?.webhookSecret;
+}
+
+function writeWebhookServeConfig() {
+	writeServeConfig({
+		triggers: [
+			{
+				name: "issue-hook",
+				everyMinutes: 720,
+				agent: "builder",
+				task: "Triage issue {{payload.issue}} titled {{payload.title}} now.",
+				webhook: { path: "/hook/issues" },
+			},
+		],
+	});
+}
+
+test("validateTriggers checks webhook shape and path uniqueness", () => {
+	const ok = serve.validateTriggers([
+		{ name: "hooked", everyMinutes: 5, agent: "builder", task: "t", webhook: { path: "/hook/x" } },
+	]).triggers[0];
+	assert.equal(ok.webhook.path, "/hook/x");
+	assert.match(
+		serve.validateTriggers([
+			{ name: "x", everyMinutes: 5, agent: "builder", task: "t", webhook: "nope" },
+		]).error,
+		/"webhook" must be an object/,
+	);
+	assert.match(
+		serve.validateTriggers([
+			{ name: "x", everyMinutes: 5, agent: "builder", task: "t", webhook: { path: "/hooks/x" } },
+		]).error,
+		/"webhook.path" must start with "\/hook\/"/,
+	);
+	assert.match(
+		serve.validateTriggers([
+			{
+				name: "x",
+				everyMinutes: 5,
+				agent: "builder",
+				task: "t",
+				webhook: { path: "/hook/Bad_Slug" },
+			},
+		]).error,
+		/"webhook.path" must start with "\/hook\/"/,
+	);
+	assert.match(
+		serve.validateTriggers([
+			{ name: "a", everyMinutes: 5, agent: "builder", task: "t", webhook: { path: "/hook/same" } },
+			{ name: "b", everyMinutes: 5, agent: "builder", task: "t", webhook: { path: "/hook/same" } },
+		]).error,
+		/webhook path "\/hook\/same" is already used by trigger "a"/,
+	);
+});
+
+test("renderTaskTemplate JSON-stringifies payload fields, caps depth, empties missing", () => {
+	assert.equal(serve.renderTaskTemplate("n={{payload.n}}", { n: 42 }), "n=42");
+	assert.equal(serve.renderTaskTemplate("hi {{payload.who}}", { who: "ada" }), 'hi "ada"');
+	assert.equal(
+		serve.renderTaskTemplate("{{payload.user}}", { user: { name: "ada", admin: false } }),
+		'{"name":"ada","admin":false}',
+	);
+	assert.equal(serve.renderTaskTemplate("x={{payload.missing}}!", {}), "x=!");
+	assert.equal(serve.renderTaskTemplate("{{payload.a.b}}", { a: { b: 7 } }), "7");
+	assert.equal(serve.renderTaskTemplate("{{payload.a.b}}", { a: {} }), "");
+	assert.equal(
+		serve.renderTaskTemplate("{{payload.v}}", { v: { a: { b: { c: 1 } } } }),
+		'{"a":{"b":{"c":1}}}',
+	);
+	let deep = { leaf: 1 };
+	for (let i = 0; i < 10; i += 1) deep = { nested: deep };
+	const rendered = serve.renderTaskTemplate("{{payload.deep}}", { deep });
+	assert.ok(rendered.includes('"[truncated]"'), "deep nesting truncates");
+	assert.ok(!rendered.includes("leaf"), "content past the depth cap is gone");
+});
+
+test("webhook secret is minted + printed once at first start and identical across restarts", async () => {
+	freshTriggersState();
+	writeWebhookServeConfig();
+	try {
+		const first = await captureStdout(() => serve.startServe({ port: 0 }));
+		await first.result.close();
+		const secret = webhookSecretFromState("issue-hook");
+		assert.match(secret ?? "", /^[0-9a-f]{64}$/, "64-hex secret persisted in triggers-state.json");
+		assert.ok(
+			first.output.includes(`webhook secret for issue-hook: ${secret}`),
+			"first start prints the secret",
+		);
+		const second = await captureStdout(() => serve.startServe({ port: 0 }));
+		await second.result.close();
+		assert.equal(second.output.includes("webhook secret"), false, "restart does not reprint");
+		assert.equal(webhookSecretFromState("issue-hook"), secret, "restart keeps the same secret");
+	} finally {
+		clearServeConfig();
+	}
+});
+
+test("webhook endpoint: 401/404/405/413/400 rejections and a valid templated fire", async () => {
+	registry.resetRegistryForTesting();
+	freshArgsDir();
+	freshTriggersState();
+	writeWebhookServeConfig();
+	const boot = await captureStdout(() => serve.startServe({ port: 0 }));
+	const started = boot.result;
+	openHandles.push(started);
+	try {
+		const hookUrl = `http://127.0.0.1:${started.port}/hook/issues`;
+		const secret = webhookSecretFromState("issue-hook");
+		assert.ok(typeof secret === "string", "secret available to the caller");
+
+		const wrong = await fetch(hookUrl, {
+			method: "POST",
+			headers: { "x-torus-secret": "deadbeef", "content-type": "application/json" },
+			body: "{}",
+		});
+		assert.equal(wrong.status, 401, "wrong secret rejected");
+		assert.equal((await wrong.json()).error, "unauthorized");
+
+		const missing = await fetch(hookUrl, { method: "POST", body: "{}" });
+		assert.equal(missing.status, 401, "missing secret rejected");
+
+		const unknown = await fetch(`http://127.0.0.1:${started.port}/hook/nope`, {
+			method: "POST",
+			headers: { "x-torus-secret": "x", "content-type": "application/json" },
+			body: "{}",
+		});
+		assert.equal(unknown.status, 404, "unknown hook path 404s");
+
+		const get = await fetch(hookUrl);
+		assert.equal(get.status, 405, "non-POST method 405s");
+		assert.equal((await get.json()).error, "method-not-allowed");
+
+		const malformed = await fetch(hookUrl, {
+			method: "POST",
+			headers: { "x-torus-secret": secret, "content-type": "application/json" },
+			body: "{not json",
+		});
+		assert.equal(malformed.status, 400, "malformed JSON 400s");
+		assert.equal((await malformed.json()).error, "invalid-body");
+
+		const oversized = await fetch(hookUrl, {
+			method: "POST",
+			headers: { "x-torus-secret": secret, "content-type": "application/json" },
+			body: JSON.stringify({ pad: "x".repeat(70 * 1024) }),
+		});
+		assert.equal(oversized.status, 413, "body over the 64 KiB cap 413s");
+		assert.equal((await oversized.json()).error, "payload-too-large");
+		assert.equal(readdirSync(ARGS_DIR).length, 0, "no engine spawn for rejected requests");
+
+		const fired = await fetch(hookUrl, {
+			method: "POST",
+			headers: { "x-torus-secret": secret, "content-type": "application/json" },
+			body: JSON.stringify({ issue: 42, title: "build fails on arm64" }),
+		});
+		assert.equal(fired.status, 200);
+		const body = await fired.json();
+		assert.equal(typeof body.delegationId, "string", "fire-and-ack response carries the id");
+		const record = registry.listDelegations().find((r) => r.id === body.delegationId);
+		assert.ok(record, "fired webhook created a registry record");
+		assert.match(record.handle ?? "", /^srv-/, "webhook run carries the serve handle tag");
+		await waitForRunDone(record.id);
+		assert.ok(
+			spawnArgsText().includes('Triage issue 42 titled "build fails on arm64" now.'),
+			"payload-rendered task text reached the engine",
+		);
+
+		const fired2 = await fetch(hookUrl, {
+			method: "POST",
+			headers: { "x-torus-secret": secret, "content-type": "application/json" },
+			body: JSON.stringify({ issue: 43 }),
+		});
+		assert.equal(fired2.status, 200);
+		const body2 = await fired2.json();
+		assert.notEqual(body2.delegationId, body.delegationId, "each request fires a new delegation");
+		assert.equal(
+			registry.listDelegations().filter((r) => r.agent === "builder").length,
+			2,
+			"no skip-while-active gate for webhooks — both delegations exist",
+		);
 	} finally {
 		clearServeConfig();
 	}

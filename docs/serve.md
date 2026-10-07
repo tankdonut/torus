@@ -32,6 +32,7 @@ Routes:
 | `GET /health` | none | `{ok: true, version}` |
 | `POST /run` | bearer | `{agent, task, model?, cwd?, wait?}` — default responds `{delegationId}` immediately; `wait: true` awaits the outcome (10-min cap → 504) |
 | `GET /runs` | bearer | delegation list from the shared registry |
+| `POST /hook/<slug>` | per-trigger secret (`X-Torus-Secret`) | webhook fire — see [Webhooks](#webhooks) |
 
 Agent/model validation is roster's own pre-flight: an unknown agent or invalid model returns 400 naming the reason and spawns nothing.
 
@@ -72,4 +73,67 @@ Behavior:
 
 ## Webhooks
 
-Coming.
+Any trigger can also be fired over HTTP: add a `webhook` block and the trigger gains a secret-authenticated `POST` endpoint whose JSON body is rendered into the task.
+
+```json
+{
+	"triggers": [
+		{
+			"name": "issue-hook",
+			"everyMinutes": 720,
+			"agent": "builder",
+			"task": "Triage issue {{payload.issue}} titled {{payload.title}}.",
+			"webhook": { "path": "/hook/issues" }
+		}
+	]
+}
+```
+
+Validation (startup, fail loud like the rest of `triggers`): `webhook.path` must be unique across triggers, must start with `/hook/`, and the remainder must be a slug (lowercase letters, digits, hyphens). The scheduled side is unaffected — a webhook trigger still fires on its `everyMinutes` cadence, and webhook fires do not touch the schedule's `lastFired` bookkeeping: the two paths run independently.
+
+### Secret lifecycle
+
+Each webhook trigger gets its own secret — 32 random bytes (hex), minted at first start, stored in `~/.torus/serve/triggers-state.json` beside the trigger's `lastFired`, and printed exactly once to stdout (same pattern as the bearer token):
+
+```
+webhook secret for issue-hook: 3f9a1c…64 hex chars
+```
+
+Restarts read the stored secret silently, so the secret (and any integrations using it) survives restarts. To rotate, delete the trigger's entry in triggers-state.json — the next start mints a fresh secret (and the trigger's `lastFired` resets).
+
+### Calling a webhook
+
+Valid:
+
+```console
+$ curl -X POST http://127.0.0.1:4747/hook/issues \
+    -H "X-Torus-Secret: <secret>" \
+    -H "Content-Type: application/json" \
+    -d '{"issue": 42, "title": "build fails on arm64"}'
+{"delegationId":"0e8d…"}
+```
+
+Wrong secret:
+
+```console
+$ curl -X POST http://127.0.0.1:4747/hook/issues -H "X-Torus-Secret: nope" -d '{}'
+{"ok":false,"error":"unauthorized"}
+```
+
+The response is fire-and-ack: `{delegationId}` comes back as soon as the run is registered — there is no wait mode. Everything else maps plainly: wrong/missing secret → 401, unknown path → 404, non-POST → 405, body over 64 KiB → 413, malformed JSON → 400.
+
+### Payload templating
+
+- The task may reference body fields as `{{payload.<field>}}`; dotted paths (`{{payload.user.name}}`) traverse objects.
+- Values render **JSON-stringified** — `42`, `"quoted"`, `{"nested":true}`. A payload is data: stringification preserves type and structure and keeps values from being interpreted as anything else.
+- Values nested deeper than 8 levels render `"[truncated]"`.
+- Missing fields render empty.
+- Body cap: 64 KiB (413 beyond).
+
+### Concurrency
+
+Webhooks are explicit events: **every request fires a new delegation**, even if the same trigger's previous run (scheduled or webhook) is still active. The skip-while-active gate exists for timer ticks only — a webhook request is a distinct ask and always lands. Fire rate is therefore your caller's discipline; there is no queueing or dedup.
+
+### Security posture
+
+The per-trigger secret is the trust boundary: anyone holding it can make the trigger's agent run its (payload-templated) task with your models. The payload is rendered as data, but the templated task itself is still acted on — see the serve section of [SECURITY.md](../SECURITY.md) for the full picture (bearer boundary, prompt-injection residual, bind exposure). Bind stays loopback by default; exposing webhooks beyond localhost means putting secrets on a network — prefer a TLS-terminating reverse proxy if you must.

@@ -28,6 +28,15 @@
  * previous run is still active, and lastFired persists to
  * ~/.torus/serve/triggers-state.json so a restart within the interval never
  * re-fires.
+ *
+ * Webhook triggers: a trigger with a `webhook: {path}` block also answers
+ * POST at that path. Auth is a per-trigger secret (X-Torus-Secret,
+ * timing-safe) minted like the bearer token, persisted in
+ * triggers-state.json, and printed once at first start. The JSON body is
+ * DATA: {{payload.<field>}} values render JSON-stringified (depth-capped)
+ * into the task, and every request fires a fresh delegation — webhooks are
+ * explicit events, so the scheduler's skip-while-active gate deliberately
+ * does not apply. Responses are fire-and-ack: {delegationId} immediately.
  */
 
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -58,11 +67,19 @@ export interface ServeTrigger {
 	agent: string;
 	task: string;
 	model?: string;
+	/** Optional webhook endpoint: POST <path> with X-Torus-Secret fires this trigger. */
+	webhook?: { path: string };
 }
 
 /** Caps for serve.json triggers — max count and floor on the interval. */
 export const MAX_TRIGGERS = 8;
 export const MIN_EVERY_MINUTES = 5;
+/** Webhook paths must sit under /hook/ with a slug remainder (a-z, 0-9, -). */
+const WEBHOOK_PATH_RE = /^\/hook\/[a-z0-9-]+$/;
+/** Webhook body cap — bigger requests drain, then answer 413. */
+const WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
+/** Payload nesting rendered into a task; deeper values become "[truncated]". */
+const PAYLOAD_DEPTH_CAP = 8;
 
 const DEFAULT_CONFIG: ServeConfig = { port: 4747, bind: "127.0.0.1" };
 
@@ -122,6 +139,7 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 	}
 	const agentNames = delegatableAgentNames();
 	const seen = new Set<string>();
+	const seenWebhookPaths = new Map<string, string>();
 	const triggers: ServeTrigger[] = [];
 	for (let i = 0; i < raw.length; i += 1) {
 		const entry = raw[i];
@@ -179,6 +197,30 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 				error: `serve.json trigger "${name}": "model" must be a string`,
 			};
 		}
+		const webhook = entry.webhook;
+		if (webhook !== undefined) {
+			if (!isRecord(webhook)) {
+				return {
+					triggers: [],
+					error: `serve.json trigger "${name}": "webhook" must be an object`,
+				};
+			}
+			const hookPath = webhook.path;
+			if (typeof hookPath !== "string" || !WEBHOOK_PATH_RE.test(hookPath)) {
+				return {
+					triggers: [],
+					error: `serve.json trigger "${name}": "webhook.path" must start with "/hook/" followed by a slug of lowercase letters, digits, and hyphens (got ${JSON.stringify(hookPath)})`,
+				};
+			}
+			const hookOwner = seenWebhookPaths.get(hookPath);
+			if (hookOwner !== undefined) {
+				return {
+					triggers: [],
+					error: `serve.json trigger "${name}": webhook path "${hookPath}" is already used by trigger "${hookOwner}" — webhook paths must be unique`,
+				};
+			}
+			seenWebhookPaths.set(hookPath, name);
+		}
 		seen.add(name);
 		triggers.push({
 			name,
@@ -186,6 +228,7 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 			agent,
 			task,
 			model: typeof model === "string" && model.length > 0 ? model : undefined,
+			webhook: isRecord(webhook) ? { path: webhook.path as string } : undefined,
 		});
 	}
 	return { triggers, error: null };
@@ -212,6 +255,44 @@ function loadOrMintToken(file: string): { token: string; created: boolean } {
 	return { token, created: true };
 }
 
+interface WebhookSecretState {
+	lastFired?: unknown;
+	webhookSecret?: unknown;
+}
+
+/**
+ * Mint-or-read per-trigger webhook secrets — the same lifecycle as the bearer
+ * token: first start generates 32 random bytes (hex) per webhook trigger and
+ * the caller prints them once; later starts read silently. Secrets live in
+ * triggers-state.json (existing lastFired entries preserved) so restarts
+ * keep them.
+ */
+function loadOrMintWebhookSecrets(triggers: ServeTrigger[]): {
+	secrets: Record<string, string>;
+	created: { name: string; secret: string }[];
+} {
+	const webhookTriggers = triggers.filter((t) => t.webhook !== undefined);
+	if (webhookTriggers.length === 0) return { secrets: {}, created: [] };
+	const state = readJson<Record<string, WebhookSecretState>>(triggersStatePath(), {});
+	const secrets: Record<string, string> = {};
+	const created: { name: string; secret: string }[] = [];
+	let changed = false;
+	for (const trigger of webhookTriggers) {
+		const existing = state[trigger.name]?.webhookSecret;
+		if (typeof existing === "string" && existing.length > 0) {
+			secrets[trigger.name] = existing;
+			continue;
+		}
+		const secret = randomBytes(32).toString("hex");
+		secrets[trigger.name] = secret;
+		created.push({ name: trigger.name, secret });
+		state[trigger.name] = { ...state[trigger.name], webhookSecret: secret };
+		changed = true;
+	}
+	if (changed) writeJson(triggersStatePath(), state);
+	return { secrets, created };
+}
+
 /** Constant-time bearer comparison (length-hiding via sha256 digests). */
 function tokenMatches(provided: string, expected: string): boolean {
 	const a = createHash("sha256").update(provided).digest();
@@ -223,6 +304,77 @@ function authorized(req: IncomingMessage, token: string): boolean {
 	const header = req.headers.authorization ?? "";
 	if (!header.startsWith("Bearer ")) return false;
 	return tokenMatches(header.slice("Bearer ".length), token);
+}
+
+/** Match `{{payload.<field>}}` references — dotted paths traverse objects. */
+const PAYLOAD_FIELD_RE = /\{\{payload\.([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)\}\}/g;
+
+/**
+ * Render a trigger task against a webhook body. Referenced values render
+ * JSON-stringified — 42, "quoted", {"nested":true} — so a payload is always
+ * data with its type visible, never merged into the task as bare prose.
+ * Values nested deeper than PAYLOAD_DEPTH_CAP levels render "[truncated]";
+ * missing fields render empty.
+ */
+export function renderTaskTemplate(task: string, payload: Record<string, unknown>): string {
+	return task.replace(PAYLOAD_FIELD_RE, (_match, fieldPath: string) => {
+		let current: unknown = payload;
+		for (const segment of fieldPath.split(".")) {
+			if (typeof current !== "object" || current === null || Array.isArray(current)) return "";
+			current = (current as Record<string, unknown>)[segment];
+			if (current === undefined) return "";
+		}
+		return stringifyCapped(current, 1);
+	});
+}
+
+function stringifyCapped(value: unknown, depth: number): string {
+	if (depth > PAYLOAD_DEPTH_CAP) return '"[truncated]"';
+	if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+	if (Array.isArray(value)) {
+		if (value.length === 0) return "[]";
+		const items = value.map((item) => stringifyCapped(item === undefined ? null : item, depth + 1));
+		return `[${items.join(",")}]`;
+	}
+	const entries = Object.entries(value as Record<string, unknown>).filter(
+		([, v]) => v !== undefined,
+	);
+	if (entries.length === 0) return "{}";
+	return `{${entries.map(([key, val]) => `${JSON.stringify(key)}:${stringifyCapped(val, depth + 1)}`).join(",")}}`;
+}
+
+/** A registered webhook endpoint: one per trigger with a webhook block. */
+interface WebhookRoute {
+	path: string;
+	trigger: ServeTrigger;
+	secret: string;
+}
+
+async function handleWebhookRequest(
+	req: IncomingMessage,
+	res: ServerResponse,
+	route: WebhookRoute,
+): Promise<void> {
+	let payload: Record<string, unknown>;
+	try {
+		payload = await readJsonObject(req, WEBHOOK_MAX_BODY_BYTES);
+	} catch (err) {
+		if (err instanceof BodyTooLargeError) {
+			return sendJson(res, 413, { ok: false, error: "payload-too-large", message: err.message });
+		}
+		return sendJson(res, 400, {
+			ok: false,
+			error: "invalid-body",
+			message: err instanceof Error ? err.message : String(err),
+		});
+	}
+	// Webhooks are explicit events: unlike a timer tick, every request fires
+	// its own delegation — no skip-while-active gate, no lastFired bookkeeping.
+	// The task itself is config-owned; only the payload-rendered parts are
+	// caller-controlled data.
+	const task = renderTaskTemplate(route.trigger.task, payload);
+	const fired = fireRun(route.trigger.agent, task, undefined, route.trigger.model ?? null);
+	return respondFireAndForget(res, fired);
 }
 
 const VERSION =
@@ -237,6 +389,9 @@ const RUN_ID_POLL_MS = 20;
 
 class BodyError extends Error {}
 
+/** Distinct so webhook routing can answer 413 while /run keeps its 400. */
+class BodyTooLargeError extends BodyError {}
+
 /**
  * Unref'd sleep for the wait cap: the losing race branch leaves its timer
  * behind, and a ref'd 10-minute timer would hold the process open long after
@@ -249,14 +404,29 @@ function sleepDetached(ms: number): Promise<null> {
 	});
 }
 
-async function readJsonObject(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJsonObject(
+	req: IncomingMessage,
+	maxBytes: number,
+): Promise<Record<string, unknown>> {
 	const chunks: Buffer[] = [];
 	let size = 0;
+	let tooLarge = false;
 	for await (const chunk of req) {
 		const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
 		size += buf.length;
-		if (size > MAX_BODY_BYTES) throw new BodyError("request body exceeds 1 MiB");
+		if (size > maxBytes) {
+			// Past the cap: keep draining (bounded by MAX_BODY_BYTES of slack,
+			// then the socket dies) so the error response lands cleanly on a
+			// keep-alive connection — but never buffer another byte.
+			tooLarge = true;
+			chunks.length = 0;
+			if (size > maxBytes + MAX_BODY_BYTES) req.destroy();
+			continue;
+		}
 		chunks.push(buf);
+	}
+	if (tooLarge) {
+		throw new BodyTooLargeError(`request body exceeds ${Math.round(maxBytes / 1024)} KiB`);
 	}
 	const raw = Buffer.concat(chunks).toString("utf8");
 	if (raw.trim().length === 0) throw new BodyError("request body must be a JSON object");
@@ -362,7 +532,7 @@ function fireRun(
 async function handleRunRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
 	let body: Record<string, unknown>;
 	try {
-		body = await readJsonObject(req);
+		body = await readJsonObject(req, MAX_BODY_BYTES);
 	} catch (err) {
 		return sendJson(res, 400, {
 			ok: false,
@@ -440,11 +610,23 @@ async function handleRunRequest(req: IncomingMessage, res: ServerResponse): Prom
 		});
 	}
 
-	const delegationId = await awaitRunId(handleTag, guarded);
+	return respondFireAndForget(res, { handleTag, guarded });
+}
+
+/**
+ * Fire-and-ack tail shared by POST /run (default mode) and webhook fires:
+ * resolve the run's delegation id (or its refusal) and answer once — the
+ * caller never waits for the run itself to finish.
+ */
+async function respondFireAndForget(
+	res: ServerResponse,
+	fired: { handleTag: string; guarded: Promise<GuardedOutcome> },
+): Promise<void> {
+	const delegationId = await awaitRunId(fired.handleTag, fired.guarded);
 	if (delegationId !== null) {
 		return sendJson(res, 200, { delegationId });
 	}
-	const settled = await guarded;
+	const settled = await fired.guarded;
 	if (!settled.settled) {
 		return sendJson(res, 500, {
 			ok: false,
@@ -465,6 +647,7 @@ async function handleRequest(
 	req: IncomingMessage,
 	res: ServerResponse,
 	token: string,
+	webhooks: Map<string, WebhookRoute>,
 ): Promise<void> {
 	const url = new URL(req.url ?? "/", "http://torus.serve.internal");
 	if (url.pathname === "/health") {
@@ -483,6 +666,17 @@ async function handleRequest(
 		}
 		if (req.method !== "POST") return sendJson(res, 404, { ok: false, error: "not-found" });
 		return handleRunRequest(req, res);
+	}
+	const route = webhooks.get(url.pathname);
+	if (route) {
+		if (req.method !== "POST") {
+			return sendJson(res, 405, { ok: false, error: "method-not-allowed" });
+		}
+		const provided = req.headers["x-torus-secret"];
+		if (typeof provided !== "string" || !tokenMatches(provided, route.secret)) {
+			return sendJson(res, 401, { ok: false, error: "unauthorized" });
+		}
+		return handleWebhookRequest(req, res, route);
 	}
 	return sendJson(res, 404, { ok: false, error: "not-found" });
 }
@@ -519,6 +713,8 @@ interface TriggerEntry {
 	timer: NodeJS.Timeout | null;
 	inFlight: boolean;
 	lastFired: number | null;
+	/** Persisted beside lastFired so webhook secrets survive restarts. */
+	webhookSecret: string | null;
 }
 
 /**
@@ -530,21 +726,42 @@ interface TriggerEntry {
  * attempt — fire or later refusal alike — so a broken trigger retries on
  * its own cadence, not every tick.
  */
-export function startTriggers(triggers: ServeTrigger[]): TriggerRuntime {
-	const state = readJson<Record<string, { lastFired?: unknown }>>(triggersStatePath(), {});
+export function startTriggers(
+	triggers: ServeTrigger[],
+	options: { webhookSecrets?: Record<string, string> } = {},
+): TriggerRuntime {
+	const state = readJson<Record<string, { lastFired?: unknown; webhookSecret?: unknown }>>(
+		triggersStatePath(),
+		{},
+	);
 	const entries: TriggerEntry[] = triggers.map((trigger) => {
 		const saved = state[trigger.name]?.lastFired;
+		const stateSecret = state[trigger.name]?.webhookSecret;
+		const passedSecret = options.webhookSecrets?.[trigger.name];
 		return {
 			trigger,
 			timer: null,
 			inFlight: false,
 			lastFired: typeof saved === "number" ? saved : null,
+			// startServe mints before this point and passes them in; a bare
+			// startTriggers caller keeps whatever the state file already held.
+			webhookSecret:
+				typeof passedSecret === "string"
+					? passedSecret
+					: typeof stateSecret === "string" && stateSecret.length > 0
+						? stateSecret
+						: null,
 		};
 	});
 	const persist = () => {
-		const out: Record<string, { lastFired: number }> = {};
+		const out: Record<string, { lastFired?: number; webhookSecret?: string }> = {};
 		for (const entry of entries) {
-			if (entry.lastFired !== null) out[entry.trigger.name] = { lastFired: entry.lastFired };
+			if (entry.lastFired !== null || entry.webhookSecret !== null) {
+				out[entry.trigger.name] = {
+					...(entry.lastFired !== null ? { lastFired: entry.lastFired } : {}),
+					...(entry.webhookSecret !== null ? { webhookSecret: entry.webhookSecret } : {}),
+				};
+			}
 		}
 		writeJson(triggersStatePath(), out);
 	};
@@ -608,9 +825,20 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
 	if (created) {
 		process.stdout.write(`serve token: ${token}\n`);
 	}
+	const webhookSecrets = loadOrMintWebhookSecrets(triggers);
+	for (const minted of webhookSecrets.created) {
+		process.stdout.write(`webhook secret for ${minted.name}: ${minted.secret}\n`);
+	}
+	const webhookRoutes = new Map<string, WebhookRoute>();
+	for (const trigger of triggers) {
+		if (!trigger.webhook) continue;
+		const secret = webhookSecrets.secrets[trigger.name];
+		if (secret === undefined) continue;
+		webhookRoutes.set(trigger.webhook.path, { path: trigger.webhook.path, trigger, secret });
+	}
 
 	const server = createServer((req, res) => {
-		void handleRequest(req, res, token).catch((err: unknown) => {
+		void handleRequest(req, res, token, webhookRoutes).catch((err: unknown) => {
 			if (!res.headersSent) {
 				sendJson(res, 500, { ok: false, error: "internal", message: String(err) });
 			} else {
@@ -642,7 +870,7 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
 	const bound = server.address();
 	const boundPort = typeof bound === "object" && bound !== null ? bound.port : port;
 	process.stdout.write(`torus serve: listening on http://${bind}:${boundPort}\n`);
-	const triggerRuntime = startTriggers(triggers);
+	const triggerRuntime = startTriggers(triggers, { webhookSecrets: webhookSecrets.secrets });
 	if (triggers.length > 0) {
 		process.stdout.write(
 			`torus serve: ${triggers.length} trigger${triggers.length === 1 ? "" : "s"} scheduled (${triggers.map((t) => t.name).join(", ")})\n`,

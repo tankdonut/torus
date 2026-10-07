@@ -26,6 +26,15 @@ Agent-writable files that trusted processes consume:
 | Monitor commands (`monitor_start`) | `extensions/monitor/index.ts` re-executes the stored command string via `bash -c` on an interval for the session's lifetime | **Unmitigated.** Bounded to 5 monitors, ≥ 5 s interval, 30 s per run — but the command executes with the session user's privileges on every tick. |
 | `~/.pi/mcp.json` | The pi engine reads MCP server configs; `command` / `args` entries spawn local processes at session start | **Unmitigated by torus.** Engine-owned user config. torus's own registrations (`context7`, `grep_app`) are remote URLs registered in-session — no local spawn. |
 
+## Serve (headless listener)
+
+`torus serve` exposes delegations over HTTP ([docs/serve.md](docs/serve.md)). Threats specific to the listener:
+
+- **Unauthenticated access to `/run`.** Anyone reaching the port can spend the account's models. Mitigation: a bearer token (32 random bytes, 0600 file, constant-time compare) guards every route except `GET /health`, and the default bind is loopback — reaching the port at all requires local access. `TORUS_SERVE=0` is a kill switch.
+- **Webhook secret leak = arbitrary task fires.** Each webhook's `X-Torus-Secret` is that endpoint's entire trust boundary: holding it lets a caller fire the trigger's task on demand, and the templated task is still acted on by an agent with the process's credentials. Payload fields render JSON-stringified into the task (`{{payload.x}}`), so bodies stay data rather than free-form task text — but that limits the blast radius, it does not eliminate it.
+- **Payload → prompt injection (residual).** Webhook bodies are untrusted input that lands inside agent prompts; stringification preserves type but does not neutralize instructions hiding in string values. Delegated agents carry their standing untrusted-input clauses, and a task like "act on {{payload.body}}" still hands attacker-chosen text to a model with tool access. Prefer payloads that carry identifiers, not prose.
+- **Bind exposure.** Loopback by default; a `0.0.0.0` bind puts both the bearer surface and every webhook path on the network with no TLS. That is an explicit opt-in — treat the tokens/secrets as network credentials in that posture and front the listener with a TLS-terminating proxy.
+
 ## Engine and OS boundary
 
 torus does **not** provide:
