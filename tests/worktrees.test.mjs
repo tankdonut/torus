@@ -228,6 +228,44 @@ test("tool handlers set and clear the torus:worktree statusline chip", async () 
 	);
 });
 
+test("tool refusals carry isError so the TUI paints them red", async () => {
+	const tools = [];
+	const ambientChild = process.env["TORUS_ENGINE_CHILD"];
+	delete process.env["TORUS_ENGINE_CHILD"];
+	try {
+		worktreesExtension({ registerTool: (t) => tools.push(t) });
+	} finally {
+		if (ambientChild !== undefined) process.env["TORUS_ENGINE_CHILD"] = ambientChild;
+	}
+	const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+	const ctx = { cwd: repo, ui: { setStatus: () => {}, theme: { fg: (_k, t) => t } } };
+
+	const created = await byName.worktree_create.execute(
+		"t1",
+		{ branch: "feat/redflag" },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(created.isError, false, "success must not flag isError");
+
+	writeFileSync(path.join(repo, "base.txt"), "base\ndirty\n");
+	try {
+		const refused = await byName.worktree_merge.execute(
+			"t2",
+			{ branch: "feat/redflag", subject: "x" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		assert.equal(refused.isError, true, "refusal must carry isError: true");
+		assert.match(refused.content[0].text, /error: /);
+	} finally {
+		sh(repo, ["checkout", "--", "base.txt"]);
+		await performRemove(repo, "feat/redflag", { force: true });
+	}
+});
+
 test("runGit scrubs ambient GIT_* env (pre-commit hooks export GIT_INDEX_FILE)", async () => {
 	const polluted = gitEnv();
 	for (const key of Object.keys(polluted)) {

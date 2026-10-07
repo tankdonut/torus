@@ -333,11 +333,16 @@ export function registerWork(pi: ExtensionAPI): void {
 						return {
 							content: [{ type: "text", text: "work: no session id available" }],
 							details: {},
+							isError: true,
 						};
 					}
 					const resolved = resolvePlan(params.plan);
 					if ("error" in resolved) {
-						return { content: [{ type: "text", text: resolved.error }], details: {} };
+						return {
+							content: [{ type: "text", text: resolved.error }],
+							details: {},
+							isError: true,
+						};
 					}
 					let markdown: string;
 					try {
@@ -346,6 +351,7 @@ export function registerWork(pi: ExtensionAPI): void {
 						return {
 							content: [{ type: "text", text: `cannot read plan: ${resolved.planPath}` }],
 							details: {},
+							isError: true,
 						};
 					}
 					const { tasks, done } = parsePlanTasks(markdown);
@@ -358,6 +364,7 @@ export function registerWork(pi: ExtensionAPI): void {
 								},
 							],
 							details: {},
+							isError: true,
 						};
 					}
 					const now = Date.now();
@@ -434,17 +441,25 @@ export function registerWork(pi: ExtensionAPI): void {
 				if (params.slug !== undefined) {
 					const resolved = resolveLedgerSlug(params.slug);
 					if ("error" in resolved) {
-						return { content: [{ type: "text", text: resolved.error }], details: {} };
+						return {
+							content: [{ type: "text", text: resolved.error }],
+							details: {},
+							isError: true,
+						};
 					}
 					const error = ledgerAppendError(resolved.slug);
 					if (error) {
-						return { content: [{ type: "text", text: error }], details: {} };
+						return { content: [{ type: "text", text: error }], details: {}, isError: true };
 					}
 					slug = resolved.slug;
 				} else {
 					const active = requireActive();
 					if ("error" in active) {
-						return { content: [{ type: "text", text: active.error }], details: {} };
+						return {
+							content: [{ type: "text", text: active.error }],
+							details: {},
+							isError: true,
+						};
 					}
 					slug = active.state.slug;
 					touch = active.state;
@@ -486,7 +501,11 @@ export function registerWork(pi: ExtensionAPI): void {
 				async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 					const active = requireActive();
 					if ("error" in active) {
-						return { content: [{ type: "text", text: active.error }], details: {} };
+						return {
+							content: [{ type: "text", text: active.error }],
+							details: {},
+							isError: true,
+						};
 					}
 					let markdown: string;
 					try {
@@ -500,11 +519,16 @@ export function registerWork(pi: ExtensionAPI): void {
 								},
 							],
 							details: {},
+							isError: true,
 						};
 					}
 					const blocker = completionBlocker(markdown);
 					if (blocker) {
-						return { content: [{ type: "text", text: `REFUSED — ${blocker}` }], details: {} };
+						return {
+							content: [{ type: "text", text: `REFUSED — ${blocker}` }],
+							details: {},
+							isError: true,
+						};
 					}
 					const now = Date.now();
 					const state: WorkState = {

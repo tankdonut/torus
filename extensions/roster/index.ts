@@ -909,7 +909,7 @@ const delegateTool = defineTool({
 			undefined,
 		);
 	},
-	renderResult(result, { expanded, isPartial }, theme) {
+	renderResult(result, { expanded, isPartial }, theme, context) {
 		const details = (result.details ?? {}) as Record<string, unknown>;
 		const agent = typeof details["agent"] === "string" ? details["agent"] : "?";
 		const model = typeof details["model"] === "string" ? shortModel(details["model"]) : "?";
@@ -938,7 +938,9 @@ const delegateTool = defineTool({
 		const inTok = typeof usage["input"] === "number" ? usage["input"] : 0;
 		const outTok = typeof usage["output"] === "number" ? usage["output"] : 0;
 		const status =
-			exitCode === 0 ? theme.fg("success", "done") : theme.fg("error", `exit ${exitCode}`);
+			context?.isError === true || exitCode !== 0
+				? theme.fg("error", exitCode !== 0 ? `exit ${exitCode}` : "failed")
+				: theme.fg("success", "done");
 		const headline =
 			theme.fg("toolTitle", theme.bold("delegate ")) +
 			theme.fg("accent", agent) +

@@ -178,6 +178,7 @@ function toolOutput(result: WorktreeResult) {
 			{ type: "text" as const, text: result.ok ? result.message : `error: ${result.error}` },
 		],
 		details: result.ok ? { ok: true } : { ok: false, error: result.error },
+		isError: !result.ok,
 	};
 }
 

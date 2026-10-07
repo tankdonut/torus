@@ -208,6 +208,7 @@ const monitorStopTool = defineTool({
 				},
 			],
 			details: toolDetails({ stopped }),
+			isError: !stopped,
 		};
 	},
 });

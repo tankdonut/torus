@@ -575,11 +575,13 @@ export const rememberTool = defineTool({
 			return {
 				content: [{ type: "text", text: "topic required — nothing written" }],
 				details: { error: "empty-topic" } as MemoryToolDetails,
+				isError: true,
 			};
 		if (params.content.trim().length === 0)
 			return {
 				content: [{ type: "text", text: "content required — nothing written" }],
 				details: { error: "empty-content" } as MemoryToolDetails,
+				isError: true,
 			};
 		if (params.content.length > CONTENT_CHAR_LIMIT)
 			return {
@@ -590,6 +592,7 @@ export const rememberTool = defineTool({
 					},
 				],
 				details: { error: "content-too-large" } as MemoryToolDetails,
+				isError: true,
 			};
 		if (params.scope === "profile") {
 			const existing = readProfile();
@@ -724,6 +727,7 @@ export const forgetTool = defineTool({
 					},
 				],
 				details: { error: "invalid-name" } as MemoryToolDetails,
+				isError: true,
 			};
 		const file = path.join(ENTRIES_DIR, name);
 		const topic = existsSync(file)
@@ -735,6 +739,7 @@ export const forgetTool = defineTool({
 					{ type: "text", text: `no such entry: ${name} — list filenames with torus_memories` },
 				],
 				details: { error: "not-found" } as MemoryToolDetails,
+				isError: true,
 			};
 		return {
 			content: [

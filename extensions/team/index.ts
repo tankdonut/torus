@@ -800,6 +800,7 @@ const teamCreateTool = defineTool({
 					teamId: undefined as string | undefined,
 					members: undefined as number | undefined,
 				},
+				isError: true,
 			};
 		}
 		const names = params.members.map((member) => member.name);
@@ -816,6 +817,7 @@ const teamCreateTool = defineTool({
 					teamId: undefined as string | undefined,
 					members: undefined as number | undefined,
 				},
+				isError: true,
 			};
 		}
 		const teamId = `${params.name.replace(/[^a-z0-9-]/gi, "-").toLowerCase()}-${Date.now().toString(36)}`;
@@ -896,6 +898,7 @@ const teamStatusTool = defineTool({
 		if (!record)
 			return {
 				content: [{ type: "text", text: "No such team. Create one with team_create." }],
+				isError: true,
 				details: { teamId: undefined as string | undefined },
 			};
 		const reports = record.members.map((m) => {
@@ -948,6 +951,7 @@ const teamMsgTool = defineTool({
 			return {
 				content: [{ type: "text", text: "No such team." }],
 				details: { delivered: undefined as number | undefined },
+				isError: true,
 			};
 		}
 		const targets =
@@ -972,7 +976,7 @@ const teamTaskCreateTool = defineTool({
 	async execute(_toolCallId, params) {
 		const record = getTeam(params.team);
 		if (!record || !AGENT_NAME_RE.test(params.team))
-			return { content: [{ type: "text", text: "No such team." }], details: {} };
+			return { content: [{ type: "text", text: "No such team." }], details: {}, isError: true };
 		let created = "";
 		updateTasksFile(record.id, (file) => {
 			const task = {
@@ -997,7 +1001,7 @@ const teamTaskListTool = defineTool({
 	async execute(_toolCallId, params) {
 		const record = getTeam(params.team);
 		if (!record || !AGENT_NAME_RE.test(params.team))
-			return { content: [{ type: "text", text: "No such team." }], details: {} };
+			return { content: [{ type: "text", text: "No such team." }], details: {}, isError: true };
 		const tasks = readTasksFile(record.id).tasks;
 		const text =
 			tasks.length === 0
@@ -1032,7 +1036,7 @@ const teamTaskUpdateTool = defineTool({
 	async execute(_toolCallId, params) {
 		const record = getTeam(params.team);
 		if (!record || !AGENT_NAME_RE.test(params.team))
-			return { content: [{ type: "text", text: "No such team." }], details: {} };
+			return { content: [{ type: "text", text: "No such team." }], details: {}, isError: true };
 		let outcome = `no task ${params.task}`;
 		updateTasksFile(record.id, (file) => {
 			const task = file.tasks.find((t) => t.id === params.task);
@@ -1062,6 +1066,7 @@ const teamDeleteTool = defineTool({
 			return {
 				content: [{ type: "text", text: "No such team." }],
 				details: { delivered: undefined },
+				isError: true,
 			};
 		for (const member of record.members) {
 			deliberateStops.add(member.id);
@@ -1163,6 +1168,7 @@ const teamRespawnTool = defineTool({
 			return {
 				content: [{ type: "text", text: "No such team (no team.json on disk)." }],
 				details: {},
+				isError: true,
 			};
 		}
 		const record = getTeam(params.team) ?? rehydrateTeam(params.team);
@@ -1170,11 +1176,13 @@ const teamRespawnTool = defineTool({
 			return {
 				content: [{ type: "text", text: "No such team (no team.json on disk)." }],
 				details: {},
+				isError: true,
 			};
 		const spec = readTeamSpec(record.id);
 		if (!spec)
 			return {
 				content: [{ type: "text", text: "Team spec missing; cannot respawn." }],
+				isError: true,
 				details: {},
 			};
 		let revived = 0;

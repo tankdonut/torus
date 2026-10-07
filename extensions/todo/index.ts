@@ -117,6 +117,7 @@ const todoWriteTool = defineTool({
 			return {
 				content: [{ type: "text", text: "no session id — todos unavailable" }],
 				details: {},
+				isError: true,
 			};
 		}
 		writeTodos(sessionId, params.todos);

@@ -165,6 +165,7 @@ export function registerGoal(pi: ExtensionAPI): void {
 					return {
 						content: [{ type: "text", text: "goal: no session id available" }],
 						details: {},
+						isError: true,
 					};
 				}
 				const state = readGoal(sessionId);
@@ -172,6 +173,7 @@ export function registerGoal(pi: ExtensionAPI): void {
 					return {
 						content: [{ type: "text", text: "no goal is set for this session" }],
 						details: {},
+						isError: true,
 					};
 				}
 				state.status = "complete";

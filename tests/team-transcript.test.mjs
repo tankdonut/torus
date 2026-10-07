@@ -119,6 +119,14 @@ test("team_status lists one merged line per member", async () => {
 	assert.match(memberLines[0], /^- solo \(builder\) · idle — /);
 });
 
+test("unknown-team tool results carry isError so the TUI paints them red", async () => {
+	registry.resetRegistryForTesting();
+	const statusTool = registeredTools().find((t) => t.name === "team_status");
+	const result = await statusTool.execute("call", { team: "no-such-team" });
+	assert.match(result.content[0].text, /No such team/);
+	assert.equal(result.isError, true, "unknown team must flag isError");
+});
+
 test("external runs exclude member ids already onboarded as delegation records", async () => {
 	registry.resetRegistryForTesting();
 	const { teamId } = await createTeam("india", [{ name: "solo", agent: "builder" }]);
