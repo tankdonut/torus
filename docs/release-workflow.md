@@ -37,6 +37,8 @@ The `v`-prefix tag convention is fixed by what already exists: `metadata-action`
 
 **[DECISION] Engine-pin bumps are user-visible features, not chores.** Every binary and image ships the pinned engine (`@earendil-works/pi-coding-agent`), and first-run installs exactly that pin — an engine bump changes runtime behavior for every consumer. Rule: a PR that moves the engine pin (typically Renovate's) must land with a `feat(deps):` subject (or `feat(deps)!:` when the engine's own changelog says breaking). It then correctly drives a minor bump and appears in the changelog instead of riding silently as a patch-level `chore(deps):`.
 
+**Engine-pin env audit (`env-hygiene`).** Every engine-pin bump re-runs `tests/env-hygiene.test.mjs` and re-verifies the launcher→child environment chain against the new engine's `.env` autoload behavior before merge. torus itself passes the environment through untouched (`runtime/bin/torus.mjs` spawn, `extensions/engine-child.ts` `engineChildEnv()`); the engine is the risk — 1.0.4 standalone binaries autoload launch-dir `.env*`, and upstream main (commit `1ffb6bd6`) removes that, so a bump can silently flip what environment a torus session starts with.
+
 **What counts as breaking (the public API surface):** CLI flags/commands and exit codes of `torus` itself; the extension load surface (`pi.extensions` entries and extension-module contracts); agent roster and skill file formats; payload bootstrap behavior (`~/.torus/runtime` layout, resolution order, first-run semantics); container entrypoint/`TORUS_ROOT` contract. Changes to any of these during 0.x → minor (post-1.0: major).
 
 ## 4. Release mechanism — release-please with a Release PR

@@ -52,6 +52,6 @@ Commit subjects are release-mechanical — release-please maps them to version b
 | `!` or `BREAKING CHANGE:` footer | minor while 0.x (`bump-minor-pre-major`), major after 1.0 |
 | `chore:`, `ci:`, `docs:`, `test:` | no bump, no changelog entry |
 
-- Engine-pin bumps (`@earendil-works/pi-*` in `package.json`) land as `feat(deps):` — every shipped binary carries the pin, so they are user-visible. Renovate applies this automatically (`renovate.json` `packageRules`); hand-bumped pins keep the same subject.
+- Engine-pin bumps (`@earendil-works/pi-*` in `package.json`) land as `feat(deps):` — every shipped binary carries the pin, so they are user-visible. Renovate applies this automatically (`renovate.json` `packageRules`); hand-bumped pins keep the same subject. Engine-pin bumps also require the release-workflow env-audit step before merge: re-run `tests/env-hygiene.test.mjs` and re-verify the engine's `.env` autoload behavior (`docs/release-workflow.md`).
 - Squash-merges keep the PR title verbatim as the commit subject — get the subject right at merge time.
 - No plan coordinates (wave/task numbers, plan slugs, ledger paths) in commit messages or code comments; history reads as the repo's own work.
