@@ -40,6 +40,28 @@ writeFileSync(
 	"utf8",
 );
 chmodSync(COST_ENGINE, 0o755);
+// Verbatim message_end usage captured from a live zai/glm-5.3-flash RPC child
+// (RPC and JSON modes stream the same record shape). The extra reasoning and
+// totalTokens fields are load-bearing fixture detail: they pin the real wire
+// shape so a fold that mis-reads it fails here, not in production.
+const LIVE_USAGE =
+	'{"input":12081,"output":18,"cacheRead":0,"cacheWrite":0,"reasoning":15,"totalTokens":12099,"cost":{"input":0.00181215,"output":0.000009,"cacheRead":0,"cacheWrite":0,"total":0.00182115}}';
+const LIVE_RPC_ENGINE = path.join(ENGINE_DIR, "live-rpc-engine.sh");
+writeFileSync(
+	LIVE_RPC_ENGINE,
+	`#!/bin/sh\necho '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"usage":${LIVE_USAGE}}}'\nexit 0\n`,
+	"utf8",
+);
+chmodSync(LIVE_RPC_ENGINE, 0o755);
+// message_end with no usage object at all: zero tokens, zero cost — the one
+// live shape that must render a turn line with no dollar segment.
+const NO_USAGE_ENGINE = path.join(ENGINE_DIR, "no-usage-engine.sh");
+writeFileSync(
+	NO_USAGE_ENGINE,
+	'#!/bin/sh\necho \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"bare"}]}}\'\nexit 0\n',
+	"utf8",
+);
+chmodSync(NO_USAGE_ENGINE, 0o755);
 
 const registry = await import("../extensions/registry.ts");
 const roster = await import("../extensions/roster/index.ts");
@@ -146,6 +168,14 @@ test("successful delegation surfaces its delegationId and finished marker", asyn
 	assert.equal(results.length, 1);
 	assert.deepEqual(results[0].content, [{ type: "text", text: "builder finished" }]);
 	assert.equal(results[0].details.ok, true);
+
+	const bareLog = readFileSync(registry.listDelegations().at(-1).logFile, "utf8");
+	assert.match(
+		bareLog,
+		/--- turn 1 \(10\/20 tok · \$0\) ---/,
+		"engine usage without a cost field renders an explicit $0",
+	);
+	assert.doesNotMatch(bareLog, /NaN/, "no NaN for unpriced runs");
 	registry.setCustomSender(() => {});
 });
 
@@ -627,6 +657,71 @@ test("engine-computed cache and cost ride the delegation pipeline end to end", a
 		/--- turn 1 \(10\/20 tok · \$0\.0315\) ---/,
 		"delegation log turn line carries the dollar segment",
 	);
+	registry.setCustomSender(() => {});
+});
+
+test("live-captured RPC usage shape folds cost into snapshots, records, and log lines", async () => {
+	registry.resetRegistryForTesting();
+	const snapshots = [];
+
+	await withEngine(LIVE_RPC_ENGINE, async () => {
+		const outcome = await roster.runDelegation(
+			"explorer",
+			"Reply with the single word ok",
+			undefined,
+			(snapshot) => snapshots.push(snapshot),
+			"sess-live",
+			"live-capture",
+		);
+		assert.equal(outcome.ok, true);
+		assert.equal(
+			outcome.details.usage.cost,
+			0.00182115,
+			"cost.total from the live wire shape lands in result usage",
+		);
+		assert.equal(outcome.details.usage.input, 12081, "live input tokens folded");
+	});
+
+	const snap = snapshots.at(-1);
+	assert.ok(snap, "live-shape engine produced a turn snapshot");
+	assert.equal(snap.usage.cost, 0.00182115, "snapshot carries the live cost total");
+
+	const record = registry.listDelegations().at(-1);
+	assert.ok(record, "registry record exists for the live-shape run");
+	assert.equal(record.cost, 0.00182115, "registry record stores the live cost total");
+	const log = readFileSync(record.logFile, "utf8");
+	assert.match(
+		log,
+		/--- turn 1 \(12081\/18 tok · \$0\.0018\) ---/,
+		"turn line from the captured wire shape ends with the dollar segment",
+	);
+	assert.doesNotMatch(log, /NaN/, "no NaN anywhere in the log");
+	registry.setCustomSender(() => {});
+});
+
+test("message_end without a usage object writes a dollar-free turn line", async () => {
+	registry.resetRegistryForTesting();
+
+	await withEngine(NO_USAGE_ENGINE, async () => {
+		const outcome = await roster.runDelegation(
+			"explorer",
+			"bare probe",
+			undefined,
+			undefined,
+			"sess-bare",
+		);
+		assert.equal(outcome.ok, true);
+		assert.equal(outcome.details.usage.input, 0, "no usage object folds zero input tokens");
+		assert.equal(outcome.details.usage.cost, 0, "no usage object folds zero cost");
+	});
+
+	const log = readFileSync(registry.listDelegations().at(-1).logFile, "utf8");
+	assert.match(
+		log,
+		/--- turn 1 \(0\/0 tok\) ---/,
+		"zero-token turn line carries no dollar segment",
+	);
+	assert.doesNotMatch(log, /\$|NaN/, "no dollar segment and no NaN without usage");
 	registry.setCustomSender(() => {});
 });
 
