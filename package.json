@@ -75,7 +75,7 @@
     "node": ">=20.11"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "0.0.78",
+    "@anthropic-ai/sandbox-runtime": "0.0.79",
     "cc-safety-net": "^2.4.4",
     "pi-lsp-client": "git+https://github.com/code-yeongyu/pi-lsp-client.git#9d029fb32b721c038b58fb418b98bbfcf720cf0a",
     "pi-web-access": "^0.37.0"
