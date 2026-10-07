@@ -168,11 +168,13 @@ Routes (plain `node:http`, no framework):
 | `GET /runs` | bearer | delegation list from the shared registry (id, agent, model, handle, status, usage counters, `parentSession`) |
 | anything else | — | 404 JSON |
 
-Config at `~/.torus/serve.json` (read-with-fallback to defaults): `{"port": 4747, "bind": "127.0.0.1", "tokenPath": …}` — defaults shown; `EADDRINUSE` fails startup with a clean error naming the port and the serve.json override.
+Config at `~/.torus/serve.json` (read-with-fallback to defaults): `{"port": 4747, "bind": "127.0.0.1", "tokenPath": …, "triggers": [{"name": "nightly-status", "everyMinutes": 720, "agent": "builder", "task": …, "model": …}]}` — defaults shown; `EADDRINUSE` fails startup with a clean error naming the port and the serve.json override.
 
 Auth: bearer token in `~/.torus/serve/auth.json` (`{token, createdAt}`, mode 0600). First start mints 32 random bytes (hex) and prints `serve token: <token>` exactly once to stdout; subsequent starts read silently. Every `/run` and `/runs` request requires `Authorization: Bearer <token>`, compared constant-time (`crypto.timingSafeEqual` over sha256 digests); anything missing or wrong is 401 JSON.
 
 Trust boundary: delegations inherit the serve process environment — provider credentials included — so the bearer token is the entire boundary; anyone holding it can spend the account's models. Bind stays loopback by default.
+
+Scheduled triggers: `triggers[]` entries are time-based delegations — validated at startup (max 8, unique slug `name` matching `AGENT_NAME_RE`, `everyMinutes` integer ≥ 5, `agent` must be a delegatable roster agent, non-empty `task`, optional `model`); an invalid entry refuses startup naming the trigger and field, a missing/empty array schedules nothing. Each trigger runs one unref'd `setInterval` firing the same roster pre-flight path as `POST /run` (`srv-`-tagged, fleet-visible); a tick skips while that trigger's own previous run is still active (per-trigger, never global), and `lastFired` persists to `~/.torus/serve/triggers-state.json` (atomic write) after each attempt so a restart within the interval does not re-fire. Intervals clear on shutdown. Full guide: `docs/serve.md`.
 
 ## Shared modules
 

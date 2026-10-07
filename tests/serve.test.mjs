@@ -241,3 +241,242 @@ test("subsequent starts read the token silently", async () => {
 	const auth = JSON.parse(readFileSync(path.join(HOME, "serve", "auth.json"), "utf8"));
 	assert.equal(result.token, auth.token, "existing token reread from disk");
 });
+
+// ---- scheduled triggers ----
+
+function writeServeConfig(cfg) {
+	writeFileSync(path.join(HOME, "serve.json"), JSON.stringify(cfg, null, 2), "utf8");
+}
+
+function clearServeConfig() {
+	rmSync(path.join(HOME, "serve.json"), { force: true });
+}
+
+function triggersStateFile() {
+	return path.join(HOME, "serve", "triggers-state.json");
+}
+
+function freshTriggersState() {
+	rmSync(triggersStateFile(), { force: true });
+}
+
+function plantTriggersState(lastFiredByName) {
+	const state = {};
+	for (const [name, lastFired] of Object.entries(lastFiredByName)) {
+		state[name] = { lastFired };
+	}
+	writeFileSync(triggersStateFile(), JSON.stringify(state, null, 2), "utf8");
+}
+
+async function findBuilderRecord() {
+	for (let i = 0; i < 150; i += 1) {
+		const record = registry.listDelegations().find((r) => r.agent === "builder") ?? null;
+		if (record) return record;
+		await sleep(20);
+	}
+	return null;
+}
+
+test("triggerIntervalMs maps minutes to milliseconds", () => {
+	assert.equal(serve.triggerIntervalMs({ everyMinutes: 5 }), 300_000);
+	assert.equal(serve.triggerIntervalMs({ everyMinutes: 60 }), 3_600_000);
+});
+
+test("validateTriggers accepts absent/empty and rejects malformed entries naming trigger + field", () => {
+	assert.equal(serve.validateTriggers(undefined).error, null);
+	assert.equal(serve.validateTriggers(null).error, null);
+	assert.equal(serve.validateTriggers([]).error, null);
+	assert.deepEqual(serve.validateTriggers([]).triggers, []);
+	assert.match(serve.validateTriggers({}).error, /"triggers" must be an array/);
+	assert.match(
+		serve.validateTriggers([{ name: "x", everyMinutes: 3, agent: "builder", task: "t" }]).error,
+		/trigger "x".*"everyMinutes" must be an integer ≥ 5 \(got 3\)/,
+	);
+	assert.match(
+		serve.validateTriggers([{ name: "x", everyMinutes: 2.5, agent: "builder", task: "t" }]).error,
+		/trigger "x".*"everyMinutes" must be an integer ≥ 5 \(got 2.5\)/,
+	);
+	assert.match(
+		serve.validateTriggers([
+			{ name: "x", everyMinutes: 5, agent: "builder", task: "t" },
+			{ name: "x", everyMinutes: 5, agent: "builder", task: "t" },
+		]).error,
+		/trigger "x": duplicate name/,
+	);
+	assert.match(
+		serve.validateTriggers([{ name: "Bad Name", everyMinutes: 5, agent: "builder", task: "t" }])
+			.error,
+		/trigger \[0\]: "name" must be a slug matching .*\(got "Bad Name"\)/,
+	);
+	assert.match(
+		serve.validateTriggers([{ name: "x", everyMinutes: 5, agent: "builder", task: "" }]).error,
+		/trigger "x": "task" must be a non-empty string/,
+	);
+	assert.match(
+		serve.validateTriggers([{ name: "x", everyMinutes: 5, agent: "builder", task: "t", model: 3 }])
+			.error,
+		/trigger "x": "model" must be a string/,
+	);
+	const ok = serve.validateTriggers([{ name: "x", everyMinutes: 5, agent: "builder", task: "t" }])
+		.triggers[0];
+	assert.equal(ok.name, "x");
+	assert.equal(ok.everyMinutes, 5);
+	assert.equal(ok.agent, "builder");
+	assert.equal(ok.task, "t");
+	assert.equal(ok.model, undefined, "omitted model stays unset");
+	assert.equal(
+		serve.validateTriggers([{ name: "x", everyMinutes: 5, agent: "builder", task: "t", model: "" }])
+			.triggers[0].model,
+		undefined,
+		"empty model string normalizes to unset",
+	);
+});
+
+test("a trigger fires a srv-tagged delegation and persists lastFired state", async () => {
+	registry.resetRegistryForTesting();
+	freshArgsDir();
+	freshTriggersState();
+	const before = Date.now();
+	const runtime = serve.startTriggers([
+		{ name: "hourly-build", everyMinutes: 5, agent: "builder", task: "trigger fire probe" },
+	]);
+	try {
+		assert.equal(runtime.fireNow("hourly-build"), true, "fresh trigger fires immediately");
+		assert.ok(existsSync(triggersStateFile()), "state file written after the fire attempt");
+		const state = JSON.parse(readFileSync(triggersStateFile(), "utf8"));
+		const lastFired = state["hourly-build"]?.lastFired;
+		assert.equal(typeof lastFired, "number", "state records a numeric lastFired");
+		assert.ok(lastFired >= before && lastFired <= Date.now(), "lastFired is the fire time");
+		const record = await findBuilderRecord();
+		assert.ok(record, "delegation started");
+		assert.equal(record.agent, "builder");
+		assert.match(record.handle ?? "", /^srv-/, "trigger run carries the serve handle tag");
+		await waitForRunDone(record.id);
+		assert.ok(readdirSync(ARGS_DIR).length >= 1, "the fake engine actually spawned");
+	} finally {
+		runtime.stop();
+	}
+});
+
+test("a trigger timer fires on its interval (real short interval through startTriggers)", async () => {
+	registry.resetRegistryForTesting();
+	freshArgsDir();
+	freshTriggersState();
+	// startTriggers does no config validation (that is startServe's job), so a
+	// fractional everyMinutes is a legitimate way to exercise the timer loop:
+	// 0.002 min = 120 ms.
+	const runtime = serve.startTriggers([
+		{ name: "fast-tick", everyMinutes: 0.002, agent: "builder", task: "timer probe" },
+	]);
+	try {
+		const record = await findBuilderRecord();
+		assert.ok(record, "the interval fired a delegation within ~3s");
+		assert.match(record.handle ?? "", /^srv-/);
+		const state = JSON.parse(readFileSync(triggersStateFile(), "utf8"));
+		assert.equal(typeof state["fast-tick"]?.lastFired, "number", "timer fire persisted state");
+	} finally {
+		runtime.stop();
+	}
+});
+
+test("a trigger skips while its previous run is still active (per-trigger, not global)", async () => {
+	registry.resetRegistryForTesting();
+	freshArgsDir();
+	freshTriggersState();
+	const runtime = serve.startTriggers([
+		{ name: "solo", everyMinutes: 5, agent: "builder", task: "skip probe" },
+	]);
+	try {
+		assert.equal(runtime.fireNow("solo"), true, "first attempt fires");
+		assert.equal(
+			runtime.fireNow("solo"),
+			false,
+			"second attempt while the first run is still active is skipped",
+		);
+		const record = await findBuilderRecord();
+		assert.ok(record, "exactly one delegation started");
+		await waitForRunDone(record.id);
+		assert.equal(
+			registry.listDelegations().filter((r) => r.agent === "builder").length,
+			1,
+			"no second delegation was created",
+		);
+		// one delegation can spawn the engine twice (RPC attempt + JSON
+		// fallback), so the spawn count proves the first run ran — the
+		// delegation count above proves the skip.
+		assert.ok(readdirSync(ARGS_DIR).length >= 1, "the first run's engine spawned");
+	} finally {
+		runtime.stop();
+	}
+});
+
+test("serve.json with 9 triggers refuses startup naming the cap", async () => {
+	const triggers = Array.from({ length: 9 }, (_, i) => ({
+		name: `t-${i}`,
+		everyMinutes: 5,
+		agent: "builder",
+		task: "x",
+	}));
+	writeServeConfig({ triggers });
+	try {
+		await assert.rejects(() => serve.startServe({ port: 0 }), /lists 9 entries — the maximum is 8/);
+	} finally {
+		clearServeConfig();
+	}
+});
+
+test("serve.json trigger with an unknown agent refuses startup naming the agent", async () => {
+	writeServeConfig({
+		triggers: [{ name: "ghost-run", everyMinutes: 5, agent: "ghost", task: "x" }],
+	});
+	try {
+		await assert.rejects(
+			() => serve.startServe({ port: 0 }),
+			(err) => {
+				assert.match(err.message, /unknown agent "ghost"/);
+				assert.match(err.message, /ghost-run/);
+				return true;
+			},
+		);
+	} finally {
+		clearServeConfig();
+	}
+});
+
+test("restart with persisted lastFired does not re-fire within the interval, but fires past it", async () => {
+	registry.resetRegistryForTesting();
+	freshArgsDir();
+	freshTriggersState();
+	writeServeConfig({
+		triggers: [{ name: "nightly", everyMinutes: 5, agent: "builder", task: "restart probe" }],
+	});
+	try {
+		// Within the interval: persisted lastFired gates firing.
+		plantTriggersState({ nightly: Date.now() - 30_000 });
+		const within = await serve.startServe({ port: 0 });
+		try {
+			assert.equal(
+				within.triggers.fireNow("nightly"),
+				false,
+				"persisted lastFired within the interval blocks firing",
+			);
+			assert.equal(readdirSync(ARGS_DIR).length, 0, "no engine spawn while gated");
+		} finally {
+			await within.close();
+		}
+		// Restart past the interval: the same state file now allows firing.
+		freshArgsDir();
+		plantTriggersState({ nightly: Date.now() - 301_000 });
+		const past = await serve.startServe({ port: 0 });
+		try {
+			assert.equal(past.triggers.fireNow("nightly"), true, "stale lastFired allows firing");
+			const record = await findBuilderRecord();
+			assert.ok(record, "the restarted trigger fired a delegation");
+			await waitForRunDone(record.id);
+		} finally {
+			await past.close();
+		}
+	} finally {
+		clearServeConfig();
+	}
+});

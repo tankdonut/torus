@@ -160,6 +160,9 @@ test("torus serve section documents routes, auth, config, and the kill switch", 
 		"Bearer",
 		"0600",
 		"timingSafeEqual",
+		"triggers",
+		"everyMinutes",
+		"triggers-state.json",
 	]) {
 		assert.ok(section.includes(token), `serve section missing token: ${token}`);
 	}

@@ -19,6 +19,15 @@
  * holding it can spend the account's models; keep auth.json owner-only (it
  * is minted 0600). Only /health is unauthenticated; every other route
  * requires a constant-time bearer-token match.
+ *
+ * Scheduled triggers: serve.json `triggers: [{name, everyMinutes, agent,
+ * task, model?}]` entries each run one unref'd setInterval that fires the
+ * same roster pre-flight path as POST /run. An invalid entry refuses
+ * startup (fail loud, fix the file) naming the trigger and field; a missing
+ * or empty array schedules nothing. A tick skips while that trigger's own
+ * previous run is still active, and lastFired persists to
+ * ~/.torus/serve/triggers-state.json so a restart within the interval never
+ * re-fires.
  */
 
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -31,15 +40,29 @@ import {
 } from "node:http";
 import path from "node:path";
 import { readJson, sleep, torusHome, writeJson } from "../fsutil.js";
-import { type DelegationRecord, listDelegations, repoRoot } from "../registry.js";
-import { type DelegationOutcome, runDelegation } from "../roster/index.js";
+import { AGENT_NAME_RE, type DelegationRecord, listDelegations, repoRoot } from "../registry.js";
+import { AGENTS, type DelegationOutcome, runDelegation } from "../roster/index.js";
 
 export interface ServeConfig {
 	port: number;
 	bind: string;
 	/** Explicit auth-token file; default ~/.torus/serve/auth.json. */
 	tokenPath?: string;
+	/** Raw `triggers` array — validated by validateTriggers at startup. */
+	triggers?: unknown;
 }
+
+export interface ServeTrigger {
+	name: string;
+	everyMinutes: number;
+	agent: string;
+	task: string;
+	model?: string;
+}
+
+/** Caps for serve.json triggers — max count and floor on the interval. */
+export const MAX_TRIGGERS = 8;
+export const MIN_EVERY_MINUTES = 5;
 
 const DEFAULT_CONFIG: ServeConfig = { port: 4747, bind: "127.0.0.1" };
 
@@ -50,6 +73,7 @@ export function loadServeConfig(): ServeConfig {
 		port: typeof file.port === "number" && file.port >= 0 ? file.port : DEFAULT_CONFIG.port,
 		bind: typeof file.bind === "string" && file.bind.length > 0 ? file.bind : DEFAULT_CONFIG.bind,
 		tokenPath: typeof file.tokenPath === "string" ? file.tokenPath : undefined,
+		triggers: file.triggers,
 	};
 }
 
@@ -59,6 +83,112 @@ export function serveConfigPath(): string {
 
 export function defaultAuthPath(): string {
 	return path.join(torusHome(), "serve", "auth.json");
+}
+
+/** Restart-survivable trigger state, beside auth.json. */
+export function triggersStatePath(): string {
+	return path.join(torusHome(), "serve", "triggers-state.json");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function delegatableAgentNames(): string[] {
+	return AGENTS.filter((a) => a.mode !== "session").map((a) => a.name);
+}
+
+/** Milliseconds between ticks for a trigger — minutes × 60_000. */
+export function triggerIntervalMs(trigger: Pick<ServeTrigger, "everyMinutes">): number {
+	return trigger.everyMinutes * 60_000;
+}
+
+/**
+ * Validate the raw serve.json `triggers` value. Absent/null/[] schedules
+ * nothing; anything else must be a well-formed array or startup refuses —
+ * the error names the trigger and the offending field so the file can be
+ * fixed in one pass.
+ */
+export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; error: string | null } {
+	if (raw === undefined || raw === null) return { triggers: [], error: null };
+	if (!Array.isArray(raw)) {
+		return { triggers: [], error: 'serve.json "triggers" must be an array of trigger objects' };
+	}
+	if (raw.length > MAX_TRIGGERS) {
+		return {
+			triggers: [],
+			error: `serve.json "triggers" lists ${raw.length} entries — the maximum is ${MAX_TRIGGERS}`,
+		};
+	}
+	const agentNames = delegatableAgentNames();
+	const seen = new Set<string>();
+	const triggers: ServeTrigger[] = [];
+	for (let i = 0; i < raw.length; i += 1) {
+		const entry = raw[i];
+		if (!isRecord(entry)) {
+			return { triggers: [], error: `serve.json trigger [${i}] must be an object` };
+		}
+		const name = entry.name;
+		if (typeof name !== "string" || !AGENT_NAME_RE.test(name)) {
+			return {
+				triggers: [],
+				error: `serve.json trigger [${i}]: "name" must be a slug matching ${AGENT_NAME_RE} (got ${JSON.stringify(name)})`,
+			};
+		}
+		if (seen.has(name)) {
+			return {
+				triggers: [],
+				error: `serve.json trigger "${name}": duplicate name — trigger names must be unique`,
+			};
+		}
+		const everyMinutes = entry.everyMinutes;
+		if (
+			typeof everyMinutes !== "number" ||
+			!Number.isInteger(everyMinutes) ||
+			everyMinutes < MIN_EVERY_MINUTES
+		) {
+			return {
+				triggers: [],
+				error: `serve.json trigger "${name}": "everyMinutes" must be an integer ≥ ${MIN_EVERY_MINUTES} (got ${JSON.stringify(everyMinutes)})`,
+			};
+		}
+		const agent = entry.agent;
+		if (typeof agent !== "string" || agent.length === 0) {
+			return {
+				triggers: [],
+				error: `serve.json trigger "${name}": "agent" must be a non-empty string`,
+			};
+		}
+		if (!agentNames.includes(agent)) {
+			return {
+				triggers: [],
+				error: `serve.json trigger "${name}": unknown agent "${agent}" — must be a delegatable roster agent (${agentNames.join(", ")})`,
+			};
+		}
+		const task = entry.task;
+		if (typeof task !== "string" || task.length === 0) {
+			return {
+				triggers: [],
+				error: `serve.json trigger "${name}": "task" must be a non-empty string`,
+			};
+		}
+		const model = entry.model;
+		if (model !== undefined && typeof model !== "string") {
+			return {
+				triggers: [],
+				error: `serve.json trigger "${name}": "model" must be a string`,
+			};
+		}
+		seen.add(name);
+		triggers.push({
+			name,
+			everyMinutes,
+			agent,
+			task,
+			model: typeof model === "string" && model.length > 0 ? model : undefined,
+		});
+	}
+	return { triggers, error: null };
 }
 
 interface AuthFile {
@@ -368,7 +498,95 @@ export interface ServeHandle {
 	port: number;
 	bind: string;
 	token: string;
+	/** The scheduled-trigger runtime; stopped by close(). */
+	triggers: TriggerRuntime;
 	close: () => Promise<void>;
+}
+
+export interface TriggerRuntime {
+	/**
+	 * Fire one trigger immediately through the same gate a timer tick uses
+	 * (skip while that trigger's run is active, skip within the interval of
+	 * the persisted lastFired). Returns true when a run was started.
+	 */
+	fireNow(name: string): boolean;
+	/** Clear all intervals; in-flight runs finish on their own. */
+	stop(): void;
+}
+
+interface TriggerEntry {
+	trigger: ServeTrigger;
+	timer: NodeJS.Timeout | null;
+	inFlight: boolean;
+	lastFired: number | null;
+}
+
+/**
+ * Start the scheduler: one unref'd setInterval per trigger. Validation is
+ * the config layer's job (startServe → validateTriggers) — this factory
+ * trusts its input, which is also what lets tests drive short real
+ * intervals. lastFired loads from triggers-state.json so a restart inside
+ * the interval does not re-fire, and persists (atomically) after every fire
+ * attempt — fire or later refusal alike — so a broken trigger retries on
+ * its own cadence, not every tick.
+ */
+export function startTriggers(triggers: ServeTrigger[]): TriggerRuntime {
+	const state = readJson<Record<string, { lastFired?: unknown }>>(triggersStatePath(), {});
+	const entries: TriggerEntry[] = triggers.map((trigger) => {
+		const saved = state[trigger.name]?.lastFired;
+		return {
+			trigger,
+			timer: null,
+			inFlight: false,
+			lastFired: typeof saved === "number" ? saved : null,
+		};
+	});
+	const persist = () => {
+		const out: Record<string, { lastFired: number }> = {};
+		for (const entry of entries) {
+			if (entry.lastFired !== null) out[entry.trigger.name] = { lastFired: entry.lastFired };
+		}
+		writeJson(triggersStatePath(), out);
+	};
+	const attemptFire = (entry: TriggerEntry): boolean => {
+		const now = Date.now();
+		if (entry.inFlight) return false;
+		if (entry.lastFired !== null && now - entry.lastFired < triggerIntervalMs(entry.trigger)) {
+			return false;
+		}
+		entry.inFlight = true;
+		entry.lastFired = now;
+		persist();
+		const { guarded } = fireRun(
+			entry.trigger.agent,
+			entry.trigger.task,
+			undefined,
+			entry.trigger.model ?? null,
+		);
+		const settle = () => {
+			entry.inFlight = false;
+		};
+		void guarded.then(settle, settle);
+		return true;
+	};
+	for (const entry of entries) {
+		const timer = setInterval(() => attemptFire(entry), triggerIntervalMs(entry.trigger));
+		timer.unref();
+		entry.timer = timer;
+	}
+	return {
+		fireNow: (name: string): boolean => {
+			const entry = entries.find((e) => e.trigger.name === name);
+			if (!entry) throw new Error(`no trigger named "${name}"`);
+			return attemptFire(entry);
+		},
+		stop: () => {
+			for (const entry of entries) {
+				if (entry.timer !== null) clearInterval(entry.timer);
+				entry.timer = null;
+			}
+		},
+	};
 }
 
 /**
@@ -381,6 +599,8 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
 		throw new Error("torus serve disabled: TORUS_SERVE=0 is set — unset it to allow the server");
 	}
 	const config = loadServeConfig();
+	const { triggers, error: triggerError } = validateTriggers(config.triggers);
+	if (triggerError !== null) throw new Error(triggerError);
 	const port = options.port ?? config.port;
 	const bind = options.bind ?? config.bind;
 	const tokenPath = options.tokenPath ?? config.tokenPath ?? defaultAuthPath();
@@ -422,13 +642,21 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
 	const bound = server.address();
 	const boundPort = typeof bound === "object" && bound !== null ? bound.port : port;
 	process.stdout.write(`torus serve: listening on http://${bind}:${boundPort}\n`);
+	const triggerRuntime = startTriggers(triggers);
+	if (triggers.length > 0) {
+		process.stdout.write(
+			`torus serve: ${triggers.length} trigger${triggers.length === 1 ? "" : "s"} scheduled (${triggers.map((t) => t.name).join(", ")})\n`,
+		);
+	}
 	return {
 		server,
 		port: boundPort,
 		bind,
 		token,
+		triggers: triggerRuntime,
 		close: () =>
 			new Promise<void>((resolve) => {
+				triggerRuntime.stop();
 				// fetch keep-alive sockets would otherwise hold close() open forever
 				server.closeIdleConnections();
 				server.close(() => resolve());
