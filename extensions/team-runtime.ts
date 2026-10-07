@@ -52,6 +52,8 @@ export interface TeamSpec {
 	status?: "active" | "shutdown";
 	/** Session that created the team — member delegation records re-parent to it on respawn. */
 	parentSession?: string | null;
+	/** Opt-in: members are taught the atomic self-claim CLI protocol in their objective. Default off — absent behaves as false. */
+	selfClaim?: boolean;
 }
 
 export function writeTeamSpec(teamId: string, spec: TeamSpec): void {

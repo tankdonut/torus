@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 // Task dependencies: the shared tasklist gains dependsOn — a task with an
 // unmet existing dependency cannot be claimed (in_progress) until its
@@ -20,13 +22,42 @@ const team = await import("../extensions/team/index.ts");
 
 registry.setCustomSender(() => {});
 
-// Fake member spawner — no engine child ever runs.
-team.setMemberSpawnerForTesting((teamId, spec, _objective, onState) => ({
-	stop: () => onState({ status: "stopped", sessionId: `sess-${spec.name}` }),
-	forceKill: () => {},
-	mailboxDir: path.join(HOME, ".torus", "teams", teamId, "mailboxes", spec.name),
-	exited: Promise.resolve(0),
-}));
+// Fake member spawner — no engine child ever runs. Objectives are captured
+// because the objective argument IS the member-visible protocol text
+// (rolePromptFor embeds it verbatim as the member's TEAM OBJECTIVE).
+const spawnedObjectives = [];
+team.setMemberSpawnerForTesting((teamId, spec, objective, onState) => {
+	spawnedObjectives.push({ teamId, name: spec.name, objective });
+	return {
+		stop: () => onState({ status: "stopped", sessionId: `sess-${spec.name}` }),
+		forceKill: () => {},
+		mailboxDir: path.join(HOME, ".torus", "teams", teamId, "mailboxes", spec.name),
+		exited: Promise.resolve(0),
+	};
+});
+
+const TEAM_TASK_CLI = fileURLToPath(new URL("../runtime/bin/team-task.mjs", import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+// Run the member CLI as a real child process — same env, so the child's
+// team-runtime resolves the same TEAMS_ROOT as the in-process one.
+function teamTask(args) {
+	return new Promise((resolve) => {
+		const child = spawn(process.execPath, [TEAM_TASK_CLI, ...args], {
+			cwd: REPO_ROOT,
+			env: { ...process.env },
+		});
+		let stdout = "";
+		let stderr = "";
+		child.stdout.on("data", (d) => (stdout += d));
+		child.stderr.on("data", (d) => (stderr += d));
+		child.on("close", (code) => resolve({ code, stdout, stderr }));
+	});
+}
+
+function firstJsonLine(stdout) {
+	return JSON.parse(stdout.trim().split("\n")[0]);
+}
 
 function tools() {
 	const registered = [];
@@ -234,5 +265,149 @@ test("list and status render blocked tasks; the lines clear as dependencies comp
 	assert.ok(
 		!statusAfterBoth.content[0].text.includes("blocked:"),
 		"fully unblocked status shows no line",
+	);
+});
+
+test("CLI claim contention: two simultaneous claims on one task — exactly one wins", async () => {
+	const teamId = `cli-contend-${Date.now().toString(36)}`;
+	runtime.writeTasksFile(teamId, {
+		nextId: 2,
+		tasks: [{ id: "t1", subject: "sole", assignee: null, status: "pending", updatedAt: "x" }],
+	});
+	const [a, b] = await Promise.all([
+		teamTask(["claim", teamId, "--as", "m1"]),
+		teamTask(["claim", teamId, "--as", "m2"]),
+	]);
+	assert.deepEqual(
+		[a.code, b.code].sort(),
+		[0, 1],
+		"exactly one claim must succeed (exit 0) and the other must refuse (exit 1)",
+	);
+	const winner = a.code === 0 ? a : b;
+	const loser = a.code === 0 ? b : a;
+	const claimed = firstJsonLine(winner.stdout);
+	assert.equal(claimed.ok, true);
+	assert.equal(claimed.task.id, "t1");
+	assert.equal(claimed.task.status, "in_progress");
+	const refused = firstJsonLine(loser.stdout);
+	assert.equal(refused.ok, false);
+	assert.match(refused.error, /no claimable task/);
+	const onDisk = runtime.readTasksFile(teamId);
+	assert.equal(onDisk.tasks.length, 1, "tasks.json stays consistent — no duplicates");
+	assert.equal(onDisk.tasks[0].assignee, claimed.task.assignee);
+	assert.equal(onDisk.tasks[0].status, "in_progress");
+});
+
+test("CLI claim skips assigned and blocked tasks, taking the first claimable by id order", async () => {
+	const teamId = `cli-skip-${Date.now().toString(36)}`;
+	runtime.writeTasksFile(teamId, {
+		nextId: 4,
+		tasks: [
+			{ id: "t1", subject: "taken", assignee: "other", status: "in_progress", updatedAt: "x" },
+			{
+				id: "t2",
+				subject: "gated",
+				assignee: null,
+				status: "pending",
+				updatedAt: "x",
+				dependsOn: ["t1"],
+			},
+			{ id: "t3", subject: "free", assignee: null, status: "pending", updatedAt: "x" },
+		],
+	});
+	const claim = await teamTask(["claim", teamId, "--as", "me"]);
+	assert.equal(claim.code, 0);
+	const claimed = firstJsonLine(claim.stdout);
+	assert.equal(claimed.task.id, "t3", "t1 is assigned, t2 is blocked — t3 is the first claimable");
+	const onDisk = runtime.readTasksFile(teamId);
+	assert.equal(onDisk.tasks.find((t) => t.id === "t1").assignee, "other");
+	assert.equal(onDisk.tasks.find((t) => t.id === "t1").status, "in_progress", "t1 untouched");
+	assert.equal(onDisk.tasks.find((t) => t.id === "t2").status, "pending", "t2 untouched");
+	// The board is now fully assigned/blocked: a further claim refuses.
+	const none = await teamTask(["claim", teamId, "--as", "late"]);
+	assert.equal(none.code, 1);
+	assert.match(firstJsonLine(none.stdout).error, /no claimable task/);
+});
+
+test("CLI complete and release verify the assignee; mismatches refuse", async () => {
+	const teamId = `cli-assignee-${Date.now().toString(36)}`;
+	runtime.writeTasksFile(teamId, {
+		nextId: 3,
+		tasks: [
+			{ id: "t1", subject: "one", assignee: null, status: "pending", updatedAt: "x" },
+			{ id: "t2", subject: "two", assignee: null, status: "pending", updatedAt: "x" },
+		],
+	});
+	assert.equal((await teamTask(["claim", teamId, "--as", "alice"])).code, 0);
+
+	const wrongComplete = await teamTask(["complete", teamId, "t1", "--as", "bob"]);
+	assert.equal(wrongComplete.code, 1);
+	assert.match(firstJsonLine(wrongComplete.stdout).error, /assigned to alice, not bob/);
+
+	const complete = await teamTask(["complete", teamId, "t1", "--as", "alice"]);
+	assert.equal(complete.code, 0);
+	assert.equal(firstJsonLine(complete.stdout).task.status, "completed");
+
+	const wrongRelease = await teamTask(["release", teamId, "t1", "--as", "bob"]);
+	assert.equal(wrongRelease.code, 1);
+	assert.match(firstJsonLine(wrongRelease.stdout).error, /assigned to alice, not bob/);
+
+	const release = await teamTask(["release", teamId, "t1", "--as", "alice"]);
+	assert.equal(release.code, 0);
+	const released = firstJsonLine(release.stdout).task;
+	assert.equal(released.status, "pending");
+	assert.equal(released.assignee, null);
+
+	const unknown = await teamTask(["complete", teamId, "t9", "--as", "alice"]);
+	assert.equal(unknown.code, 1);
+	assert.match(firstJsonLine(unknown.stdout).error, /no task t9/);
+});
+
+test("selfClaim threads the claim protocol sentence into the member-visible objective (default off)", async () => {
+	const registered = tools();
+	spawnedObjectives.length = 0;
+	const off = await newTeam(registered, "scoff");
+	const offObjectives = spawnedObjectives.filter((o) => o.teamId === off).map((o) => o.objective);
+	assert.ok(offObjectives.length > 0, "the spawner must receive the member objective");
+	for (const objective of offObjectives) {
+		assert.equal(
+			objective,
+			"scoff objective",
+			"default teams: objective unchanged, nothing appended",
+		);
+		assert.ok(!objective.includes("team-task.mjs"), "no claim sentence when selfClaim is off");
+	}
+	assert.equal(runtime.readTeamSpec(off).selfClaim, undefined, "spec round-trips absence");
+
+	spawnedObjectives.length = 0;
+	const on = await tool(registered, "team_create").execute(
+		"call",
+		{
+			name: "scon",
+			objective: "scon objective",
+			members: [{ name: "solo", agent: "builder" }],
+			selfClaim: true,
+		},
+		undefined,
+		undefined,
+		{ sessionManager: { getSessionId: () => "sess-scon" } },
+	);
+	assert.ok(on.details.teamId);
+	const onObjectives = spawnedObjectives
+		.filter((o) => o.teamId === on.details.teamId)
+		.map((o) => o.objective);
+	assert.ok(onObjectives.length > 0);
+	const sentence = `Claim work atomically with \`node runtime/bin/team-task.mjs claim ${on.details.teamId} --as <your-name>\`; only pending unassigned unblocked tasks are claimable; release with the release subcommand if you cannot finish.`;
+	for (const objective of onObjectives) {
+		assert.equal(
+			objective,
+			`scon objective ${sentence}`,
+			"opted-in teams: exactly one sentence appended",
+		);
+	}
+	assert.equal(
+		runtime.readTeamSpec(on.details.teamId).selfClaim,
+		true,
+		"spec round-trips the flag",
 	);
 });

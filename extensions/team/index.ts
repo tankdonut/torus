@@ -48,6 +48,16 @@ const AGENT_NAMES = DELEGATABLE.map((a) => a.name).join(", ");
 const MAX_PARALLEL = 8;
 const CHAIN_CONTEXT_LIMIT = 4000;
 
+/** The member-facing self-claim protocol sentence (one sentence, appended to the objective when selfClaim is on). */
+function selfClaimSentence(teamId: string): string {
+	return `Claim work atomically with \`node runtime/bin/team-task.mjs claim ${teamId} --as <your-name>\`; only pending unassigned unblocked tasks are claimable; release with the release subcommand if you cannot finish.`;
+}
+
+/** Objective as members receive it: unchanged unless the team opted into self-claim. */
+function memberObjective(objective: string, teamId: string, selfClaim?: boolean): string {
+	return selfClaim ? `${objective} ${selfClaimSentence(teamId)}` : objective;
+}
+
 /** Fan-out result coalescing window (see flushBatch); module-level for test overriding. */
 let fanoutCoalesceMs = 5_000;
 
@@ -823,6 +833,12 @@ const teamCreateTool = defineTool({
 			}),
 			{ minItems: 1, maxItems: 8 },
 		),
+		selfClaim: Type.Optional(
+			Type.Boolean({
+				description:
+					"Teach members the atomic task self-claim CLI in their objective (default false)",
+			}),
+		),
 	}),
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 		const invalidMember = params.members.find((member) => !AGENT_NAME_RE.test(member.name));
@@ -875,7 +891,10 @@ const teamCreateTool = defineTool({
 			objective: params.objective,
 			members: params.members,
 			parentSession,
+			// Written only when opted in: an off/default team's team.json is byte-identical to pre-flag teams.
+			...(params.selfClaim === true ? { selfClaim: true } : {}),
 		});
+		const spawnObjective = memberObjective(params.objective, teamId, params.selfClaim === true);
 		for (const spec of params.members) {
 			const memberId = `${teamId}/${spec.name}`;
 			const memberRecord = {
@@ -889,7 +908,7 @@ const teamCreateTool = defineTool({
 				mailboxDir: "",
 			};
 			record.members.push(memberRecord);
-			const handle = attachMember(teamId, memberId, spec, params.objective, true, parentSession);
+			const handle = attachMember(teamId, memberId, spec, spawnObjective, true, parentSession);
 			memberRecord.mailboxDir = handle.mailboxDir;
 		}
 		emitTorusCustom(
@@ -1289,7 +1308,7 @@ const teamRespawnTool = defineTool({
 				record.id,
 				memberId,
 				member,
-				spec.objective,
+				memberObjective(spec.objective, record.id, spec.selfClaim),
 				true,
 				spec.parentSession ?? null,
 			);
