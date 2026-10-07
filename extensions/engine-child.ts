@@ -43,6 +43,24 @@ export interface EngineTally {
 	/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
 	cost: number;
 	text: string;
+	/**
+	 * Consecutive trailing assistant turns that added neither a token delta
+	 * nor a text change — the defensive net for dead model connections the
+	 * engine never signals explicitly. Failed calls still emit message_end
+	 * (and may finalize cleanly). Reset to 0 by any turn that progresses;
+	 * optional so pre-existing tallies start at 0.
+	 */
+	noProgressTail?: number;
+	/**
+	 * Most recent engine-signaled model-error text: an `error` stream event,
+	 * an assistant message_end with stopReason "error" (its errorMessage), or
+	 * an exhausted auto-retry (auto_retry_end success:false, its finalError).
+	 * Most recent wins; a later healthy assistant turn clears it — the
+	 * engine's own auto-retry recovered — so it tracks the run's trailing
+	 * failure state, not its history. Optional so pre-existing tallies start
+	 * with none.
+	 */
+	lastError?: string;
 }
 
 /** Add a usage value into a running counter; absent/non-finite values read as 0. */
@@ -52,14 +70,52 @@ function sumFinite(current: unknown, delta: unknown): number {
 	return base + add;
 }
 
+/** First non-empty trimmed string among the candidates, or null. */
+function errorText(...values: unknown[]): string | null {
+	for (const value of values) {
+		if (typeof value === "string" && value.trim().length > 0) return value.trim();
+	}
+	return null;
+}
+
 /**
  * Fold a `message_end` assistant event into `tally`: each text block sets
  * `tally.text` and counts a turn (roster semantics — final text wins), and a
  * numeric usage object adds to the token counters, the cache counters, and
  * the engine-computed cost. Non-matching events are ignored. Absent or
  * non-finite usage values accumulate as 0 so the tally can never go NaN.
+ *
+ * Engine-signaled model errors are consumed in the same fold — the single
+ * pipeline: an `error` stream event, a message_update carrying one, an
+ * assistant message_end with stopReason "error", or auto_retry_end with
+ * success:false all record their text in `tally.lastError` (most recent wins;
+ * a later healthy turn clears it). Per-turn progress is measured here too: a
+ * turn whose token totals and text are both unchanged made no progress and
+ * extends `tally.noProgressTail` — the defensive net for error shapes the
+ * engine never signals; any delta (tokens or text) resets it to 0.
  */
 export function reduceEngineEvent(record: Record<string, unknown>, tally: EngineTally): void {
+	if (record["type"] === "error") {
+		tally.lastError = errorText(record["error"], record["reason"]) ?? "provider stream error";
+		return;
+	}
+	if (record["type"] === "auto_retry_end" && record["success"] === false) {
+		tally.lastError = errorText(record["finalError"]) ?? "engine auto-retry failed";
+		return;
+	}
+	if (record["type"] === "message_update") {
+		const streamEvent = record["assistantMessageEvent"];
+		if (
+			typeof streamEvent === "object" &&
+			streamEvent !== null &&
+			(streamEvent as Record<string, unknown>)["type"] === "error"
+		) {
+			const e = streamEvent as Record<string, unknown>;
+			tally.lastError =
+				errorText(e["errorMessage"], e["error"], e["reason"]) ?? "provider stream error";
+		}
+		return;
+	}
 	if (
 		record["type"] !== "message_end" ||
 		typeof record["message"] !== "object" ||
@@ -68,8 +124,26 @@ export function reduceEngineEvent(record: Record<string, unknown>, tally: Engine
 		return;
 	const message = record["message"] as Record<string, unknown>;
 	if (message["role"] !== "assistant") return;
+	const stopReason = message["stopReason"];
+	// The stopReason gate sits ahead of the content guard so an error signal
+	// never depends on the message carrying well-formed content blocks.
+	if (stopReason === "error") {
+		tally.lastError =
+			errorText(message["errorMessage"]) ??
+			tally.lastError ??
+			"model call failed (stopReason: error)";
+	} else if (
+		stopReason === "stop" ||
+		stopReason === "toolUse" ||
+		stopReason === "length" ||
+		stopReason === "deferred"
+	) {
+		tally.lastError = undefined;
+	}
 	const content = message["content"];
 	if (!Array.isArray(content)) return;
+	const tokensBefore = tally.tokensIn + tally.tokensOut;
+	const textBefore = tally.text;
 	for (const block of content) {
 		if (typeof block !== "object" || block === null) continue;
 		const b = block as Record<string, unknown>;
@@ -92,6 +166,8 @@ export function reduceEngineEvent(record: Record<string, unknown>, tally: Engine
 				: undefined;
 		tally.cost = sumFinite(tally.cost, costTotal);
 	}
+	const progressed = tally.tokensIn + tally.tokensOut !== tokensBefore || tally.text !== textBefore;
+	tally.noProgressTail = progressed ? 0 : (tally.noProgressTail ?? 0) + 1;
 }
 
 /** The canonical `--extension` argument list every torus child engine gets. */

@@ -322,6 +322,10 @@ interface SpawnResult {
 		cacheWrite: number;
 		/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
 		cost: number;
+		/** Trailing assistant turns with no token delta and no text change. */
+		noProgressTail: number;
+		/** Most recent engine-signaled model-error text, if the run ended in one. */
+		lastError?: string;
 	};
 	seenToolCalls: Set<string>;
 	seenToolResults: Set<string>;
@@ -357,7 +361,15 @@ async function runEngineRpc(
 		finalText: "",
 		stderr: "",
 		sessionId: null,
-		usage: { input: 0, output: 0, turns: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+		usage: {
+			input: 0,
+			output: 0,
+			turns: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			cost: 0,
+			noProgressTail: 0,
+		},
 		seenToolCalls: new Set(),
 		seenToolResults: new Set(),
 	};
@@ -447,7 +459,15 @@ async function runEngineJson(
 		finalText: "",
 		stderr: "",
 		sessionId: null,
-		usage: { input: 0, output: 0, turns: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+		usage: {
+			input: 0,
+			output: 0,
+			turns: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			cost: 0,
+			noProgressTail: 0,
+		},
 		seenToolCalls: new Set(),
 		seenToolResults: new Set(),
 	};
@@ -533,6 +553,8 @@ export function consumeEventLine(
 		cacheWrite: result.usage.cacheWrite,
 		cost: result.usage.cost,
 		text: result.finalText,
+		noProgressTail: result.usage.noProgressTail ?? 0,
+		lastError: result.usage.lastError,
 	};
 	reduceEngineEvent(record, tally);
 	result.usage.turns = tally.turns;
@@ -541,6 +563,8 @@ export function consumeEventLine(
 	result.usage.cacheRead = tally.cacheRead;
 	result.usage.cacheWrite = tally.cacheWrite;
 	result.usage.cost = tally.cost;
+	result.usage.noProgressTail = tally.noProgressTail ?? 0;
+	result.usage.lastError = tally.lastError;
 	result.finalText = tally.text;
 }
 
@@ -816,7 +840,17 @@ export async function runDelegation(
 				}
 			})();
 			result = attempt;
-			if (attempt.exitCode === 0 || attempt.usage.turns > 0) break;
+			// Turns alone no longer vouch for an attempt: engine-signaled model
+			// errors (the engine already auto-retried and gave up) and a trailing
+			// run of no-progress turns are both dead work, so the turns > 0
+			// acceptance requires a clean tail and no error signal, and the walk
+			// advances down-chain. A zero exit still accepts (the torus:done case)
+			// — the outcome gate below turns that acceptance red instead.
+			if (
+				attempt.exitCode === 0 ||
+				(attempt.usage.turns > 0 && attempt.usage.noProgressTail === 0 && !attempt.usage.lastError)
+			)
+				break;
 			const isLast = candidate === attemptModels[attemptModels.length - 1];
 			if (!isLast) {
 				appendAction(
@@ -830,14 +864,31 @@ export async function runDelegation(
 			finalText: "",
 			stderr: "no chain model attempted",
 			sessionId: null,
-			usage: { input: 0, output: 0, turns: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+			usage: {
+				input: 0,
+				output: 0,
+				turns: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: 0,
+				noProgressTail: 0,
+			},
 			seenToolCalls: new Set(),
 			seenToolResults: new Set(),
 		};
+		const noProgressTail = finalResult.usage.noProgressTail;
+		const lastError = finalResult.usage.lastError;
+		// Engine-signaled model errors are the primary failure signal: an error
+		// event, a stopReason:"error" turn, or an exhausted auto-retry. The
+		// no-progress tail is the defensive net for dead connections the engine
+		// never signals. Either one fails the run even on a clean exit — the
+		// partial text below is still delivered, it may hold useful work — but
+		// the run must render red, never green.
+		const ok = finalResult.exitCode === 0 && !lastError && noProgressTail === 0;
 		const text =
 			finalResult.finalText ||
 			`(no text output; exit=${finalResult.exitCode})\n${finalResult.stderr.slice(0, 2000)}`;
-		finishDelegation(delegationId, finalResult.exitCode === 0, text, finalResult.sessionId);
+		finishDelegation(delegationId, ok, text, finalResult.sessionId);
 		if (emitResult) {
 			emitTorusCustom(
 				{
@@ -845,25 +896,27 @@ export async function runDelegation(
 					content: [
 						{
 							type: "text",
-							text: `${agent.name} ${finalResult.exitCode === 0 ? "finished" : "failed"}`,
+							text: `${agent.name} ${ok ? "finished" : "failed"}`,
 						},
 					],
 					display: true,
 					details: {
 						agent: agent.name,
-						ok: finalResult.exitCode === 0,
+						ok,
 						delegationId,
 						sessionId: finalResult.sessionId,
 						handle,
 						durationMs: Date.now() - startedAt,
 						turns: finalResult.usage.turns,
+						...(lastError ? { error: lastError } : {}),
+						...(noProgressTail > 0 ? { noProgressTail } : {}),
 					},
 				},
 				{ triggerTurn: false },
 			);
 		}
 		return {
-			ok: finalResult.exitCode === 0,
+			ok,
 			text,
 			delegationId,
 			details: {
@@ -874,6 +927,13 @@ export async function runDelegation(
 				delegationId,
 				turns: finalResult.usage.turns,
 				usage: finalResult.usage,
+				noProgressTail,
+				...(lastError ? { error: lastError } : {}),
+				...(noProgressTail > 0
+					? {
+							noProgress: `delegated run ended without model progress (${noProgressTail} turn(s) with no progress — connection or model failure)`,
+						}
+					: {}),
 			},
 		};
 	} catch (runError) {
@@ -1107,8 +1167,17 @@ const delegateTool = defineTool({
 		} finally {
 			ctx.ui.setStatus(statusKey, undefined);
 		}
-		if (!outcome.ok)
-			return { content: [{ type: "text", text: outcome.text }], details: outcome.details };
+		if (!outcome.ok) {
+			// Exit-code failures render red through details.exitCode; engine-signaled
+			// model errors and dead tails fail with exit 0, so isError is what flips
+			// their tool block red while the text keeps the partial work.
+			const failedCleanExit = outcome.details.exitCode === 0;
+			return {
+				content: [{ type: "text", text: outcome.text }],
+				details: outcome.details,
+				...(failedCleanExit ? { isError: true } : {}),
+			};
+		}
 		const usage = (outcome.details.usage ?? {}) as Record<string, unknown>;
 		const num = (v: unknown): number => (typeof v === "number" ? v : 0);
 		return {

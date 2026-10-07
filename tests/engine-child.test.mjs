@@ -90,6 +90,194 @@ test("reduceEngineEvent counts one turn per assistant message, not per text bloc
 	assert.equal(tally.text, "part two", "last text block still wins");
 });
 
+test("noProgressTail: progress resets it, dead turns increment it, text-only progress counts", () => {
+	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	const turn = (text, usage) =>
+		reduceEngineEvent(
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text }],
+					...(usage ? { usage } : {}),
+				},
+			},
+			tally,
+		);
+
+	turn("working", { input: 10, output: 20 });
+	assert.equal(tally.noProgressTail, 0, "a token-moving turn is progress");
+	turn("working", { input: 0, output: 0 });
+	assert.equal(tally.noProgressTail, 1, "zero usage delta + identical text is a dead turn");
+	turn("working");
+	assert.equal(tally.noProgressTail, 2, "absent usage + identical text stays dead");
+	turn("fresh text only", { input: 0, output: 0 });
+	assert.equal(tally.noProgressTail, 0, "a new text block alone counts as progress");
+	turn("fresh text only");
+	assert.equal(tally.noProgressTail, 1, "the same text replayed with no usage is dead again");
+});
+
+test("noProgressTail: tool-only turns follow the same delta rule", () => {
+	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	const toolTurn = (usage) =>
+		reduceEngineEvent(
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "tool_call", id: "t1", name: "bash", arguments: {} }],
+					usage,
+				},
+			},
+			tally,
+		);
+	toolTurn({ input: 100, output: 5 });
+	assert.equal(tally.noProgressTail, 0, "tool-only turn with usage is progress");
+	toolTurn({ input: 0, output: 0 });
+	assert.equal(tally.noProgressTail, 1, "tool-only turn with zero usage and no text is dead");
+});
+
+test("noProgressTail mirrors the observed wire pattern: identical replay adds nothing", () => {
+	// Live reviewer run whose connection died mid-verdict: turns 10 and 11
+	// replayed byte-identical cumulative usage (13084/2050) and byte-identical
+	// partial text before the child finalized cleanly.
+	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	const partial = "Let me check TEAMS_ROOT resolution, then run the acceptance suite.";
+	const replay = (usage) =>
+		reduceEngineEvent(
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: partial }],
+					usage,
+				},
+			},
+			tally,
+		);
+	replay({ input: 12000, output: 2000 });
+	replay({ input: 1084, output: 50 });
+	assert.equal(tally.tokensIn, 13084, "cumulative input matches the observed run");
+	assert.equal(tally.tokensOut, 2050, "cumulative output matches the observed run");
+	assert.equal(tally.noProgressTail, 0);
+	replay({ input: 0, output: 0 });
+	assert.equal(tally.noProgressTail, 1, "identical cumulative usage + identical text = dead tail");
+	assert.equal(tally.turns, 3, "the dead turn still counted as a turn");
+});
+
+test("lastError: error events, stopReason-error turns, and failed auto-retries all land; most recent wins", () => {
+	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	reduceEngineEvent({ type: "error", reason: "connection", error: "fetch failed" }, tally);
+	assert.equal(tally.lastError, "fetch failed", "a top-level error event sets lastError");
+	reduceEngineEvent(
+		{
+			type: "message_update",
+			usage: { input: 0, output: 0 },
+			assistantMessageEvent: { type: "error", reason: "error", errorMessage: "socket hang up" },
+		},
+		tally,
+	);
+	assert.equal(tally.lastError, "socket hang up", "a message_update error event supersedes");
+	reduceEngineEvent({ type: "auto_retry_end", success: true, attempt: 2 }, tally);
+	assert.equal(tally.lastError, "socket hang up", "a successful retry does not touch lastError");
+	reduceEngineEvent(
+		{ type: "auto_retry_end", success: false, attempt: 3, finalError: "529 overloaded" },
+		tally,
+	);
+	assert.equal(
+		tally.lastError,
+		"529 overloaded",
+		"an exhausted auto-retry supersedes with its finalError",
+	);
+});
+
+test("lastError: a stopReason-error turn records its errorMessage and still counts as a turn", () => {
+	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "partial" }],
+				stopReason: "error",
+				errorMessage: "connection reset",
+			},
+		},
+		tally,
+	);
+	assert.equal(tally.lastError, "connection reset");
+	assert.equal(tally.turns, 1, "the errored turn still counts");
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "still partial" }],
+				stopReason: "error",
+			},
+		},
+		tally,
+	);
+	assert.equal(
+		tally.lastError,
+		"connection reset",
+		"a bare stopReason error keeps the earlier text",
+	);
+});
+
+test("lastError: a later healthy turn clears it (the engine's retry recovered)", () => {
+	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	reduceEngineEvent({ type: "error", error: "529 overloaded" }, tally);
+	assert.equal(tally.lastError, "529 overloaded");
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "recovered and answered" }],
+				usage: { input: 10, output: 20 },
+				stopReason: "stop",
+			},
+		},
+		tally,
+	);
+	assert.equal(
+		tally.lastError,
+		undefined,
+		"a trailing healthy turn means the run did not end in error",
+	);
+});
+
+test("lastError: healthy runs and non-assistant messages never set it", () => {
+	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "fine" }],
+				usage: { input: 5, output: 5 },
+				stopReason: "stop",
+			},
+		},
+		tally,
+	);
+	assert.equal(tally.lastError, undefined);
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "user",
+				content: [{ type: "text", text: "no" }],
+				stopReason: "error",
+				errorMessage: "not an assistant",
+			},
+		},
+		tally,
+	);
+	assert.equal(tally.lastError, undefined, "non-assistant messages carry no error signal here");
+});
+
 test("reduceEngineEvent ignores non-assistant and non-message_end events", () => {
 	const tally = {
 		turns: 0,

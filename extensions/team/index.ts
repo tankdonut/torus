@@ -148,6 +148,8 @@ const fanoutTool = defineTool({
 			/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
 			cost: number;
 			durationMs: number;
+			/** Engine-signaled model-error text for failed runs; absent otherwise. */
+			error?: string;
 		};
 		let batch: FanoutEntry[] = [];
 		let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -190,6 +192,15 @@ const fanoutTool = defineTool({
 						// plus the summed batch cost; 0 when a model has no catalog price.
 						costs: identified.map((e) => e.cost),
 						cost: entries.reduce((sum, e) => sum + e.cost, 0),
+						// Per-failed-run model-error texts in completion order
+						// ("@sick: fetch failed"); present only when a run carried one.
+						...(entries.some((e) => !e.ok && typeof e.error === "string")
+							? {
+									errors: entries
+										.filter((e) => !e.ok && typeof e.error === "string")
+										.map((e) => `${e.label}: ${e.error}`),
+								}
+							: {}),
 						durationMs: Math.max(...entries.map((e) => e.durationMs)),
 					},
 				},
@@ -254,6 +265,10 @@ const fanoutTool = defineTool({
 						turns: usage?.turns ?? 0,
 						cost: typeof usage?.cost === "number" && Number.isFinite(usage.cost) ? usage.cost : 0,
 						durationMs: Date.now() - runStartedAt,
+						error:
+							outcome.ok || typeof outcome.details.error !== "string"
+								? undefined
+								: outcome.details.error,
 					});
 					return {
 						agent: run.agent,

@@ -249,6 +249,77 @@ test("team_respawn starts a fresh record and stale supervisor callbacks cannot f
 	assert.equal(memberRecord(memberId).sessionId, "sess-echo-2");
 });
 
+test("fan-out with one model-error run marks it not-ok with its error text in the coalesced marker", async () => {
+	registry.resetRegistryForTesting();
+	// One engine, two behaviors: the "error probe" task ends in a dead turn
+	// carrying the engine's first-class error signal (stopReason "error" +
+	// errorMessage); every other task gets a single healthy turn.
+	const ENGINE_DIR = mkdtempSync(path.join(tmpdir(), "torus-fanout-error-"));
+	const MIXED_ENGINE = path.join(ENGINE_DIR, "mixed-engine.sh");
+	writeFileSync(
+		MIXED_ENGINE,
+		[
+			"#!/bin/sh",
+			'case "$*" in *"error probe"*)',
+			'\techo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"partial verdict"}],"usage":{"input":100,"output":10},"stopReason":"stop"}}\'',
+			'\techo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"partial verdict"}],"usage":{"input":0,"output":0},"stopReason":"error","errorMessage":"socket hang up"}}\'',
+			"\t;;",
+			'*) echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":10,"output":20},"stopReason":"stop"}}\' ;;',
+			"esac",
+			"exit 0",
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	chmodSync(MIXED_ENGINE, 0o755);
+	process.env.TORUS_ENGINE_BIN = MIXED_ENGINE;
+
+	const customs = [];
+	registry.setCustomSender((message) => customs.push(message));
+	const fanoutTool = registeredTools().find((t) => t.name === "torus_fanout");
+	assert.ok(fanoutTool, "torus_fanout not registered");
+	try {
+		const result = await fanoutTool.execute(
+			"call",
+			{
+				runs: [
+					{ agent: "builder", task: "error probe", handle: "sick" },
+					{ agent: "builder", task: "healthy probe", handle: "well" },
+				],
+			},
+			undefined,
+			undefined,
+			{
+				sessionManager: { getSessionId: () => "sess-fanout-error" },
+				ui: { setStatus: () => {} },
+			},
+		);
+		assert.equal(result.details.ok, 1, "exactly one run succeeds");
+	} finally {
+		delete process.env.TORUS_ENGINE_BIN;
+		rmSync(ENGINE_DIR, { recursive: true, force: true });
+	}
+
+	const results = customs.filter((m) => m.customType === "torus.delegation-result");
+	assert.equal(results.length, 1, "one combined marker for the batch");
+	const combined = results[0];
+	assert.equal(combined.details.ok, false, "the model-error run drags the batch marker to not-ok");
+	assert.match(combined.content[0].text, /@sick ✗/, "the model-error run is rendered failed");
+	assert.match(combined.content[0].text, /@well ✓/, "the healthy run is still rendered ok");
+	assert.deepEqual(
+		combined.details.errors,
+		["@sick: socket hang up"],
+		"the coalesced marker carries the engine error text per failed run",
+	);
+	assert.equal(combined.details.runs, 2);
+	assert.equal(
+		combined.details.delegationIds.length,
+		2,
+		"both runs rode the batch with delegation ids",
+	);
+	registry.setCustomSender(() => {});
+});
+
 test("fan-out coalesced result marker carries per-run and summed cost", async () => {
 	registry.resetRegistryForTesting();
 	// Fake engines priced by task text so the two runs settle with distinct

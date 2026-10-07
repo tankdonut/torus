@@ -62,6 +62,89 @@ writeFileSync(
 	"utf8",
 );
 chmodSync(NO_USAGE_ENGINE, 0o755);
+// Mirrors a live reviewer run whose model connection died mid-verdict: the
+// last message_end turn replays byte-identical cumulative usage
+// (13084/2050 tok · $0.0428) and byte-identical partial text AND carries the
+// engine's first-class failure signal (stopReason "error" + errorMessage),
+// then the child exits 0 — a clean exit over a dead, errored tail.
+const DEGENERATE_TAIL_ENGINE = path.join(ENGINE_DIR, "degenerate-tail-engine.sh");
+writeFileSync(
+	DEGENERATE_TAIL_ENGINE,
+	[
+		"#!/bin/sh",
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reading the tasklist and mailboxes first."}],"usage":{"input":12000,"output":2000,"cost":{"total":0.04}}}}\'',
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Let me check TEAMS_ROOT resolution, then run the acceptance suite."}],"usage":{"input":1084,"output":50,"cost":{"total":0.0028}}}}\'',
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Let me check TEAMS_ROOT resolution, then run the acceptance suite."}],"usage":{"input":0,"output":0,"cost":{"total":0}},"stopReason":"error","errorMessage":"fetch failed"}}\'',
+		"exit 0",
+		"",
+	].join("\n"),
+	"utf8",
+);
+chmodSync(DEGENERATE_TAIL_ENGINE, 0o755);
+// The silent twin: same dead tail, but the engine emitted no error markers at
+// all — the shape only the no-progress heuristic net can catch.
+const SILENT_TAIL_ENGINE = path.join(ENGINE_DIR, "silent-tail-engine.sh");
+writeFileSync(
+	SILENT_TAIL_ENGINE,
+	[
+		"#!/bin/sh",
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reading the tasklist and mailboxes first."}],"usage":{"input":12000,"output":2000,"cost":{"total":0.04}}}}\'',
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Let me check TEAMS_ROOT resolution, then run the acceptance suite."}],"usage":{"input":1084,"output":50,"cost":{"total":0.0028}}}}\'',
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Let me check TEAMS_ROOT resolution, then run the acceptance suite."}],"usage":{"input":0,"output":0,"cost":{"total":0}}}}\'',
+		"exit 0",
+		"",
+	].join("\n"),
+	"utf8",
+);
+chmodSync(SILENT_TAIL_ENGINE, 0o755);
+// The final turn carries stopReason "error" + errorMessage but still makes
+// progress (fresh text + token delta), so the heuristic tail stays at 0 — the
+// engine's error signal alone must gate this run red.
+const MODEL_ERROR_ENGINE = path.join(ENGINE_DIR, "model-error-engine.sh");
+writeFileSync(
+	MODEL_ERROR_ENGINE,
+	[
+		"#!/bin/sh",
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reading the tasklist first."}],"usage":{"input":12000,"output":2000,"cost":{"total":0.04}},"stopReason":"toolUse"}}\'',
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"The verdict was cut off mid-sentence."}],"usage":{"input":300,"output":60,"cost":{"total":0.001}},"stopReason":"error","errorMessage":"fetch failed"}}\'',
+		"exit 0",
+		"",
+	].join("\n"),
+	"utf8",
+);
+chmodSync(MODEL_ERROR_ENGINE, 0o755);
+// The engine retried a transient failure and gave up: auto_retry_end with
+// success:false + finalError — the "week of connection errors" shape.
+const AUTO_RETRY_FAIL_ENGINE = path.join(ENGINE_DIR, "auto-retry-fail-engine.sh");
+writeFileSync(
+	AUTO_RETRY_FAIL_ENGINE,
+	[
+		"#!/bin/sh",
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reading the tasklist first."}],"usage":{"input":12000,"output":2000,"cost":{"total":0.04}},"stopReason":"stop"}}\'',
+		'echo \'{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2000,"errorMessage":"529 overloaded"}\'',
+		'echo \'{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"529 overloaded"}\'',
+		"exit 0",
+		"",
+	].join("\n"),
+	"utf8",
+);
+chmodSync(AUTO_RETRY_FAIL_ENGINE, 0o755);
+// Same shape, but the final turn makes progress (new text + token delta) —
+// the healthy control for the dead-tail engine above.
+const HEALTHY_TAIL_ENGINE = path.join(ENGINE_DIR, "healthy-tail-engine.sh");
+writeFileSync(
+	HEALTHY_TAIL_ENGINE,
+	[
+		"#!/bin/sh",
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reading the tasklist and mailboxes first."}],"usage":{"input":12000,"output":2000,"cost":{"total":0.04}}}}\'',
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Let me check TEAMS_ROOT resolution, then run the acceptance suite."}],"usage":{"input":1084,"output":50,"cost":{"total":0.0028}}}}\'',
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Verdict: the acceptance suite passes; shipping."}],"usage":{"input":200,"output":80,"cost":{"total":0.0009}}}}\'',
+		"exit 0",
+		"",
+	].join("\n"),
+	"utf8",
+);
+chmodSync(HEALTHY_TAIL_ENGINE, 0o755);
 
 const registry = await import("../extensions/registry.ts");
 const roster = await import("../extensions/roster/index.ts");
@@ -176,6 +259,209 @@ test("successful delegation surfaces its delegationId and finished marker", asyn
 		"engine usage without a cost field renders an explicit $0",
 	);
 	assert.doesNotMatch(bareLog, /NaN/, "no NaN for unpriced runs");
+	registry.setCustomSender(() => {});
+});
+
+test("delegation ending in an engine-signaled model error fails red with the error text surfaced", async () => {
+	registry.resetRegistryForTesting();
+	const customs = [];
+	captureCustoms(customs);
+
+	await withEngine(DEGENERATE_TAIL_ENGINE, async () => {
+		const outcome = await roster.runDelegation(
+			"reviewer",
+			"review the acceptance suite",
+			undefined,
+			undefined,
+			"sess-degenerate",
+			"dead-tail",
+		);
+		assert.equal(outcome.ok, false, "clean exit with an errored tail must fail, not render green");
+		assert.equal(
+			outcome.details.exitCode,
+			0,
+			"the engine finalized cleanly — the failure is the error signal",
+		);
+		assert.equal(outcome.details.turns, 3);
+		assert.equal(
+			outcome.details.error,
+			"fetch failed",
+			"the engine's errorMessage is the surfaced failure text",
+		);
+		assert.equal(outcome.details.noProgressTail, 1, "the dead turn also trips the heuristic net");
+		const keys = Object.keys(outcome.details);
+		assert.ok(
+			keys.indexOf("error") < keys.indexOf("noProgress"),
+			"the real error renders before the heuristic note",
+		);
+		assert.match(
+			outcome.text,
+			/Let me check TEAMS_ROOT resolution, then run the acceptance suite\./,
+			"partial text is preserved as the result text",
+		);
+	});
+
+	const record = registry.listDelegations().at(-1);
+	assert.ok(record, "registry record exists for the errored run");
+	assert.equal(record.status, "failed", "errored run must be marked failed in the registry");
+	const log = readFileSync(record.logFile, "utf8");
+	assert.match(log, /--- turn 2 \(13084\/2050 tok · \$0\.0428\) ---/);
+	assert.match(
+		log,
+		/--- turn 3 \(13084\/2050 tok · \$0\.0428\) ---/,
+		"the log mirrors the observed pattern: identical cumulative turn lines",
+	);
+
+	const results = customs.filter((m) => m.customType === "torus.delegation-result");
+	assert.equal(results.length, 1);
+	assert.deepEqual(results[0].content, [{ type: "text", text: "reviewer failed" }]);
+	assert.equal(results[0].details.ok, false, "result marker must carry ok:false");
+	assert.equal(
+		results[0].details.error,
+		"fetch failed",
+		"marker details carry the engine error text",
+	);
+	assert.equal(results[0].details.noProgressTail, 1, "marker details expose the dead tail");
+	registry.setCustomSender(() => {});
+});
+
+test("a progressing error turn fails on the engine signal alone, not the heuristic", async () => {
+	registry.resetRegistryForTesting();
+	let outcome = null;
+	await withEngine(MODEL_ERROR_ENGINE, async () => {
+		outcome = await roster.runDelegation(
+			"reviewer",
+			"review it",
+			undefined,
+			undefined,
+			"sess-model-error",
+			"err",
+		);
+	});
+	assert.equal(
+		outcome.ok,
+		false,
+		"stopReason error fails the run even though every turn progressed",
+	);
+	assert.equal(outcome.details.error, "fetch failed");
+	assert.equal(
+		outcome.details.noProgressTail,
+		0,
+		"the heuristic saw progress — the engine signal did the gating, not the heuristic",
+	);
+	assert.equal(outcome.details.noProgress, undefined, "no heuristic note when the tail is clean");
+});
+
+test("a silent dead tail with no engine error still fails through the heuristic net", async () => {
+	registry.resetRegistryForTesting();
+	let outcome = null;
+	await withEngine(SILENT_TAIL_ENGINE, async () => {
+		outcome = await roster.runDelegation(
+			"reviewer",
+			"review it",
+			undefined,
+			undefined,
+			"sess-silent-tail",
+			"quiet",
+		);
+	});
+	assert.equal(
+		outcome.ok,
+		false,
+		"the engine signaled nothing — only the heuristic catches the dead tail",
+	);
+	assert.equal(outcome.details.error, undefined, "no engine error text to surface");
+	assert.equal(outcome.details.noProgressTail, 1);
+	assert.match(
+		outcome.details.noProgress,
+		/delegated run ended without model progress \(1 turn\(s\) with no progress — connection or model failure\)/,
+	);
+	assert.equal(outcome.details.exitCode, 0, "the silent shape still exits cleanly");
+});
+
+test("auto-retry exhaustion fails the run with the engine's finalError", async () => {
+	registry.resetRegistryForTesting();
+	let outcome = null;
+	await withEngine(AUTO_RETRY_FAIL_ENGINE, async () => {
+		outcome = await roster.runDelegation(
+			"builder",
+			"build it",
+			undefined,
+			undefined,
+			"sess-retry",
+			"flaky",
+		);
+	});
+	assert.equal(outcome.ok, false, "auto_retry_end success:false is a failed run");
+	assert.equal(
+		outcome.details.error,
+		"529 overloaded",
+		"the engine's finalError is the surfaced text",
+	);
+	assert.equal(
+		outcome.details.noProgressTail,
+		0,
+		"the heuristic tail is clean — the retry signal gated",
+	);
+	assert.equal(outcome.details.noProgress, undefined);
+});
+
+test("delegate tool block renders red for a model-error run and stays green for healthy runs", async () => {
+	registry.resetRegistryForTesting();
+	const tools = [];
+	roster.registerRoster({
+		registerTool: (t) => tools.push(t),
+		registerCommand: () => {},
+		on: () => {},
+		sendMessage: () => {},
+	});
+	const delegate = tools.find((t) => t.name === "torus_delegate");
+	assert.ok(delegate, "torus_delegate not registered");
+	const theme = { fg: (_color, text) => text, bold: (text) => text };
+	const ctx = {
+		ui: { setStatus: () => {} },
+		sessionManager: { getSessionId: () => "sess-render" },
+	};
+
+	let dead = null;
+	await withEngine(DEGENERATE_TAIL_ENGINE, async () => {
+		dead = await delegate.execute(
+			"c1",
+			{ agent: "reviewer", task: "review it" },
+			undefined,
+			undefined,
+			ctx,
+		);
+	});
+	assert.equal(dead.isError, true, "exit-0 model error must flag isError so the block renders red");
+	assert.equal(dead.details.error, "fetch failed", "the tool block carries the engine error text");
+	assert.match(dead.content[0].text, /Let me check TEAMS_ROOT resolution/, "partial text kept");
+	assert.equal(dead.structuredContent, undefined, "no structuredContent for a failed run");
+	const red = delegate
+		.renderResult(dead, { expanded: false, isPartial: false }, theme, { isError: true })
+		.render(200)
+		.join("\n");
+	assert.match(red, /failed/, "model-error run renders the failed status");
+	assert.doesNotMatch(red, /done/, "model-error run must not render the green done status");
+
+	let healthy = null;
+	await withEngine(HEALTHY_TAIL_ENGINE, async () => {
+		healthy = await delegate.execute(
+			"c2",
+			{ agent: "reviewer", task: "review it" },
+			undefined,
+			undefined,
+			ctx,
+		);
+	});
+	assert.equal(healthy.isError, undefined, "healthy multi-turn run is not an error");
+	assert.equal(healthy.details.noProgressTail, 0, "healthy run carries a clean tail");
+	assert.equal(healthy.structuredContent.ok, true);
+	const green = delegate
+		.renderResult(healthy, { expanded: false, isPartial: false }, theme, { isError: false })
+		.render(200)
+		.join("\n");
+	assert.match(green, /done/, "healthy run still renders green");
 	registry.setCustomSender(() => {});
 });
 
