@@ -99,3 +99,12 @@ test("MCP spec status and stateless-server smoke are documented", () => {
 	const smokeDoc = readFileSync(smokeDocPath, "utf8");
 	assert.ok(smokeDoc.includes("stateless"), "docs/smoke-checklist.md missing stateless MCP smoke");
 });
+
+test("docs/efficiency.md documents the overhead bench method", () => {
+	const benchDocPath = path.join(root, "docs/efficiency.md");
+	assert.ok(existsSync(benchDocPath), "docs/efficiency.md does not exist");
+	const benchDoc = readFileSync(benchDocPath, "utf8");
+	for (const token of ["bench:overhead", "cache"]) {
+		assert.ok(benchDoc.includes(token), `docs/efficiency.md missing token: ${token}`);
+	}
+});

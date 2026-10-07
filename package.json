@@ -54,6 +54,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "test": "node --experimental-strip-types --import ./tests/resolve-ts-hook.mjs --test tests/",
+    "bench:overhead": "node scripts/bench-overhead.mjs",
     "prepare": "husky"
   },
   "peerDependencies": {
