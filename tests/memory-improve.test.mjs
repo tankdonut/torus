@@ -276,3 +276,116 @@ test("torus_memories warns about unparseable entries", async () => {
 test("cleanup", () => {
 	rmSync(home, { recursive: true, force: true });
 });
+
+// Structured-output checks: pi-ai exports Type but no Value, so validate
+// structuredContent against the tool's real outputSchema (plain JSON Schema)
+// with a hand-rolled checker, plus a permissiveness walk (optional fields,
+// no additionalProperties bans).
+function schemaError(schema, value, at = "value") {
+	if (schema.anyOf) {
+		return schema.anyOf.some((s) => schemaError(s, value, at) === null)
+			? null
+			: `${at}: matches no union member`;
+	}
+	if (schema.type === "object") {
+		if (typeof value !== "object" || value === null || Array.isArray(value))
+			return `${at}: expected object`;
+		for (const key of schema.required ?? []) {
+			if (!(key in value)) return `${at}.${key}: required`;
+		}
+		for (const [key, prop] of Object.entries(schema.properties ?? {})) {
+			if (!(key in value)) continue;
+			const err = schemaError(prop, value[key], `${at}.${key}`);
+			if (err) return err;
+		}
+		return null;
+	}
+	if (schema.type === "array") {
+		if (!Array.isArray(value)) return `${at}: expected array`;
+		for (const [i, item] of value.entries()) {
+			const err = schemaError(schema.items, item, `${at}[${i}]`);
+			if (err) return err;
+		}
+		return null;
+	}
+	if (schema.type === "string") return typeof value === "string" ? null : `${at}: expected string`;
+	if (schema.type === "number") return typeof value === "number" ? null : `${at}: expected number`;
+	if (schema.type === "boolean")
+		return typeof value === "boolean" ? null : `${at}: expected boolean`;
+	if (schema.type === "null") return value === null ? null : `${at}: expected null`;
+	return `${at}: unsupported schema type ${String(schema.type)}`;
+}
+
+function assertPermissive(schema, at = "schema") {
+	if (schema.anyOf) {
+		for (const member of schema.anyOf) assertPermissive(member, at);
+		return;
+	}
+	if (schema.type === "array") {
+		assertPermissive(schema.items, `${at}[]`);
+		return;
+	}
+	if (schema.type !== "object" || !schema.properties) return;
+	assert.notEqual(schema.additionalProperties, false, `${at} must not ban additional properties`);
+	const required = new Set(schema.required ?? []);
+	for (const [key, prop] of Object.entries(schema.properties)) {
+		assert.ok(!required.has(key), `${at}.${key} must be optional`);
+		assertPermissive(prop, `${at}.${key}`);
+	}
+}
+
+function assertStructured(tool, structured) {
+	assert.ok(tool.outputSchema, `${tool.name} must declare outputSchema`);
+	const err = schemaError(tool.outputSchema, structured);
+	assert.ok(err === null, `${tool.name} structuredContent fails outputSchema: ${err}`);
+}
+
+test("torus_recall and torus_memories emit structuredContent matching their schemas", async () => {
+	await memory.rememberTool.execute("t", {
+		topic: "Structured output probe",
+		content: "one  two\nthree",
+		tags: "probe",
+	});
+	// Age the entry past the recency boost: a recent entry scores +1 on any
+	// query, which would make the zero-hit case below unreachable.
+	const probeFile = entryFiles().find((f) => f.includes("structured-output-probe"));
+	assert.ok(probeFile, "probe entry written");
+	writeFileSync(
+		path.join(entriesDir, probeFile),
+		readFileSync(path.join(entriesDir, probeFile), "utf8").replace(
+			/^created: .*$/m,
+			"created: 2020-01-01T00:00:00.000Z",
+		),
+		"utf8",
+	);
+
+	const recall = memory.recallTool;
+	assertPermissive(recall.outputSchema);
+	const hit = await recall.execute("t", { query: "structured output probe" });
+	assert.ok(hit.structuredContent, "recall success carries structuredContent");
+	assertStructured(recall, hit.structuredContent);
+	const row = hit.structuredContent.results[0];
+	assert.ok(row, "probe entry ranks first");
+	assert.equal(row.topic, "Structured output probe");
+	assert.ok(typeof row.path === "string" && row.path.endsWith(".md"), "path is the entry file");
+	assert.equal(row.snippet, "one two three", "snippet is the whitespace-squashed body preview");
+	assert.match(hit.content[0].text, /Structured output probe/, "text content unchanged");
+
+	const miss = await recall.execute("t", { query: "zzz-no-such-memory" });
+	assert.deepEqual(
+		miss.structuredContent,
+		{ results: [] },
+		"zero-hit success carries an empty results array",
+	);
+
+	const list = memory.listTool;
+	assertPermissive(list.outputSchema);
+	const listing = await list.execute("t", {});
+	assertStructured(list, listing.structuredContent);
+	const entry = listing.structuredContent.entries.find(
+		(e) => e.topic === "Structured output probe",
+	);
+	assert.ok(entry, "listed entry present in structuredContent");
+	assert.ok(!entry.file.includes("/"), "file is the basename torus_forget takes");
+	assert.deepEqual(entry.tags, ["probe"]);
+});

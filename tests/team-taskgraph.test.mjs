@@ -411,3 +411,139 @@ test("selfClaim threads the claim protocol sentence into the member-visible obje
 		"spec round-trips the flag",
 	);
 });
+
+// Structured-output checks: pi-ai exports Type but no Value, so validate
+// structuredContent against the tool's real outputSchema (plain JSON Schema)
+// with a hand-rolled checker, plus a permissiveness walk (optional fields,
+// no additionalProperties bans).
+function schemaError(schema, value, at = "value") {
+	if (schema.anyOf) {
+		return schema.anyOf.some((s) => schemaError(s, value, at) === null)
+			? null
+			: `${at}: matches no union member`;
+	}
+	if (schema.type === "object") {
+		if (typeof value !== "object" || value === null || Array.isArray(value))
+			return `${at}: expected object`;
+		for (const key of schema.required ?? []) {
+			if (!(key in value)) return `${at}.${key}: required`;
+		}
+		for (const [key, prop] of Object.entries(schema.properties ?? {})) {
+			if (!(key in value)) continue;
+			const err = schemaError(prop, value[key], `${at}.${key}`);
+			if (err) return err;
+		}
+		return null;
+	}
+	if (schema.type === "array") {
+		if (!Array.isArray(value)) return `${at}: expected array`;
+		for (const [i, item] of value.entries()) {
+			const err = schemaError(schema.items, item, `${at}[${i}]`);
+			if (err) return err;
+		}
+		return null;
+	}
+	if (schema.type === "string") return typeof value === "string" ? null : `${at}: expected string`;
+	if (schema.type === "number") return typeof value === "number" ? null : `${at}: expected number`;
+	if (schema.type === "boolean")
+		return typeof value === "boolean" ? null : `${at}: expected boolean`;
+	if (schema.type === "null") return value === null ? null : `${at}: expected null`;
+	return `${at}: unsupported schema type ${String(schema.type)}`;
+}
+
+function assertPermissive(schema, at = "schema") {
+	if (schema.anyOf) {
+		for (const member of schema.anyOf) assertPermissive(member, at);
+		return;
+	}
+	if (schema.type === "array") {
+		assertPermissive(schema.items, `${at}[]`);
+		return;
+	}
+	if (schema.type !== "object" || !schema.properties) return;
+	assert.notEqual(schema.additionalProperties, false, `${at} must not ban additional properties`);
+	const required = new Set(schema.required ?? []);
+	for (const [key, prop] of Object.entries(schema.properties)) {
+		assert.ok(!required.has(key), `${at}.${key} must be optional`);
+		assertPermissive(prop, `${at}.${key}`);
+	}
+}
+
+function assertStructured(tool, structured) {
+	assert.ok(tool.outputSchema, `${tool.name} must declare outputSchema`);
+	const err = schemaError(tool.outputSchema, structured);
+	assert.ok(err === null, `${tool.name} structuredContent fails outputSchema: ${err}`);
+}
+
+test("task tools emit structuredContent on success only", async () => {
+	const registered = tools();
+	const teamId = await newTeam(registered, "scon-tasks");
+	await createTask(registered, teamId, "first thing");
+	await createTask(registered, teamId, "second thing", ["t1"]);
+
+	const listTool = tool(registered, "team_task_list");
+	assertPermissive(listTool.outputSchema);
+	const list = await listTool.execute("call", { team: teamId });
+	assertStructured(listTool, list.structuredContent);
+	assert.deepEqual(list.structuredContent.tasks, [
+		{ id: "t1", subject: "first thing", assignee: null, status: "pending" },
+		{
+			id: "t2",
+			subject: "second thing",
+			assignee: null,
+			status: "pending",
+			dependsOn: ["t1"],
+			blocked: ["t1"],
+		},
+	]);
+	assert.match(list.content[0].text, /- t2 \[pending\] \[blocked by t1\] second thing/);
+
+	const missing = await listTool.execute("call", { team: "no-such-team" });
+	assert.equal(missing.isError, true);
+	assert.equal(missing.structuredContent, undefined, "no-such-team omits structuredContent");
+
+	const updateTool = tool(registered, "team_task_update");
+	assertPermissive(updateTool.outputSchema);
+	const claim = await updateTool.execute("call", {
+		team: teamId,
+		task: "t1",
+		status: "in_progress",
+		assignee: "solo",
+	});
+	assertStructured(updateTool, claim.structuredContent);
+	assert.deepEqual(claim.structuredContent.task, {
+		id: "t1",
+		subject: "first thing",
+		assignee: "solo",
+		status: "in_progress",
+	});
+
+	const blocked = await updateTool.execute("call", {
+		team: teamId,
+		task: "t2",
+		status: "in_progress",
+	});
+	assert.equal(blocked.isError, true);
+	assert.equal(blocked.structuredContent, undefined, "blocked refusal omits structuredContent");
+
+	const absent = await updateTool.execute("call", {
+		team: teamId,
+		task: "t99",
+		status: "completed",
+	});
+	assert.equal(absent.isError, undefined);
+	assert.equal(
+		absent.structuredContent,
+		undefined,
+		"unknown task mutates nothing and emits no structuredContent",
+	);
+
+	const gone = await updateTool.execute("call", { team: teamId, task: "t1", status: "deleted" });
+	assertStructured(updateTool, gone.structuredContent);
+	assert.deepEqual(gone.structuredContent.task, {
+		id: "t1",
+		subject: "first thing",
+		assignee: "solo",
+		status: "deleted",
+	});
+});

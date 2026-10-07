@@ -769,3 +769,122 @@ test("delegate headline renders the dollar segment for priced, free, and unprice
 	assert.doesNotMatch(unpriced, /\$/, "absent cost renders no dollar segment");
 	assert.match(unpriced, /1000\/500 tok/, "token segment renders when cost is absent");
 });
+
+// Structured-output checks: pi-ai exports Type but no Value, so validate
+// structuredContent against the tool's real outputSchema (plain JSON Schema)
+// with a hand-rolled checker, plus a permissiveness walk (optional fields,
+// no additionalProperties bans).
+function schemaError(schema, value, at = "value") {
+	if (schema.anyOf) {
+		return schema.anyOf.some((s) => schemaError(s, value, at) === null)
+			? null
+			: `${at}: matches no union member`;
+	}
+	if (schema.type === "object") {
+		if (typeof value !== "object" || value === null || Array.isArray(value))
+			return `${at}: expected object`;
+		for (const key of schema.required ?? []) {
+			if (!(key in value)) return `${at}.${key}: required`;
+		}
+		for (const [key, prop] of Object.entries(schema.properties ?? {})) {
+			if (!(key in value)) continue;
+			const err = schemaError(prop, value[key], `${at}.${key}`);
+			if (err) return err;
+		}
+		return null;
+	}
+	if (schema.type === "array") {
+		if (!Array.isArray(value)) return `${at}: expected array`;
+		for (const [i, item] of value.entries()) {
+			const err = schemaError(schema.items, item, `${at}[${i}]`);
+			if (err) return err;
+		}
+		return null;
+	}
+	if (schema.type === "string") return typeof value === "string" ? null : `${at}: expected string`;
+	if (schema.type === "number") return typeof value === "number" ? null : `${at}: expected number`;
+	if (schema.type === "boolean")
+		return typeof value === "boolean" ? null : `${at}: expected boolean`;
+	if (schema.type === "null") return value === null ? null : `${at}: expected null`;
+	return `${at}: unsupported schema type ${String(schema.type)}`;
+}
+
+function assertPermissive(schema, at = "schema") {
+	if (schema.anyOf) {
+		for (const member of schema.anyOf) assertPermissive(member, at);
+		return;
+	}
+	if (schema.type === "array") {
+		assertPermissive(schema.items, `${at}[]`);
+		return;
+	}
+	if (schema.type !== "object" || !schema.properties) return;
+	assert.notEqual(schema.additionalProperties, false, `${at} must not ban additional properties`);
+	const required = new Set(schema.required ?? []);
+	for (const [key, prop] of Object.entries(schema.properties)) {
+		assert.ok(!required.has(key), `${at}.${key} must be optional`);
+		assertPermissive(prop, `${at}.${key}`);
+	}
+}
+
+function assertStructured(tool, structured) {
+	assert.ok(tool.outputSchema, `${tool.name} must declare outputSchema`);
+	const err = schemaError(tool.outputSchema, structured);
+	assert.ok(err === null, `${tool.name} structuredContent fails outputSchema: ${err}`);
+}
+
+test("delegate carries structuredContent on success and omits it on failure", async () => {
+	registry.resetRegistryForTesting();
+	const registered = [];
+	roster.registerRoster({
+		registerTool: (t) => registered.push(t),
+		registerCommand: () => {},
+		on: () => {},
+		sendMessage: () => {},
+	});
+	const delegate = registered.find((t) => t.name === "torus_delegate");
+	assert.ok(delegate, "torus_delegate not registered");
+	assertPermissive(delegate.outputSchema);
+
+	let success = null;
+	await withEngine(EVENT_ENGINE, async () => {
+		success = await delegate.execute(
+			"c1",
+			{ agent: "builder", task: "structured probe" },
+			undefined,
+			undefined,
+			{
+				ui: { setStatus: () => {} },
+				sessionManager: { getSessionId: () => "sess-structured" },
+			},
+		);
+	});
+	assert.ok(success?.structuredContent, "success result carries structuredContent");
+	const sc = success.structuredContent;
+	assert.equal(sc.ok, true);
+	assert.equal(sc.text, success.content[0].text, "structured text mirrors the content block");
+	assert.equal(sc.delegationId, success.details.delegationId);
+	assert.equal(sc.model, success.details.model);
+	assert.equal(sc.turns, success.details.turns);
+	assert.deepEqual(sc.usage, { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0 });
+	assertStructured(delegate, sc);
+
+	const failure = await delegate.execute(
+		"c2",
+		{ agent: "no-such-agent", task: "probe" },
+		undefined,
+		undefined,
+		{
+			ui: { setStatus: () => {} },
+			sessionManager: { getSessionId: () => "sess-structured" },
+		},
+	);
+	assert.equal(failure.isError, undefined, "unknown-agent surfaces through text, not isError");
+	assert.equal(
+		failure.structuredContent,
+		undefined,
+		"unknown-agent failure must omit structuredContent",
+	);
+	assert.match(failure.content[0].text, /Unknown agent/);
+	registry.setCustomSender(() => {});
+});

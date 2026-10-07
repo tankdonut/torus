@@ -642,13 +642,26 @@ export const rememberTool = defineTool({
 	},
 });
 
-const recallTool = defineTool({
+export const recallTool = defineTool({
 	name: "torus_recall",
 	label: "Torus Recall",
 	description: "Search git-backed memories (topic/tags/body), scoped project+global by default",
 	parameters: Type.Object({
 		query: Type.String(),
 		scope: Type.Optional(Type.String({ description: "project | global | all (default all)" })),
+	}),
+	// `snippet` is the same whitespace-squashed 220-char preview the text
+	// content renders. Zero-hit success carries an empty results array.
+	outputSchema: Type.Object({
+		results: Type.Optional(
+			Type.Array(
+				Type.Object({
+					topic: Type.Optional(Type.String()),
+					path: Type.Optional(Type.String()),
+					snippet: Type.Optional(Type.String()),
+				}),
+			),
+		),
 	}),
 	async execute(_toolCallId, params) {
 		const scope = params.scope === "project" || params.scope === "global" ? params.scope : "all";
@@ -657,6 +670,7 @@ const recallTool = defineTool({
 			return {
 				content: [{ type: "text", text: `no memories match "${params.query}"` }],
 				details: { hits: undefined as number | undefined },
+				structuredContent: { results: [] },
 			};
 		}
 		const text = hits
@@ -665,7 +679,17 @@ const recallTool = defineTool({
 					`- ${e.topic} [${e.tags.join(",") || "no tags"}] (${e.project}) ${e.file}\n  ${e.body.replace(/\s+/g, " ").slice(0, 220)}`,
 			)
 			.join("\n");
-		return { content: [{ type: "text", text }], details: { hits: hits.length } };
+		return {
+			content: [{ type: "text", text }],
+			details: { hits: hits.length },
+			structuredContent: {
+				results: hits.map((e) => ({
+					topic: e.topic,
+					path: e.file,
+					snippet: e.body.replace(/\s+/g, " ").slice(0, 220),
+				})),
+			},
+		};
 	},
 });
 
@@ -691,11 +715,28 @@ export const listTool = defineTool({
 	parameters: Type.Object({
 		scope: Type.Optional(Type.String({ description: "project | global | all" })),
 	}),
+	// `file` is the entry filename torus_forget takes (basename, as listed in
+	// the text content). Zero-entry success carries an empty array.
+	outputSchema: Type.Object({
+		entries: Type.Optional(
+			Type.Array(
+				Type.Object({
+					file: Type.Optional(Type.String()),
+					topic: Type.Optional(Type.String()),
+					tags: Type.Optional(Type.Array(Type.String())),
+				}),
+			),
+		),
+	}),
 	async execute(_toolCallId, params) {
 		const scope = params.scope === "project" || params.scope === "global" ? params.scope : "all";
 		const entries = scoped(listEntries(), process.cwd(), scope).slice(0, 15);
 		if (entries.length === 0)
-			return { content: [{ type: "text", text: "(no memories yet)" }], details: {} };
+			return {
+				content: [{ type: "text", text: "(no memories yet)" }],
+				details: {},
+				structuredContent: { entries: [] },
+			};
 		const text = entries
 			.map((e) => `- ${e.topic} (${e.project}, ${path.basename(e.file)})`)
 			.join("\n");
@@ -704,7 +745,17 @@ export const listTool = defineTool({
 			corrupt.length > 0
 				? `\n⚠ ${corrupt.length} unparseable entries (invisible to recall/injection): ${corrupt.join(", ")} — torus_forget can remove them`
 				: "";
-		return { content: [{ type: "text", text: text + warning }], details: {} };
+		return {
+			content: [{ type: "text", text: text + warning }],
+			details: {},
+			structuredContent: {
+				entries: entries.map((e) => ({
+					file: path.basename(e.file),
+					topic: e.topic,
+					tags: e.tags,
+				})),
+			},
+		};
 	},
 });
 

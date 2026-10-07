@@ -344,3 +344,99 @@ test("stale surfacing: TORUS_TASK_STALE_MIN flips the verdict on a recent clock;
 		"the default must be restored after the env probes",
 	);
 });
+
+// Structured-output checks: pi-ai exports Type but no Value, so validate
+// structuredContent against the tool's real outputSchema (plain JSON Schema)
+// with a hand-rolled checker, plus a permissiveness walk (optional fields,
+// no additionalProperties bans).
+function schemaError(schema, value, at = "value") {
+	if (schema.anyOf) {
+		return schema.anyOf.some((s) => schemaError(s, value, at) === null)
+			? null
+			: `${at}: matches no union member`;
+	}
+	if (schema.type === "object") {
+		if (typeof value !== "object" || value === null || Array.isArray(value))
+			return `${at}: expected object`;
+		for (const key of schema.required ?? []) {
+			if (!(key in value)) return `${at}.${key}: required`;
+		}
+		for (const [key, prop] of Object.entries(schema.properties ?? {})) {
+			if (!(key in value)) continue;
+			const err = schemaError(prop, value[key], `${at}.${key}`);
+			if (err) return err;
+		}
+		return null;
+	}
+	if (schema.type === "array") {
+		if (!Array.isArray(value)) return `${at}: expected array`;
+		for (const [i, item] of value.entries()) {
+			const err = schemaError(schema.items, item, `${at}[${i}]`);
+			if (err) return err;
+		}
+		return null;
+	}
+	if (schema.type === "string") return typeof value === "string" ? null : `${at}: expected string`;
+	if (schema.type === "number") return typeof value === "number" ? null : `${at}: expected number`;
+	if (schema.type === "boolean")
+		return typeof value === "boolean" ? null : `${at}: expected boolean`;
+	if (schema.type === "null") return value === null ? null : `${at}: expected null`;
+	return `${at}: unsupported schema type ${String(schema.type)}`;
+}
+
+function assertPermissive(schema, at = "schema") {
+	if (schema.anyOf) {
+		for (const member of schema.anyOf) assertPermissive(member, at);
+		return;
+	}
+	if (schema.type === "array") {
+		assertPermissive(schema.items, `${at}[]`);
+		return;
+	}
+	if (schema.type !== "object" || !schema.properties) return;
+	assert.notEqual(schema.additionalProperties, false, `${at} must not ban additional properties`);
+	const required = new Set(schema.required ?? []);
+	for (const [key, prop] of Object.entries(schema.properties)) {
+		assert.ok(!required.has(key), `${at}.${key} must be optional`);
+		assertPermissive(prop, `${at}.${key}`);
+	}
+}
+
+function assertStructured(tool, structured) {
+	assert.ok(tool.outputSchema, `${tool.name} must declare outputSchema`);
+	const err = schemaError(tool.outputSchema, structured);
+	assert.ok(err === null, `${tool.name} structuredContent fails outputSchema: ${err}`);
+}
+
+test("team_status structuredContent mirrors the rendered roster, stale, and blocked lines", async () => {
+	const { registered, teamId } = await plantStaleFixture("scon-status", "idle", 31 * 60_000);
+	await tool(registered, "team_task_create").execute("call", {
+		team: teamId,
+		subject: "follow the rescue",
+		dependsOn: ["t1"],
+	});
+
+	const statusTool = tool(registered, "team_status");
+	assertPermissive(statusTool.outputSchema);
+	const result = await statusTool.execute("call", { team: teamId });
+	assertStructured(statusTool, result.structuredContent);
+	const sc = result.structuredContent;
+	assert.equal(sc.team, teamId);
+	assert.equal(sc.status, "active");
+	assert.deepEqual(sc.members, [
+		{ name: "kilo", agent: "builder", status: "idle", reportTail: "(no outbox yet)" },
+	]);
+	assert.deepEqual(sc.stale, [
+		{ id: "t1", subject: "rescue the wedged build", assignee: "kilo", minutes: 31 },
+	]);
+	assert.deepEqual(sc.blocked, [{ id: "t2", subject: "follow the rescue", dependsOn: ["t1"] }]);
+	assert.deepEqual(sc.orphaned, []);
+
+	const text = result.content[0].text;
+	assert.match(text, /stale: t1 .* for 31min/, "text still renders the stale line");
+	assert.match(text, /blocked: t2 .* waiting on t1/, "text still renders the blocked line");
+
+	const missing = await statusTool.execute("call", { team: "ghost-team" });
+	assert.equal(missing.isError, true);
+	assert.equal(missing.structuredContent, undefined, "no-such-team omits structuredContent");
+});

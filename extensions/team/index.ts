@@ -962,6 +962,50 @@ const teamStatusTool = defineTool({
 	parameters: Type.Object({
 		team: Type.Optional(Type.String({ description: "Team id (default: most recent active team)" })),
 	}),
+	// Machine-readable roster for codemode scripts. Every field optional;
+	// the no-such-team error result sets no structuredContent.
+	outputSchema: Type.Object({
+		team: Type.Optional(Type.String()),
+		status: Type.Optional(Type.String()),
+		members: Type.Optional(
+			Type.Array(
+				Type.Object({
+					name: Type.Optional(Type.String()),
+					agent: Type.Optional(Type.String()),
+					status: Type.Optional(Type.String()),
+					reportTail: Type.Optional(Type.String()),
+				}),
+			),
+		),
+		orphaned: Type.Optional(
+			Type.Array(
+				Type.Object({
+					id: Type.Optional(Type.String()),
+					subject: Type.Optional(Type.String()),
+					assignee: Type.Optional(Type.String()),
+				}),
+			),
+		),
+		stale: Type.Optional(
+			Type.Array(
+				Type.Object({
+					id: Type.Optional(Type.String()),
+					subject: Type.Optional(Type.String()),
+					assignee: Type.Optional(Type.String()),
+					minutes: Type.Optional(Type.Number()),
+				}),
+			),
+		),
+		blocked: Type.Optional(
+			Type.Array(
+				Type.Object({
+					id: Type.Optional(Type.String()),
+					subject: Type.Optional(Type.String()),
+					dependsOn: Type.Optional(Type.Array(Type.String())),
+				}),
+			),
+		),
+	}),
 	async execute(_toolCallId, params) {
 		const record = resolveTeam(params.team);
 		if (!record)
@@ -970,6 +1014,7 @@ const teamStatusTool = defineTool({
 				isError: true,
 				details: { teamId: undefined as string | undefined },
 			};
+		const memberData: { name: string; agent: string; status: string; reportTail: string }[] = [];
 		const reports = record.members.map((m) => {
 			let tail = "(no report yet)";
 			try {
@@ -985,6 +1030,7 @@ const teamStatusTool = defineTool({
 				memberRun?.cost,
 				(memberRun?.tokensIn ?? 0) + (memberRun?.tokensOut ?? 0) > 0,
 			);
+			memberData.push({ name: m.name, agent: m.agent, status: m.status, reportTail: tail });
 			return `- ${m.name} (${m.agent}) · ${m.status}${cost ? ` · ${cost}` : ""} — ${tail}`;
 		});
 		// Durability surfacing: a task left in_progress under a member that has
@@ -992,12 +1038,14 @@ const teamStatusTool = defineTool({
 		// reassign or close it. Read-only: no task is mutated here.
 		const tasks = readTasksFile(record.id).tasks;
 		const orphans: string[] = [];
+		const orphanData: { id: string; subject: string; assignee: string }[] = [];
 		for (const task of tasks) {
 			if (task.status !== "in_progress" || task.assignee === null) continue;
 			if (!record.members.some((m) => m.name === task.assignee && m.status === "stopped")) continue;
 			orphans.push(
 				`orphaned: ${task.id} (${task.subject}) was in-progress under @${task.assignee} (stopped) — reassign or complete via team_task_update`,
 			);
+			orphanData.push({ id: task.id, subject: task.subject, assignee: task.assignee });
 		}
 		// Stale surfacing: an in_progress task under a member that is idle (not
 		// working on it, not stopped — stopped is the orphan case above) with no
@@ -1009,6 +1057,7 @@ const teamStatusTool = defineTool({
 		// Read-only: no mutation, no timer.
 		const staleMin = staleThresholdMinutes();
 		const staleLines: string[] = [];
+		const staleData: { id: string; subject: string; assignee: string; minutes: number }[] = [];
 		for (const task of tasks) {
 			if (task.status !== "in_progress" || task.assignee === null) continue;
 			const member = record.members.find((m) => m.name === task.assignee);
@@ -1021,13 +1070,22 @@ const teamStatusTool = defineTool({
 				`stale: ${task.id} (${task.subject}) in-progress under @${task.assignee} for ${elapsedMin}min — ` +
 					`nudge via team_msg or release via team-task/team_task_update`,
 			);
+			staleData.push({
+				id: task.id,
+				subject: task.subject,
+				assignee: task.assignee,
+				minutes: elapsedMin,
+			});
 		}
 		const blockedLines: string[] = [];
+		const blockedData: { id: string; subject: string; dependsOn: string[] }[] = [];
 		const blockers = blockedTasks(tasks);
 		for (const task of tasks) {
 			const deps = blockers.get(task.id);
-			if (deps)
+			if (deps) {
 				blockedLines.push(`blocked: ${task.id} (${task.subject}) waiting on ${deps.join(",")}`);
+				blockedData.push({ id: task.id, subject: task.subject, dependsOn: deps });
+			}
 		}
 		return {
 			content: [
@@ -1037,6 +1095,14 @@ const teamStatusTool = defineTool({
 				},
 			],
 			details: { teamId: record.id },
+			structuredContent: {
+				team: record.id,
+				status: record.status,
+				members: memberData,
+				orphaned: orphanData,
+				stale: staleData,
+				blocked: blockedData,
+			},
 		};
 	},
 });
@@ -1133,6 +1199,22 @@ const teamTaskListTool = defineTool({
 	label: "Torus Team Task List",
 	description: "List the team shared tasklist",
 	parameters: Type.Object({ team: Type.String() }),
+	// `blocked` carries the unmet dependency ids (the same blockedTasks
+	// derivation the text renderer uses); `dependsOn` is the declared edge.
+	outputSchema: Type.Object({
+		tasks: Type.Optional(
+			Type.Array(
+				Type.Object({
+					id: Type.Optional(Type.String()),
+					subject: Type.Optional(Type.String()),
+					assignee: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+					status: Type.Optional(Type.String()),
+					dependsOn: Type.Optional(Type.Array(Type.String())),
+					blocked: Type.Optional(Type.Array(Type.String())),
+				}),
+			),
+		),
+	}),
 	async execute(_toolCallId, params) {
 		const record = getTeam(params.team);
 		if (!record || !AGENT_NAME_RE.test(params.team))
@@ -1148,7 +1230,23 @@ const teamTaskListTool = defineTool({
 							return `- ${t.id} [${t.status}]${deps ? ` [blocked by ${deps.join(",")}]` : ""} ${t.assignee ? `@${t.assignee} ` : ""}${t.subject}`;
 						})
 						.join("\n");
-		return { content: [{ type: "text", text }], details: {} };
+		return {
+			content: [{ type: "text", text }],
+			details: {},
+			structuredContent: {
+				tasks: tasks.map((t) => {
+					const deps = blockers.get(t.id);
+					return {
+						id: t.id,
+						subject: t.subject,
+						assignee: t.assignee,
+						status: t.status,
+						...(t.dependsOn ? { dependsOn: t.dependsOn } : {}),
+						...(deps ? { blocked: deps } : {}),
+					};
+				}),
+			},
+		};
 	},
 });
 
@@ -1170,11 +1268,25 @@ const teamTaskUpdateTool = defineTool({
 		),
 		assignee: Type.Optional(Type.String()),
 	}),
+	// Machine-readable view of the mutated task. Every field optional; the
+	// refusal and unknown-task results set no structuredContent.
+	outputSchema: Type.Object({
+		task: Type.Optional(
+			Type.Object({
+				id: Type.Optional(Type.String()),
+				subject: Type.Optional(Type.String()),
+				assignee: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+				status: Type.Optional(Type.String()),
+			}),
+		),
+	}),
 	async execute(_toolCallId, params) {
 		const record = getTeam(params.team);
 		if (!record || !AGENT_NAME_RE.test(params.team))
 			return { content: [{ type: "text", text: "No such team." }], details: {}, isError: true };
 		let outcome = `no task ${params.task}`;
+		let updated: { id: string; subject: string; assignee: string | null; status: string } | null =
+			null;
 		let refusal: string | null = null;
 		updateTasksFile(record.id, (file) => {
 			const task = file.tasks.find((t) => t.id === params.task);
@@ -1188,6 +1300,12 @@ const teamTaskUpdateTool = defineTool({
 			}
 			refusal = null;
 			if (params.status === "deleted") {
+				updated = {
+					id: task.id,
+					subject: task.subject,
+					assignee: task.assignee,
+					status: "deleted",
+				};
 				outcome = `task ${params.task} deleted`;
 				return { tasks: file.tasks.filter((t) => t.id !== params.task), nextId: file.nextId };
 			}
@@ -1195,10 +1313,21 @@ const teamTaskUpdateTool = defineTool({
 			if (params.assignee) task.assignee = params.assignee;
 			task.updatedAt = new Date().toISOString();
 			outcome = `task ${params.task} -> ${task.status}`;
+			updated = {
+				id: task.id,
+				subject: task.subject,
+				assignee: task.assignee,
+				status: task.status,
+			};
 		});
 		if (refusal !== null)
 			return { content: [{ type: "text", text: refusal }], details: {}, isError: true };
-		return { content: [{ type: "text", text: outcome }], details: {} };
+		if (updated === null) return { content: [{ type: "text", text: outcome }], details: {} };
+		return {
+			content: [{ type: "text", text: outcome }],
+			details: {},
+			structuredContent: { task: updated },
+		};
 	},
 });
 

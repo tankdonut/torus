@@ -959,6 +959,25 @@ const delegateTool = defineTool({
 			}),
 		),
 	}),
+	// Machine-readable shape of successful results (codemode scripts receive
+	// this instead of the text content). Every field optional; failures and
+	// pre-flight rejections set no structuredContent.
+	outputSchema: Type.Object({
+		ok: Type.Optional(Type.Boolean()),
+		text: Type.Optional(Type.String()),
+		delegationId: Type.Optional(Type.String()),
+		model: Type.Optional(Type.String()),
+		turns: Type.Optional(Type.Number()),
+		usage: Type.Optional(
+			Type.Object({
+				input: Type.Optional(Type.Number()),
+				output: Type.Optional(Type.Number()),
+				cacheRead: Type.Optional(Type.Number()),
+				cacheWrite: Type.Optional(Type.Number()),
+				cost: Type.Optional(Type.Number()),
+			}),
+		),
+	}),
 	renderCall(args, theme) {
 		const handle = args.handle?.trim().replace(/^@+/, "");
 		const skillsBadge = args.skills?.length
@@ -1088,9 +1107,27 @@ const delegateTool = defineTool({
 		} finally {
 			ctx.ui.setStatus(statusKey, undefined);
 		}
+		if (!outcome.ok)
+			return { content: [{ type: "text", text: outcome.text }], details: outcome.details };
+		const usage = (outcome.details.usage ?? {}) as Record<string, unknown>;
+		const num = (v: unknown): number => (typeof v === "number" ? v : 0);
 		return {
 			content: [{ type: "text", text: outcome.text }],
 			details: outcome.details,
+			structuredContent: {
+				ok: true,
+				text: outcome.text,
+				...(outcome.delegationId ? { delegationId: outcome.delegationId } : {}),
+				...(typeof outcome.details.model === "string" ? { model: outcome.details.model } : {}),
+				...(typeof outcome.details.turns === "number" ? { turns: outcome.details.turns } : {}),
+				usage: {
+					input: num(usage["input"]),
+					output: num(usage["output"]),
+					cacheRead: num(usage["cacheRead"]),
+					cacheWrite: num(usage["cacheWrite"]),
+					cost: num(usage["cost"]),
+				},
+			},
 		};
 	},
 });
