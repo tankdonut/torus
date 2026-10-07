@@ -269,13 +269,6 @@ thead th {
 	font-weight: 700;
 }
 
-/* Wide tables break out of the 52rem body column once the viewport allows. */
-@media (min-width: 72rem) {
-	.table-wrap {
-		margin-inline: -6rem;
-	}
-}
-
 .colophon {
 	margin-top: 3rem;
 	padding-top: 0.8rem;
