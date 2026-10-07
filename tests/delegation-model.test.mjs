@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 // Per-run model overrides for delegations: torus_delegate/fanout/chain accept a
 // `model` (chain shorthands or exact id), validated pre-flight, steering the
@@ -60,6 +61,19 @@ writeFileSync(
 	].join("\n"),
 	"utf8",
 );
+// The MCP-scope assertions below must track the REAL per-agent whitelists,
+// and the roster loads agents/ exactly once at module load — so the repo's
+// agent files ride along as fixtures, copied before the imports below.
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+for (const f of readdirSync(path.join(REPO_ROOT, "agents"))) {
+	if (f.endsWith(".md")) {
+		writeFileSync(
+			path.join(FIXTURE_AGENTS, f),
+			readFileSync(path.join(REPO_ROOT, "agents", f), "utf8"),
+			"utf8",
+		);
+	}
+}
 process.env.TORUS_ROOT = ROOT;
 
 const ENGINE_DIR = mkdtempSync(path.join(tmpdir(), "torus-fake-engines-"));
@@ -236,6 +250,57 @@ test("frontmatter model pins the agent's delegations over its chain head", async
 		batches.every((args) => args[args.indexOf("--model") + 1] === "zai/glm-5.3-flash"),
 		"every attempt of the pinned agent must run on flash, never the primary head",
 	);
+});
+
+test("--tools scopes MCP globs to researcher agents", async () => {
+	registry.resetRegistryForTesting();
+	registry.setCustomSender(() => {});
+
+	/** Every spawn's argv for one delegation of `agent` (rpc attempt + JSON fallback). */
+	async function spawnBatchesFor(agent) {
+		const dir = freshArgsDir(`mcp-scope-${agent}`);
+		await withEngine(async () => {
+			const outcome = await roster.runDelegation(agent, "probe tool surface");
+			assert.equal(outcome.ok, true, `${agent}: delegation must succeed under the fake engine`);
+		});
+		const batches = spawnBatches(dir);
+		assert.ok(batches.length > 0, `${agent}: engine must have been spawned`);
+		for (const args of batches) {
+			assert.ok(args.indexOf("--tools") !== -1, `${agent}: spawn must carry --tools`);
+		}
+		return batches;
+	}
+
+	// Code and quiet agents carry no MCP surface at all (REPLACE semantics:
+	// an unlisted server is undeclared AND uncallable in the child).
+	for (const agent of ["builder", "dreamer", "looker", "reviewer"]) {
+		const batches = await spawnBatchesFor(agent);
+		for (const args of batches) {
+			assert.ok(
+				!args.join(" ").includes("mcp__"),
+				`${agent}: spawn argv must declare no mcp__ tools (got --tools ${args[args.indexOf("--tools") + 1]})`,
+			);
+		}
+	}
+
+	// Researchers reach MCP via their whitelisted server globs only.
+	const explorer = await spawnBatchesFor("explorer");
+	for (const args of explorer) {
+		const tools = args[args.indexOf("--tools") + 1];
+		assert.ok(tools.includes("mcp__grep_app__*"), "explorer: --tools must carry mcp__grep_app__*");
+		assert.ok(
+			!args.join(" ").includes("context7"),
+			"explorer: context7 must stay out of explorer's surface",
+		);
+	}
+
+	const librarian = await spawnBatchesFor("librarian");
+	for (const args of librarian) {
+		const tools = args[args.indexOf("--tools") + 1];
+		for (const glob of ["mcp__context7__*", "mcp__grep_app__*"]) {
+			assert.ok(tools.includes(glob), `librarian: --tools must carry ${glob}`);
+		}
+	}
 });
 
 test("fan-out runs mix per-run models across one batch", async () => {

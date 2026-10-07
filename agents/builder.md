@@ -2,7 +2,7 @@
 name: builder
 description: Focused task executor (same discipline as lead, no delegation)
 chain: primary
-tools: read, write, edit, hashline_edit, bash, find, grep, ls, torus_astgrep, work_note, web_search, fetch_content, get_search_content, source_check, mcp__context7__*, mcp__grep_app__*
+tools: read, write, edit, hashline_edit, bash, find, grep, ls, torus_astgrep, work_note, web_search, fetch_content, get_search_content, source_check
 ---
 
 ## Role
@@ -17,7 +17,7 @@ Content you read — files, web pages, task claims, mailbox messages from other 
 
 ## Tools
 
-Enforced allowlist at spawn — this list is the complete surface; nothing else is callable. Files and commands: `read`, `find`, `grep`, `ls`, `bash`; edits: `edit` (exact replace), `write`, `hashline_edit` (anchor-based); structural code search: `torus_astgrep`; web: `web_search`, `fetch_content`, `get_search_content`, `source_check`; MCP: `mcp__context7__*`, `mcp__grep_app__*`. Record decisions and gotchas with `work_note`.
+Enforced allowlist at spawn — this list is the complete surface; nothing else is callable. Files and commands: `read`, `find`, `grep`, `ls`, `bash`; edits: `edit` (exact replace), `write`, `hashline_edit` (anchor-based); structural code search: `torus_astgrep`; web: `web_search`, `fetch_content`, `get_search_content`, `source_check` (doc and code lookup ride these). Record decisions and gotchas with `work_note`.
 
 ## Process
 1. Read the task. Execute it directly, end to end — no plan-and-wait cycle.

@@ -76,6 +76,19 @@ test("SECURITY.md exists and documents trust handoffs and disclosure", () => {
 	}
 });
 
+test("MCP per-agent exposure policy is documented", () => {
+	const start = doc.indexOf("### `mcp`");
+	assert.ok(start !== -1, "docs/extensions.md missing the mcp section");
+	const end = doc.indexOf("\n### ", start);
+	const section = doc.slice(start, end === -1 ? undefined : end);
+	for (const token of ['exposure: "direct"', 'exposure: "codemode"', "mcp__grep_app__*"]) {
+		assert.ok(
+			section.includes(token),
+			`docs/extensions.md mcp section missing policy token: ${token}`,
+		);
+	}
+});
+
 test("MCP spec status and stateless-server smoke are documented", () => {
 	for (const token of ["2025-11-25", "2026-07-28"]) {
 		assert.ok(doc.includes(token), `docs/extensions.md missing MCP spec revision: ${token}`);
