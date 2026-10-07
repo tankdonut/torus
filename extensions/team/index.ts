@@ -943,6 +943,18 @@ const teamCreateTool = defineTool({
 	},
 });
 
+/**
+ * Minutes an in_progress task may sit under an idle member before team_status
+ * flags it. TORUS_TASK_STALE_MIN, default 30; unreadable values silently fall
+ * back to 30. Read at call time so callers (and tests) can vary it per call.
+ */
+function staleThresholdMinutes(): number {
+	const raw = process.env["TORUS_TASK_STALE_MIN"];
+	if (!raw) return 30;
+	const parsed = Number(raw);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : 30;
+}
+
 const teamStatusTool = defineTool({
 	name: "team_status",
 	label: "Torus Team Status",
@@ -987,6 +999,29 @@ const teamStatusTool = defineTool({
 				`orphaned: ${task.id} (${task.subject}) was in-progress under @${task.assignee} (stopped) — reassign or complete via team_task_update`,
 			);
 		}
+		// Stale surfacing: an in_progress task under a member that is idle (not
+		// working on it, not stopped — stopped is the orphan case above) with no
+		// tasklist activity for longer than TORUS_TASK_STALE_MIN minutes. The
+		// stale clock is task.updatedAt, not the registry's member-level
+		// ExternalRun.activeUpdatedAt: it is per-task (one idle member can hold
+		// several), durable in tasks.json which this tool already reads, and it
+		// survives a parent restart — run beacons are per-process shared state.
+		// Read-only: no mutation, no timer.
+		const staleMin = staleThresholdMinutes();
+		const staleLines: string[] = [];
+		for (const task of tasks) {
+			if (task.status !== "in_progress" || task.assignee === null) continue;
+			const member = record.members.find((m) => m.name === task.assignee);
+			if (member?.status !== "idle") continue;
+			const updatedMs = Date.parse(task.updatedAt);
+			if (!Number.isFinite(updatedMs)) continue;
+			const elapsedMin = Math.floor((Date.now() - updatedMs) / 60_000);
+			if (elapsedMin <= staleMin) continue;
+			staleLines.push(
+				`stale: ${task.id} (${task.subject}) in-progress under @${task.assignee} for ${elapsedMin}min — ` +
+					`nudge via team_msg or release via team-task/team_task_update`,
+			);
+		}
 		const blockedLines: string[] = [];
 		const blockers = blockedTasks(tasks);
 		for (const task of tasks) {
@@ -998,7 +1033,7 @@ const teamStatusTool = defineTool({
 			content: [
 				{
 					type: "text",
-					text: `team ${record.name} [${record.status}] — ${record.objective}\n${reports.concat(orphans, blockedLines).join("\n")}`,
+					text: `team ${record.name} [${record.status}] — ${record.objective}\n${reports.concat(orphans, staleLines, blockedLines).join("\n")}`,
 				},
 			],
 			details: { teamId: record.id },

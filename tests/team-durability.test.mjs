@@ -222,3 +222,125 @@ test("orphan surfacing: same task under a working member stays silent; stopping 
 		/^orphaned: t1 \(close the loop\) was in-progress under @foxtrot \(stopped\) — reassign or complete via team_task_update$/m,
 	);
 });
+
+// Stale surfacing: an in_progress task under an IDLE member (working means
+// active, stopped is the orphan case above) is flagged once its tasklist
+// clock — task.updatedAt — outlives TORUS_TASK_STALE_MIN (default 30min).
+// The clock is planted by rewriting tasks.json through the production writer,
+// exactly what a member that claimed then went quiet leaves on disk.
+async function plantStaleFixture(name, memberStatus, updatedAgoMs) {
+	const registered = tools();
+	const created = await tool(registered, "team_create").execute(
+		"call",
+		{ name, objective: "stale probe", members: [{ name: "kilo", agent: "builder" }] },
+		undefined,
+		undefined,
+		{ sessionManager: { getSessionId: () => `sess-${name}` } },
+	);
+	const teamId = created.details.teamId;
+	assert.ok(teamId, "team_create must return a teamId");
+	spawned.at(-1).onState({ status: memberStatus, sessionId: `sess-${name}` });
+	await tool(registered, "team_task_create").execute("call", {
+		team: teamId,
+		subject: "rescue the wedged build",
+		assignee: "kilo",
+	});
+	await tool(registered, "team_task_update").execute("call", {
+		team: teamId,
+		task: "t1",
+		status: "in_progress",
+	});
+	const file = runtime.readTasksFile(teamId);
+	const task = file.tasks.find((t) => t.id === "t1");
+	assert.ok(task, "fixture task must exist");
+	task.updatedAt = new Date(Date.now() - updatedAgoMs).toISOString();
+	runtime.writeTasksFile(teamId, file);
+	return { registered, teamId };
+}
+
+/** Set one env var for the duration of fn, restoring whatever was there (unset included). */
+async function withEnv(name, value, fn) {
+	const saved = process.env[name];
+	if (value === undefined) delete process.env[name];
+	else process.env[name] = value;
+	try {
+		return await fn();
+	} finally {
+		if (saved === undefined) delete process.env[name];
+		else process.env[name] = saved;
+	}
+}
+
+test("stale surfacing: idle member + task untouched for 31min renders the stale line with elapsed minutes", async () => {
+	const { registered, teamId } = await plantStaleFixture("stale-old", "idle", 31 * 60_000);
+	const text = await statusText(registered, teamId);
+	assert.match(
+		text,
+		/^stale: t1 \(rescue the wedged build\) in-progress under @kilo for 31min — nudge via team_msg or release via team-task\/team_task_update$/m,
+		"a 31min-old in_progress task under an idle member must be named stale",
+	);
+});
+
+test("stale surfacing: fresh clock stays silent under the default threshold", async () => {
+	const { registered, teamId } = await plantStaleFixture("stale-fresh", "idle", 5 * 60_000);
+	const text = await statusText(registered, teamId);
+	assert.equal(
+		(text.match(/stale:/g) ?? []).length,
+		0,
+		"a 5min-old task under an idle member is not stale at the default 30min threshold",
+	);
+});
+
+test("stale surfacing: a WORKING member is never stale — work may simply be slow", async () => {
+	const { registered, teamId } = await plantStaleFixture("stale-working", "working", 31 * 60_000);
+	const text = await statusText(registered, teamId);
+	assert.equal(
+		(text.match(/stale:/g) ?? []).length,
+		0,
+		"an old clock under a working member must not render a stale line",
+	);
+});
+
+test("stale surfacing: a STOPPED member stays the orphan case — no double flagging", async () => {
+	const { registered, teamId } = await plantStaleFixture("stale-stopped", "stopped", 31 * 60_000);
+	const text = await statusText(registered, teamId);
+	assert.match(
+		text,
+		/^orphaned: t1 \(rescue the wedged build\) was in-progress under @kilo \(stopped\) — reassign or complete via team_task_update$/m,
+	);
+	assert.equal(
+		(text.match(/stale:/g) ?? []).length,
+		0,
+		"a stopped member's task is an orphan, not stale — one line per problem",
+	);
+});
+
+test("stale surfacing: TORUS_TASK_STALE_MIN flips the verdict on a recent clock; garbage falls back to 30", async () => {
+	const { registered, teamId } = await plantStaleFixture("stale-tuned", "idle", 5 * 60_000);
+	await withEnv("TORUS_TASK_STALE_MIN", "1", async () => {
+		const text = await statusText(registered, teamId);
+		assert.match(
+			text,
+			/^stale: t1 \(rescue the wedged build\) in-progress under @kilo for 5min — nudge via team_msg or release via team-task\/team_task_update$/m,
+			"threshold 1 must flag a 5min-old task",
+		);
+	});
+	await withEnv("TORUS_TASK_STALE_MIN", "0", async () => {
+		const text = await statusText(registered, teamId);
+		assert.match(text, /stale: t1 /m, "threshold 0 must flag any age");
+	});
+	await withEnv("TORUS_TASK_STALE_MIN", "banana", async () => {
+		const text = await statusText(registered, teamId);
+		assert.equal(
+			(text.match(/stale:/g) ?? []).length,
+			0,
+			"an unparseable threshold must silently fall back to 30",
+		);
+	});
+	const text = await statusText(registered, teamId);
+	assert.equal(
+		(text.match(/stale:/g) ?? []).length,
+		0,
+		"the default must be restored after the env probes",
+	);
+});
