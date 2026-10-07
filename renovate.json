@@ -8,6 +8,15 @@
   ],
   "packageRules": [
     {
+      "matchManagers": ["asdf"],
+      "matchDatasources": ["node-version"],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "matchDatasources": ["node-version"],
+      "commitMessagePrefix": "chore(deps): "
+    },
+    {
       "matchPackageNames": [
         "@earendil-works/pi-ai",
         "@earendil-works/pi-coding-agent",
