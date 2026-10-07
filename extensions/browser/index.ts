@@ -206,8 +206,18 @@ export function splitMouseBuffer(
 	return { keys: rest, held: "" };
 }
 
-function withinSpan(x: number, span: [number, number]): boolean {
-	return x >= span[0] && x <= span[1];
+function withinSpan(x: number, span: readonly [number, number] | undefined): boolean {
+	return span !== undefined && x >= span[0] && x <= span[1];
+}
+
+/** The footer's back affordance: colored text, click-routed like the buttons. */
+const BACK_LABEL = "[esc] back";
+
+/** Screen-space span for BACK_LABEL at `leadWidth` visible columns into the
+ * footer line — undefined when the label would be clipped by `width`. */
+function backSpan(leadWidth: number, width: number): [number, number] | undefined {
+	const start = leadWidth + 3; // the dim " · " separator before the label
+	return start + BACK_LABEL.length <= width ? [start, start + BACK_LABEL.length - 1] : undefined;
 }
 
 class FleetBrowser implements Component {
@@ -230,10 +240,15 @@ class FleetBrowser implements Component {
 	private stopConfirm = false;
 	/** Hovered list row index / footer button for bold-on-hover; null = none. */
 	private hoverRow: number | null = null;
-	private hoverButton: "steer" | "stop" | null = null;
-	/** Screen-space hit-boxes for the [steer]/[stop] buttons in the detail footer line. */
-	private footerButtons: { y: number; steer: [number, number]; stop: [number, number] } | null =
-		null;
+	private hoverButton: "steer" | "stop" | "back" | null = null;
+	/** Screen-space hit-boxes in the detail footer line: the [steer]/[stop]
+	 * buttons and the colored back label, each present only when fully rendered. */
+	private footerButtons: {
+		y: number;
+		steer?: [number, number];
+		stop?: [number, number];
+		back?: [number, number];
+	} | null = null;
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private readonly componentCache = new Map<
 		string,
@@ -397,7 +412,9 @@ class FleetBrowser implements Component {
 						? "steer"
 						: withinSpan(event.x, this.footerButtons.stop)
 							? "stop"
-							: null
+							: withinSpan(event.x, this.footerButtons.back)
+								? "back"
+								: null
 					: null;
 			if (row !== this.hoverRow) {
 				this.hoverRow = row;
@@ -417,6 +434,21 @@ class FleetBrowser implements Component {
 			this.footerButtons &&
 			event.y === this.footerButtons.y
 		) {
+			if (withinSpan(event.x, this.footerButtons.back)) {
+				// Same as pressing esc: leave steer/stop states, or back out of detail.
+				if (this.steerMode) {
+					this.steerMode = false;
+					this.steerText = "";
+				} else if (this.stopConfirm) {
+					this.stopConfirm = false;
+				} else if (this.listSeen) {
+					this.mode = "list";
+				} else {
+					this.close();
+				}
+				this.tui.requestRender();
+				return { handled: true };
+			}
 			const selected = this.items[this.cursor];
 			const running = selected?.kind === "delegation" && selected.record.status === "running";
 			if (running && withinSpan(event.x, this.footerButtons.steer)) {
@@ -650,12 +682,12 @@ class FleetBrowser implements Component {
 					)
 				: this.externalHeader(item.run, theme, width);
 		let footer: string[];
+		// The header call above already left footerButtons holding exactly the
+		// zones it rendered — back-only in steer/stop states, back+buttons otherwise.
 		if (this.steerMode && canSteer) {
-			this.footerButtons = null;
 			const input = ` ${theme.fg(steerColor, `steer> ${this.steerText}█`)}`;
 			footer = [frameRule, input, frameRule, header];
 		} else if (stopPrompt && item.kind === "delegation") {
-			this.footerButtons = null;
 			const who = item.record.handle ? `@${item.record.handle}` : item.record.agent;
 			footer = [` ${theme.fg("error", theme.bold(`stop ${who}? y/n`))}`, frameRule, header];
 		} else {
@@ -673,7 +705,8 @@ class FleetBrowser implements Component {
 	/** Detail footer status line. With `buttons`, the colored [steer]/[stop] pair
 	 * renders inline where the grey key tips used to sit and records its
 	 * screen-space hit-box for click routing; the tail absorbs truncation so the
-	 * buttons stay intact while they fit. */
+	 * buttons stay intact while they fit. The back label gets the same
+	 * treatment — colored, bold-on-hover, click-routed — whenever it fully fits. */
 	private delegationHeader(
 		record: DelegationRecord,
 		theme: Theme,
@@ -689,9 +722,12 @@ class FleetBrowser implements Component {
 		const stats = `turn ${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} tok`;
 		const who = record.handle ? `@${record.handle} (${record.agent})` : record.agent;
 		const head = `${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(record.handle ?? record.agent), who)} ${theme.fg("dim", record.model)} ${statusIcon} ${stats}${theme.fg("dim", " · j/k scroll · g/G ends")}`;
-		const tail = theme.fg("dim", ` · esc back · ${record.sessionId ?? "no session"}`);
+		const back = this.hoverButton === "back" ? theme.bold(BACK_LABEL) : BACK_LABEL;
+		const tail = `${theme.fg("dim", " · ")}${theme.fg("accent", back)}${theme.fg("dim", ` · ${record.sessionId ?? "no session"}`)}`;
 		if (!buttons) {
 			this.footerButtons = null;
+			const zone = backSpan(visibleWidth(head), width);
+			if (zone) this.footerButtons = { y: 0, back: zone };
 			return truncateToWidth(head + tail, width);
 		}
 		const steer = this.hoverButton === "steer" ? theme.bold("[s] steer") : "[s] steer";
@@ -709,11 +745,14 @@ class FleetBrowser implements Component {
 			steer: [steerStart, steerStart + "[s] steer".length - 1],
 			stop: [stopStart, stopStart + "[x] stop".length - 1],
 		};
+		const zone = backSpan(visibleWidth(lead), width);
+		if (zone) this.footerButtons.back = zone;
 		return lead + truncateToWidth(tail, width - visibleWidth(lead));
 	}
 
 	private externalHeader(run: ExternalRun, theme: Theme, width: number): string {
-		this.footerButtons = null; // external runs have no steer/stop controls
+		// External runs have no steer/stop controls, but the back label below
+		// still gets its colored render and click zone.
 		const statusIcon =
 			run.state === "running"
 				? theme.fg("warning", `${SPINNER[this.tick % SPINNER.length] ?? "•"} live`)
@@ -721,10 +760,13 @@ class FleetBrowser implements Component {
 					? theme.fg("success", "✓ done")
 					: theme.fg("error", "✗ failed");
 		const stats = `turn ${run.turns ?? 0} · ${formatTokens(run.tokensIn ?? 0)}→${formatTokens(run.tokensOut ?? 0)} tok`;
-		return truncateToWidth(
-			`${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(run.handle ?? run.label), `@${sanitizeRender(run.handle ?? run.label)}`)} ${theme.fg("dim", `[${sanitizeRender(run.source)}]`)} ${run.model ? theme.fg("dim", sanitizeRender(run.model)) : ""} ${statusIcon} ${stats} ${theme.fg("dim", `· j/k scroll · g/G ends · esc back · ${sanitizeRender(run.sessionId ?? "no session")}`)}`,
-			width,
-		);
+		const back = this.hoverButton === "back" ? theme.bold(BACK_LABEL) : BACK_LABEL;
+		const head = `${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(run.handle ?? run.label), `@${sanitizeRender(run.handle ?? run.label)}`)} ${theme.fg("dim", `[${sanitizeRender(run.source)}]`)} ${run.model ? theme.fg("dim", sanitizeRender(run.model)) : ""} ${statusIcon} ${stats}${theme.fg("dim", " · j/k scroll · g/G ends")}`;
+		const tail = `${theme.fg("dim", " · ")}${theme.fg("accent", back)}${theme.fg("dim", ` · ${sanitizeRender(run.sessionId ?? "no session")}`)}`;
+		this.footerButtons = null;
+		const zone = backSpan(visibleWidth(head), width);
+		if (zone) this.footerButtons = { y: 0, back: zone };
+		return truncateToWidth(head + tail, width);
 	}
 
 	private actionLogLines(logFile: string, theme: Theme, width: number): string[] {

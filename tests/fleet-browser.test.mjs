@@ -456,6 +456,94 @@ test("detail footer: [steer]/[stop] ride the status line, stop needs y/n, hover 
 	}
 });
 
+test("detail footer: back label is colored, hoverable, and click-routed", () => {
+	registry.resetRegistryForTesting();
+	// Mark colors with real SGR codes so visibleWidth skips them — plain-text
+	// markers would inflate the measured width and clip the line under test.
+	const theme = {
+		fg: (color, text) => `\x1b[38;5;${color === "accent" ? 99 : 240}m${text}\x1b[0m`,
+		bold: (text) => `\x1b[1m${text}\x1b[22m`,
+	};
+	registry.startDelegation("w7-run", "builder", "zai/glm-5.3", null, "backy");
+	registry.attachControl("w7-run", { stop: () => {}, steer: () => true });
+	const { hooks } = registerExtension();
+	const driver = makeCtx("fullscreen", theme);
+	hooks.get("session_start")(undefined, driver.ctx);
+	globalThis[registry.FLEET_OPENER]("w7-run"); // detail opened directly — no list behind it
+	const component = driver.component();
+	try {
+		const backLine = () => {
+			const lines = component.render(160);
+			const y = lines.findIndex((l) => l.includes("[esc] back"));
+			assert.ok(y >= 0, "footer status line carries the back chip");
+			const buttons = component.footerButtons;
+			assert.ok(buttons, "footer hit-boxes registered");
+			assert.ok(buttons.back, "back chip has a click span");
+			assert.equal(buttons.y, y, "back hit-box y tracks the rendered footer line");
+			return buttons;
+		};
+
+		const box = backLine();
+		assert.match(
+			component.render(160)[box.y] ?? "",
+			/\x1b\[38;5;99m\[esc\] back/,
+			"back chip renders in the accent color, not dim",
+		);
+
+		// Hover bolds the back chip like the steer/stop buttons.
+		assert.deepEqual(
+			component.handleMouse({ type: "move", button: "none", x: box.back[0], y: box.y }),
+			undefined,
+		);
+		assert.ok(
+			component.render(160).some((l) => l.includes("\x1b[1m[esc] back")),
+			"hovered back chip renders bold",
+		);
+
+		// Click backs out to the list when one was seen; a re-opened detail
+		// re-enters steer mode, and clicking back there leaves it.
+		component.listSeen = true;
+		assert.deepEqual(
+			component.handleMouse({ type: "click", button: "left", x: box.back[0], y: box.y }),
+			{ handled: true },
+		);
+		assert.ok(
+			component.render(160).some((l) => l.includes("esc close")),
+			"back click returns to the list view",
+		);
+		component.handleInput(ENTER);
+		component.handleInput("s");
+		assert.ok(
+			component.render(160).some((l) => l.includes("steer>")),
+			"steer box opened",
+		);
+		const steerBox = backLine();
+		assert.deepEqual(
+			component.handleMouse({ type: "click", button: "left", x: steerBox.back[0], y: steerBox.y }),
+			{ handled: true },
+		);
+		assert.ok(
+			!component.render(160).some((l) => l.includes("steer>")),
+			"back click leaves steer mode",
+		);
+
+		// A clipped chip must not register a phantom click zone.
+		component.render(30);
+		assert.ok(!component.footerButtons?.back, "clipped back chip registers no click zone");
+
+		// With no list behind the detail, back click closes the overlay.
+		component.listSeen = false;
+		const closeBox = backLine();
+		assert.deepEqual(
+			component.handleMouse({ type: "click", button: "left", x: closeBox.back[0], y: closeBox.y }),
+			{ handled: true },
+		);
+		assert.equal(driver.doneCount(), 1, "back click on a directly-opened detail closes it");
+	} finally {
+		component.dispose();
+	}
+});
+
 test("detail transcript: edit success renders its diff from persisted result details", () => {
 	registry.resetRegistryForTesting();
 	const sid = "0f0e0d0c-aaaa-4bbb-8ccc-444455559999";
