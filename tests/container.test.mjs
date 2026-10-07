@@ -15,6 +15,7 @@ const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
 const toolVersions = readFileSync(path.join(root, ".tool-versions"), "utf8");
 const dockerignore = readFileSync(path.join(root, ".dockerignore"), "utf8");
 const ciWorkflow = readFileSync(path.join(root, ".github", "workflows", "ci.yml"), "utf8");
+const makeSh = readFileSync(path.join(root, "make.sh"), "utf8");
 
 function dockerfileArg(name) {
 	const match = dockerfile.match(new RegExp(`^ARG ${name}=(\\S+)$`, "m"));
@@ -29,17 +30,24 @@ function toolPin(plugin) {
 const nodePin = toolPin("nodejs");
 const astGrepPin = dockerfileArg("AST_GREP_VERSION");
 
-test("container: Dockerfile ARG pins match .tool-versions (node, bun)", () => {
+test("container: node/bun versions come from .tool-versions, not Dockerfile defaults", () => {
 	for (const [argName, plugin] of [
 		["NODE_VERSION", "nodejs"],
 		["BUN_VERSION", "bun"],
 	]) {
 		const pin = toolPin(plugin);
 		assert.ok(pin, `.tool-versions must contain a ${plugin} pin`);
-		assert.equal(
-			dockerfileArg(argName),
-			pin,
-			`Dockerfile ARG ${argName} drifted from .tool-versions (${plugin} ${pin ?? "?"})`,
+		assert.ok(
+			new RegExp(`^ARG ${argName}$`, "m").test(dockerfile),
+			`Dockerfile must declare bare ARG ${argName} — ${plugin} is pinned in .tool-versions, not defaulted`,
+		);
+		assert.ok(
+			makeSh.includes(`${argName}="$(awk '$1=="${plugin}"{print $2}' .tool-versions)"`),
+			`./make.sh image must resolve ${argName} from .tool-versions (${plugin})`,
+		);
+		assert.ok(
+			makeSh.includes(`--build-arg ${argName}="$${argName}"`),
+			`./make.sh image must pass ${argName} as a docker build-arg`,
 		);
 	}
 });
@@ -53,9 +61,10 @@ test("container: every Dockerfile FROM pins a version (no :latest, no bare image
 		const tag = image.slice(colon + 1);
 		assert.notEqual(tag.toLowerCase(), "latest", `FROM ${image} must not float on :latest`);
 		for (const arg of [...tag.matchAll(/\$\{([A-Z_]+)\}/g)].map((m) => m[1])) {
+			if (dockerfileArg(arg) !== undefined) continue;
 			assert.ok(
-				dockerfileArg(arg) !== undefined,
-				`FROM ${image} uses ARG ${arg} which has no default value`,
+				makeSh.includes(`--build-arg ${arg}=`),
+				`FROM ${image} uses ARG ${arg} which has no default and no make.sh image --build-arg`,
 			);
 		}
 	}
@@ -154,6 +163,16 @@ test("container: ci.yml container job builds, tests, and publishes multi-arch (r
 	assert.ok(pushLine, "container job must set a push: expression on build-push-action");
 	assert.ok(pushLine.includes("refs/heads/main"), "push must be gated on refs/heads/main");
 	assert.ok(pushLine.includes("refs/tags/v"), "push must be gated on refs/tags/v");
+	for (const arg of ["NODE_VERSION", "BUN_VERSION"]) {
+		assert.ok(
+			ciWorkflow.includes(`${arg}=$(awk`),
+			`container job must resolve ${arg} from .tool-versions for the publish build args`,
+		);
+		assert.ok(
+			new RegExp(`build-args:[\\s\\S]*?${arg}=\\$\\{\\{ env\\.${arg} \\}}`).test(ciWorkflow),
+			`container publish must pass ${arg} build-arg (Dockerfile declares no default)`,
+		);
+	}
 });
 
 const GATED = process.env.TORUS_CONTAINER_TESTS === "1";
