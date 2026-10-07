@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0](https://github.com/tankdonut/torus/compare/v0.3.0...v0.4.0) (2026-10-07)
+
+
+### Features
+
+* accept per-run model overrides in delegations ([a27652c](https://github.com/tankdonut/torus/commit/a27652cab8321220e4ef4ea78d69a8e5e4b7ffa8))
+* add torus-vs-stock-pi overhead bench ([a3558ea](https://github.com/tankdonut/torus/commit/a3558ea323fa132c879adae2455c4266043a9dbd))
+* colorize and click-route the fleet detail back chip ([98a8540](https://github.com/tankdonut/torus/commit/98a854044d965dfa5859d752fbd0bcdac16c460d))
+* scope child agents with complete tool whitelists ([fef45a6](https://github.com/tankdonut/torus/commit/fef45a6e02b5d26fd15f9b909cd9be431cc2f786))
+* scope MCP tools to researcher agents ([e8a465f](https://github.com/tankdonut/torus/commit/e8a465f30560dee1cba7f705f505700fd3f99d94))
+* show engine-computed cost on delegation surfaces ([29ca42a](https://github.com/tankdonut/torus/commit/29ca42ad4ab18a940a2acbafc020bab6b1bfabec))
+* show session cost in the statusline ([b602531](https://github.com/tankdonut/torus/commit/b6025310ab1b7cec1f90736d4734f8a76c0bb2b1))
+
+
+### Bug Fixes
+
+* alt+t fleet list scrolling, arrow keys, and run durations ([6761e96](https://github.com/tankdonut/torus/commit/6761e96df1c3102a04b94a0d122b3db3031ab30f))
+* carry cost through live delegation snapshots ([7d316f2](https://github.com/tankdonut/torus/commit/7d316f2237013d1659d3bc8fa08a4b86144f145d))
+
 ## [0.3.0](https://github.com/tankdonut/torus/compare/v0.2.0...v0.3.0) (2026-10-07)
 
 
