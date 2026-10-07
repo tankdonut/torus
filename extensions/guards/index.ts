@@ -1,18 +1,21 @@
 /**
  * torus — context guards + error recovery.
  *
- * Five behaviors that keep context lean and failures recoverable:
+ * Six behaviors that keep context lean and failures recoverable:
  *   - tool-output truncation (giant results capped before they eat context)
  *   - bash file-read guard (cat/head/tail of files -> use the read tool)
  *   - write-overwrite guard (near-identical full rewrites -> edit/hashline)
  *   - symlink-escape guard (writes/dumps through a symbolic link -> blocked)
+ *   - keywords.json write guard (torus-home keywords file is injected into
+ *     the system prompt verbatim -> agent writes blocked, reads stay open)
  *   - error-recovery guidance (structured retry advice appended to failed
  *     edit/bash results instead of raw model flailing)
  *
  * TORUS_GUARDS=0 disables everything; TORUS_MAX_TOOL_OUTPUT tunes the cap.
  */
 
-import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import {
 	type BashToolCallEvent,
@@ -22,6 +25,9 @@ import {
 	type ToolResultEvent,
 	type WriteToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
+// The engine's exports map blocks deep package imports (ERR_PACKAGE_PATH_NOT_EXPORTED),
+// so reach the same module instance the engine's file tools use via a relative specifier.
+import { resolveToCwd } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/path-utils.js";
 import { torusHome } from "../fsutil.js";
 
 const DEFAULT_MAX_TOOL_OUTPUT = 16_000;
@@ -32,6 +38,8 @@ const READ_DUMP_BLOCK_REASON =
 	"use the read tool for file contents — it is anchored (hashline), truncation-aware, and keeps context structured; bash dumps bypass all of that";
 const SYMLINK_BLOCK_REASON =
 	"symbolic link in path — resolve the real target path first, or edit the destination directly";
+const KEYWORDS_BLOCK_REASON =
+	"keywords.json is injected into the system prompt — edit it as the user, not from a session; mode changes go through the user's own editor";
 
 export function truncateText(text: string, max: number): string {
 	if (text.length <= max) return text;
@@ -146,13 +154,50 @@ export function rewriteSimilarity(disk: string, next: string): number {
 	return common / Math.max(a.length, b.length);
 }
 
+/** Real absolute path when `target` exists, else null (missing files stay lexical). */
+function realpathIfExists(target: string): string | null {
+	try {
+		return realpathSync(target);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * True when `target` is a keywords.json the prompts extension consumes as
+ * system-prompt content: the torus-home resolution (TORUS_HOME override,
+ * ~/.torus default) plus the fixed ~/.torus path loadKeywords() reads
+ * regardless of TORUS_HOME. The raw path.resolve spelling is compared, and so
+ * is the engine's own write-tool resolution (resolveToCwd: `@`-prefix
+ * stripping, `~` expansion, `file://` conversion) — the guard never
+ * re-implements engine path semantics, it reuses them. When the target
+ * exists the comparison also runs on real paths so a symlinked (stowed)
+ * torus home cannot be written through its readlink'd location.
+ */
+export function isKeywordsTarget(target: string): boolean {
+	const candidates = [
+		path.join(torusHome(), "keywords.json"),
+		path.join(homedir(), ".torus", "keywords.json"),
+	].map((candidate) => path.resolve(candidate));
+	const spellings = [path.resolve(target), resolveToCwd(target, process.cwd())];
+	for (const spelling of spellings) {
+		if (candidates.includes(spelling)) return true;
+		const real = realpathIfExists(spelling);
+		if (real !== null && candidates.some((candidate) => realpathIfExists(candidate) === real))
+			return true;
+	}
+	return false;
+}
+
 /**
  * Block reason for a write call, or null when it should proceed: a symbolic
- * link anywhere in the target path, or an existing target whose content is
- * near-identical to the proposed full rewrite.
+ * link anywhere in the target path, the torus-home keywords.json (its content
+ * becomes system-prompt text, so it stays user-owned), or an existing target
+ * whose content is near-identical to the proposed full rewrite.
  */
 export function writeBlockReason(target: string, content: string): string | null {
 	if (hasSymlinkInPath(target)) return SYMLINK_BLOCK_REASON;
+	if (isKeywordsTarget(target)) return KEYWORDS_BLOCK_REASON;
 	if (!existsSync(target)) return null;
 	let disk = "";
 	try {
