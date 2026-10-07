@@ -10,6 +10,8 @@ process.env["TORUS_HOME"] = mkdtempSync(path.join(tmpdir(), "work-test-"));
 const {
 	parsePlanTasks,
 	completionBlocker,
+	approvalBlocker,
+	registerWork,
 	resolvePlan,
 	readWorkState,
 	writeWorkState,
@@ -21,6 +23,7 @@ const {
 	activeWorkFor,
 	workContextBlock,
 } = await import("../extensions/work/index.ts");
+const { setCurrentSessionId } = await import("../extensions/registry.ts");
 
 function plantPlan(name, body) {
 	const dir = path.join(process.env["TORUS_HOME"], "plans");
@@ -81,6 +84,18 @@ test("completionBlocker: null when all checked, lists remainder otherwise, error
 	assert.match(blocker, /2\. B/);
 	assert.match(blocker, /3\. C/);
 	assert.match(completionBlocker("# empty\n"), /no column-zero checkbox tasks/);
+});
+
+test("approvalBlocker: null on marker or recorded escape, blocker otherwise; checkbox-shaped fakes never count", () => {
+	assert.equal(approvalBlocker("Approval: tankdonut 2026-10-07\n- [ ] 1. A\n"), null);
+	assert.equal(approvalBlocker("Approval: skipped (--yes)\n- [ ] 1. A\n"), null);
+	assert.equal(
+		approvalBlocker("# plan\n\n- [x] 1. A\n- [x] F1. Final\n"),
+		'plan lacks an approval marker (add a line "Approval: <user/date>", or "Approval: skipped (--yes)" to bind without review)',
+	);
+	// a checkbox row is task grammar, never an approval marker — and it still parses as a task
+	assert.ok(approvalBlocker("- [ ] Approval: fake\n") !== null);
+	assert.equal(parsePlanTasks("- [ ] Approval: fake\n").tasks.length, 1);
 });
 
 test("resolvePlan: exact stem beats prefix, unique prefix resolves, ambiguity errors with candidates", () => {
@@ -223,4 +238,61 @@ test("workContextBlock: injects plan path, progress, next task; missing plan sur
 
 	plantState({ slug: "ctx", planPath: file, sessionId: "ses-c", status: "complete" });
 	assert.equal(workContextBlock("ses-c"), "");
+});
+
+function workTools() {
+	const tools = [];
+	const ambientChild = process.env["TORUS_ENGINE_CHILD"];
+	delete process.env["TORUS_ENGINE_CHILD"];
+	try {
+		registerWork({ registerTool: (t) => tools.push(t), on: () => {} });
+	} finally {
+		if (ambientChild !== undefined) process.env["TORUS_ENGINE_CHILD"] = ambientChild;
+	}
+	return Object.fromEntries(tools.map((t) => [t.name, t]));
+}
+
+test("work_start refuses unmarked plans: exact REFUSED text, no state file, no start row; checkbox fakes do not count", async () => {
+	setCurrentSessionId("ses-gate");
+	const { work_start } = workTools();
+
+	plantPlan("gate-unmarked", "# plan\n\n- [ ] 1. A\n- [ ] 2. B\n");
+	const refused = await work_start.execute("t", { plan: "gate-unmarked" });
+	assert.equal(refused.isError, true);
+	assert.equal(
+		refused.content[0].text,
+		'REFUSED — plan lacks an approval marker (add a line "Approval: <user/date>", or "Approval: skipped (--yes)" to bind without review)',
+	);
+	assert.equal(readWorkState("gate-unmarked"), null, "no state file on refusal");
+	assert.deepEqual(readLedger("gate-unmarked", 5), [], "no start row on refusal");
+
+	// a checkbox-shaped fake is a task row, not approval — the plan has tasks yet still refuses
+	plantPlan("gate-fake", "- [ ] Approval: fake\n");
+	const fakeRefused = await work_start.execute("t", { plan: "gate-fake" });
+	assert.equal(fakeRefused.isError, true);
+	assert.match(fakeRefused.content[0].text, /REFUSED — plan lacks an approval marker/);
+});
+
+test("work_start binds approved plans: marker text, skipped escape, and assumeApproved recorded in the start row", async () => {
+	setCurrentSessionId("ses-gate");
+	const { work_start } = workTools();
+
+	plantPlan("gate-marked", "# plan\n\nApproval: tankdonut 2026-10-07\n\n- [ ] 1. A\n");
+	const marked = await work_start.execute("t", { plan: "gate-marked" });
+	assert.equal(marked.isError, undefined);
+	assert.ok(readWorkState("gate-marked"), "state written on bind");
+	const markedRows = readLedger("gate-marked", 5);
+	assert.equal(markedRows.at(-1)?.event, "start");
+	assert.equal(markedRows.at(-1)?.approval, "tankdonut 2026-10-07");
+
+	plantPlan("gate-skipped", "Approval: skipped (--yes)\n- [ ] 1. A\n");
+	const skipped = await work_start.execute("t", { plan: "gate-skipped" });
+	assert.equal(skipped.isError, undefined);
+	assert.equal(readLedger("gate-skipped", 1).at(-1)?.approval, "skipped (--yes)");
+
+	plantPlan("gate-assume", "# plan\n\n- [ ] 1. A\n");
+	const assumed = await work_start.execute("t", { plan: "gate-assume", assumeApproved: true });
+	assert.equal(assumed.isError, undefined);
+	assert.ok(readWorkState("gate-assume"), "escape hatch still binds state");
+	assert.equal(readLedger("gate-assume", 1).at(-1)?.approval, "assumed");
 });

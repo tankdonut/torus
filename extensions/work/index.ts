@@ -49,6 +49,8 @@ export interface LedgerEntry {
 	verification?: string;
 	evidence?: string;
 	verifiedBy?: string;
+	/** How the plan was approved at binding: the marker text, or "assumed" (assumeApproved). */
+	approval?: string;
 }
 
 export interface ParsedTask {
@@ -60,6 +62,12 @@ export interface ParsedTask {
 
 /** Column-zero checkbox rows only — indented rows are detail, not tasks. */
 const TASK_RE = /^- \[( |x|X)\] (.*)$/;
+
+/**
+ * Column-zero approval marker: plain text by design, so it can never be
+ * mistaken for (or collide with) a task checkbox row.
+ */
+const APPROVAL_RE = /^Approval: (.+)$/;
 
 /** Parse a plan's machine-readable task rows: done/total progress + next task. */
 export function parsePlanTasks(markdown: string): { tasks: ParsedTask[]; done: number } {
@@ -228,6 +236,26 @@ export function completionBlocker(markdown: string): string | null {
 	return null;
 }
 
+/** The plan's approval marker value (e.g. "tankdonut 2026-10-07"), or null when it carries none. */
+export function approvalMarker(markdown: string): string | null {
+	for (const line of markdown.split("\n")) {
+		const value = APPROVAL_RE.exec(line)?.[1]?.trim();
+		if (value) return value;
+	}
+	return null;
+}
+
+/**
+ * Gate for work_start: null when the plan carries an approval marker —
+ * "Approval: <user/date>" from an accepted plan, or the recorded
+ * "Approval: skipped (--yes)" escape — otherwise the blocking-message string.
+ */
+export function approvalBlocker(markdown: string): string | null {
+	return approvalMarker(markdown) === null
+		? 'plan lacks an approval marker (add a line "Approval: <user/date>", or "Approval: skipped (--yes)" to bind without review)'
+		: null;
+}
+
 /**
  * Resolve a slug the way a dispatch text carries it: exact, else unique
  * prefix, else unique substring (leads paraphrase dated stems —
@@ -320,12 +348,18 @@ export function registerWork(pi: ExtensionAPI): void {
 				name: "work_start",
 				label: "Work Start",
 				description:
-					"Bind a torus-plan plan file to this session as active work. Parses the plan's column-zero checkboxes, reports progress and the next task, and injects an active-work context block into every turn until work_complete. Rebinding an existing plan resumes it (elapsed time spans runs). Use with the torus-execute skill. Parent sessions only — delegated children never rebind work.",
+					'Bind a torus-plan plan file to this session as active work. Approval gate: refuses unless the plan carries a column-zero "Approval: <user/date>" line (or the recorded escape "Approval: skipped (--yes)"); assumeApproved binds without one and is journaled. Parses the plan\'s column-zero checkboxes, reports progress and the next task, and injects an active-work context block into every turn until work_complete. Rebinding an existing plan resumes it (elapsed time spans runs). Use with the torus-execute skill. Parent sessions only — delegated children never rebind work.',
 				parameters: Type.Object({
 					plan: Type.String({
 						description:
 							"Plan reference: absolute path, or the file stem (full or unique prefix) under ~/.torus/plans",
 					}),
+					assumeApproved: Type.Optional(
+						Type.Boolean({
+							description:
+								'Bind without an approval marker because the user explicitly directed skipping review; recorded as approval: "assumed" in the start ledger row',
+						}),
+					),
 				}),
 				async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 					const sessionId = currentSessionId();
@@ -367,6 +401,17 @@ export function registerWork(pi: ExtensionAPI): void {
 							isError: true,
 						};
 					}
+					const assume = params.assumeApproved ?? false;
+					const marker = approvalMarker(markdown);
+					const blocker = assume ? null : approvalBlocker(markdown);
+					if (blocker) {
+						return {
+							content: [{ type: "text", text: `REFUSED — ${blocker}` }],
+							details: {},
+							isError: true,
+						};
+					}
+					const approval = assume ? "assumed" : (marker ?? "");
 					const now = Date.now();
 					const prior = readWorkState(resolved.slug);
 					const state: WorkState = {
@@ -385,6 +430,7 @@ export function registerWork(pi: ExtensionAPI): void {
 						sessionId,
 						event: "start",
 						text: prior ? "work rebound to a new session (resume)" : "work started",
+						approval,
 					});
 					const next = tasks.find((t) => !t.checked);
 					const body = [
