@@ -1,6 +1,6 @@
 # Agent Skills portability — `skills/`
 
-torus's seven skills (`skills/*/SKILL.md`) follow the [Agent Skills](https://agentskills.io) open standard. Compliance is machine-enforced by `tests/skills-spec.test.mjs`: one directory per skill containing exactly one `SKILL.md`, `---`-delimited frontmatter plus a non-empty markdown body, a `name` matching the directory (`^[a-z0-9-]{1,64}$`), a required `description` (≤1024 chars), and only the spec's optional fields beyond those two.
+torus's skills (`skills/*/SKILL.md`) follow the [Agent Skills](https://agentskills.io) open standard. Compliance is machine-enforced by `tests/skills-spec.test.mjs`: one directory per skill containing exactly one `SKILL.md`, `---`-delimited frontmatter plus a non-empty markdown body, a `name` matching the directory (`^[a-z0-9-]{1,64}$`), a required `description` (≤1024 chars), and only the spec's optional fields beyond those two.
 
 ## Skill layout
 

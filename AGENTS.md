@@ -40,6 +40,7 @@
 - `.npmrc` is agent-blocked by `cc-safety-net` by design; humans create it via `./make.sh npmrc`.
 - Guarded writes and reads: bare `cat`/`head`/`tail` of an absolute path is blocked — use the read tool; overwriting an existing similar file via `write` is blocked — use `edit` (`extensions/guards/index.ts`).
 - The engine is pinned in `package.json` (`@earendil-works/pi-coding-agent`); `TORUS_PI_BIN` overrides the binary path.
+- Repo docs (README, CONTRIBUTING, docs/) make no hand-written numerical claims that duplicate a machine source of truth — tool/skill/agent counts, version floors, model context sizes. They go stale silently; reference the authoritative file (`package.json`, `agents/`, `docs/extensions.md`) instead. Regenerated benchmark output (`docs/efficiency.md`) is exempt.
 
 ## Commit convention
 
