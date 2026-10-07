@@ -150,8 +150,8 @@ Structured user questions: labeled-option select dialogs (1–4 questions, 2–6
 Tools: `torus_ask` (questions[] with question/header/options/allowCustom).
 
 ### `ui`
-The `torus` statusline segment: brand, identity block (persona, shortened model id, thinking effort — all in the persona's truecolor RGB), dim provider availability; the engine tag appears only when `TORUS_ENGINE` is overridden. Health and objective follow: the MCP connected count (`MCP N`, success/warning) polled on `session_start`/`turn_start` with a settle-poll that repaints while startup connections are still coming up, and the session goal as a compact chip (`▶ <48-char head>` warning while active, `⏸` dim while paused, absent when unset or complete — pushed by the goal extension). Model and effort are event-tracked module state, so every writer renders the same line. Plus a warning `delegate ×N` chip while `torus_delegate` executions are in flight (ref-counted). Source of the persona color map used by persona-theming.
-Hooks: `session_start`, `model_select`, `tool_execution_start`, `tool_execution_end` (torus_delegate only). Env: `TORUS_ENGINE` (display only).
+The `torus` statusline segment: brand, identity block (persona, shortened model id, thinking effort — all in the persona's truecolor RGB), dim provider availability; the engine tag appears only when `TORUS_ENGINE` is overridden. Health and objective follow: the MCP connected count (`MCP N`, success/warning) polled on `session_start`/`turn_start` with a settle-poll that repaints while startup connections are still coming up, and the session goal as a compact chip (`▶ <48-char head>` warning while active, `⏸` dim while paused, absent when unset or complete — pushed by the goal extension). Model and effort are event-tracked module state, so every writer renders the same line. Plus a warning `delegate ×N` chip while `torus_delegate` executions are in flight (ref-counted), and a persistent session-cost chip on its own `torus:cost` statusline key beside the torus segment: assistant `message_end` usage is folded through the shared engine-child tally reducer and rendered with `formatCost` — `$0` shows only once tokens were spent, and the chip stays absent until something measurable happens. Source of the persona color map used by persona-theming.
+Hooks: `session_start`, `turn_start`, `model_select`, `message_end`, `tool_execution_start`, `tool_execution_end` (torus_delegate only). Env: `TORUS_ENGINE` (display only); `TORUS_STATUSLINE_COST=0` disables the session-cost chip.
 
 ## Shared modules
 
@@ -159,10 +159,10 @@ Hooks: `session_start`, `model_select`, `tool_execution_start`, `tool_execution_
 |---|---|---|
 | `extensions/registry.ts` | DelegationRecord store (globalThis-hosted), run beacons + foreign-process scan, team records, session/persona slots, log rehydration, tmux pane mgmt, `repoRoot()`, sanitize/redact/shellQuote/name gates | roster, team, browser, fleet, notify, memory, goal, prompts, ui, engine-child |
 | `extensions/rpc.ts` | `RpcChild` — newline-JSON RPC client for engine children (prompt/steer/getState/kill) | roster, team-runtime |
-| `extensions/engine-child.ts` | `engineChildEnv` (sets `TORUS_ENGINE_CHILD=1`), event parse/reduce, `childExtensionArgs` (the child set), `resolveEngineBin` | roster, team-runtime, doctor |
+| `extensions/engine-child.ts` | `engineChildEnv` (sets `TORUS_ENGINE_CHILD=1`), event parse/reduce, `childExtensionArgs` (the child set), `resolveEngineBin` | roster, team-runtime, doctor, ui |
 | `extensions/team-runtime.ts` | Team spec persistence, mailboxes, locked tasklist, member supervisor | team |
 | `extensions/frontmatter.ts` | `---` header parser/stripper | roster, prompts, memory |
-| `extensions/fsutil.ts` | `TORUS_HOME`, best-effort readJson, atomic writeJson, sleep, splitList | registry, memory, goal, worktrees, prompts, team-runtime |
+| `extensions/fsutil.ts` | `TORUS_HOME`, best-effort readJson, atomic writeJson, sleep, splitList | registry, memory, goal, worktrees, prompts, team-runtime, ui |
 | `extensions/osnotify.ts` | notify-send toasts (summary+body, @handle label, duration/preview/stats; grouped under a torus desktop entry; running-late ping after 45s, replaced in place by the finish toast via replaces-id, suppressed per member on team_delete in favor of one combined shutdown toast; failures critical+persistent, low-value toasts transient), `TORUS_NOTIFY=0` opt-out | registry, monitor, notify |
 | `extensions/persona-theme.ts` | Persona-colored editor border | prompts |
 | `extensions/transcript.ts` | Session transcript location/parsing, live tail | browser |
@@ -202,6 +202,7 @@ LSP tools: `lsp_diagnostics`, `lsp_goto_definition`, `lsp_find_references`, `lsp
 | `TORUS_HASHLINE=0` / `TORUS_FMT_CMD` | hashline | Disable anchoring / post-edit formatter command |
 | `TORUS_INTERACTIVE=0` | interactive | Disable `interactive_bash` overlay |
 | `TORUS_MONITOR=0` | monitor | Disable monitors |
+| `TORUS_STATUSLINE_COST=0` | ui | Disable the session-cost statusline chip |
 | `TORUS_TEAM_NOTIFY=0` | team | Disable the per-member idle/crash wake-up markers (result markers still render) |
 | `TORUS_COMMENT_CHECKER=0` / `TORUS_COMMENT_CHECKER_PROMPT` | comment-checker | Disable / override the challenge text |
 | `TORUS_WORKTREES_ROOT` | worktrees | Worktree root override (default `~/.torus/worktrees`) |

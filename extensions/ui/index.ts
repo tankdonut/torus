@@ -1,9 +1,14 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type EngineTally, reduceEngineEvent } from "../engine-child.js";
+import { formatCost } from "../fsutil.js";
 import { connectedServerCount, mcpStatusText } from "../mcp/index.js";
 import { providerAvailabilities } from "../providers/index.js";
 import { sessionPersona } from "../registry.js";
 
 export const STATUS_KEY = "torus";
+
+/** Persistent session-cost chip key; `torus:`-prefixed like the delegation markers. */
+export const COST_STATUS_KEY = "torus:cost";
 
 type AppTheme = ExtensionContext["ui"]["theme"];
 export type StatusPainter = Pick<AppTheme, "fg" | "bold">;
@@ -13,6 +18,39 @@ const DELEGATION_TOOLS = new Set(["torus_delegate", "torus_fanout", "torus_chain
 
 /** In-flight delegation tool executions; parallel fanouts must not wipe each other's indicator. */
 let delegateInFlight = 0;
+
+/**
+ * Session-cost tallies behind the `torus:cost` chip, keyed by session id so a
+ * switch back to an earlier in-process session restores its own total. Fed
+ * through the shared engine-child reducer — the same math every delegation
+ * surface uses — never a second cost parser.
+ */
+const sessionCostTallies = new Map<string, EngineTally>();
+
+function freshSessionTally(): EngineTally {
+	return { turns: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, cost: 0, text: "" };
+}
+
+/** Session id for cost keying; contexts without a session manager share one bucket. */
+function sessionCostId(ctx: ExtensionContext): string {
+	return ctx.sessionManager?.getSessionId() ?? "";
+}
+
+/** TORUS_STATUSLINE_COST=0 never touches the cost key — no set, no clear. */
+function statuslineCostSuppressed(): boolean {
+	return process.env["TORUS_STATUSLINE_COST"] === "0";
+}
+
+/**
+ * Render the session-cost chip for ctx's session. formatCost yields "" when
+ * nothing measurable happened — keep the entry absent rather than blank.
+ */
+function paintSessionCost(ctx: ExtensionContext): void {
+	if (statuslineCostSuppressed()) return;
+	const tally = sessionCostTallies.get(sessionCostId(ctx));
+	const text = tally ? formatCost(tally.cost, tally.tokensIn + tally.tokensOut > 0) : "";
+	ctx.ui.setStatus(COST_STATUS_KEY, text === "" ? undefined : text);
+}
 
 /** Current model / thinking effort, seeded from ctx and kept fresh via events. */
 let currentModel: string | undefined;
@@ -183,11 +221,22 @@ export function registerUi(pi: ExtensionAPI): void {
 		refreshMcp();
 		pollMcpUntilSettled(ctx);
 		refreshToruStatus(ctx);
+		// a fresh session has spent nothing yet — drop any chip from the prior one
+		paintSessionCost(ctx);
 	});
 
 	pi.on("turn_start", (_event, ctx: ExtensionContext) => {
 		refreshMcp();
 		refreshToruStatus(ctx);
+	});
+
+	pi.on("message_end", (event, ctx: ExtensionContext) => {
+		if (statuslineCostSuppressed()) return;
+		const id = sessionCostId(ctx);
+		const tally = sessionCostTallies.get(id) ?? freshSessionTally();
+		reduceEngineEvent(event as unknown as Record<string, unknown>, tally);
+		sessionCostTallies.set(id, tally);
+		paintSessionCost(ctx);
 	});
 
 	pi.on("model_select", (event, ctx: ExtensionContext) => {

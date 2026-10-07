@@ -10,8 +10,15 @@ const { searchSessions, findSessionFile } = await import("../extensions/sessions
 const { detectKeyword, DEFAULT_KEYWORDS, mergeKeywords } = await import(
 	"../extensions/prompts/index.ts"
 );
-const { PERSONA_COLORS, buildStatus, personaFg, registerUi, setStatusExtras, setStatusModel } =
-	await import("../extensions/ui/index.ts");
+const {
+	PERSONA_COLORS,
+	buildStatus,
+	COST_STATUS_KEY,
+	personaFg,
+	registerUi,
+	setStatusExtras,
+	setStatusModel,
+} = await import("../extensions/ui/index.ts");
 const { goalChipFor } = await import("../extensions/goal/index.ts");
 const { AGENTS } = await import("../extensions/roster/index.ts");
 const { setSessionPersona } = await import("../extensions/registry.js");
@@ -155,6 +162,151 @@ test("buildStatus: MCP count and goal chip render on the torus line", () => {
 	assert.ok(healthy.includes("<dim>⏸ ship the frobnicator</dim>"), "paused goal chip should dim");
 	setStatusExtras(null, null);
 	setSessionPersona(null);
+});
+
+test("statusline cost chip: message_end costs accumulate via the shared tally reducer", () => {
+	const handlers = {};
+	registerUi({
+		on: (event, handler) => (handlers[event] = handler),
+		getMcpServers: () => [],
+		getActiveTools: () => [],
+	});
+	const paints = [];
+	const ctx = {
+		ui: { setStatus: (key, value) => paints.push([key, value]) },
+		sessionManager: { getSessionId: () => "sess-cost-sum" },
+	};
+	const assistantEnd = (usage) =>
+		handlers["message_end"](
+			{
+				type: "message_end",
+				message: { role: "assistant", content: [{ type: "text", text: "hi" }], usage },
+			},
+			ctx,
+		);
+
+	assistantEnd({
+		input: 100,
+		output: 40,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: { input: 0.02, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+	});
+	assistantEnd({
+		input: 10,
+		output: 5,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: { input: 0.004, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.005 },
+	});
+
+	const costPaints = paints.filter(([key]) => key === COST_STATUS_KEY);
+	assert.equal(costPaints.length, 2, "each message_end repaints the cost chip");
+	assert.equal(costPaints[0][1], "$0.0300", "first event renders alone at 4dp under $1");
+	assert.equal(costPaints.at(-1)[1], "$0.0350", "costs sum across message_end events");
+});
+
+test("statusline cost chip: tokens without cost render $0; nothing spent keeps the chip absent", () => {
+	const handlers = {};
+	registerUi({
+		on: (event, handler) => (handlers[event] = handler),
+		getMcpServers: () => [],
+		getActiveTools: () => [],
+	});
+	const paints = [];
+	const mkCtx = (sessionId) => ({
+		ui: { setStatus: (key, value) => paints.push([key, value]) },
+		sessionManager: { getSessionId: () => sessionId },
+	});
+	const assistantEnd = (ctx, usage) =>
+		handlers["message_end"](
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "hi" }],
+					...(usage ? { usage } : {}),
+				},
+			},
+			ctx,
+		);
+
+	// tokens spent, model has no catalog price: an explicit $0 beats an ambiguous blank
+	assistantEnd(mkCtx("sess-cost-zero"), { input: 10, output: 4 });
+	assert.equal(
+		paints.filter(([key]) => key === COST_STATUS_KEY).at(-1)[1],
+		"$0",
+		"zero cost with tokens spent renders $0",
+	);
+
+	// no usage at all: nothing measurable — the entry is cleared, not $0
+	assistantEnd(mkCtx("sess-cost-empty"), undefined);
+	assert.equal(
+		paints.filter(([key]) => key === COST_STATUS_KEY).at(-1)[1],
+		undefined,
+		"no usage keeps the chip absent",
+	);
+
+	// a fresh session boundary drops the prior session's chip
+	handlers["session_start"](
+		{ type: "session_start", reason: "new" },
+		{ ...mkCtx("sess-cost-fresh"), model: undefined, thinkingLevel: undefined },
+	);
+	assert.equal(
+		paints.filter(([key]) => key === COST_STATUS_KEY).at(-1)[1],
+		undefined,
+		"session_start clears the chip for the new session",
+	);
+});
+
+test("statusline cost chip: TORUS_STATUSLINE_COST=0 never touches the cost key", () => {
+	process.env["TORUS_STATUSLINE_COST"] = "0";
+	try {
+		const handlers = {};
+		registerUi({
+			on: (event, handler) => (handlers[event] = handler),
+			getMcpServers: () => [],
+			getActiveTools: () => [],
+		});
+		const paints = [];
+		const ctx = {
+			ui: {
+				setStatus: (key, value) => paints.push([key, value]),
+				theme: { fg: (_color, text) => text, bold: (text) => text },
+			},
+			sessionManager: { getSessionId: () => "sess-cost-off" },
+		};
+		const assistantEnd = (total) =>
+			handlers["message_end"](
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "hi" }],
+						usage: {
+							input: 100,
+							output: 40,
+							cacheRead: 0,
+							cacheWrite: 0,
+							cost: { input: 0.02, output: 0.01, cacheRead: 0, cacheWrite: 0, total },
+						},
+					},
+				},
+				ctx,
+			);
+
+		assistantEnd(0.03);
+		assistantEnd(0.005);
+		handlers["session_start"]({ type: "session_start", reason: "new" }, ctx);
+
+		assert.equal(
+			paints.filter(([key]) => key === COST_STATUS_KEY).length,
+			0,
+			"kill switch: no setStatus call ever carries the cost key",
+		);
+	} finally {
+		delete process.env["TORUS_STATUSLINE_COST"];
+	}
 });
 
 test("goalChipFor: active/paused heads truncated to 48 chars, complete and empty drop", () => {
