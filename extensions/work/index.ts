@@ -37,6 +37,7 @@ export type WorkEvent =
 	| "blocked"
 	| "wave-gate"
 	| "note"
+	| "converge"
 	| "complete";
 
 export interface LedgerEntry {
@@ -451,7 +452,7 @@ export function registerWork(pi: ExtensionAPI): void {
 			name: "work_note",
 			label: "Work Note",
 			description:
-				"Append a typed evidence row to a work ledger (~/.torus/work/<slug>.ledger.jsonl). Without slug: the session's active work. With slug: that work — how delegated builders journal gotchas and decisions (the ledger is the plan's shared notepad; rows carry the writer's session id). Events: task-done (verification + evidence), verified (verifiedBy: lead|reviewer), blocked (blocker), wave-gate (command + exit code), note (anything durable). Returns the tail for confirmation.",
+				"Append a typed evidence row to a work ledger (~/.torus/work/<slug>.ledger.jsonl). Without slug: the session's active work. With slug: that work — how delegated builders journal gotchas and decisions (the ledger is the plan's shared notepad; rows carry the writer's session id). Events: task-done (verification + evidence), verified (verifiedBy: lead|reviewer), blocked (blocker), wave-gate (command + exit code), note (anything durable), converge (cross-wave synthesis). Returns the tail for confirmation.",
 			parameters: Type.Object({
 				event: Type.Union(
 					[
@@ -460,6 +461,7 @@ export function registerWork(pi: ExtensionAPI): void {
 						Type.Literal("blocked"),
 						Type.Literal("wave-gate"),
 						Type.Literal("note"),
+						Type.Literal("converge"),
 					],
 					{ description: "Ledger row type" },
 				),

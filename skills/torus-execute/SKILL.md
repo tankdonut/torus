@@ -35,7 +35,7 @@ The plan file (checkboxes) + work ledger are the durable state. After any restar
 
 ## Final verification wave
 
-Run the plan's F1–F3; all must pass before completion:
+Run the plan's F1–F3; all must pass before completion. Before F1, write one converge row (`work_note`, event: `converge`) synthesizing the waves' evidence — what shipped, what the verification chain proved, residual risks:
 
 1. **F1 review** — delegate to `reviewer`: the plan path plus landed commits; ask for plan-compliance and code-quality verdicts against the plan's constraints and Must-NOT list.
 2. **F2 stopping condition** — exercise it yourself on the real surface; capture the artifact the plan names.

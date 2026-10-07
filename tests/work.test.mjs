@@ -296,3 +296,27 @@ test("work_start binds approved plans: marker text, skipped escape, and assumeAp
 	assert.ok(readWorkState("gate-assume"), "escape hatch still binds state");
 	assert.equal(readLedger("gate-assume", 1).at(-1)?.approval, "assumed");
 });
+
+test("work_note admits converge rows: append via the tool, tail keeps the event intact", async () => {
+	plantState({ slug: "open-cv" });
+	const { work_note } = workTools();
+
+	const out = await work_note.execute("t", {
+		event: "converge",
+		text: "waves synthesized: what shipped, what verification proved, residual risks",
+		slug: "open-cv",
+	});
+	assert.equal(out.isError, undefined);
+	assert.match(out.content[0].text, /\[converge\] waves synthesized/);
+
+	const rows = readLedger("open-cv", 5);
+	assert.equal(rows.at(-1)?.event, "converge");
+	assert.equal(
+		rows.at(-1)?.text,
+		"waves synthesized: what shipped, what verification proved, residual risks",
+	);
+	assert.deepEqual(
+		readLedger("open-cv", 1).map((e) => e.event),
+		["converge"],
+	);
+});
