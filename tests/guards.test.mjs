@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-const { isBareFileDump, isMemoryStoreMutation, recoveryGuidance, rewriteSimilarity, truncateText } =
-	await import("../extensions/guards/index.ts");
+const {
+	dumpBlockReason,
+	hasSymlinkInPath,
+	isBareFileDump,
+	isMemoryStoreMutation,
+	recoveryGuidance,
+	rewriteSimilarity,
+	truncateText,
+	writeBlockReason,
+} = await import("../extensions/guards/index.ts");
 
 test("truncateText: under cap untouched; over cap keeps head+tail and reports omission", () => {
 	const short = "a".repeat(100);
@@ -79,4 +87,70 @@ test("recoveryGuidance: edit and json variants are distinct, actionable", () => 
 	assert.match(edit, /hashline_edit/);
 	assert.match(json, /jq/);
 	assert.notEqual(edit, json);
+});
+
+test("hasSymlinkInPath: symlinked component anywhere in the path is flagged; real nested paths are not", () => {
+	const base = realpathSync(tmpdir());
+	const dir = mkdtempSync(path.join(base, "torus-guards-"));
+	const outsideDir = mkdtempSync(path.join(base, "torus-outside-"));
+	const outside = path.join(outsideDir, "secret.txt");
+	writeFileSync(outside, "secret\n");
+	symlinkSync(outside, path.join(dir, "escape"));
+	mkdirSync(path.join(dir, "real", "nested"), { recursive: true });
+	symlinkSync(path.join(dir, "real"), path.join(dir, "linkdir"));
+	assert.equal(hasSymlinkInPath(path.join(dir, "escape")), true, "final component is a symlink");
+	assert.equal(
+		hasSymlinkInPath(path.join(dir, "linkdir", "nested", "newfile")),
+		true,
+		"intermediate directory is a symlink, trailing component does not exist yet",
+	);
+	assert.equal(
+		hasSymlinkInPath(path.join(dir, "real", "nested", "file")),
+		false,
+		"real nested path with no symlinks",
+	);
+});
+
+test("writeBlockReason: symlinked write targets blocked, real nested targets allowed", () => {
+	const base = realpathSync(tmpdir());
+	const dir = mkdtempSync(path.join(base, "torus-guards-"));
+	const outsideDir = mkdtempSync(path.join(base, "torus-outside-"));
+	const outside = path.join(outsideDir, "secret.txt");
+	writeFileSync(outside, "secret\n");
+	symlinkSync(outside, path.join(dir, "escape"));
+	mkdirSync(path.join(dir, "real", "nested"), { recursive: true });
+	symlinkSync(path.join(dir, "real"), path.join(dir, "linkdir"));
+	assert.match(
+		String(writeBlockReason(path.join(dir, "escape"), "payload\n")),
+		/symbolic link in path/,
+		"write target is itself a symlink",
+	);
+	assert.match(
+		String(writeBlockReason(path.join(dir, "linkdir", "nested", "newfile"), "payload\n")),
+		/symbolic link in path/,
+		"symlink as an intermediate directory component",
+	);
+	assert.equal(
+		writeBlockReason(path.join(dir, "real", "nested", "file"), "payload\n"),
+		null,
+		"real nested target with no symlinks is allowed (no false positive)",
+	);
+});
+
+test("dumpBlockReason: cat through a symlink is blocked with the symlink reason, real files keep the read-tool reason", () => {
+	const base = realpathSync(tmpdir());
+	const dir = mkdtempSync(path.join(base, "torus-guards-"));
+	const outsideDir = mkdtempSync(path.join(base, "torus-outside-"));
+	const outside = path.join(outsideDir, "secret.txt");
+	writeFileSync(outside, "secret\n");
+	symlinkSync(outside, path.join(dir, "escape"));
+	const realFile = path.join(dir, "x.txt");
+	writeFileSync(realFile, "content\n");
+	assert.match(
+		dumpBlockReason(`cat ${path.join(dir, "escape")}`),
+		/symbolic link in path/,
+		"read-dump of an absolute path through a symlink",
+	);
+	assert.ok(!/symbolic link/.test(String(dumpBlockReason(`cat ${realFile}`))));
+	assert.equal(dumpBlockReason("cat relative/x.txt"), null);
 });

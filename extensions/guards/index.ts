@@ -1,17 +1,18 @@
 /**
  * torus — context guards + error recovery.
  *
- * Four behaviors that keep context lean and failures recoverable:
+ * Five behaviors that keep context lean and failures recoverable:
  *   - tool-output truncation (giant results capped before they eat context)
  *   - bash file-read guard (cat/head/tail of files -> use the read tool)
  *   - write-overwrite guard (near-identical full rewrites -> edit/hashline)
+ *   - symlink-escape guard (writes/dumps through a symbolic link -> blocked)
  *   - error-recovery guidance (structured retry advice appended to failed
  *     edit/bash results instead of raw model flailing)
  *
  * TORUS_GUARDS=0 disables everything; TORUS_MAX_TOOL_OUTPUT tunes the cap.
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import {
 	type BashToolCallEvent,
@@ -26,6 +27,11 @@ import { torusHome } from "../fsutil.js";
 const DEFAULT_MAX_TOOL_OUTPUT = 16_000;
 const WRITE_SIMILARITY_BLOCK = 0.7;
 const WRITE_MIN_LINES = 5;
+
+const READ_DUMP_BLOCK_REASON =
+	"use the read tool for file contents — it is anchored (hashline), truncation-aware, and keeps context structured; bash dumps bypass all of that";
+const SYMLINK_BLOCK_REASON =
+	"symbolic link in path — resolve the real target path first, or edit the destination directly";
 
 export function truncateText(text: string, max: number): string {
 	if (text.length <= max) return text;
@@ -67,21 +73,59 @@ function memoryStoreDir(): string {
 	return path.join(torusHome(), "memory");
 }
 
-/** True when a bash command is a plain file dump that the read tool should own. */
-export function isBareFileDump(command: string): boolean {
+/**
+ * True when any existing component of the target path (from the root down) is
+ * a symbolic link, so a write/read "inside" it lands wherever the link points.
+ * Trailing components that do not exist yet are skipped — the write may be
+ * what creates them.
+ */
+export function hasSymlinkInPath(target: string): boolean {
+	const absolute = path.resolve(target);
+	const root = path.parse(absolute).root;
+	const parts = absolute
+		.slice(root.length)
+		.split(path.sep)
+		.filter((part) => part.length > 0);
+	let current = root;
+	for (const part of parts) {
+		current = path.join(current, part);
+		try {
+			if (lstatSync(current).isSymbolicLink()) return true;
+		} catch {
+			return false;
+		}
+	}
+	return false;
+}
+
+/** Absolute file operand of a plain cat-family dump, or null when the command is not one. */
+function fileDumpTarget(command: string): string | null {
 	const trimmed = command.trim();
-	if (!CAT_FAMILY.test(trimmed)) return false;
-	if (/[|;&<>]/.test(trimmed)) return false;
+	if (!CAT_FAMILY.test(trimmed)) return null;
+	if (/[|;&<>]/.test(trimmed)) return null;
 	const tokens = trimmed.split(/\s+/).slice(1);
 	const operands = tokens.filter((token) => !token.startsWith("-"));
-	if (operands.length === 0) return false;
+	if (operands.length === 0) return null;
 	const target = operands[operands.length - 1];
-	if (target === undefined || !target.startsWith("/")) return false;
+	if (target === undefined || !target.startsWith("/")) return null;
 	try {
-		return statSync(target).isFile();
+		if (!statSync(target).isFile()) return null;
 	} catch {
-		return false;
+		return null;
 	}
+	return target;
+}
+
+/** Block reason for a plain bash file dump, or null when the command is not one. */
+export function dumpBlockReason(command: string): string | null {
+	const target = fileDumpTarget(command);
+	if (target === null) return null;
+	return hasSymlinkInPath(target) ? SYMLINK_BLOCK_REASON : READ_DUMP_BLOCK_REASON;
+}
+
+/** True when a bash command is a plain file dump that the read tool should own. */
+export function isBareFileDump(command: string): boolean {
+	return dumpBlockReason(command) !== null;
 }
 
 /** Line-overlap ratio between disk content and proposed rewrite (0..1). */
@@ -102,6 +146,26 @@ export function rewriteSimilarity(disk: string, next: string): number {
 	return common / Math.max(a.length, b.length);
 }
 
+/**
+ * Block reason for a write call, or null when it should proceed: a symbolic
+ * link anywhere in the target path, or an existing target whose content is
+ * near-identical to the proposed full rewrite.
+ */
+export function writeBlockReason(target: string, content: string): string | null {
+	if (hasSymlinkInPath(target)) return SYMLINK_BLOCK_REASON;
+	if (!existsSync(target)) return null;
+	let disk = "";
+	try {
+		disk = readFileSync(target, "utf8");
+	} catch {
+		return null;
+	}
+	if (disk.split("\n").length < WRITE_MIN_LINES) return null;
+	const similarity = rewriteSimilarity(disk, content);
+	if (similarity < WRITE_SIMILARITY_BLOCK) return null;
+	return `target already exists and is ${Math.round(similarity * 100)}% identical to this rewrite — use hashline_edit (anchored range replace) or edit (oldText/newText) for surgical changes; full rewrites are only for genuinely new content`;
+}
+
 const JSON_BREAKAGE_RE = /Unexpected token|is not valid JSON|JSON\.parse|SyntaxError.*JSON/i;
 
 export function recoveryGuidance(kind: "edit" | "json"): string {
@@ -119,11 +183,11 @@ export function registerGuards(pi: ExtensionAPI): void {
 		if (event.type !== "tool_call") return undefined;
 		if ((event as BashToolCallEvent).toolName === "bash") {
 			const command = String((event.input as { command?: unknown }).command ?? "");
-			if (command && isBareFileDump(command)) {
+			const dumpReason = command ? dumpBlockReason(command) : null;
+			if (dumpReason !== null) {
 				return {
 					block: true,
-					reason:
-						"use the read tool for file contents — it is anchored (hashline), truncation-aware, and keeps context structured; bash dumps bypass all of that",
+					reason: dumpReason,
 				};
 			}
 			if (command && isMemoryStoreMutation(command, memoryStoreDir())) {
@@ -136,25 +200,10 @@ export function registerGuards(pi: ExtensionAPI): void {
 		}
 		if ((event as WriteToolCallEvent).toolName === "write") {
 			const input = event.input as { path?: unknown; content?: unknown };
-			if (
-				typeof input.path === "string" &&
-				typeof input.content === "string" &&
-				existsSync(input.path)
-			) {
-				let disk = "";
-				try {
-					disk = readFileSync(input.path, "utf8");
-				} catch {
-					return undefined;
-				}
-				if (disk.split("\n").length >= WRITE_MIN_LINES) {
-					const similarity = rewriteSimilarity(disk, input.content);
-					if (similarity >= WRITE_SIMILARITY_BLOCK) {
-						return {
-							block: true,
-							reason: `target already exists and is ${Math.round(similarity * 100)}% identical to this rewrite — use hashline_edit (anchored range replace) or edit (oldText/newText) for surgical changes; full rewrites are only for genuinely new content`,
-						};
-					}
+			if (typeof input.path === "string" && typeof input.content === "string") {
+				const reason = writeBlockReason(input.path, input.content);
+				if (reason !== null) {
+					return { block: true, reason };
 				}
 			}
 		}
