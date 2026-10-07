@@ -220,6 +220,12 @@ test("fsutil readJson/writeJson round-trip and splitList semantics", async () =>
 	assert.deepEqual(splitList(undefined), []);
 });
 
+test("formatCost renders negative cost as no cost at all", async () => {
+	const { formatCost } = await import("../extensions/fsutil.ts");
+	assert.equal(formatCost(-0.5, true), "", "negative sub-dollar cost renders nothing");
+	assert.equal(formatCost(-5, true), "", "negative dollar-plus cost renders nothing");
+});
+
 test("flattenPreview flattens whitespace and truncates with ellipsis", async () => {
 	const { flattenPreview } = await import("../extensions/fleet/theme-kit.ts");
 	assert.equal(flattenPreview("a\n  b\t\tc", 20), "a b c");

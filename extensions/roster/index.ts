@@ -34,7 +34,7 @@ import {
 } from "../engine-child.js";
 import { flattenPreview, shortModel } from "../fleet/theme-kit.js";
 import { parseFrontmatter, stripFrontmatter } from "../frontmatter.js";
-import { sleep, splitList } from "../fsutil.js";
+import { formatCost, sleep, splitList } from "../fsutil.js";
 import { clickable } from "../notify/index.js";
 import { MODEL_CHAINS, providerAvailabilities } from "../providers/index.js";
 import {
@@ -299,7 +299,15 @@ interface SpawnResult {
 	finalText: string;
 	stderr: string;
 	sessionId: string | null;
-	usage: { input: number; output: number; turns: number };
+	usage: {
+		input: number;
+		output: number;
+		turns: number;
+		cacheRead: number;
+		cacheWrite: number;
+		/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
+		cost: number;
+	};
 	seenToolCalls: Set<string>;
 	seenToolResults: Set<string>;
 }
@@ -307,7 +315,14 @@ interface SpawnResult {
 export interface DelegationSnapshot {
 	text: string;
 	turns: number;
-	usage: { input: number; output: number };
+	usage: {
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheWrite: number;
+		/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
+		cost: number;
+	};
 	/** Registry id of the run; injected by runDelegation before onTurn fires. */
 	delegationId?: string;
 }
@@ -327,7 +342,7 @@ async function runEngineRpc(
 		finalText: "",
 		stderr: "",
 		sessionId: null,
-		usage: { input: 0, output: 0, turns: 0 },
+		usage: { input: 0, output: 0, turns: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
 		seenToolCalls: new Set(),
 		seenToolResults: new Set(),
 	};
@@ -344,7 +359,7 @@ async function runEngineRpc(
 				onTurn({
 					text: result.finalText,
 					turns: result.usage.turns,
-					usage: { input: result.usage.input, output: result.usage.output },
+					usage: { ...result.usage },
 				});
 			}
 		},
@@ -417,7 +432,7 @@ async function runEngineJson(
 		finalText: "",
 		stderr: "",
 		sessionId: null,
-		usage: { input: 0, output: 0, turns: 0 },
+		usage: { input: 0, output: 0, turns: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
 		seenToolCalls: new Set(),
 		seenToolResults: new Set(),
 	};
@@ -456,7 +471,7 @@ async function runEngineJson(
 						onTurn({
 							text: result.finalText,
 							turns: result.usage.turns,
-							usage: { input: result.usage.input, output: result.usage.output },
+							usage: { ...result.usage },
 						});
 					}
 				}
@@ -499,12 +514,18 @@ export function consumeEventLine(
 		turns: result.usage.turns,
 		tokensIn: result.usage.input,
 		tokensOut: result.usage.output,
+		cacheRead: result.usage.cacheRead,
+		cacheWrite: result.usage.cacheWrite,
+		cost: result.usage.cost,
 		text: result.finalText,
 	};
 	reduceEngineEvent(record, tally);
 	result.usage.turns = tally.turns;
 	result.usage.input = tally.tokensIn;
 	result.usage.output = tally.tokensOut;
+	result.usage.cacheRead = tally.cacheRead;
+	result.usage.cacheWrite = tally.cacheWrite;
+	result.usage.cost = tally.cost;
 	result.finalText = tally.text;
 }
 
@@ -765,7 +786,7 @@ export async function runDelegation(
 			finalText: "",
 			stderr: "no chain model attempted",
 			sessionId: null,
-			usage: { input: 0, output: 0, turns: 0 },
+			usage: { input: 0, output: 0, turns: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
 			seenToolCalls: new Set(),
 			seenToolResults: new Set(),
 		};
@@ -937,6 +958,10 @@ const delegateTool = defineTool({
 		const exitCode = typeof details["exitCode"] === "number" ? details["exitCode"] : 0;
 		const inTok = typeof usage["input"] === "number" ? usage["input"] : 0;
 		const outTok = typeof usage["output"] === "number" ? usage["output"] : 0;
+		const cost = formatCost(
+			typeof usage["cost"] === "number" ? usage["cost"] : undefined,
+			inTok + outTok > 0,
+		);
 		const status =
 			context?.isError === true || exitCode !== 0
 				? theme.fg("error", exitCode !== 0 ? `exit ${exitCode}` : "failed")
@@ -944,7 +969,10 @@ const delegateTool = defineTool({
 		const headline =
 			theme.fg("toolTitle", theme.bold("delegate ")) +
 			theme.fg("accent", agent) +
-			theme.fg("dim", ` (${model}) · ${status} · ${turns ?? "?"} turns · ${inTok}/${outTok} tok`);
+			theme.fg(
+				"dim",
+				` (${model}) · ${status} · ${turns ?? "?"} turns · ${inTok}/${outTok} tok${cost ? ` · ${cost}` : ""}`,
+			);
 
 		if (!expanded) return clickable([new Text(headline, 0, 0)], delegationId);
 		const body = result.content

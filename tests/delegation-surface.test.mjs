@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -31,6 +31,15 @@ writeFileSync(
 	"utf8",
 );
 chmodSync(STAGGER_ENGINE, 0o755);
+// Emits the full usage shape the pinned engine produces: cache counters plus
+// the computed cost object (models with catalog pricing).
+const COST_ENGINE = path.join(ENGINE_DIR, "cost-engine.sh");
+writeFileSync(
+	COST_ENGINE,
+	'#!/bin/sh\necho \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":10,"output":20,"cacheRead":900,"cacheWrite":100,"cost":{"input":0.01,"output":0.02,"cacheRead":0.001,"cacheWrite":0.0005,"total":0.0315}}}}\'\nexit 0\n',
+	"utf8",
+);
+chmodSync(COST_ENGINE, 0o755);
 
 const registry = await import("../extensions/registry.ts");
 const roster = await import("../extensions/roster/index.ts");
@@ -579,4 +588,89 @@ test("delegate tool block renders turns and is mouse-clickable", () => {
 		/3 turns/,
 		"turns fall back to usage when top-level is absent",
 	);
+});
+
+test("engine-computed cache and cost ride the delegation pipeline end to end", async () => {
+	registry.resetRegistryForTesting();
+	const snapshots = [];
+
+	await withEngine(COST_ENGINE, async () => {
+		const outcome = await roster.runDelegation(
+			"builder",
+			"cost probe",
+			undefined,
+			(snapshot) => snapshots.push(snapshot),
+			"sess-cost",
+			"priced",
+		);
+		assert.equal(outcome.ok, true);
+		assert.equal(outcome.details.usage.cacheRead, 900, "result usage carries cacheRead");
+		assert.equal(outcome.details.usage.cacheWrite, 100, "result usage carries cacheWrite");
+		assert.equal(outcome.details.usage.cost, 0.0315, "result usage carries the engine cost total");
+	});
+
+	assert.ok(snapshots.length > 0, "cost engine produced at least one turn snapshot");
+	const snap = snapshots.at(-1);
+	assert.equal(snap.usage.input, 10, "snapshot round-trip keeps input tokens");
+	assert.equal(snap.usage.cacheRead, 900, "snapshot round-trip keeps cacheRead");
+	assert.equal(snap.usage.cacheWrite, 100, "snapshot round-trip keeps cacheWrite");
+	assert.equal(snap.usage.cost, 0.0315, "snapshot round-trip keeps cost");
+
+	const record = registry.listDelegations().at(-1);
+	assert.ok(record, "registry record exists for the run");
+	assert.equal(record.cacheRead, 900, "registry record stores cacheRead");
+	assert.equal(record.cacheWrite, 100, "registry record stores cacheWrite");
+	assert.equal(record.cost, 0.0315, "registry record stores cost");
+	const log = readFileSync(record.logFile, "utf8");
+	assert.match(
+		log,
+		/--- turn 1 \(10\/20 tok · \$0\.0315\) ---/,
+		"delegation log turn line carries the dollar segment",
+	);
+	registry.setCustomSender(() => {});
+});
+
+test("delegate headline renders the dollar segment for priced, free, and unpriced runs", () => {
+	const tools = [];
+	roster.registerRoster({
+		registerTool: (t) => tools.push(t),
+		registerCommand: () => {},
+		on: () => {},
+		sendMessage: () => {},
+	});
+	const delegate = tools.find((t) => t.name === "torus_delegate");
+	assert.ok(delegate, "torus_delegate not registered");
+	const theme = { fg: (_color, text) => text, bold: (text) => text };
+
+	const render = (usage) =>
+		delegate
+			.renderResult(
+				{
+					content: [{ type: "text", text: "done" }],
+					details: { agent: "reviewer", model: "zai/glm-5.3", exitCode: 0, turns: 2, usage },
+				},
+				{ expanded: false, isPartial: false },
+				theme,
+			)
+			.render(200)
+			.join("\n");
+
+	assert.match(
+		render({ input: 1000, output: 500, turns: 2, cost: 0.0123 }),
+		/1000\/500 tok · \$0\.0123/,
+		"sub-dollar cost keeps 4 decimal places",
+	);
+	assert.match(
+		render({ input: 1000, output: 500, turns: 2, cost: 1.234 }),
+		/· \$1\.23/,
+		"cost at or above $1 trims to 2 decimal places",
+	);
+	assert.match(
+		render({ input: 1000, output: 500, turns: 2, cost: 0 }),
+		/1000\/500 tok · \$0/,
+		"tokens spent with no catalog price renders an explicit $0",
+	);
+	const unpriced = render({ input: 1000, output: 500, turns: 2 });
+	assert.doesNotMatch(unpriced, /\$/, "absent cost renders no dollar segment");
+	assert.match(unpriced, /1000\/500 tok/, "token segment renders when cost is absent");
 });

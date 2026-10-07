@@ -2,6 +2,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { formatCost } from "../fsutil.js";
 import { osNotify } from "../osnotify.js";
 import { DEFAULT_MEMBER_MODEL } from "../providers/index.js";
 import {
@@ -125,6 +126,8 @@ const fanoutTool = defineTool({
 			ok: boolean;
 			delegationId: string | null;
 			turns: number;
+			/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
+			cost: number;
 			durationMs: number;
 		};
 		let batch: FanoutEntry[] = [];
@@ -138,6 +141,12 @@ const fanoutTool = defineTool({
 			const entries = batch;
 			batch = [];
 			const single = entries.length === 1 ? entries[0] : undefined;
+			// One filtered list feeds both arrays: a run without a delegation id
+			// contributes neither an id nor a cost entry, so costs stay
+			// index-aligned with delegationIds in mixed success/failure batches.
+			const identified = entries.filter(
+				(e): e is FanoutEntry & { delegationId: string } => typeof e.delegationId === "string",
+			);
 			emitTorusCustom(
 				{
 					customType: "torus.delegation-result",
@@ -155,11 +164,13 @@ const fanoutTool = defineTool({
 						handle: single?.handle ?? undefined,
 						ok: entries.every((e) => e.ok),
 						delegationId: single?.delegationId ?? undefined,
-						delegationIds: entries
-							.map((e) => e.delegationId)
-							.filter((id): id is string => typeof id === "string"),
+						delegationIds: identified.map((e) => e.delegationId),
 						runs: entries.length,
 						turns: entries.reduce((sum, e) => sum + e.turns, 0),
+						// Per-run costs in completion order (aligned with delegationIds)
+						// plus the summed batch cost; 0 when a model has no catalog price.
+						costs: identified.map((e) => e.cost),
+						cost: entries.reduce((sum, e) => sum + e.cost, 0),
 						durationMs: Math.max(...entries.map((e) => e.durationMs)),
 					},
 				},
@@ -213,7 +224,7 @@ const fanoutTool = defineTool({
 						false,
 						false,
 					);
-					const usage = outcome.details.usage as { turns?: number } | undefined;
+					const usage = outcome.details.usage as { turns?: number; cost?: number } | undefined;
 					coalesce({
 						label,
 						handle,
@@ -221,6 +232,7 @@ const fanoutTool = defineTool({
 						ok: outcome.ok,
 						delegationId: outcome.delegationId,
 						turns: usage?.turns ?? 0,
+						cost: typeof usage?.cost === "number" && Number.isFinite(usage.cost) ? usage.cost : 0,
 						durationMs: Date.now() - runStartedAt,
 					});
 					return {
@@ -237,6 +249,7 @@ const fanoutTool = defineTool({
 						ok: false,
 						delegationId: null,
 						turns: 0,
+						cost: 0,
 						durationMs: Date.now() - runStartedAt,
 					});
 					throw error;
@@ -709,7 +722,13 @@ function attachMember(
 						updateDelegation(memberId, {
 							text: stats.text,
 							turns: stats.turns,
-							usage: { input: stats.tokensIn, output: stats.tokensOut },
+							usage: {
+								input: stats.tokensIn,
+								output: stats.tokensOut,
+								cacheRead: stats.cacheRead,
+								cacheWrite: stats.cacheWrite,
+								cost: stats.cost,
+							},
 						});
 					}
 				: undefined,
@@ -911,7 +930,12 @@ const teamStatusTool = defineTool({
 			} catch {
 				tail = "(no outbox yet)";
 			}
-			return `- ${m.name} (${m.agent}) · ${m.status} — ${tail}`;
+			const memberRun = listDelegations().find((r) => r.id === `${record.id}/${m.name}`);
+			const cost = formatCost(
+				memberRun?.cost,
+				(memberRun?.tokensIn ?? 0) + (memberRun?.tokensOut ?? 0) > 0,
+			);
+			return `- ${m.name} (${m.agent}) · ${m.status}${cost ? ` · ${cost}` : ""} — ${tail}`;
 		});
 		// Durability surfacing: a task left in_progress under a member that has
 		// since stopped can never be finished by itself — name it so the lead can

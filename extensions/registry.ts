@@ -16,7 +16,7 @@ import {
 	statSync,
 } from "node:fs";
 import path from "node:path";
-import { torusHome, writeJson } from "./fsutil.js";
+import { formatCost, torusHome, writeJson } from "./fsutil.js";
 import { type DelegationToastInfo, notifyDelegation, RUNNING_LATE_MS } from "./osnotify.js";
 
 export interface DelegationRecord {
@@ -29,6 +29,11 @@ export interface DelegationRecord {
 	turns: number;
 	tokensIn: number;
 	tokensOut: number;
+	/** Prompt-cache tokens read/written across the run (engine usage). */
+	cacheRead: number;
+	cacheWrite: number;
+	/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
+	cost: number;
 	text: string;
 	logFile: string;
 	sessionId: string | null;
@@ -269,6 +274,10 @@ export interface ExternalRun {
 	turns?: number;
 	tokensIn?: number;
 	tokensOut?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
+	cost?: number;
 }
 
 export function externalRunAgeSeconds(run: ExternalRun): number {
@@ -310,6 +319,9 @@ export function updateExternalRun(
 			| "turns"
 			| "tokensIn"
 			| "tokensOut"
+			| "cacheRead"
+			| "cacheWrite"
+			| "cost"
 			| "sessionId"
 			| "memberStatus"
 			| "activeSeconds"
@@ -644,6 +656,9 @@ export function startDelegation(
 		turns: 0,
 		tokensIn: 0,
 		tokensOut: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: 0,
 		text: "",
 		logFile,
 		sessionId: null,
@@ -708,7 +723,17 @@ export function attachSessionId(id: string, sessionId: string): void {
 
 export function updateDelegation(
 	id: string,
-	snapshot: { text: string; turns: number; usage: { input: number; output: number } },
+	snapshot: {
+		text: string;
+		turns: number;
+		usage: {
+			input: number;
+			output: number;
+			cacheRead?: number;
+			cacheWrite?: number;
+			cost?: number;
+		};
+	},
 ): DelegationRecord | undefined {
 	const record = registry.get(id);
 	if (!record) return undefined;
@@ -716,6 +741,9 @@ export function updateDelegation(
 	record.turns = snapshot.turns;
 	record.tokensIn = snapshot.usage.input;
 	record.tokensOut = snapshot.usage.output;
+	record.cacheRead = finiteOrZero(snapshot.usage.cacheRead);
+	record.cacheWrite = finiteOrZero(snapshot.usage.cacheWrite);
+	record.cost = finiteOrZero(snapshot.usage.cost);
 	writeRunBeacon({
 		id: record.id,
 		agent: record.agent,
@@ -727,9 +755,10 @@ export function updateDelegation(
 		sessionId: record.sessionId,
 		logFile: record.logFile,
 	});
+	const cost = formatCost(snapshot.usage.cost, snapshot.usage.input + snapshot.usage.output > 0);
 	appendFileSync(
 		record.logFile,
-		`\n--- turn ${snapshot.turns} (${snapshot.usage.input}/${snapshot.usage.output} tok) ---\n${indentChildText(snapshot.text)}\n`,
+		`\n--- turn ${snapshot.turns} (${snapshot.usage.input}/${snapshot.usage.output} tok${cost ? ` · ${cost}` : ""}) ---\n${indentChildText(snapshot.text)}\n`,
 	);
 	return record;
 }
@@ -797,8 +826,14 @@ export function finishDelegation(
 	return record;
 }
 
+/** Normalize an optional usage-derived number; anything non-finite stores as 0. */
+function finiteOrZero(value: number | undefined): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 const REHYDRATE_LIMIT = 50;
-const TURN_RE = /--- turn (\d+) \((\d+)\/(\d+) tok\) ---\n([\s\S]*?)(?=\n--- turn |\n\[|$)/g;
+const TURN_RE =
+	/--- turn (\d+) \((\d+)\/(\d+) tok(?: · (\$[0-9.]+))?\) ---\n([\s\S]*?)(?=\n--- turn |\n\[|$)/g;
 
 /**
  * The registry lives in process memory; a resumed session starts a fresh
@@ -844,12 +879,15 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 		let turns = 0;
 		let tokensIn = 0;
 		let tokensOut = 0;
+		let cost = 0;
 		let text = "";
 		for (const turn of raw.matchAll(TURN_RE)) {
 			turns = Number(turn[1] ?? 0);
 			tokensIn = Number(turn[2] ?? 0);
 			tokensOut = Number(turn[3] ?? 0);
-			text = (turn[4] ?? "").trim();
+			const loggedCost = Number.parseFloat((turn[4] ?? "").replace("$", ""));
+			cost = Number.isFinite(loggedCost) ? loggedCost : 0;
+			text = (turn[5] ?? "").trim();
 		}
 		let startedAt = Date.parse(start.groups.ts);
 		if (!Number.isFinite(startedAt)) {
@@ -876,6 +914,9 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 			turns,
 			tokensIn,
 			tokensOut,
+			cacheRead: 0,
+			cacheWrite: 0,
+			cost,
 			text: text.slice(0, 4000),
 			logFile,
 			sessionId: end?.groups.session ?? null,

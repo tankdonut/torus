@@ -264,6 +264,10 @@ export function spawnMember(
 		turns: number;
 		tokensIn: number;
 		tokensOut: number;
+		cacheRead: number;
+		cacheWrite: number;
+		/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
+		cost: number;
 		/** Last child text snapshot; feeds the delegation-registry turn log. */
 		text: string;
 	}) => void,
@@ -286,7 +290,15 @@ export function spawnMember(
 	let stopped = false;
 
 	const engineBin = resolveEngineBin();
-	const tally: EngineTally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	const tally: EngineTally = {
+		turns: 0,
+		tokensIn: 0,
+		tokensOut: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: 0,
+		text: "",
+	};
 	let modelIndex = 0;
 	let turnsAtSpawn = 0;
 	let resolveExited: (code: number) => void = () => {};
@@ -308,6 +320,9 @@ export function spawnMember(
 							turns: tally.turns,
 							tokensIn: tally.tokensIn,
 							tokensOut: tally.tokensOut,
+							cacheRead: tally.cacheRead,
+							cacheWrite: tally.cacheWrite,
+							cost: tally.cost,
 							text: tally.text.slice(0, 2000),
 						});
 					}

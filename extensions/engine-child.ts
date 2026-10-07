@@ -36,14 +36,28 @@ export interface EngineTally {
 	turns: number;
 	tokensIn: number;
 	tokensOut: number;
+	/** Prompt-cache tokens read across the session (usage.cacheRead). */
+	cacheRead: number;
+	/** Prompt-cache tokens written across the session (usage.cacheWrite). */
+	cacheWrite: number;
+	/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
+	cost: number;
 	text: string;
+}
+
+/** Add a usage value into a running counter; absent/non-finite values read as 0. */
+function sumFinite(current: unknown, delta: unknown): number {
+	const base = typeof current === "number" && Number.isFinite(current) ? current : 0;
+	const add = typeof delta === "number" && Number.isFinite(delta) ? delta : 0;
+	return base + add;
 }
 
 /**
  * Fold a `message_end` assistant event into `tally`: each text block sets
  * `tally.text` and counts a turn (roster semantics — final text wins), and a
- * numeric usage object adds to the token counters. Non-matching events are
- * ignored.
+ * numeric usage object adds to the token counters, the cache counters, and
+ * the engine-computed cost. Non-matching events are ignored. Absent or
+ * non-finite usage values accumulate as 0 so the tally can never go NaN.
  */
 export function reduceEngineEvent(record: Record<string, unknown>, tally: EngineTally): void {
 	if (
@@ -69,6 +83,14 @@ export function reduceEngineEvent(record: Record<string, unknown>, tally: Engine
 		const u = usage as Record<string, unknown>;
 		tally.tokensIn += typeof u["input"] === "number" ? u["input"] : 0;
 		tally.tokensOut += typeof u["output"] === "number" ? u["output"] : 0;
+		tally.cacheRead = sumFinite(tally.cacheRead, u["cacheRead"]);
+		tally.cacheWrite = sumFinite(tally.cacheWrite, u["cacheWrite"]);
+		const cost = u["cost"];
+		const costTotal =
+			typeof cost === "object" && cost !== null
+				? (cost as Record<string, unknown>)["total"]
+				: undefined;
+		tally.cost = sumFinite(tally.cost, costTotal);
 	}
 }
 

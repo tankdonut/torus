@@ -1,5 +1,5 @@
 /**
- * torus — shared filesystem + timing helpers.
+ * torus — shared filesystem, formatting, and timing helpers.
  *
  * Every JSON read here is best-effort (missing or corrupt file → fallback);
  * every JSON write is atomic (tmp file + rename) with the parent directory
@@ -48,4 +48,22 @@ export function splitList(raw: string | undefined): string[] {
 		.split(",")
 		.map((s) => s.trim())
 		.filter((s) => s.length > 0);
+}
+
+/**
+ * Format an engine-computed dollar cost for delegation surfaces.
+ *
+ * - Absent or non-finite cost → "" (no cost data; the surface renders nothing)
+ * - Negative cost → "" (not a price signal; engine totals are ≥ 0, defensive)
+ * - Exactly 0 with tokens spent → "$0" (the run happened but the model has
+ *   no catalog price; an explicit zero beats an ambiguous blank)
+ * - Exactly 0 with no tokens → "" (nothing measurable happened)
+ * - Under $1 keeps 4 decimal places; $1 and above trims to 2
+ */
+export function formatCost(cost: number | undefined, tokensSpent: boolean): string {
+	if (typeof cost !== "number" || !Number.isFinite(cost)) return "";
+	if (cost < 0) return "";
+	if (cost === 0) return tokensSpent ? "$0" : "";
+	if (Math.abs(cost) >= 1) return `$${cost.toFixed(2)}`;
+	return `$${cost.toFixed(4)}`;
 }

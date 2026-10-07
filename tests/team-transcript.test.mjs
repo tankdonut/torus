@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -247,4 +247,126 @@ test("team_respawn starts a fresh record and stale supervisor callbacks cannot f
 	second.onState({ status: "stopped", sessionId: "sess-echo-2" });
 	assert.equal(memberRecord(memberId).status, "failed");
 	assert.equal(memberRecord(memberId).sessionId, "sess-echo-2");
+});
+
+test("fan-out coalesced result marker carries per-run and summed cost", async () => {
+	registry.resetRegistryForTesting();
+	// Fake engines priced by task text so the two runs settle with distinct
+	// engine-computed totals; the JSON fallback consumes one message_end each.
+	const ENGINE_DIR = mkdtempSync(path.join(tmpdir(), "torus-fanout-cost-"));
+	const PRICED_ENGINE = path.join(ENGINE_DIR, "priced-engine.sh");
+	writeFileSync(
+		PRICED_ENGINE,
+		[
+			"#!/bin/sh",
+			'case "$*" in',
+			'  *"cheap run"*) echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"cheap done"}],"usage":{"input":10,"output":20,"cacheRead":100,"cacheWrite":10,"cost":{"total":0.01}}}}\' ;;',
+			'  *) echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":10,"output":20,"cacheRead":900,"cacheWrite":100,"cost":{"total":0.0315}}}}\' ;;',
+			"esac",
+			"exit 0",
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	chmodSync(PRICED_ENGINE, 0o755);
+	process.env.TORUS_ENGINE_BIN = PRICED_ENGINE;
+
+	const customs = [];
+	registry.setCustomSender((message) => customs.push(message));
+	const fanoutTool = registeredTools().find((t) => t.name === "torus_fanout");
+	assert.ok(fanoutTool, "torus_fanout not registered");
+	try {
+		const result = await fanoutTool.execute(
+			"call",
+			{
+				runs: [
+					{ agent: "builder", task: "cheap run", handle: "scout" },
+					{ agent: "builder", task: "pricey run", handle: "heavy" },
+				],
+			},
+			undefined,
+			undefined,
+			{ sessionManager: { getSessionId: () => "sess-fanout-cost" }, ui: { setStatus: () => {} } },
+		);
+		assert.equal(result.details.ok, 2, "both runs succeed under the fake engines");
+	} finally {
+		delete process.env.TORUS_ENGINE_BIN;
+		rmSync(ENGINE_DIR, { recursive: true, force: true });
+	}
+
+	const results = customs.filter((m) => m.customType === "torus.delegation-result");
+	assert.equal(results.length, 1, "simultaneous completions flush as one combined marker");
+	const combined = results[0];
+	assert.equal(combined.details.runs, 2);
+	assert.deepEqual(
+		[...combined.details.costs].sort((a, b) => a - b),
+		[0.01, 0.0315],
+		"per-run costs ride the marker details",
+	);
+	assert.ok(
+		Math.abs(combined.details.cost - 0.0415) < 1e-9,
+		`summed batch cost expected 0.0415, got ${combined.details.cost}`,
+	);
+	registry.setCustomSender(() => {});
+});
+
+test("mixed fan-out batch keeps costs aligned with delegationIds when a run fails early", async () => {
+	registry.resetRegistryForTesting();
+	// One priced engine for the succeeding run; the failing run targets an
+	// unknown agent so runDelegation bails before minting a delegation id —
+	// the same null-id coalesce entry a thrown run produces via the catch path.
+	const ENGINE_DIR = mkdtempSync(path.join(tmpdir(), "torus-fanout-mixed-"));
+	const PRICED_ENGINE = path.join(ENGINE_DIR, "priced-engine.sh");
+	writeFileSync(
+		PRICED_ENGINE,
+		[
+			"#!/bin/sh",
+			'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":10,"output":20,"cost":{"total":0.0315}}}}\'',
+			"exit 0",
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	chmodSync(PRICED_ENGINE, 0o755);
+	process.env.TORUS_ENGINE_BIN = PRICED_ENGINE;
+
+	const customs = [];
+	registry.setCustomSender((message) => customs.push(message));
+	const fanoutTool = registeredTools().find((t) => t.name === "torus_fanout");
+	assert.ok(fanoutTool, "torus_fanout not registered");
+	try {
+		const result = await fanoutTool.execute(
+			"call",
+			{
+				runs: [
+					{ agent: "ghost", task: "doomed run", handle: "doomed" },
+					{ agent: "builder", task: "priced run", handle: "scout" },
+				],
+			},
+			undefined,
+			undefined,
+			{ sessionManager: { getSessionId: () => "sess-fanout-mixed" }, ui: { setStatus: () => {} } },
+		);
+		assert.equal(result.details.ok, 1, "exactly one run succeeds");
+	} finally {
+		delete process.env.TORUS_ENGINE_BIN;
+		rmSync(ENGINE_DIR, { recursive: true, force: true });
+	}
+
+	const results = customs.filter((m) => m.customType === "torus.delegation-result");
+	assert.equal(results.length, 1, "near-simultaneous settle flushes one combined marker");
+	const combined = results[0];
+	assert.equal(combined.details.runs, 2, "both runs ride the batch");
+	assert.equal(
+		combined.details.delegationIds.length,
+		1,
+		"only the succeeding run contributes a delegation id",
+	);
+	assert.equal(combined.details.costs.length, 1, "the failed run contributes no cost entry");
+	assert.ok(
+		Math.abs(combined.details.costs[0] - 0.0315) < 1e-9,
+		`costs[0] must be the success's engine cost, got ${combined.details.costs[0]}`,
+	);
+	assert.equal(combined.details.delegationIds[0].length > 0, true, "the id is a real string");
+	registry.setCustomSender(() => {});
 });

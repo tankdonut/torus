@@ -6,6 +6,7 @@ import {
 	type TuiMouseEventResult,
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
+import { formatCost } from "../fsutil.js";
 import {
 	type DelegationRecord,
 	type ExternalRun,
@@ -86,6 +87,8 @@ function formatRow(
 		record.status === "running" && run?.memberStatus === "idle"
 			? theme.fg("dim", "·")
 			: statusIcon(theme, record.status, tick);
+	const cost = formatCost(record.cost, record.tokensIn + record.tokensOut > 0);
+	const costSeg = cost ? ` · ${cost}` : "";
 
 	if (record.status === "running") {
 		const stats =
@@ -93,13 +96,13 @@ function formatRow(
 				? theme.fg("dim", `t${record.turns} · idle ${Math.round(externalRunAgeSeconds(run))}s`)
 				: theme.fg(
 						"dim",
-						`t${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} · ${Math.round((Date.now() - record.startedAt) / 1000)}s`,
+						`t${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)}${costSeg} · ${Math.round((Date.now() - record.startedAt) / 1000)}s`,
 					);
 		return truncateToWidth(`${prefix} ${icon} ${name} ${badge} ${model} ${stats}`, width);
 	}
 	const stats = theme.fg(
 		"dim",
-		`${record.turns}t · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)}`,
+		`${record.turns}t · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)}${costSeg}`,
 	);
 	return truncateToWidth(`${prefix} ${icon} ${name} ${badge} ${model} ${stats}`, width);
 }
@@ -173,9 +176,10 @@ class FleetStrip implements Component {
 		const shownExternal = external.slice(0, Math.max(0, MAX_ROWS - shownRunning));
 		for (const run of shownExternal) {
 			const age = externalRunAgeSeconds(run);
+			const runCost = formatCost(run.cost, (run.tokensIn ?? 0) + (run.tokensOut ?? 0) > 0);
 			const stats = this.theme.fg(
 				"dim",
-				`t${run.turns ?? 0} · ${formatTokens(run.tokensIn ?? 0)}→${formatTokens(run.tokensOut ?? 0)} · ${age}s`,
+				`t${run.turns ?? 0} · ${formatTokens(run.tokensIn ?? 0)}→${formatTokens(run.tokensOut ?? 0)}${runCost ? ` · ${runCost}` : ""} · ${age}s`,
 			);
 			const who = this.theme.fg(
 				entityColor(run.handle ?? run.label),

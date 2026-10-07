@@ -91,7 +91,15 @@ test("reduceEngineEvent counts one turn per assistant message, not per text bloc
 });
 
 test("reduceEngineEvent ignores non-assistant and non-message_end events", () => {
-	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	const tally = {
+		turns: 0,
+		tokensIn: 0,
+		tokensOut: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: 0,
+		text: "",
+	};
 	reduceEngineEvent({ type: "session", id: "abc" }, tally);
 	reduceEngineEvent({ type: "tool_execution_start", toolName: "bash" }, tally);
 	reduceEngineEvent(
@@ -100,6 +108,103 @@ test("reduceEngineEvent ignores non-assistant and non-message_end events", () =>
 	);
 	assert.equal(tally.turns, 0);
 	assert.equal(tally.text, "");
+});
+
+test("reduceEngineEvent tallies cache tokens and engine-computed cost cumulatively", () => {
+	const tally = {
+		turns: 0,
+		tokensIn: 0,
+		tokensOut: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: 0,
+		text: "",
+	};
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "one" }],
+				usage: {
+					input: 10,
+					output: 20,
+					cacheRead: 900,
+					cacheWrite: 100,
+					cost: { input: 0.01, output: 0.02, cacheRead: 0.001, cacheWrite: 0.0005, total: 0.0315 },
+				},
+			},
+		},
+		tally,
+	);
+	assert.equal(tally.cacheRead, 900);
+	assert.equal(tally.cacheWrite, 100);
+	assert.equal(tally.cost, 0.0315);
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "two" }],
+				usage: {
+					input: 5,
+					output: 6,
+					cacheRead: 50,
+					cacheWrite: 0,
+					cost: { total: 0.0085 },
+				},
+			},
+		},
+		tally,
+	);
+	assert.equal(tally.cacheRead, 950);
+	assert.equal(tally.cacheWrite, 100);
+	assert.equal(Math.round((tally.cost - 0.04) * 1e9), 0, "cost accumulates across turns");
+});
+
+test("absent or malformed cost never poisons the tally with NaN", () => {
+	const tally = { turns: 0, tokensIn: 0, tokensOut: 0, text: "" };
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "no cost object" }],
+				usage: { input: 7, output: 8 },
+			},
+		},
+		tally,
+	);
+	assert.ok(Number.isFinite(tally.cost), "usage without cost yields a finite cost");
+	assert.equal(tally.cost, 0);
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "garbage cost" }],
+				usage: { input: 1, output: 1, cost: { total: Number.NaN } },
+			},
+		},
+		tally,
+	);
+	assert.ok(Number.isFinite(tally.cost), "non-finite cost.total must not leak NaN");
+	assert.equal(tally.cost, 0);
+	reduceEngineEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "string cost" }],
+				usage: { input: 1, output: 1, cost: "free" },
+			},
+		},
+		tally,
+	);
+	assert.ok(Number.isFinite(tally.cost));
+	assert.equal(tally.cost, 0);
+	assert.ok(Number.isFinite(tally.cacheRead), "absent cache fields stay finite too");
+	assert.equal(tally.cacheRead, 0);
 });
 
 test("childExtensionArgs includes every composed extension that exists in the repo layout", () => {
