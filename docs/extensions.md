@@ -186,6 +186,20 @@ Web access suite. Tools: `web_search` (30+ providers, fallback chains, batch que
 ### `pi-lsp-client`
 LSP tools: `lsp_diagnostics`, `lsp_goto_definition`, `lsp_find_references`, `lsp_symbols`, `lsp_prepare_rename`, `lsp_rename` — over a shared server pool (lazy spawn, refcount, idle reaping, crash retry). Command `/lsp` (status / install / warmup); 40+ builtin servers; custom servers via `.pi/lsp-client.json`. Loaded in parent and children; `/doctor` probes `typescript-language-server`.
 
+## Ambient model calls
+
+Where torus itself spends model calls (and where it looks like it might but doesn't), recorded with the decision on adopting the engine's classifier Models API — `ctx.modelRegistry.classify()` with in-pin `@cf/cloudflare/clef*` catalog models. The bar for adoption: a genuine classification, a binary or few-label decision on short text — not generation.
+
+| Call site | Trigger | Model today | Kind | Adoptable |
+|---|---|---|---|---|
+| `session-title` (`generateTitle` — torus's only direct `modelRegistry.complete` call) | first `turn_end` with a real user prompt and no session name (background, 3 attempts); `/rename` regenerates from the transcript | fast chain head `zai/glm-5.3-flash` via `resolveTitleModel` (`TORUS_TITLE_MODEL` → authed fast default → session model) | Generation — a novel ≤50-char title from free text | No — `classify()` answers fixed-label choice/bool/score questions and cannot mint a title; picking among canned titles would gut the feature |
+| `memory` dream + reflect (`runDelegation` to the `dreamer` agent; gating itself — `reflectDecision` over `reflect-state` counters — is pure arithmetic) | `agent_settled`: dream after 6 h with undreamed log activity, reflect after `TORUS_REFLECT_TURNS` settles or 10 min idle; `/reflect` | full engine-child delegation walking the agent's model chain (read-only tools) | Generation + tool use — reads store/transcript/logs, authors ENTRY:/DELETE:/PROFILE: blocks | No — a one-shot classifier over JSON state cannot read files or author structured proposals |
+| `comment-checker` | every `edit`/`write` tool call | none — language comment-prefix table plus regexes over added lines | Deterministic check (no model) | No — no call to replace, and prefix matching is exact; a classifier would be slower and less reliable |
+| `monitor` | each interval check cycle | none — `spawnSync` plus output-hash compare | Deterministic check (no model) | No — no call to replace |
+| `prompts` persona switch | `alt+p` / `/persona-*` | none for inference — `modelRegistry.find` + `setModel` only selects the session model | Model selection (no call) | No — nothing is inferred |
+
+Decision: no-op. No ambient call site is a genuine classification, so `TORUS_CLASSIFY_MODEL` is deliberately read nowhere and behavior is unchanged; revisit when a call site with a genuinely closed label set appears.
+
 ## Environment variables
 
 | Variable | Consumer | Purpose |

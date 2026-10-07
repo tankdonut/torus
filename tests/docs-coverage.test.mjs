@@ -108,3 +108,30 @@ test("docs/efficiency.md documents the overhead bench method", () => {
 		assert.ok(benchDoc.includes(token), `docs/efficiency.md missing token: ${token}`);
 	}
 });
+
+test("ambient model calls map covers every site and records the no-op decision", () => {
+	const start = doc.indexOf("## Ambient model calls");
+	assert.ok(start !== -1, "docs/extensions.md missing the Ambient model calls section");
+	const end = doc.indexOf("\n## ", start + 1);
+	const section = doc.slice(start, end === -1 ? undefined : end);
+	for (const token of [
+		"session-title",
+		"dreamer",
+		"comment-checker",
+		"monitor",
+		"classify(",
+		"TORUS_CLASSIFY_MODEL",
+	]) {
+		assert.ok(section.includes(token), `ambient model calls section missing token: ${token}`);
+	}
+	assert.ok(
+		section.includes("Decision: no-op"),
+		"ambient model calls section missing the no-op decision",
+	);
+	// the no-op is load-bearing: nothing in extensions/ reads the opt-in, so
+	// behavior with the env var unset (or set) is identical to the mapped code
+	assert.ok(
+		!sources.includes("TORUS_CLASSIFY_MODEL"),
+		"no-op violated: extensions/ reads TORUS_CLASSIFY_MODEL",
+	);
+});
