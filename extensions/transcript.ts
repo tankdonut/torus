@@ -159,6 +159,32 @@ export function transcriptItems(sessionId: string, maxItems: number): Transcript
 		}
 		if (typeof entry !== "object" || entry === null) continue;
 		const record = entry as Record<string, unknown>;
+
+		// Custom entries are per-session mirrors of extension state. Only
+		// torus.work-ledger rows render — the ledger JSONL file under
+		// ~/.torus/work stays the cross-session source of truth; the mirrored
+		// entry just makes the row visible in this session's replay. Rendered
+		// through the tool-item pipeline so it draws as a compact ledger line;
+		// every other custom entry is ignored.
+		if (record["type"] === "custom") {
+			if (record["customType"] === "torus.work-ledger") {
+				const data = record["data"];
+				if (typeof data === "object" && data !== null) {
+					const row = data as Record<string, unknown>;
+					const event = typeof row["event"] === "string" ? row["event"] : "?";
+					const text = typeof row["text"] === "string" ? row["text"] : "";
+					const id = nextId();
+					items.push({
+						kind: "tool",
+						id,
+						toolCallId: `ledger-${id}`,
+						name: "ledger",
+						args: { event, text: text.slice(0, 120) },
+					});
+				}
+			}
+			continue;
+		}
 		if (record["type"] !== "message") continue;
 		const message = record["message"] as Record<string, unknown> | undefined;
 		if (!message || typeof message["role"] !== "string") continue;

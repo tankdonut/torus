@@ -190,6 +190,64 @@ test("liveTail returns non-empty tail lines from a real log", () => {
 	rmSync(log, { force: true });
 });
 
+test("mirrored torus.work-ledger custom entries render a compact ledger line", () => {
+	const id = `${UUID}-led`;
+	plantSession(id, [
+		JSON.stringify({ type: "session", id, timestamp: Date.now(), cwd: "/tmp" }),
+		JSON.stringify({
+			type: "custom",
+			customType: "torus.work-ledger",
+			data: {
+				ts: "2026-10-07T00:00:00.000Z",
+				sessionId: id,
+				event: "task-done",
+				text: "T1 done: shipped the thing, tests green",
+			},
+		}),
+		JSON.stringify({
+			type: "custom",
+			customType: "torus.work-ledger",
+			data: { event: "note", text: "x".repeat(300) },
+		}),
+		JSON.stringify({
+			type: "message",
+			id: "m1",
+			message: { role: "user", content: [{ type: "text", text: "after the mirror rows" }] },
+		}),
+	]);
+	const items = transcriptItems(id, 40);
+	const ledgers = items.filter((i) => i.kind === "tool" && i.name === "ledger");
+	assert.equal(ledgers.length, 2, "one ledger line per mirrored row");
+	assert.deepEqual(ledgers[0].args, {
+		event: "task-done",
+		text: "T1 done: shipped the thing, tests green",
+	});
+	assert.equal(ledgers[1].args.event, "note");
+	assert.equal(ledgers[1].args.text.length, 120, "text truncated to the compact preview");
+	assert.ok(
+		items.some((i) => i.kind === "user"),
+		"regular kinds still render",
+	);
+});
+
+test("custom entries of other customTypes render nothing", () => {
+	const id = `${UUID}-other`;
+	plantSession(id, [
+		JSON.stringify({ type: "custom", customType: "pi.virtual-model-state", data: { mode: "m" } }),
+		JSON.stringify({ type: "custom", customType: "codemode-store", data: { runs: [] } }),
+		...baseSession(id),
+	]);
+	const items = transcriptItems(id, 40);
+	assert.equal(
+		items.filter((i) => i.kind === "tool" && i.name === "ledger").length,
+		0,
+		"foreign custom entries produce no items",
+	);
+	const tool = items.find((i) => i.kind === "tool" && i.toolCallId === "tc1");
+	assert.ok(tool, "existing kinds unaffected");
+	if (tool && tool.kind === "tool") assert.equal(tool.output, "total 0");
+});
+
 test("cleanup: planted fixtures removed", () => {
 	rmSync(DIR, { recursive: true, force: true });
 	assert.equal(transcriptItems(UUID, 40).length, 0);

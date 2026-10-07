@@ -159,9 +159,26 @@ export function writeWorkState(state: WorkState): void {
 	writeJson(stateFile(state.slug), state);
 }
 
+/**
+ * Session-entry mirror binding for ledger rows, captured at registration.
+ * Null when the engine (or a test fake) exposes no appendEntry.
+ */
+let mirrorSessionEntry: ((customType: string, data?: unknown) => void) | null = null;
+
 export function appendLedgerEntry(slug: string, entry: LedgerEntry): void {
 	mkdirSync(WORK_DIR, { recursive: true });
+	// The ledger JSONL file is the source of truth (cross-session by design);
+	// it is written first and its failure is the only fatal one.
 	appendFileSync(ledgerFile(slug), `${JSON.stringify(entry)}\n`, "utf-8");
+	// Mirror-only: the session entry below duplicates the row so replay
+	// surfaces (resume, tree, HTML export) show it in this session — the file
+	// above remains authoritative. Best-effort: a mirror failure must never
+	// break an append that already landed, so it is swallowed silently.
+	if (mirrorSessionEntry) {
+		try {
+			mirrorSessionEntry("torus.work-ledger", entry);
+		} catch {}
+	}
 }
 
 /** Last `n` ledger rows, newest last; corrupt lines are skipped, not fatal. */
@@ -327,6 +344,9 @@ function refreshLastActive(state: WorkState): WorkState {
 }
 
 export function registerWork(pi: ExtensionAPI): void {
+	// Bind the session-entry mirror (see appendLedgerEntry); guarded because
+	// test fakes and older engines may not expose appendEntry.
+	mirrorSessionEntry = typeof pi.appendEntry === "function" ? pi.appendEntry.bind(pi) : null;
 	const requireActive = (): { state: WorkState } | { error: string } => {
 		const sessionId = currentSessionId();
 		const state = activeWorkFor(sessionId);

@@ -240,12 +240,12 @@ test("workContextBlock: injects plan path, progress, next task; missing plan sur
 	assert.equal(workContextBlock("ses-c"), "");
 });
 
-function workTools() {
+function workTools(pi = {}) {
 	const tools = [];
 	const ambientChild = process.env["TORUS_ENGINE_CHILD"];
 	delete process.env["TORUS_ENGINE_CHILD"];
 	try {
-		registerWork({ registerTool: (t) => tools.push(t), on: () => {} });
+		registerWork({ registerTool: (t) => tools.push(t), on: () => {}, ...pi });
 	} finally {
 		if (ambientChild !== undefined) process.env["TORUS_ENGINE_CHILD"] = ambientChild;
 	}
@@ -319,4 +319,47 @@ test("work_note admits converge rows: append via the tool, tail keeps the event 
 		readLedger("open-cv", 1).map((e) => e.event),
 		["converge"],
 	);
+});
+
+test("work_note mirrors each ledger row into the session as one torus.work-ledger entry", async () => {
+	plantState({ slug: "mirror" });
+	const mirrored = [];
+	const { work_note } = workTools({
+		appendEntry: (customType, data) => mirrored.push({ customType, data }),
+	});
+
+	const out = await work_note.execute("t", {
+		event: "task-done",
+		text: "mirror row",
+		slug: "mirror",
+		verification: "npm test → 0 fail",
+	});
+	assert.equal(out.isError, undefined);
+
+	assert.equal(mirrored.length, 1, "exactly one mirror entry per row");
+	assert.equal(mirrored[0].customType, "torus.work-ledger");
+	assert.deepEqual(mirrored[0].data, readLedger("mirror", 1).at(-1));
+
+	workTools(); // drop the mirror binding for later tests
+});
+
+test("a throwing session mirror never breaks the file append", async () => {
+	plantState({ slug: "mirror-throw" });
+	const { work_note } = workTools({
+		appendEntry: () => {
+			throw new Error("session store unavailable");
+		},
+	});
+
+	const out = await work_note.execute("t", {
+		event: "note",
+		text: "row survives mirror failure",
+		slug: "mirror-throw",
+	});
+	assert.equal(out.isError, undefined);
+	const row = readLedger("mirror-throw", 1).at(-1);
+	assert.equal(row.event, "note");
+	assert.equal(row.text, "row survives mirror failure");
+
+	workTools(); // drop the throwing mirror binding
 });
