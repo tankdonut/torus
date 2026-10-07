@@ -316,6 +316,46 @@ test("strip: team members show a badge + idle state; overflow row appears past M
 	}
 });
 
+test("strip: member and delegate lines show input→output tokens", () => {
+	registry.resetRegistryForTesting();
+	const tui = { mode: "fullscreen", requestRender: () => {} };
+	const theme = { fg: (_color, text) => text, bold: (text) => `*${text}*` };
+	let factory = null;
+	fleet.registerFleetWidget({
+		on: (event, handler) => {
+			if (event === "session_start") handler({}, { ui: { setWidget: (_key, f) => (factory = f) } });
+		},
+		registerShortcut: () => {},
+	});
+	assert.ok(factory, "widget factory captured");
+
+	registry.startDelegation("del-tok", "builder", "zai/glm-5.3-flash", "sess", "scout");
+	registry.updateDelegation("del-tok", {
+		text: "working",
+		turns: 3,
+		usage: { input: 1234, output: 5678 },
+	});
+	registry.publishExternalRun({
+		id: "ext-tok",
+		label: "solo",
+		handle: "solo",
+		state: "running",
+		turns: 2,
+		tokensIn: 100,
+		tokensOut: 250,
+	});
+	const strip = factory(tui, theme);
+	try {
+		const lines = strip.render(200).join("\n");
+		assert.match(lines, /1\.2k→5\.7k/, "running delegate row shows input→output tokens");
+		assert.match(lines, /100→250/, "external-run row shows input→output tokens");
+		assert.doesNotMatch(lines, /}o\b/, "output-only token suffix is gone");
+	} finally {
+		strip.dispose();
+	}
+	registry.resetRegistryForTesting();
+});
+
 test("detail footer: [steer]/[stop] ride the status line, stop needs y/n, hover bolds rows", () => {
 	registry.resetRegistryForTesting();
 	const theme = { fg: (_c, t) => t, bold: (t) => `*${t}*` };

@@ -93,11 +93,14 @@ function formatRow(
 				? theme.fg("dim", `t${record.turns} · idle ${Math.round(externalRunAgeSeconds(run))}s`)
 				: theme.fg(
 						"dim",
-						`t${record.turns} · ${formatTokens(record.tokensOut)}o · ${Math.round((Date.now() - record.startedAt) / 1000)}s`,
+						`t${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} · ${Math.round((Date.now() - record.startedAt) / 1000)}s`,
 					);
 		return truncateToWidth(`${prefix} ${icon} ${name} ${badge} ${model} ${stats}`, width);
 	}
-	const stats = theme.fg("dim", `${record.turns}t · ${formatTokens(record.tokensOut)}o`);
+	const stats = theme.fg(
+		"dim",
+		`${record.turns}t · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)}`,
+	);
 	return truncateToWidth(`${prefix} ${icon} ${name} ${badge} ${model} ${stats}`, width);
 }
 
@@ -172,7 +175,7 @@ class FleetStrip implements Component {
 			const age = externalRunAgeSeconds(run);
 			const stats = this.theme.fg(
 				"dim",
-				`t${run.turns ?? 0} · ${formatTokens(run.tokensOut ?? 0)}o · ${age}s`,
+				`t${run.turns ?? 0} · ${formatTokens(run.tokensIn ?? 0)}→${formatTokens(run.tokensOut ?? 0)} · ${age}s`,
 			);
 			const who = this.theme.fg(
 				entityColor(run.handle ?? run.label),
