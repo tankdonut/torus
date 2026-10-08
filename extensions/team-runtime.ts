@@ -139,12 +139,55 @@ function maxTaskId(tasks: TasksFile["tasks"]): number {
 	return max;
 }
 
+const TASK_STATUSES = new Set(["pending", "in_progress", "completed", "deleted"]);
+
+/**
+ * The tasklist is member-writable by hand, and members write plausible
+ * non-canonical statuses ("done", "complete", "in-progress"). Consumers
+ * compare status exactly (blockedTasks, the claim scan, the stale scan), so a
+ * raw string that slips past the tool schema must not silently deadlock
+ * dependents: synonyms fold to their canonical value, anything unknown reads
+ * as "pending" — visible as re-work, never a hidden lock.
+ */
+function normalizeTaskStatus(raw: unknown): string {
+	if (typeof raw === "string" && TASK_STATUSES.has(raw)) return raw;
+	const folded =
+		typeof raw === "string"
+			? raw
+					.trim()
+					.toLowerCase()
+					.replace(/[\s_-]+/g, "_")
+			: "";
+	switch (folded) {
+		case "done":
+		case "complete":
+		case "completed":
+		case "finished":
+		case "closed":
+			return "completed";
+		case "in_progress":
+		case "inprogress":
+		case "working":
+		case "active":
+		case "wip":
+			return "in_progress";
+		case "delete":
+		case "deleted":
+		case "canceled":
+		case "cancelled":
+			return "deleted";
+		default:
+			return "pending";
+	}
+}
+
 export function readTasksFile(teamId: string): TasksFile {
 	const parsed = readJson<Partial<TasksFile>>(tasksFile(teamId), {});
 	// A member hand-editing tasks.json can leave dependsOn as anything — only
 	// an array is a dependency list; anything else reads as "no dependencies".
 	const tasks = (Array.isArray(parsed.tasks) ? parsed.tasks : []).map((task) => ({
 		...task,
+		status: normalizeTaskStatus(task.status),
 		dependsOn: Array.isArray(task.dependsOn) ? task.dependsOn : undefined,
 	}));
 	return {
@@ -154,7 +197,11 @@ export function readTasksFile(teamId: string): TasksFile {
 }
 
 export function writeTasksFile(teamId: string, file: TasksFile): void {
-	writeJson(tasksFile(teamId), { tasks: file.tasks, nextId: file.nextId });
+	// Writes must not persist a status the exact-match readers would misread.
+	writeJson(tasksFile(teamId), {
+		tasks: file.tasks.map((task) => ({ ...task, status: normalizeTaskStatus(task.status) })),
+		nextId: file.nextId,
+	});
 }
 
 /**
