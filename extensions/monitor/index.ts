@@ -7,11 +7,11 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { appendFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { projectStateDir, torusHome } from "../fsutil.js";
 import { notifyMonitor } from "../osnotify.js";
 import { emitTorusCustom } from "../registry.js";
 
@@ -21,7 +21,16 @@ function toolDetails(d: Record<string, unknown>): Record<string, unknown> {
 
 const MIN_INTERVAL_SEC = 5;
 const MAX_MONITORS = 5;
-const MONITOR_LOG_DIR = path.join(homedir(), ".torus", "monitors");
+
+/** Per-project monitor log dir, resolved per check — a session can cd after load. */
+function monitorLogDir(): string {
+	return path.join(projectStateDir(), "monitors");
+}
+
+/** Pre-namespacing log dir; only ever read for the one-time rename migration. */
+function legacyDir(): string {
+	return path.join(torusHome(), "monitors");
+}
 
 interface MonitorEntry {
 	name: string;
@@ -98,8 +107,15 @@ export function runMonitorCheck(entry: MonitorEntry): void {
 	entry.checks += 1;
 	const failed = run.status !== null && run.status !== 0;
 
-	mkdirSync(MONITOR_LOG_DIR, { recursive: true });
-	const logFile = path.join(MONITOR_LOG_DIR, `${entry.name}.log`);
+	const logDir = monitorLogDir();
+	mkdirSync(logDir, { recursive: true });
+	const logFile = path.join(logDir, `${entry.name}.log`);
+	// One-time migration: a pre-namespacing log is renamed (not copied) into
+	// the project dir on first write; history is durable and never pruned.
+	const legacyFile = path.join(legacyDir(), `${entry.name}.log`);
+	if (existsSync(legacyFile) && !existsSync(logFile)) {
+		renameSync(legacyFile, logFile);
+	}
 	appendFileSync(
 		logFile,
 		`[${new Date().toISOString()}] check ${entry.checks} exit=${run.status} hash=${digest}\n${output.slice(0, 2000)}\n`,
@@ -133,7 +149,7 @@ const monitorTool = defineTool({
 	name: "torus_monitor",
 	label: "Torus Monitor",
 	description:
-		"Watch a shell command on an interval; desktop-notifies and stops when its output changes (stopOn: change) or it exits non-zero (stopOn: fail). History lands in ~/.torus/monitors/<name>.log. Use for CI tails, file watches, long builds.",
+		"Watch a shell command on an interval; desktop-notifies and stops when its output changes (stopOn: change) or it exits non-zero (stopOn: fail). History lands in ~/.torus/state/--<project>--/monitors/<name>.log. Use for CI tails, file watches, long builds.",
 	parameters: Type.Object({
 		name: Type.String({ description: "Short monitor name ([a-z0-9-])" }),
 		command: Type.String({ description: "Shell command whose output is watched" }),
