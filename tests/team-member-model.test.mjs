@@ -23,7 +23,7 @@ registry.setCustomSender(() => {});
 
 const spawned = [];
 const spawn = (teamId, spec, _objective, onState) => {
-	const mailboxDir = path.join(HOME, ".torus", "teams", teamId, "mailboxes", spec.name);
+	const mailboxDir = path.join(HOME, "teams", teamId, "mailboxes", spec.name);
 	spawned.push({ teamId, spec, onState, mailboxDir });
 	return {
 		stop: () => onState({ status: "stopped", sessionId: `sess-${spec.name}` }),

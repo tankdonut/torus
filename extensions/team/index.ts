@@ -2,7 +2,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { formatCost } from "../fsutil.js";
+import { formatCost, projectKey } from "../fsutil.js";
 import { osNotify } from "../osnotify.js";
 import { DEFAULT_MEMBER_MODEL } from "../providers/index.js";
 import {
@@ -43,6 +43,7 @@ import {
 	type Task,
 	tasksFile,
 	teamDir,
+	teamMatchesProject,
 	updateTasksFile,
 	writeTeamSpec,
 } from "../team-runtime.js";
@@ -818,11 +819,16 @@ function attachMember(
 }
 
 function resolveTeam(id?: string): TeamRecord | undefined {
-	return id
-		? getTeam(id)
-		: listTeams().find(
-				(t) => t.status === "active" && t.members.some((m) => m.status !== "stopped"),
-			);
+	if (id) return getTeam(id);
+	// Default resolution stays inside the current project (legacy specs with
+	// no project match any); a foreign project's team is reached only by id.
+	const key = projectKey(process.cwd());
+	return listTeams().find(
+		(t) =>
+			teamMatchesProject(t.id, key) &&
+			t.status === "active" &&
+			t.members.some((m) => m.status !== "stopped"),
+	);
 }
 
 function teamRosterText(record: {
@@ -917,6 +923,7 @@ const teamCreateTool = defineTool({
 			objective: params.objective,
 			members: params.members,
 			parentSession,
+			project: projectKey(process.cwd()),
 			// Written only when opted in: an off/default team's team.json is byte-identical to pre-flag teams.
 			...(params.selfClaim === true ? { selfClaim: true } : {}),
 		});
@@ -986,7 +993,11 @@ const teamStatusTool = defineTool({
 	label: "Torus Team Status",
 	description: "Roster, member states, and the latest outbox report per member",
 	parameters: Type.Object({
-		team: Type.Optional(Type.String({ description: "Team id (default: most recent active team)" })),
+		team: Type.Optional(
+			Type.String({
+				description: "Team id (default: most recent active team in the current project)",
+			}),
+		),
 	}),
 	// Machine-readable roster for codemode scripts. Every field optional;
 	// the no-such-team error result sets no structuredContent.

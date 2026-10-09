@@ -8,7 +8,6 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import {
 	childExtensionArgs,
@@ -18,13 +17,13 @@ import {
 	sessionIdFromState,
 } from "./engine-child.js";
 import { stripFrontmatter } from "./frontmatter.js";
-import { readJson, sleep, writeJson } from "./fsutil.js";
+import { readJson, sleep, torusHome, writeJson } from "./fsutil.js";
 import { DEFAULT_MEMBER_MODEL } from "./providers/index.js";
 import { AGENT_NAME_RE, repoRoot } from "./registry.js";
 import { AGENTS, resolveModels } from "./roster/index.js";
 import { RpcChild } from "./rpc.js";
 
-const TEAMS_ROOT = path.join(homedir(), ".torus", "teams");
+const TEAMS_ROOT = path.join(torusHome(), "teams");
 const POLL_MS = 2_000;
 
 export interface MemberSpec {
@@ -54,6 +53,8 @@ export interface TeamSpec {
 	parentSession?: string | null;
 	/** Opt-in: members are taught the atomic self-claim CLI protocol in their objective. Default off — absent behaves as false. */
 	selfClaim?: boolean;
+	/** Project key of the cwd that created the team. Absent on legacy specs — those match any project. */
+	project?: string;
 }
 
 export function writeTeamSpec(teamId: string, spec: TeamSpec): void {
@@ -70,6 +71,17 @@ export function readTeamSpec(teamId: string): (TeamSpec & { id: string }) | null
 	)
 		return null;
 	return parsed as TeamSpec & { id: string };
+}
+
+/**
+ * Whether a team belongs to the given project key. A spec that records a
+ * project matches only that key; legacy specs without the field match any
+ * project. Explicit team ids are never checked against this — only default
+ * resolution filters by it.
+ */
+export function teamMatchesProject(teamId: string, key: string): boolean {
+	const project = readTeamSpec(teamId)?.project;
+	return project === undefined || project === key;
 }
 
 export function markTeamStatus(teamId: string, status: "active" | "shutdown"): void {

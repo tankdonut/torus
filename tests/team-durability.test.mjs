@@ -9,8 +9,8 @@ import { after, test } from "node:test";
 // BEFORE the team module is imported; the first registerTeam() below then
 // rehydrates them cold. Each test file runs as its own process under
 // `node --test`, so the env-first imports here are a genuine first import:
-// registry derives its dirs from TORUS_HOME, team-runtime derives TEAMS_ROOT
-// from HOME (same isolation contract as team-transcript.test.mjs).
+// registry and team-runtime both derive their dirs from TORUS_HOME (same
+// isolation contract as team-transcript.test.mjs).
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-team-durability-test-"));
 process.env.TORUS_HOME = HOME;
 process.env.HOME = HOME;
@@ -30,7 +30,7 @@ team.setMemberSpawnerForTesting((teamId, spec, _objective, onState) => {
 	return {
 		stop: () => onState({ status: "stopped", sessionId: `sess-${spec.name}` }),
 		forceKill: () => {},
-		mailboxDir: path.join(HOME, ".torus", "teams", teamId, "mailboxes", spec.name),
+		mailboxDir: path.join(HOME, "teams", teamId, "mailboxes", spec.name),
 		exited: Promise.resolve(0),
 	};
 });
@@ -439,4 +439,105 @@ test("team_status structuredContent mirrors the rendered roster, stale, and bloc
 	const missing = await statusTool.execute("call", { team: "ghost-team" });
 	assert.equal(missing.isError, true);
 	assert.equal(missing.structuredContent, undefined, "no-such-team omits structuredContent");
+});
+
+// ---- project-scoped default team resolution ----
+// Specs carry the project key of the creating cwd; default resolution only
+// considers same-project teams (legacy specs with no key match any). Explicit
+// ids are never filtered. Each scenario resets the registry and registers
+// crafted records so earlier fixtures cannot compete for the default pick;
+// the status tool is captured before the drop (tools() rehydrates from disk,
+// and resetRegistryForTesting does not clear the shared teams map).
+const CURRENT_PROJECT = `--${process.cwd().replace(/^\/+/, "").replaceAll("/", "-")}--`;
+const OTHER_PROJECT = "--elsewhere--";
+
+function craftStatusTool() {
+	const statusTool = tool(tools(), "team_status");
+	registry.resetRegistryForTesting();
+	for (const record of registry.listTeams()) registry.dropTeam(record.id);
+	return statusTool;
+}
+
+function registerCraftedTeam(teamId, { project, createdAt }) {
+	runtime.writeTeamSpec(teamId, {
+		name: teamId,
+		objective: `${teamId} standing objective`,
+		members: [{ name: "solo", agent: "builder" }],
+		status: "active",
+		...(project === undefined ? {} : { project }),
+	});
+	registry.registerTeam({
+		id: teamId,
+		name: teamId,
+		objective: `${teamId} standing objective`,
+		status: "active",
+		dir: runtime.teamDir(teamId),
+		members: [
+			{
+				id: `${teamId}/solo`,
+				name: "solo",
+				agent: "builder",
+				model: "test-model",
+				status: "idle",
+				sessionId: null,
+				startedAt: 0,
+				mailboxDir: "",
+			},
+		],
+		createdAt,
+	});
+}
+
+test("team_create stamps the creating cwd's project key into team.json", async () => {
+	const registered = tools();
+	const created = await tool(registered, "team_create").execute(
+		"call",
+		{
+			name: "projstamp",
+			objective: "stamp the project",
+			members: [{ name: "alpha", agent: "builder" }],
+		},
+		undefined,
+		undefined,
+		{ sessionManager: { getSessionId: () => "sess-projstamp" } },
+	);
+	const teamId = created.details.teamId;
+	assert.ok(teamId, "team_create must return a teamId");
+	assert.equal(runtime.readTeamSpec(teamId)?.project, CURRENT_PROJECT);
+});
+
+test("default resolution prefers the current project's team over a newer foreign one", async () => {
+	const statusTool = craftStatusTool();
+	registerCraftedTeam("scoped-foreign", { project: OTHER_PROJECT, createdAt: 9000 });
+	registerCraftedTeam("scoped-local", { project: CURRENT_PROJECT, createdAt: 1000 });
+	const result = await statusTool.execute("call", {});
+	assert.match(result.content[0].text, /^team scoped-local \[active\]/m);
+});
+
+test("default resolution reports none when only foreign-project teams exist", async () => {
+	const statusTool = craftStatusTool();
+	registerCraftedTeam("scoped-only-foreign", { project: OTHER_PROJECT, createdAt: 9000 });
+	const result = await statusTool.execute("call", {});
+	assert.equal(result.isError, true);
+	assert.match(result.content[0].text, /No such team/);
+
+	const explicit = await statusTool.execute("call", { team: "scoped-only-foreign" });
+	assert.match(explicit.content[0].text, /^team scoped-only-foreign \[active\]/m);
+});
+
+test("legacy specs without a project match any project and stay unstamped by status writes", async () => {
+	const statusTool = craftStatusTool();
+	registerCraftedTeam("scoped-legacy", { project: undefined, createdAt: 1000 });
+	registerCraftedTeam("scoped-foreign-two", { project: OTHER_PROJECT, createdAt: 9000 });
+	const byDefault = await statusTool.execute("call", {});
+	assert.match(byDefault.content[0].text, /^team scoped-legacy \[active\]/m);
+
+	runtime.markTeamStatus("scoped-legacy", "shutdown");
+	const reread = runtime.readTeamSpec("scoped-legacy");
+	assert.equal(reread?.status, "shutdown");
+	assert.equal(
+		reread?.project,
+		undefined,
+		"a status rewrite must not stamp a project onto a legacy spec",
+	);
 });

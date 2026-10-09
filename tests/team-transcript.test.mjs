@@ -5,8 +5,8 @@ import path from "node:path";
 import { after, test } from "node:test";
 
 // Team lifecycle must reach the transcript and the delegation registry. The
-// sandbox envs land before any extension import: registry derives its dirs
-// from TORUS_HOME, team-runtime derives TEAMS_ROOT from HOME, and TORUS_NOTIFY
+// sandbox envs land before any extension import: registry and team-runtime
+// derive their dirs from TORUS_HOME, and TORUS_NOTIFY
 // keeps delegation toasts off the test desktop. spawnMember is substituted
 // with a fake so team/index.ts wiring is exercised without engine children.
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-team-transcript-test-"));
@@ -25,7 +25,7 @@ function fakeSpawner() {
 		return {
 			stop: () => onState({ status: "stopped", sessionId: `sess-${spec.name}` }),
 			forceKill: () => {},
-			mailboxDir: path.join(HOME, ".torus", "teams", teamId, "mailboxes", spec.name),
+			mailboxDir: path.join(HOME, "teams", teamId, "mailboxes", spec.name),
 			exited: Promise.resolve(0),
 		};
 	};
@@ -172,7 +172,7 @@ test("registry steer reaches the member mailbox and registry stop finishes the r
 
 	assert.equal(registry.steerDelegation(memberId, "please check the flaky test"), true);
 	const inbox = readFileSync(
-		path.join(HOME, ".torus", "teams", teamId, "mailboxes", "worker", "inbox.md"),
+		path.join(HOME, "teams", teamId, "mailboxes", "worker", "inbox.md"),
 		"utf8",
 	);
 	assert.match(inbox, /please check the flaky test/);

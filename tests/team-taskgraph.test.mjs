@@ -31,7 +31,7 @@ team.setMemberSpawnerForTesting((teamId, spec, objective, onState) => {
 	return {
 		stop: () => onState({ status: "stopped", sessionId: `sess-${spec.name}` }),
 		forceKill: () => {},
-		mailboxDir: path.join(HOME, ".torus", "teams", teamId, "mailboxes", spec.name),
+		mailboxDir: path.join(HOME, "teams", teamId, "mailboxes", spec.name),
 		exited: Promise.resolve(0),
 	};
 });
@@ -577,7 +577,7 @@ test("CLI writers on a nonexistent team refuse fast instead of hanging", async (
 
 test("updateTasksFile throws a bounded error when the lock can never be created", () => {
 	const teamId = `blocked-${Date.now().toString(36)}`;
-	const teamsRoot = path.join(HOME, ".torus", "teams");
+	const teamsRoot = path.join(HOME, "teams");
 	mkdirSync(teamsRoot, { recursive: true });
 	// A regular FILE where the team directory would go: every lock mkdir fails
 	// forever, which used to spin the lock loop without bound.
