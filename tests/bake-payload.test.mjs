@@ -17,7 +17,7 @@ test("bake-payload: writes the payload tree carrying the shared runtime manifest
 	});
 	assert.equal(run.status, 0, `bake-payload failed: ${run.stderr}`);
 
-	for (const entry of ["extensions", "agents", "skills", "package.json"]) {
+	for (const entry of ["extensions", "agents", "skills", "package.json", "package-lock.json"]) {
 		assert.ok(existsSync(path.join(dir, entry)), `baked tree missing ${entry}`);
 	}
 	const repoHasNpmrc = existsSync(path.join(root, ".npmrc"));
@@ -25,6 +25,12 @@ test("bake-payload: writes the payload tree carrying the shared runtime manifest
 		existsSync(path.join(dir, ".npmrc")),
 		repoHasNpmrc,
 		repoHasNpmrc ? "baked tree missing .npmrc" : "baked tree must not invent an .npmrc",
+	);
+
+	assert.equal(
+		readFileSync(path.join(dir, "package-lock.json"), "utf8"),
+		readFileSync(path.join(root, "package-lock.json"), "utf8"),
+		"baked lockfile must be byte-identical to the repo lockfile — payload installs pin to repo resolutions, not latest-at-build",
 	);
 
 	const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
