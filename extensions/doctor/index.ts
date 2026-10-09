@@ -2,15 +2,17 @@
  * torus — /doctor.
  *
  * One command answering "is anything broken?": torus version, engine pin drift,
- * provider auth, MCP wiring, LSP binary, tmux, git identity, and torus state-dir
- * writability, each with a concrete ok/warn/fail line.
+ * provider auth, MCP wiring, LSP binary, tmux, git identity, torus state-dir
+ * writability, and a read-only legacy state-layout scan, each with a concrete
+ * ok/warn/fail line.
  */
 
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { torusHome } from "../fsutil.js";
 
 export interface CheckResult {
 	name: string;
@@ -82,6 +84,65 @@ export function torusVersionCheck(pinnedVersion: string): CheckResult {
 			detail: "torus version unknown (no TORUS_ROOT package.json)",
 		};
 	}
+}
+
+const LEGACY_FLAT_STORES = [
+	"plans",
+	"work",
+	"research",
+	"monitors",
+	"logs",
+	"todo",
+	"goal",
+	"persona",
+	"reflect-state",
+] as const;
+
+const TEAMS_RESIDUE = /^[a-z-]*probe|^demo|^live|^dur\d/;
+
+/**
+ * Read-only report on pre-namespacing flat state left under the torus home:
+ * legacy store dirs (plans/, work/, ...) plus probe/garbage teams dirs.
+ * Strictly stat/readdir — never deletes, moves, or writes anything; legacy
+ * paths stay readable via the fallback readers, cleanup is manual.
+ */
+export function stateLayoutCheck(root = torusHome()): CheckResult {
+	const parts: string[] = [];
+	for (const store of LEGACY_FLAT_STORES) {
+		const dir = path.join(root, store);
+		if (!existsSync(dir)) {
+			continue;
+		}
+		let files = 0;
+		try {
+			files = readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile()).length;
+		} catch {
+			files = 0;
+		}
+		parts.push(`${store}/${files}`);
+	}
+	const teamsDir = path.join(root, "teams");
+	if (existsSync(teamsDir)) {
+		let residue = 0;
+		try {
+			residue = readdirSync(teamsDir, { withFileTypes: true }).filter(
+				(entry) => entry.isDirectory() && TEAMS_RESIDUE.test(entry.name),
+			).length;
+		} catch {
+			residue = 0;
+		}
+		if (residue > 0) {
+			parts.push(`teams residue/${residue}`);
+		}
+	}
+	if (parts.length === 0) {
+		return { name: "state-layout", status: "ok", detail: "namespaced state/ layout only" };
+	}
+	return {
+		name: "state-layout",
+		status: "warn",
+		detail: `${parts.join(", ")} — legacy flat state present — readable via fallback; manual cleanup only`,
+	};
 }
 
 export function runDoctorChecks(
@@ -181,6 +242,8 @@ export function runDoctorChecks(
 	}
 
 	checks.push(sandboxCheck());
+
+	checks.push(stateLayoutCheck());
 
 	return checks;
 }

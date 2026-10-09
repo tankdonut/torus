@@ -83,7 +83,7 @@ No tools or commands. Hooks: `session_start` (ctx capture).
 Env: `TORUS_APPROVAL=0` leaves the slot absent — unmatched hosts deny, exactly as before the extension existed.
 
 ### `doctor`
-One-command health check: engine pin drift vs the `package.json` pin, provider auth (`auth.json`), default provider, MCP wiring, LSP binary, `sg` (ast-grep), tmux, git identity, and `~/.torus` writability — each ok/warn/fail.
+One-command health check: engine pin drift vs the `package.json` pin, provider auth (`auth.json`), default provider, MCP wiring, LSP binary, `sg` (ast-grep), tmux, git identity, `~/.torus` writability, and a read-only `state-layout` scan for legacy flat-state residue — each ok/warn/fail.
 Commands: `/doctor`. No tools or hooks.
 Interactions: dynamic-imports `engine-child` + `registry`. Not loaded into children.
 
