@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { unlinkSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import {
@@ -6,11 +6,24 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { readJson, writeJson } from "../fsutil.js";
+import {
+	projectStateDir,
+	pruneOrphanSessionFiles,
+	readJsonFallback,
+	torusHome,
+	writeJson,
+} from "../fsutil.js";
 import { currentSessionId, setCurrentSessionId } from "../registry.js";
+import { sessionFileExists } from "../sessions/index.js";
 import { type GoalChip, refreshToruStatus, setStatusGoal } from "../ui/index.js";
 
-const GOAL_DIR = path.join(homedir(), ".torus", "goal");
+/** Age floor for orphan GC — a goal file is never deleted for age alone. */
+const ORPHAN_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Pre-project-scoped store: read-only fallback, unlinked once a session writes anew. */
+function legacyGoalFile(sessionId: string): string {
+	return path.join(torusHome(), "goal", `${sessionId}.json`);
+}
 
 export interface GoalState {
 	goal: string;
@@ -19,16 +32,36 @@ export interface GoalState {
 	notes: string[];
 }
 
+function goalDir(): string {
+	return path.join(projectStateDir(), "goal");
+}
+
 function goalFile(sessionId: string): string {
-	return path.join(GOAL_DIR, `${sessionId}.json`);
+	return path.join(goalDir(), `${sessionId}.json`);
 }
 
 export function readGoal(sessionId: string): GoalState | null {
-	return readJson<GoalState | null>(goalFile(sessionId), null);
+	return readJsonFallback<GoalState | null>(goalFile(sessionId), legacyGoalFile(sessionId), null);
 }
 
-function writeGoal(sessionId: string, state: GoalState | null): void {
+/**
+ * Orphan-only GC for the project-scoped goal dir: a file goes only when its
+ * session transcript no longer exists AND it is older than the age floor.
+ * Live sessions (`true`) and unreadable session roots (`null`) keep everything;
+ * the legacy store is never touched here.
+ */
+export function pruneGoalOrphans(
+	exists: (sessionId: string) => boolean | null = (sessionId) => sessionFileExists(sessionId),
+): number {
+	return pruneOrphanSessionFiles(goalDir(), exists, ORPHAN_MIN_AGE_MS);
+}
+
+export function writeGoal(sessionId: string, state: GoalState | null): void {
 	writeJson(goalFile(sessionId), state);
+	try {
+		unlinkSync(legacyGoalFile(sessionId));
+	} catch {}
+	pruneGoalOrphans();
 }
 
 export function goalContextBlock(sessionId: string | null): string {
