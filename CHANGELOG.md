@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.0](https://github.com/tankdonut/torus/compare/v0.6.0...v0.7.0) (2026-10-09)
+
+
+### Features
+
+* **deps:** Update dependency @earendil-works/pi-ai to v1.1.0 ([ad478ac](https://github.com/tankdonut/torus/commit/ad478acbf80e77b903b6835e0b9eab2b46053ed6))
+* **deps:** Update dependency @earendil-works/pi-coding-agent to v1.1.0 ([48bfbdb](https://github.com/tankdonut/torus/commit/48bfbdb8f076233c37e7802cd4515bc3174c6a90))
+* **deps:** Update dependency @earendil-works/pi-tui to v1.1.0 ([246af60](https://github.com/tankdonut/torus/commit/246af60d04cfda078b912b4c5d9c3968d8ec3b37))
+* rebuild overhead bench with robust stats, interleaving, and HTML report ([b7d6224](https://github.com/tankdonut/torus/commit/b7d622460276ee2fa3d1e6b61f0ef6c305dd02f4))
+
+
+### Bug Fixes
+
+* **deps:** raise node engines floor to 22.12 for sandbox-runtime 0.0.79 ([a6d7c5c](https://github.com/tankdonut/torus/commit/a6d7c5cab7bd92b84a9cb7185e524772e667a429))
+* **deps:** update dependency @anthropic-ai/sandbox-runtime to v0.0.79 ([6d881d2](https://github.com/tankdonut/torus/commit/6d881d2549004fca19ae1c99d8425f6bcd90aa6d))
+* **fleet:** show plain idle marker instead of banked work seconds ([9258133](https://github.com/tankdonut/torus/commit/92581334f715622d2e0f26377f75bfca44b57e27))
+* **team:** normalize tasklist statuses so hand edits can't deadlock dependents ([903cbfc](https://github.com/tankdonut/torus/commit/903cbfcde143aba500ef60261569efdf97867217))
+* **team:** resolve member model shorthands before records are written ([9352f5d](https://github.com/tankdonut/torus/commit/9352f5d027e57eb4ee32391b71885b1ba2ace7ea))
+
 ## [0.6.0](https://github.com/tankdonut/torus/compare/v0.5.0...v0.6.0) (2026-10-07)
 
 
