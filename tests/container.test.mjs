@@ -188,7 +188,7 @@ test("container: ci.yml builds each platform once, tests the pushed digest, merg
 		"arm64 build must be gated to main/tags only",
 	);
 	assert.ok(
-		/container-arm64:[\s\S]*?runs-on: ubuntu-24\.04-arm/.test(ciWorkflow),
+		/container-arm64:[\s\S]*?runs-on: ubuntu-\d{2}\.\d{2}-arm/.test(ciWorkflow),
 		"arm64 build must run on a native arm64 runner (no QEMU)",
 	);
 	assert.ok(ciWorkflow.includes("platforms: linux/arm64"), "arm64 job must build linux/arm64");
