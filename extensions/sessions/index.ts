@@ -5,7 +5,7 @@
  * "which session fixed the mailbox cursors" is answerable directly.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { type Dirent, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
@@ -86,6 +86,34 @@ export function findSessionFile(sessionId: string, root: string = DEFAULT_ROOT):
 		}
 	} catch {}
 	return null;
+}
+
+/**
+ * Does any session file for `sessionId` exist under `root`? `null` means the
+ * root is unreadable — callers must prune nothing in that case. Sessions are
+ * resumable indefinitely, so `true` must keep a session's satellite state
+ * forever.
+ */
+export function sessionFileExists(sessionId: string, root: string = DEFAULT_ROOT): boolean | null {
+	const suffix = `_${sessionId}.jsonl`;
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(root, { withFileTypes: true });
+	} catch {
+		return null;
+	}
+	for (const entry of entries) {
+		if (!entry.isDirectory()) {
+			if (entry.name.endsWith(suffix)) return true;
+			continue;
+		}
+		try {
+			if (readdirSync(path.join(root, entry.name)).some((file) => file.endsWith(suffix))) {
+				return true;
+			}
+		} catch {}
+	}
+	return false;
 }
 
 const sessionsTool = defineTool({
