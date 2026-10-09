@@ -149,7 +149,7 @@ const monitorTool = defineTool({
 	name: "torus_monitor",
 	label: "Torus Monitor",
 	description:
-		"Watch a shell command on an interval; desktop-notifies and stops when its output changes (stopOn: change) or it exits non-zero (stopOn: fail). History lands in ~/.torus/state/--<project>--/monitors/<name>.log. Use for CI tails, file watches, long builds.",
+		"Watch a shell command on an interval; desktop-notifies and stops when its output changes (stopOn: change) or it exits non-zero (stopOn: fail). History lands in $TORUS_STATE_DIR/monitors/<name>.log. Use for CI tails, file watches, long builds.",
 	parameters: Type.Object({
 		name: Type.String({ description: "Short monitor name ([a-z0-9-])" }),
 		command: Type.String({ description: "Shell command whose output is watched" }),

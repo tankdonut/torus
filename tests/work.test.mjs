@@ -12,7 +12,8 @@ import path from "node:path";
 import { test } from "node:test";
 
 // Dirs resolve at call time; the sandbox still keeps every write inside it.
-process.env["TORUS_HOME"] = mkdtempSync(path.join(tmpdir(), "work-test-"));
+const HOME = mkdtempSync(path.join(tmpdir(), "work-test-"));
+process.env["TORUS_HOME"] = HOME;
 
 const {
 	parsePlanTasks,
@@ -247,7 +248,8 @@ test("workContextBlock: injects plan path, progress, next task; missing plan sur
 	plantState({ slug: "ctx", planPath: file, sessionId: "ses-a", lastActiveAt: 2000 });
 	const block = workContextBlock("ses-a");
 	assert.match(block, /torus work/);
-	assert.match(block, new RegExp(file.replaceAll("/", "\\/")));
+	assert.match(block, /\$TORUS_STATE_DIR\/plans\/ctx\.md/);
+	assert.ok(!block.includes(HOME));
 	assert.match(block, /1\/2 tasks checked/);
 	assert.match(block, /Next: L2 2\. B/);
 	assert.match(block, /work_note/);

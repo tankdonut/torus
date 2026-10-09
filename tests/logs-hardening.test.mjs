@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -35,15 +35,23 @@ test("delegation log surface: project dir 0700, log file 0600, steer text redact
 	registry.finishDelegation(id, true, "done");
 });
 
-test("startDelegation(cwd) writes into that project's state dir and tags record + beacon", () => {
+test("startDelegation(cwd) logs into the dispatching project's state dir and tags record + beacon with the child cwd key", () => {
 	const otherCwd = path.join(HOME, "worktree", "other");
 	const key = projectKeyFor(otherCwd);
 	const id = `cwd-${Date.now()}`;
 	const record = registry.startDelegation(id, "tester", "some-model", null, null, otherCwd);
-	const otherLogs = path.join(HOME, "state", key, "logs");
-	assert.equal(path.dirname(record.logFile), otherLogs, "explicit cwd routes the log");
-	assert.equal(statSync(otherLogs).mode & 0o777, 0o700, "logs dir must be owner-only");
+	const dispatchingLogs = path.join(HOME, "state", projectKeyFor(process.cwd()), "logs");
+	assert.equal(
+		path.dirname(record.logFile),
+		dispatchingLogs,
+		"log lands in the dispatching root, not the child cwd's",
+	);
+	assert.equal(statSync(dispatchingLogs).mode & 0o777, 0o700, "logs dir must be owner-only");
 	assert.equal(statSync(record.logFile).mode & 0o777, 0o600, "log file must be owner-only");
+	assert.ok(
+		!existsSync(path.join(HOME, "state", key)),
+		"no state dir is created for the child cwd",
+	);
 	assert.equal(record.project, key);
 	const beacon = JSON.parse(readFileSync(path.join(HOME, "runs", `${id}.json`), "utf8"));
 	assert.equal(beacon.project, key);

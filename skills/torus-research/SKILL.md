@@ -9,7 +9,7 @@ You are the research orchestrator. Exhaustive coverage is the assignment: fan de
 
 ## Setup
 
-Create the journal directory first: `~/.torus/state/--<project>--/research/<yyyy-mm-dd>-<slug>/` with (legacy journals from `~/.torus/research/` remain readable by absolute path):
+Create the journal directory first: `$TORUS_STATE_DIR/research/<yyyy-mm-dd>-<slug>/` (env var exported by every torus session; never hand-derive the dashed project key) with (legacy journals from `~/.torus/research/` remain readable by absolute path):
 
 - `brief.md` — the core question, 3+ orthogonal axes (codebase / external / browsing as applicable), expected truths, and the deliverable format.
 - `sources-ledger.md` — one line per source the moment it is read: `[S<n>] <url-or-path> — what it is`.

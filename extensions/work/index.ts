@@ -21,6 +21,7 @@ import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+	displayPath,
 	listDirUnion,
 	projectStateDir,
 	readJson,
@@ -162,7 +163,9 @@ export function resolvePlan(ref: string): { planPath: string; slug: string } | {
 		.sort()
 		.map((file) => file.replace(/\.md$/, ""));
 	if (stems.length === 0) {
-		return { error: `no plans under ${project} or ${legacy} — pass an absolute plan path` };
+		return {
+			error: `no plans under ${displayPath(project)} or ${displayPath(legacy)} — pass an absolute plan path`,
+		};
 	}
 	const exact = stems.filter((stem) => stem === trimmed);
 	if (exact.length === 1) return planResult(project, legacy, exact[0] ?? trimmed);
@@ -426,7 +429,7 @@ export function workContextBlock(sessionId: string | null): string {
 	try {
 		markdown = readFileSync(state.planPath, "utf-8");
 	} catch {
-		return `[torus work — active plan execution]\nPlan MISSING at ${state.planPath} — surface this to the user before doing anything else.`;
+		return `[torus work — active plan execution]\nPlan MISSING at ${displayPath(state.planPath)} — surface this to the user before doing anything else.`;
 	}
 	const { tasks, done } = parsePlanTasks(markdown);
 	const next = tasks.find((t) => !t.checked);
@@ -440,7 +443,7 @@ export function workContextBlock(sessionId: string | null): string {
 		? `Next: L${next.line} ${next.title.slice(0, 100)}`
 		: "All tasks checked — run the plan's final verification wave, then work_complete";
 	return `[torus work — active plan execution; the plan file is the contract, resume from it and the ledger, never from memory]
-Plan: ${state.planPath} — ${done}/${tasks.length} tasks checked (${elapsed})
+Plan: ${displayPath(state.planPath)} — ${done}/${tasks.length} tasks checked (${elapsed})
 ${nextLine}${tailLines}
 Record evidence with work_note; only work_complete (which refuses while any task is unchecked) ends execution.`;
 }
@@ -479,7 +482,7 @@ export function registerWork(pi: ExtensionAPI): void {
 				parameters: Type.Object({
 					plan: Type.String({
 						description:
-							"Plan reference: absolute path, or the file stem (full or unique prefix) under ~/.torus/state/--<project>--/plans",
+							"Plan reference: absolute path, or the file stem (full or unique prefix) under $TORUS_STATE_DIR/plans",
 					}),
 					assumeApproved: Type.Optional(
 						Type.Boolean({
@@ -510,7 +513,9 @@ export function registerWork(pi: ExtensionAPI): void {
 						markdown = readFileSync(resolved.planPath, "utf-8");
 					} catch {
 						return {
-							content: [{ type: "text", text: `cannot read plan: ${resolved.planPath}` }],
+							content: [
+								{ type: "text", text: `cannot read plan: ${displayPath(resolved.planPath)}` },
+							],
 							details: {},
 							isError: true,
 						};
@@ -561,7 +566,7 @@ export function registerWork(pi: ExtensionAPI): void {
 					});
 					const next = tasks.find((t) => !t.checked);
 					const body = [
-						`${prior ? "Resumed" : "Started"}: ${resolved.planPath}`,
+						`${prior ? "Resumed" : "Started"}: ${displayPath(resolved.planPath)}`,
 						`Progress: ${done}/${tasks.length} tasks checked (${formatElapsed(now - state.startedAt)} elapsed)`,
 						next
 							? `Next: L${next.line} ${next.title}`
@@ -578,7 +583,7 @@ export function registerWork(pi: ExtensionAPI): void {
 			name: "work_note",
 			label: "Work Note",
 			description:
-				"Append a typed evidence row to a work ledger (~/.torus/state/--<project>--/work/<slug>.ledger.jsonl). Without slug: the session's active work. With slug: that work — how delegated builders journal gotchas and decisions (the ledger is the plan's shared notepad; rows carry the writer's session id). Events: task-done (verification + evidence), verified (verifiedBy: lead|reviewer), blocked (blocker), wave-gate (command + exit code), note (anything durable), converge (cross-wave synthesis). Returns the tail for confirmation.",
+				"Append a typed evidence row to a work ledger ($TORUS_STATE_DIR/work/<slug>.ledger.jsonl). Without slug: the session's active work. With slug: that work — how delegated builders journal gotchas and decisions (the ledger is the plan's shared notepad; rows carry the writer's session id). Events: task-done (verification + evidence), verified (verifiedBy: lead|reviewer), blocked (blocker), wave-gate (command + exit code), note (anything durable), converge (cross-wave synthesis). Returns the tail for confirmation.",
 			parameters: Type.Object({
 				event: Type.Union(
 					[
@@ -689,7 +694,7 @@ export function registerWork(pi: ExtensionAPI): void {
 							content: [
 								{
 									type: "text",
-									text: `plan MISSING at ${active.state.planPath} — resolve the plan before completing`,
+									text: `plan MISSING at ${displayPath(active.state.planPath)} — resolve the plan before completing`,
 								},
 							],
 							details: {},

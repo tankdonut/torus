@@ -2,7 +2,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { formatCost, projectKey } from "../fsutil.js";
+import { displayPath, formatCost, projectKey } from "../fsutil.js";
 import { osNotify } from "../osnotify.js";
 import { DEFAULT_MEMBER_MODEL } from "../providers/index.js";
 import {
@@ -968,7 +968,7 @@ const teamCreateTool = defineTool({
 			content: [
 				{
 					type: "text",
-					text: `team ${teamId} created with ${record.members.length} member(s).\n${teamRosterText(record)}\nmailboxes: ${path.join(teamDir(teamId), "mailboxes")}\ntasklist: ${tasksFile(teamId)}\nTools: team_msg, team_task_create/list/update, team_status, team_delete.`,
+					text: `team ${teamId} created with ${record.members.length} member(s).\n${teamRosterText(record)}\nmailboxes: ${displayPath(path.join(teamDir(teamId), "mailboxes"))}\ntasklist: ${displayPath(tasksFile(teamId))}\nTools: team_msg, team_task_create/list/update, team_status, team_delete.`,
 				},
 			],
 			details: { teamId, members: record.members.length },

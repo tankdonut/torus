@@ -47,7 +47,7 @@ export interface DelegationRecord {
 	logFile: string;
 	sessionId: string | null;
 	parentSession: string | null;
-	/** Project key (state-dir identity) of the cwd the delegation runs in. */
+	/** Project key (state-dir identity) of the cwd the delegation runs in — informational; the log itself lives in the dispatching session's state dir. */
 	project: string;
 	paneId: string | null;
 }
@@ -118,9 +118,14 @@ export function stableColorIndex(name: string, buckets: number): number {
 	return Math.abs(hash) % Math.max(1, buckets);
 }
 
-/** Absolute path of this project's delegation-log directory (state/--<project>--/logs). */
-export function logsDir(cwd: string = process.cwd()): string {
-	return path.join(projectStateDir(cwd), "logs");
+/**
+ * Absolute path of the dispatching project's delegation-log directory
+ * (state/--<project>--/logs). Delegation logs always land here — a child
+ * running in another cwd (e.g. a worktree) logs into the dispatching
+ * session's root, never its own, so worktree-keyed state dirs stop appearing.
+ */
+export function logsDir(): string {
+	return path.join(projectStateDir(), "logs");
 }
 
 /** Pre-project flat delegation-log directory (~/.torus/logs); read for old runs. */
@@ -662,7 +667,7 @@ export function startDelegation(
 	handle: string | null = null,
 	cwd: string = process.cwd(),
 ): DelegationRecord {
-	const dir = logsDir(cwd);
+	const dir = logsDir();
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	// chmod covers a pre-existing directory created with wider perms
 	chmodSync(dir, 0o700);

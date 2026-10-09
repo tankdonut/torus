@@ -39,10 +39,71 @@ export function projectKey(cwd: string): string {
 	return `--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`;
 }
 
-/** Per-project state root: ${TORUS_HOME:-~/.torus}/state/--<project>--/. */
+/**
+ * Per-project state root: ${TORUS_HOME:-~/.torus}/state/--<project>--/.
+ *
+ * Called without `cwd` this also mirrors the result into the environment as
+ * TORUS_STATE_DIR (see TORUS_STATE_DIR_ENV) — the value prompts and shell
+ * commands should use instead of hand-deriving the dashed project key.
+ *
+ * Resolution: engine children (TORUS_ENGINE_CHILD=1, set by engineChildEnv)
+ * treat the inherited value as authoritative — the dispatching session pinned
+ * them to its root, so `$TORUS_STATE_DIR/…` paths and ledger appends land in
+ * the dispatching project even from a worktree cwd. Main sessions recompute
+ * from cwd on every call (a stale value never survives). Explicit-cwd calls
+ * (child-log keying, sandbox hosts) always compute fresh and never touch the
+ * env.
+ */
 export function projectStateDir(cwd?: string): string {
-	return path.join(torusHome(), "state", projectKey(cwd ?? process.cwd()));
+	if (cwd === undefined && process.env["TORUS_ENGINE_CHILD"] === "1") {
+		const pinned = process.env[TORUS_STATE_DIR_ENV];
+		if (pinned !== undefined && pinned.length > 0) return pinned;
+	}
+	const dir = path.join(torusHome(), "state", projectKey(cwd ?? process.cwd()));
+	if (cwd === undefined) process.env[TORUS_STATE_DIR_ENV] = dir;
+	return dir;
 }
+
+/**
+ * Env var carrying this process's per-project state root. Exported in every
+ * torus process — main session, delegated engine children, team members — so
+ * tool descriptions, skills, and bash commands reference `$TORUS_STATE_DIR/…`
+ * instead of `~/.torus/state/--<dashed-cwd>--/…` (long, and hand-deriving the
+ * key has caused misfiled plans). Children inherit the parent's value through
+ * `engineChildEnv()` and keep it (pinned — see projectStateDir), so a
+ * `$TORUS_STATE_DIR` path in a dispatch text means the dispatching project's
+ * root no matter which cwd the child runs in.
+ */
+export const TORUS_STATE_DIR_ENV = "TORUS_STATE_DIR";
+
+/** (Re)export TORUS_STATE_DIR from this process's cwd; returns the value. */
+export function ensureStateDirEnv(): string {
+	return projectStateDir();
+}
+
+/**
+ * Display form of a torus-owned path for tool output and prompts: this
+ * process's state root renders as `$TORUS_STATE_DIR/…` (copy-pasteable — the
+ * var is exported, so it expands in shell commands), any other TORUS_HOME path
+ * as `$TORUS_HOME/…`, anything else unchanged. Never affects paths on disk.
+ */
+export function displayPath(file: string): string {
+	const state = projectStateDir();
+	if (file === state || file.startsWith(`${state}${path.sep}`)) {
+		return file.replace(state, () => `$${TORUS_STATE_DIR_ENV}`);
+	}
+	const home = torusHome();
+	if (file === home || file.startsWith(`${home}${path.sep}`)) {
+		return file.replace(home, () => "$TORUS_HOME");
+	}
+	return file;
+}
+
+// Exported at module load so every torus process — main session, delegated
+// children, team members (all load extensions that import this module) —
+// carries $TORUS_STATE_DIR from its first turn; later projectStateDir() calls
+// keep it fresh.
+ensureStateDirEnv();
 
 /** Parse `file` as JSON; any read/parse failure yields `fallback`. */
 export function readJson<T>(file: string, fallback: T): T {
