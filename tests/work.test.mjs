@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-// The work module resolves its state dir at import time — sandbox TORUS_HOME first.
+// Dirs resolve at call time; the sandbox still keeps every write inside it.
 process.env["TORUS_HOME"] = mkdtempSync(path.join(tmpdir(), "work-test-"));
 
 const {
@@ -25,12 +32,28 @@ const {
 } = await import("../extensions/work/index.ts");
 const { setCurrentSessionId } = await import("../extensions/registry.ts");
 
-function plantPlan(name, body) {
-	const dir = path.join(process.env["TORUS_HOME"], "plans");
+/** Per-project state dir for a cwd — derived at call time so chdir tests follow along. */
+function projectDir(cwd = process.cwd()) {
+	return path.join(
+		process.env["TORUS_HOME"],
+		"state",
+		`--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`,
+	);
+}
+
+function plantPlanIn(dir, name, body) {
 	mkdirSync(dir, { recursive: true });
 	const file = path.join(dir, `${name}.md`);
 	writeFileSync(file, body, "utf-8");
 	return file;
+}
+
+function plantPlan(name, body) {
+	return plantPlanIn(path.join(projectDir(), "plans"), name, body);
+}
+
+function plantLegacyPlan(name, body) {
+	return plantPlanIn(path.join(process.env["TORUS_HOME"], "plans"), name, body);
 }
 
 function plantState(overrides) {
@@ -105,7 +128,7 @@ test("resolvePlan: exact stem beats prefix, unique prefix resolves, ambiguity er
 	plantPlan("beta", "- [ ] 1. A\n");
 
 	assert.deepEqual(resolvePlan("alpha"), {
-		planPath: path.join(process.env["TORUS_HOME"], "plans", "alpha.md"),
+		planPath: path.join(projectDir(), "plans", "alpha.md"),
 		slug: "alpha",
 	});
 	const prefixed = resolvePlan("alpha-t");
@@ -143,11 +166,7 @@ test("ledger: append then tail newest-last; corrupt lines skipped; missing file 
 		readLedger("t", 10).map((e) => e.text),
 		["first", "second"],
 	);
-	appendFileSync(
-		path.join(process.env["TORUS_HOME"], "work", "t.ledger.jsonl"),
-		"{not json\n",
-		"utf-8",
-	);
+	appendFileSync(path.join(projectDir(), "work", "t.ledger.jsonl"), "{not json\n", "utf-8");
 	assert.equal(readLedger("t", 10).length, 2);
 	assert.deepEqual(
 		readLedger("t", 1).map((e) => e.text),
@@ -362,4 +381,169 @@ test("a throwing session mirror never breaks the file append", async () => {
 	assert.equal(row.text, "row survives mirror failure");
 
 	workTools(); // drop the throwing mirror binding
+});
+
+test("work_start with a stem resolves the plan from the project dir and writes state under the project work dir", async () => {
+	setCurrentSessionId("ses-bind");
+	const { work_start } = workTools();
+	const file = plantPlan("proj-bind", "# plan\n\nApproval: tankdonut 2026-10-07\n\n- [ ] 1. A\n");
+
+	const out = await work_start.execute("t", { plan: "proj-bind" });
+	assert.equal(out.isError, undefined);
+
+	const dir = path.join(projectDir(), "work");
+	assert.equal(existsSync(path.join(dir, "proj-bind.json")), true, "state in project work dir");
+	assert.equal(
+		existsSync(path.join(dir, "proj-bind.ledger.jsonl")),
+		true,
+		"ledger in project work dir",
+	);
+	assert.equal(readWorkState("proj-bind")?.planPath, file);
+	assert.equal(readLedger("proj-bind", 1).at(-1)?.event, "start");
+});
+
+test("a legacy plan, state, and ledger still resolve, read, and append", () => {
+	const legacyPlan = plantLegacyPlan("legacy-plan", "- [ ] 1. A\n");
+	const resolved = resolvePlan("legacy-plan");
+	assert.ok(!("error" in resolved), resolved.error);
+	if (!("error" in resolved)) assert.equal(resolved.planPath, legacyPlan);
+
+	const legacyWork = path.join(process.env["TORUS_HOME"], "work");
+	mkdirSync(legacyWork, { recursive: true });
+	writeFileSync(
+		path.join(legacyWork, "legacy-work.json"),
+		JSON.stringify({
+			slug: "legacy-work",
+			planPath: legacyPlan,
+			sessionId: "ses-old",
+			status: "active",
+			createdAt: 1,
+			startedAt: 1,
+			lastActiveAt: 1,
+			completedAt: null,
+		}),
+		"utf-8",
+	);
+	writeFileSync(
+		path.join(legacyWork, "legacy-work.ledger.jsonl"),
+		`${JSON.stringify({ ts: "1", sessionId: "ses-old", event: "note", text: "old row" })}\n`,
+		"utf-8",
+	);
+
+	assert.equal(readWorkState("legacy-work")?.planPath, legacyPlan);
+	assert.ok(listWorkStates().some((s) => s.slug === "legacy-work"));
+	assert.deepEqual(
+		readLedger("legacy-work", 5).map((e) => e.text),
+		["old row"],
+	);
+
+	appendLedgerEntry("legacy-work", {
+		ts: "2",
+		sessionId: "ses-old",
+		event: "note",
+		text: "new row",
+	});
+	assert.deepEqual(
+		readLedger("legacy-work", 5).map((e) => e.text),
+		["old row", "new row"],
+	);
+});
+
+test("first ledger append migrates the legacy ledger: content preserved, legacy gone", () => {
+	const legacyLedger = path.join(process.env["TORUS_HOME"], "work", "mig.ledger.jsonl");
+	mkdirSync(path.dirname(legacyLedger), { recursive: true });
+	writeFileSync(
+		legacyLedger,
+		`${JSON.stringify({ ts: "1", sessionId: "s", event: "note", text: "history" })}\n`,
+		"utf-8",
+	);
+
+	appendLedgerEntry("mig", { ts: "2", sessionId: "s", event: "task-done", text: "fresh" });
+
+	assert.equal(existsSync(legacyLedger), false, "legacy ledger relocated on first append");
+	const migrated = path.join(projectDir(), "work", "mig.ledger.jsonl");
+	assert.equal(existsSync(migrated), true);
+	assert.deepEqual(
+		readLedger("mig", 5).map((e) => e.text),
+		["history", "fresh"],
+	);
+});
+
+test("two project cwds with the same plan stem create separate work states and ledgers", async () => {
+	const projA = mkdtempSync(path.join(tmpdir(), "work-proj-a-"));
+	const projB = mkdtempSync(path.join(tmpdir(), "work-proj-b-"));
+	const realCwd = process.cwd();
+	try {
+		process.chdir(projA);
+		const cwdA = process.cwd();
+		plantPlan("shared-stem", "# plan\n\nApproval: tankdonut 2026-10-07\n\n- [ ] 1. A\n");
+		setCurrentSessionId("ses-a");
+		const startedA = await workTools().work_start.execute("t", { plan: "shared-stem" });
+		assert.equal(startedA.isError, undefined);
+		assert.equal(
+			readWorkState("shared-stem")?.planPath,
+			path.join(projectDir(cwdA), "plans", "shared-stem.md"),
+		);
+
+		process.chdir(projB);
+		const cwdB = process.cwd();
+		plantPlan("shared-stem", "# plan\n\nApproval: tankdonut 2026-10-07\n\n- [ ] 1. B\n");
+		setCurrentSessionId("ses-b");
+		const startedB = await workTools().work_start.execute("t", { plan: "shared-stem" });
+		assert.equal(startedB.isError, undefined);
+		assert.equal(
+			readWorkState("shared-stem")?.planPath,
+			path.join(projectDir(cwdB), "plans", "shared-stem.md"),
+		);
+
+		const stateA = JSON.parse(
+			readFileSync(path.join(projectDir(cwdA), "work", "shared-stem.json"), "utf-8"),
+		);
+		const stateB = JSON.parse(
+			readFileSync(path.join(projectDir(cwdB), "work", "shared-stem.json"), "utf-8"),
+		);
+		assert.equal(stateA.sessionId, "ses-a");
+		assert.equal(stateB.sessionId, "ses-b");
+
+		process.chdir(cwdA);
+		assert.deepEqual(
+			readLedger("shared-stem", 10).map((e) => e.event),
+			["start"],
+		);
+		assert.equal(readWorkState("shared-stem")?.sessionId, "ses-a");
+		process.chdir(cwdB);
+		assert.deepEqual(
+			readLedger("shared-stem", 10).map((e) => e.event),
+			["start"],
+		);
+		assert.equal(readWorkState("shared-stem")?.sessionId, "ses-b");
+	} finally {
+		process.chdir(realCwd);
+	}
+});
+
+test("an explicit cross-project slug stays addressable via work_note slug resolution", async () => {
+	const projA = mkdtempSync(path.join(tmpdir(), "work-proj-x-"));
+	const projB = mkdtempSync(path.join(tmpdir(), "work-proj-y-"));
+	const realCwd = process.cwd();
+	try {
+		process.chdir(projA);
+		plantState({ slug: "cross-proj-work", sessionId: "ses-lead" });
+
+		process.chdir(projB);
+		assert.deepEqual(resolveLedgerSlug("cross-proj-work"), { slug: "cross-proj-work" });
+		assert.equal(ledgerAppendError("cross-proj-work"), null);
+
+		setCurrentSessionId("ses-builder");
+		const { work_note } = workTools();
+		const out = await work_note.execute("t", {
+			event: "note",
+			text: "cross-project row",
+			slug: "cross-proj-work",
+		});
+		assert.equal(out.isError, undefined);
+		assert.match(out.content[0].text, /\[note\] cross-project row/);
+	} finally {
+		process.chdir(realCwd);
+	}
 });
