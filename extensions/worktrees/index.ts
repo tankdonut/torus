@@ -2,10 +2,14 @@
  * torus — worktree lifecycle tools.
  *
  * Isolated feature workspaces via git worktrees under ONE canonical root
- * outside the repo: ${TORUS_HOME:-~/.torus}/worktrees/<repo>/<branch>
- * (override with TORUS_WORKTREES_ROOT). Living outside the repo means no
+ * outside the repo: ${TORUS_HOME:-~/.torus}/worktrees/--<repo>--/<branch>
+ * (override with TORUS_WORKTREES_ROOT), where --<repo>-- is the canonical
+ * project key of the repo root. Living outside the repo means no
  * accidental commits and no gitignore guard; `git worktree list` in the
- * main checkout still enumerates them wherever they live.
+ * main checkout still enumerates them wherever they live. Worktrees made
+ * before the canonical key are addressed in place via a basename fallback
+ * (see resolveWorktreePath) — git worktree metadata is position-sensitive,
+ * so existing directories are never moved.
  *
  * Safety model ported from the managing-worktrees scripts: merge is
  * rebase → squash (one commit; ff opt-in) → tree-identity proof → only
@@ -39,7 +43,7 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { torusHome } from "../fsutil.js";
+import { projectKey, torusHome } from "../fsutil.js";
 
 const STATUS_KEY = "torus:worktree";
 let activeBranch: string | null = null;
@@ -61,13 +65,28 @@ export function validateBranch(branch: string): string | null {
 	return null;
 }
 
+function worktreesBase(): string {
+	return process.env["TORUS_WORKTREES_ROOT"] ?? path.join(torusHome(), "worktrees");
+}
+
 export function worktreeRoot(repoRoot: string): string {
-	const base = process.env["TORUS_WORKTREES_ROOT"] ?? path.join(torusHome(), "worktrees");
-	return path.join(base, path.basename(repoRoot));
+	return path.join(worktreesBase(), projectKey(repoRoot));
 }
 
 export function worktreePath(repoRoot: string, branch: string): string {
 	return path.join(worktreeRoot(repoRoot), branch);
+}
+
+/**
+ * Resolve an EXISTING worktree: canonical project-key layout first, falling
+ * back to the pre-canonical basename layout when the canonical path is
+ * absent — merge/remove/teardown must keep serving worktrees created before
+ * the key change. New creates stay canonical-only via worktreePath.
+ */
+export function resolveWorktreePath(repoRoot: string, branch: string): string {
+	const canonical = worktreePath(repoRoot, branch);
+	if (existsSync(canonical)) return canonical;
+	return path.join(worktreesBase(), path.basename(repoRoot), branch);
 }
 
 export interface GitResult {
@@ -245,7 +264,7 @@ export async function performRemove(
 ): Promise<WorktreeResult> {
 	const invalid = validateBranch(branch);
 	if (invalid) return { ok: false, error: invalid };
-	const wtPath = worktreePath(repoRoot, branch);
+	const wtPath = resolveWorktreePath(repoRoot, branch);
 	if (!statSync(wtPath, { throwIfNoEntry: false })?.isDirectory()) {
 		return { ok: false, error: `no worktree at ${wtPath}` };
 	}
@@ -293,7 +312,7 @@ export async function performMerge(
 	const strategy = opts?.strategy ?? "squash";
 	const mainBranch = opts?.mainBranch ?? "main";
 	const signal = opts?.signal;
-	const wtPath = worktreePath(repoRoot, branch);
+	const wtPath = resolveWorktreePath(repoRoot, branch);
 
 	if (!statSync(wtPath, { throwIfNoEntry: false })?.isDirectory()) {
 		return { ok: false, error: `no worktree at ${wtPath}` };
@@ -417,7 +436,7 @@ export default function worktreesExtension(pi: ExtensionAPI): void {
 			name: "worktree_create",
 			label: "Worktree Create",
 			description:
-				"Create an isolated git worktree for multi-step feature work (2+ commits, new files, refactors) at ~/.torus/worktrees/<repo>/<branch> — outside the repo, so no pollution and no gitignore changes. Run the baseline test suite in the new worktree before starting. Skip for single-file fixes. Branch naming: <type>/<short-description>.",
+				"Create an isolated git worktree for multi-step feature work (2+ commits, new files, refactors) at ~/.torus/worktrees/--<repo>--/<branch> — outside the repo, so no pollution and no gitignore changes. Run the baseline test suite in the new worktree before starting. Skip for single-file fixes. Branch naming: <type>/<short-description>.",
 			parameters: Type.Object({
 				branch: Type.String({ description: "New branch name, e.g. feat/streaming-import" }),
 				base: Type.Optional(
