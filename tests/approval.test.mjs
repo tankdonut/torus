@@ -1,19 +1,36 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-const {
-	registerApproval,
-	decideTrust,
-	parseCustomHost,
-	projectSlug,
-	readPersistedHosts,
-	writePersistedHosts,
-} = await import("../extensions/approval/index.ts");
+const home = mkdtempSync(path.join(tmpdir(), "torus-approval-"));
+process.env.TORUS_HOME = home;
+
+const { registerApproval, decideTrust, parseCustomHost, readPersistedHosts, writePersistedHosts } =
+	await import("../extensions/approval/index.ts");
 
 const SLOT = Symbol.for("torus.approval.v1");
+
+const newHostsFile = (cwd) =>
+	path.join(
+		home,
+		"state",
+		`--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`,
+		"sandbox-hosts.json",
+	);
+
+function plantLegacyHosts(cwd, hosts) {
+	const slug =
+		cwd
+			.replace(/[^a-zA-Z0-9-]/g, "")
+			.toLowerCase()
+			.slice(-48) || "default";
+	const file = path.join(home, "sandbox", `${slug}-hosts.json`);
+	mkdirSync(path.dirname(file), { recursive: true });
+	writeFileSync(file, JSON.stringify({ hosts }));
+	return file;
+}
 
 function handlerPi() {
 	const handlers = {};
@@ -48,9 +65,37 @@ function fakeCtx({ selectScript, inputScript, hasUI = true, cwd } = {}) {
 	};
 }
 
-test("projectSlug: sanitizes cwd like registry precedent, falls back to default", () => {
-	assert.equal(projectSlug("/var/home/u/Dev/torus"), "varhomeudevtorus");
-	assert.equal(projectSlug("///"), "default");
+test("writePersistedHosts: new file lands at state/--<project>--/sandbox-hosts.json", () => {
+	writePersistedHosts("/proj/a", ["a.dev", "a.dev", "b.dev"]);
+	assert.ok(existsSync(newHostsFile("/proj/a")));
+	assert.deepEqual(readPersistedHosts("/proj/a"), ["a.dev", "b.dev"]);
+	writeFileSync(newHostsFile("/proj/a"), "{not json");
+	assert.deepEqual(readPersistedHosts("/proj/a"), []);
+});
+
+test("readPersistedHosts: legacy <slug>-hosts.json alone still feeds reads; present new file wins", () => {
+	plantLegacyHosts("/Old Layout", ["old.dev"]);
+	assert.deepEqual(readPersistedHosts("/Old Layout"), ["old.dev"]);
+	writePersistedHosts("/Old Layout", ["new.dev"]);
+	assert.deepEqual(readPersistedHosts("/Old Layout"), ["new.dev"]);
+});
+
+test("writePersistedHosts: first write migrates — new file appears, legacy twin gone", () => {
+	const legacyFile = plantLegacyHosts("/proj/migrate", ["old.dev"]);
+	writePersistedHosts("/proj/migrate", ["old.dev", "new.dev"]);
+	assert.ok(existsSync(newHostsFile("/proj/migrate")));
+	assert.ok(!existsSync(legacyFile));
+	assert.deepEqual(readPersistedHosts("/proj/migrate"), ["old.dev", "new.dev"]);
+});
+
+test("per-project isolation: two cwds keep separate host sets", () => {
+	writePersistedHosts("/proj/alpha", ["alpha.dev"]);
+	writePersistedHosts("/proj/beta", ["beta.dev"]);
+	assert.ok(existsSync(newHostsFile("/proj/alpha")));
+	assert.ok(existsSync(newHostsFile("/proj/beta")));
+	assert.deepEqual(readPersistedHosts("/proj/alpha"), ["alpha.dev"]);
+	assert.deepEqual(readPersistedHosts("/proj/beta"), ["beta.dev"]);
+	assert.equal(readPersistedHosts("/proj/beta").includes("alpha.dev"), false);
 });
 
 test("parseCustomHost: exact hosts and *.domain pass; anything else null", () => {
@@ -61,22 +106,20 @@ test("parseCustomHost: exact hosts and *.domain pass; anything else null", () =>
 	assert.equal(parseCustomHost("run the tests first"), null);
 });
 
-test("persisted hosts: round-trip in an isolated root, corrupt file reads empty", () => {
-	const root = mkdtempSync(path.join(tmpdir(), "torus-appr-"));
-	writePersistedHosts("/proj/a", ["a.dev", "a.dev", "b.dev"], root);
-	assert.deepEqual(readPersistedHosts("/proj/a", root), ["a.dev", "b.dev"]);
-	const file = path.join(root, `${projectSlug("/proj/a")}-hosts.json`);
-	assert.ok(existsSync(file));
-	writeFileSync(file, "{not json");
-	assert.deepEqual(readPersistedHosts("/proj/a", root), []);
+test("decideTrust: persisted host allows silently without a dialog", async () => {
+	writePersistedHosts("/proj/known", ["known.dev"]);
+	const ctx = fakeCtx({ selectScript: [undefined], cwd: "/proj/known" });
+	const decision = await decideTrust(ctx, "known.dev", 443, {
+		persist: () => assert.fail("must not persist"),
+	});
+	assert.deepEqual(decision, { kind: "allow" });
+	assert.equal(ctx.calls.select.length, 0);
 });
 
-test("decideTrust: persisted host allows silently without a dialog", async () => {
-	const root = mkdtempSync(path.join(tmpdir(), "torus-appr-"));
-	writePersistedHosts("/proj/a", ["known.dev"], root);
-	const ctx = fakeCtx({ selectScript: [undefined], cwd: "/proj/a" });
-	const decision = await decideTrust(ctx, "known.dev", 443, {
-		hostsRoot: root,
+test("decideTrust: legacy-only approvals still allow without a dialog", async () => {
+	plantLegacyHosts("/proj/legacy", ["legacy.dev"]);
+	const ctx = fakeCtx({ selectScript: [undefined], cwd: "/proj/legacy" });
+	const decision = await decideTrust(ctx, "legacy.dev", 443, {
 		persist: () => assert.fail("must not persist"),
 	});
 	assert.deepEqual(decision, { kind: "allow" });
@@ -84,17 +127,13 @@ test("decideTrust: persisted host allows silently without a dialog", async () =>
 });
 
 test("decideTrust: always persists; custom host is parsed; garbage custom denies", async () => {
-	const root = mkdtempSync(path.join(tmpdir(), "torus-appr-"));
 	const persisted = [];
 	const persist = (hosts) => persisted.push(hosts);
 	const always = await decideTrust(
 		fakeCtx({ selectScript: ["Always allow (this project)"] }),
 		"new.dev",
 		443,
-		{
-			hostsRoot: root,
-			persist,
-		},
+		{ persist },
 	);
 	assert.deepEqual(always, { kind: "always" });
 	assert.deepEqual(persisted.at(-1), ["new.dev"]);
@@ -103,7 +142,7 @@ test("decideTrust: always persists; custom host is parsed; garbage custom denies
 		fakeCtx({ selectScript: ["Custom…"], inputScript: ["*.internal.corp"] }),
 		"x.dev",
 		443,
-		{ hostsRoot: root, persist },
+		{ persist },
 	);
 	assert.deepEqual(custom, { kind: "custom", text: "*.internal.corp", host: "*.internal.corp" });
 
@@ -111,7 +150,7 @@ test("decideTrust: always persists; custom host is parsed; garbage custom denies
 		fakeCtx({ selectScript: ["Custom…"], inputScript: ["just let me out"] }),
 		"x.dev",
 		443,
-		{ hostsRoot: root, persist },
+		{ persist },
 	);
 	assert.deepEqual(garbage, { kind: "custom", text: "just let me out", host: null });
 });
@@ -140,7 +179,7 @@ test("registerApproval: installs the slot, captures ctx, session-caches and dedu
 		registerApproval(pi);
 		const slot = globalThis[SLOT];
 		assert.ok(slot, "slot installed");
-		const ctx = fakeCtx({ selectScript: ["Allow once"], cwd: "/proj/a" });
+		const ctx = fakeCtx({ selectScript: ["Allow once"], cwd: "/proj/fresh" });
 		await pi.handlers.session_start({ type: "session_start" }, ctx);
 		const first = await slot.askNetworkTrust("fresh.dev", 443);
 		assert.deepEqual(first, { kind: "allow" });

@@ -4,15 +4,17 @@
  * Trust-on-denial UX for the sandbox's network allowlist: when srt's proxy
  * hits a non-allowlisted host, ask the user Allow once / Always allow
  * (this project) / Deny / Custom… (typed host or *.domain ⇒ session
- * allow). "Always" persists under ~/.torus/sandbox/<slug>-hosts.json —
- * outside the sandbox's writable roots, so the agent cannot self-escalate.
+ * allow). "Always" persists under ~/.torus/state/--<project>--/sandbox-hosts.json
+ * — outside the sandbox's writable roots, so the agent cannot self-escalate.
+ * Approvals from the pre-namespacing ~/.torus/sandbox/<slug>-hosts.json
+ * layout are still read (never rewritten) so existing trusts keep working.
  * Headless sessions auto-deny. TORUS_APPROVAL=0 leaves the slot absent
  * (sandbox denies unmatched hosts, as before).
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { unlinkSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { torusHome } from "../fsutil.js";
+import { projectStateDir, readJsonFallback, torusHome, writeJson } from "../fsutil.js";
 
 export type TrustDecision =
 	| { kind: "allow" }
@@ -31,11 +33,12 @@ const ALWAYS_ALLOW = "Always allow (this project)";
 const DENY = "Deny";
 const CUSTOM = "Custom…";
 
-function defaultRoot(): string {
-	return path.join(torusHome(), "sandbox");
+function hostsFile(cwd: string): string {
+	return path.join(projectStateDir(cwd), "sandbox-hosts.json");
 }
 
-export function projectSlug(cwd: string): string {
+/** Pre-namespacing slug: strip non-alphanumerics, lowercase, last 48 chars. */
+function legacyProjectSlug(cwd: string): string {
 	const slug = cwd
 		.replace(/[^a-zA-Z0-9-]/g, "")
 		.toLowerCase()
@@ -43,22 +46,24 @@ export function projectSlug(cwd: string): string {
 	return slug.length > 0 ? slug : "default";
 }
 
-export function readPersistedHosts(cwd: string, root = defaultRoot()): string[] {
-	const file = path.join(root, `${projectSlug(cwd)}-hosts.json`);
-	if (!existsSync(file)) return [];
-	try {
-		const parsed = JSON.parse(readFileSync(file, "utf8")) as { hosts?: unknown };
-		if (!Array.isArray(parsed.hosts)) return [];
-		return parsed.hosts.filter((host): host is string => typeof host === "string");
-	} catch {
-		return [];
-	}
+/** Old flat layout, kept as a read fallback only — never written. */
+function legacyHostsFile(cwd: string): string {
+	return path.join(torusHome(), "sandbox", `${legacyProjectSlug(cwd)}-hosts.json`);
 }
 
-export function writePersistedHosts(cwd: string, hosts: string[], root = defaultRoot()): void {
-	mkdirSync(root, { recursive: true });
-	const file = path.join(root, `${projectSlug(cwd)}-hosts.json`);
-	writeFileSync(file, `${JSON.stringify({ hosts: [...new Set(hosts)] }, null, "\t")}\n`);
+export function readPersistedHosts(cwd: string): string[] {
+	const persisted = readJsonFallback<{ hosts?: unknown }>(hostsFile(cwd), legacyHostsFile(cwd), {
+		hosts: [],
+	});
+	if (!Array.isArray(persisted.hosts)) return [];
+	return persisted.hosts.filter((host): host is string => typeof host === "string");
+}
+
+export function writePersistedHosts(cwd: string, hosts: string[]): void {
+	writeJson(hostsFile(cwd), { hosts: [...new Set(hosts)] });
+	try {
+		unlinkSync(legacyHostsFile(cwd));
+	} catch {}
 }
 
 const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -84,7 +89,6 @@ function anyMatches(host: string, entries: Iterable<string>): boolean {
 }
 
 export interface DecideOptions {
-	hostsRoot?: string;
 	persist?: (hosts: string[]) => void;
 }
 
@@ -98,11 +102,10 @@ export async function decideTrust(
 	port: number | undefined,
 	options: DecideOptions = {},
 ): Promise<TrustDecision> {
-	const root = options.hostsRoot ?? defaultRoot();
 	const persist =
-		options.persist ?? ((hosts: string[]) => writePersistedHosts(process.cwd(), hosts, root));
+		options.persist ?? ((hosts: string[]) => writePersistedHosts(process.cwd(), hosts));
 	const cwd = ctx?.cwd ?? process.cwd();
-	const persisted = readPersistedHosts(cwd, root);
+	const persisted = readPersistedHosts(cwd);
 	if (anyMatches(host, persisted)) return { kind: "allow" };
 	if (!ctx?.hasUI) return { kind: "deny" };
 	const where = `${host}${port !== undefined ? `:${port}` : ""}`;
