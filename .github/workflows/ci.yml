@@ -164,7 +164,7 @@ jobs:
   # container-publish, which also gates on the tested amd64 build.
   container-arm64:
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     permissions:
       contents: read
       packages: write
