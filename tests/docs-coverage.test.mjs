@@ -154,6 +154,48 @@ test("engine config surfaces section documents all four pinned-engine levers", (
 	}
 });
 
+test("model chain override file is documented", () => {
+	const start = doc.indexOf("### `providers`");
+	assert.ok(start !== -1, "docs/extensions.md missing the providers section");
+	const end = doc.indexOf("\n### ", start);
+	const section = doc.slice(start, end === -1 ? undefined : end);
+	for (const token of [
+		"chains.json",
+		"TORUS_HOME",
+		"non-empty array",
+		"falls back",
+		"frontmatter",
+	]) {
+		assert.ok(section.includes(token), `providers section missing token: ${token}`);
+	}
+});
+
+test("chains.json alternate-provider registration is documented", () => {
+	const start = doc.indexOf("### `providers`");
+	assert.ok(start !== -1, "docs/extensions.md missing the providers section");
+	const end = doc.indexOf("\n### ", start);
+	const section = doc.slice(start, end === -1 ? undefined : end);
+	for (const token of [
+		"providers",
+		"openai-completions",
+		"ollama",
+		"OPENROUTER_API_KEY",
+		"SKIPPED",
+		"pi.registerProvider",
+		"KnownProvider",
+		"11434",
+	]) {
+		assert.ok(section.includes(token), `providers section missing token: ${token}`);
+	}
+});
+
+test("efficiency doc notes ambient routing follows the fast tier", () => {
+	const efficiency = readFileSync(path.join(root, "docs/efficiency.md"), "utf8");
+	for (const token of ["ambient", "fast tier", "chains.json", "local model"]) {
+		assert.ok(efficiency.includes(token), `docs/efficiency.md missing token: ${token}`);
+	}
+});
+
 test("torus serve section documents routes, auth, config, and the kill switch", () => {
 	const start = doc.indexOf("## `torus serve`");
 	assert.ok(start !== -1, "docs/extensions.md missing the torus serve section");

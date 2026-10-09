@@ -36,7 +36,7 @@ import { flattenPreview, shortModel } from "../fleet/theme-kit.js";
 import { parseFrontmatter, stripFrontmatter } from "../frontmatter.js";
 import { formatCost, sleep, splitList } from "../fsutil.js";
 import { clickable } from "../notify/index.js";
-import { MODEL_CHAINS, providerAvailabilities } from "../providers/index.js";
+import { type ChainTier, modelChain, providerAvailabilities } from "../providers/index.js";
 import {
 	AGENT_NAME_RE,
 	appendAction,
@@ -60,7 +60,7 @@ import { RpcChild } from "../rpc.js";
 interface AgentDef {
 	name: string;
 	description: string;
-	chain: keyof typeof MODEL_CHAINS;
+	chain: ChainTier;
 	mode?: "child" | "session";
 	promptFile?: string;
 	promptBody?: string;
@@ -118,9 +118,9 @@ function firstDelegatable(name: string): AgentDef | undefined {
 	return DELEGATABLE.find((a) => a.name === name);
 }
 
-export function resolveModels(chain: keyof typeof MODEL_CHAINS): string[] {
+export function resolveModels(chain: ChainTier): string[] {
 	const available = providerAvailabilities();
-	return MODEL_CHAINS[chain].filter((model) => {
+	return modelChain(chain).filter((model) => {
 		const provider = model.split("/")[0];
 		return (
 			provider !== undefined &&
@@ -130,7 +130,7 @@ export function resolveModels(chain: keyof typeof MODEL_CHAINS): string[] {
 	});
 }
 
-function resolveModel(chain: keyof typeof MODEL_CHAINS): string | undefined {
+function resolveModel(chain: ChainTier): string | undefined {
 	return resolveModels(chain)[0];
 }
 

@@ -19,6 +19,7 @@ import type {
 	SessionEntry,
 	SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
+import { modelChain } from "../providers/index.js";
 
 /** Hard cap mirroring OpenCode's title truncation (97 chars + ellipsis). */
 const TITLE_MAX = 100;
@@ -32,7 +33,7 @@ const DIGEST_USER_MAX = 1200;
 const DIGEST_ASSISTANT_MAX = 300;
 /** Give-up threshold for background auto-title retries. */
 const MAX_AUTO_ATTEMPTS = 3;
-/** Head of the fast model chain (providers/index.ts). */
+/** Hard fallback when the fast chain resolves empty (it never does today). */
 const DEFAULT_TITLE_MODEL = "zai/glm-5.3-flash";
 
 const TITLE_SYSTEM_PROMPT = `You are a title generator. You output ONLY a session title. Nothing else.
@@ -51,7 +52,7 @@ export interface TitleModelRegistry {
 	hasConfiguredAuth(model: Model<Api>): boolean;
 }
 
-/** Model cascade for title generation: env override -> fast default -> session model. */
+/** Model cascade for title generation: env override -> fast chain head -> session model. */
 export function resolveTitleModel(
 	override: string | undefined,
 	registry: TitleModelRegistry,
@@ -64,7 +65,10 @@ export function resolveTitleModel(
 			if (candidate) return candidate;
 		}
 	}
-	const [provider, modelId] = DEFAULT_TITLE_MODEL.split("/");
+	// The fast chain is read per call, so a chains.json fast override retargets
+	// ambient titling without a restart; an unfindable head falls through to the
+	// session model below.
+	const [provider, modelId] = (modelChain("fast")[0] ?? DEFAULT_TITLE_MODEL).split("/");
 	const fast = registry.find(provider ?? "", modelId ?? "");
 	if (fast && registry.hasConfiguredAuth(fast)) return fast;
 	return sessionModel;

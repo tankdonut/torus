@@ -218,5 +218,6 @@ Cells are medians; `±` is half the interquartile range across measured runs. Ve
 - Non-cached tokens-in deltas are mostly within run-to-run noise, and can be negative: on the multi-file reasoning task the stock engine flails (more turns, more fresh input) while the torus context reaches the answer directly.
 - Cost deltas are small but above noise on glm-5.3; on flash pricing they sit closer to the noise floor.
 - Wall-clock overhead per run is dominated by extension loading at spawn; amortized in real sessions that run many turns.
+- Ambient roles (dream/reflect, session-title) resolve via the fast tier, so a `chains.json` fast override pointing at a local model moves all ambient work to it.
 - Compare models only within their own section — pricing and token behavior differ.
 
