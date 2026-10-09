@@ -2,14 +2,19 @@
 /**
  * Generates runtime/bin/payload-assets.mjs (gitignored): one file-loader
  * import per payload file plus string constants for the runtime package.json
- * and .npmrc, and a sha256 payload hash. bun build --compile embeds the
+ * and .npmrc and package-lock.json, and a sha256 payload hash. bun build --compile embeds the
  * imported files; runtime/bin/torus.mjs extracts them to ~/.torus/runtime.
  */
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computePayloadHash } from "../runtime/bin/payload-extract.mjs";
-import { PAYLOAD_DIRS, payloadNpmrc, payloadPackageJson } from "./payload-manifest.mjs";
+import {
+	PAYLOAD_DIRS,
+	payloadNpmrc,
+	payloadPackageJson,
+	payloadPackageLock,
+} from "./payload-manifest.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -35,11 +40,13 @@ const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 const generatedPackageJson = payloadPackageJson(pkg);
 
 const payloadNpmrcValue = payloadNpmrc();
+const payloadPackageLockValue = payloadPackageLock();
 
 const hashInput = [
 	...payloadFiles,
 	{ path: "package.json", bytes: Buffer.from(generatedPackageJson, "utf8") },
 	{ path: ".npmrc", bytes: Buffer.from(payloadNpmrcValue ?? "", "utf8") },
+	{ path: "package-lock.json", bytes: Buffer.from(payloadPackageLockValue ?? "", "utf8") },
 ];
 const payloadHash = computePayloadHash(hashInput);
 
@@ -54,6 +61,7 @@ lines.push(`export const PAYLOAD_HASH = ${JSON.stringify(payloadHash)};`);
 lines.push('export const OWNED_TOP_LEVELS = ["extensions", "agents", "skills"];');
 lines.push(`export const PAYLOAD_PACKAGE_JSON = ${JSON.stringify(generatedPackageJson)};`);
 lines.push(`export const PAYLOAD_NPMRC = ${JSON.stringify(payloadNpmrcValue)};`);
+lines.push(`export const PAYLOAD_PACKAGE_LOCK = ${JSON.stringify(payloadPackageLockValue)};`);
 lines.push("export const payloadFiles = [");
 for (const [i, file] of payloadFiles.entries()) {
 	lines.push(`\t{ path: ${JSON.stringify(file.path)}, virtual: f${i} },`);

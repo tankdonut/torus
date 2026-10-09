@@ -52,7 +52,7 @@ Full-toolkit flavor:
 | Tool | Version / source |
 |------|------------------|
 | node + npm | pinned by `.tool-versions` (base image `node:<pin>-slim`) |
-| torus payload + pi engine | baked at `/opt/torus` from the repo payload manifest (engine pin promoted from devDependencies) |
+| torus payload + pi engine | baked at `/opt/torus` from the repo payload manifest (engine pin promoted from devDependencies), deps resolved through the baked repo `package-lock.json` |
 | ast-grep — both the `sg` shim and `ast-grep` | 0.45.3 (GitHub release) |
 | typescript-language-server / typescript | 5.3.0 / 7.0.2 (global npm) |
 | tmux, bubblewrap, socat, git, ripgrep, notify-send (libnotify) | apt (distro packages) |

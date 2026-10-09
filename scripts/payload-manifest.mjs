@@ -49,3 +49,12 @@ export function payloadNpmrc() {
 		return null;
 	}
 }
+
+/** Repo package-lock.json contents, or null when absent (payload installs then float to latest-at-build). */
+export function payloadPackageLock() {
+	try {
+		return readFileSync(path.join(root, "package-lock.json"), "utf8");
+	} catch {
+		return null;
+	}
+}

@@ -69,6 +69,12 @@ async function embeddedRoot() {
 	if (assets.PAYLOAD_NPMRC !== null) {
 		files.push({ path: ".npmrc", bytes: Buffer.from(assets.PAYLOAD_NPMRC, "utf8") });
 	}
+	if (assets.PAYLOAD_PACKAGE_LOCK != null) {
+		files.push({
+			path: "package-lock.json",
+			bytes: Buffer.from(assets.PAYLOAD_PACKAGE_LOCK, "utf8"),
+		});
+	}
 	process.stderr.write(`torus: extracting embedded payload to ${root}...\n`);
 	try {
 		extractPayload(root, assets.PAYLOAD_HASH, assets.OWNED_TOP_LEVELS, files);

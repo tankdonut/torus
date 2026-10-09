@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Writes the payload tree (extensions/, agents/, skills/ + the runtime
- * package.json + .npmrc) to a target directory — the same shape the compiled
+ * package.json + .npmrc + package-lock.json) to a target directory — the same
  * binary extracts to ~/.torus/runtime, from the same shared manifest source.
  * Container images bake this tree plus `npm install`ed node_modules so the
  * launcher resolves TORUS_ROOT and never bootstraps over the network.
@@ -16,6 +16,7 @@ import {
 	payloadManifest,
 	payloadNpmrc,
 	payloadPackageJson,
+	payloadPackageLock,
 } from "./payload-manifest.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -48,3 +49,11 @@ const deps = Object.keys(payloadManifest(pkg).dependencies);
 process.stderr.write(
 	`baked payload to ${target} (payload dirs: ${PAYLOAD_DIRS.length}, deps: ${deps.length})\n`,
 );
+
+const lock = payloadPackageLock();
+if (lock !== null) {
+	// pins payload installs to the repo's resolved versions — without it the
+	// bake floats to latest-at-build-time and races freshly published tarballs
+	// (seen as CDN 404s minutes after an upstream release)
+	writeFileSync(path.join(target, "package-lock.json"), lock);
+}
