@@ -5,36 +5,80 @@
  * session model, and when delegation is the right move.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { stripFrontmatter } from "../frontmatter.js";
-import { readJson, writeJson } from "../fsutil.js";
+import {
+	projectStateDir,
+	pruneOrphanSessionFiles,
+	readJsonFallback,
+	torusHome,
+	writeJson,
+} from "../fsutil.js";
 import { applyPersonaTheme } from "../persona-theme.js";
 import { repoRoot, sessionPersona, setSessionPersona } from "../registry.js";
 import { AGENTS, personaModel } from "../roster/index.js";
+import { sessionFileExists } from "../sessions/index.js";
 import { refreshToruStatus } from "../ui/index.js";
 
 const AGENTS_DIR = path.join(repoRoot(), "agents");
-const PERSONA_DIR = path.join(homedir(), ".torus", "persona");
+const PERSONA_ORPHAN_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
-function personaFile(sessionId: string): string {
-	return path.join(PERSONA_DIR, `${sessionId}.json`);
+/** Per-project persona state dir, resolved at call time (sessions can cd). */
+function personaDir(): string {
+	return path.join(projectStateDir(), "persona");
 }
 
-function persistPersona(sessionId: string, name: string | null): void {
+/** Pre-project layout: read-only now, except the move-on-write unlink. */
+function legacyPersonaDir(): string {
+	return path.join(torusHome(), "persona");
+}
+
+function personaFile(sessionId: string): string {
+	return path.join(personaDir(), `${sessionId}.json`);
+}
+
+function legacyPersonaFile(sessionId: string): string {
+	return path.join(legacyPersonaDir(), `${sessionId}.json`);
+}
+
+export function persistPersona(sessionId: string, name: string | null): void {
 	try {
 		writeJson(personaFile(sessionId), { persona: name });
 	} catch {
 		// persistence is best-effort; persona still applies to this process
+		return;
+	}
+	try {
+		// move-on-write: a stale legacy twin must not resurrect cleared state
+		unlinkSync(legacyPersonaFile(sessionId));
+	} catch {
+		// legacy twin absent or already migrated
 	}
 }
 
-function restorePersona(sessionId: string): string | null {
-	const parsed = readJson<{ persona?: string | null } | null>(personaFile(sessionId), null);
+export function restorePersona(sessionId: string): string | null {
+	const parsed = readJsonFallback<{ persona?: string | null } | null>(
+		personaFile(sessionId),
+		legacyPersonaFile(sessionId),
+		null,
+	);
 	return typeof parsed?.persona === "string" ? parsed.persona : null;
+}
+
+/**
+ * Orphan-only GC for per-project persona state: a `<sessionId>.json` is
+ * deleted only when its session file is gone (`exists === false`) AND the
+ * state is older than 30 days. Live sessions and unreadable session roots
+ * (`null`) keep everything; the legacy dir is never touched.
+ */
+export function prunePersonaOrphans(
+	exists: (sessionId: string) => boolean | null = (id) => sessionFileExists(id),
+): number {
+	return pruneOrphanSessionFiles(personaDir(), exists, PERSONA_ORPHAN_MIN_AGE_MS);
 }
 
 const delegatable = AGENTS.filter((a) => a.mode !== "session");
@@ -128,6 +172,7 @@ export function registerPrompts(pi: ExtensionAPI): void {
 			const restored = restorePersona(sessionId);
 			setSessionPersona(restored ?? switcherOrder[0]?.name ?? null);
 		}
+		prunePersonaOrphans();
 		refreshToruStatus(ctx);
 		applyPersonaTheme(ctx, sessionPersona());
 	});
