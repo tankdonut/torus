@@ -83,8 +83,28 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .tool-versions
-      - name: Build image (single-platform, loaded for tests)
-        run: ./make.sh image torus:ci
+      - uses: docker/setup-buildx-action@v4
+      - name: Resolve .tool-versions pins for build args
+        run: |
+          echo "NODE_VERSION=$(awk '$1=="nodejs"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
+          echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
+      # One buildx pipeline: the amd64 test image is loaded into the daemon AND
+      # exported to the GHA cache, so the publish build below reuses those
+      # layers instead of recompiling the binary + payload per platform.
+      # (A plain `docker build` — `make.sh image` — cannot share buildx cache,
+      # which is what made this job build the image twice from scratch.)
+      - name: Build test image (amd64, cache-warming for publish)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: torus:ci
+          build-args: |
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            BUN_VERSION=${{ env.BUN_VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Container test suite
         run: ./make.sh image-test torus:ci
       - name: Docker meta
@@ -103,11 +123,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-buildx-action@v4
-      - name: Resolve .tool-versions pins for build args
-        run: |
-          echo "NODE_VERSION=$(awk '$1=="nodejs"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
-          echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
       - name: Publish multi-arch image
         uses: docker/build-push-action@v7
         with:
