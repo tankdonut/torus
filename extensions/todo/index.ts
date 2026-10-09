@@ -1,5 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import {
@@ -8,11 +7,18 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import {
+	projectStateDir,
+	pruneOrphanSessionFiles,
+	readJsonFallback,
+	torusHome,
+} from "../fsutil.js";
+import { sessionFileExists } from "../sessions/index.js";
 
 const STRIKE_ON = "\x1b[9m";
 const STRIKE_OFF = "\x1b[29m";
 
-const TODO_DIR = path.join(homedir(), ".torus", "todo");
+const ORPHAN_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_KEY = Symbol.for("torus.current-session");
 
 interface TodoItem {
@@ -21,22 +27,46 @@ interface TodoItem {
 	priority?: "high" | "medium" | "low";
 }
 
+function todoDir(): string {
+	return path.join(projectStateDir(), "todo");
+}
+
+/** Todos live under the current project's state dir, resolved per call — sessions can cd. */
 function todoFile(sessionId: string): string {
-	return path.join(TODO_DIR, `${sessionId}.json`);
+	return path.join(todoDir(), `${sessionId}.json`);
+}
+
+/** Pre-project-layout todo location, still read when the project file is absent. */
+function legacyTodoFile(sessionId: string): string {
+	return path.join(torusHome(), "todo", `${sessionId}.json`);
 }
 
 export function readTodos(sessionId: string): TodoItem[] {
-	try {
-		const parsed = JSON.parse(readFileSync(todoFile(sessionId), "utf8")) as { todos?: TodoItem[] };
-		return Array.isArray(parsed.todos) ? parsed.todos : [];
-	} catch {
-		return [];
-	}
+	const parsed = readJsonFallback<{ todos?: TodoItem[] }>(
+		todoFile(sessionId),
+		legacyTodoFile(sessionId),
+		{
+			todos: [],
+		},
+	);
+	return Array.isArray(parsed.todos) ? parsed.todos : [];
 }
 
-function writeTodos(sessionId: string, todos: TodoItem[]): void {
-	mkdirSync(TODO_DIR, { recursive: true });
-	writeFileSync(todoFile(sessionId), JSON.stringify({ todos }, null, 2), "utf8");
+export function writeTodos(sessionId: string, todos: TodoItem[]): void {
+	const file = todoFile(sessionId);
+	mkdirSync(path.dirname(file), { recursive: true });
+	writeFileSync(file, JSON.stringify({ todos }, null, 2), "utf8");
+	try {
+		unlinkSync(legacyTodoFile(sessionId));
+	} catch {}
+	pruneTodoOrphans();
+}
+
+/** Orphan-only GC: never age-prune, never touch the legacy dir. */
+export function pruneTodoOrphans(
+	exists: (sessionId: string) => boolean | null = sessionFileExists,
+): number {
+	return pruneOrphanSessionFiles(todoDir(), exists, ORPHAN_MIN_AGE_MS);
 }
 
 export function todoContextBlock(sessionId: string | null): string {
