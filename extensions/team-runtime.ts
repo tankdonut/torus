@@ -4,6 +4,7 @@ import {
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -17,13 +18,20 @@ import {
 	sessionIdFromState,
 } from "./engine-child.js";
 import { stripFrontmatter } from "./frontmatter.js";
-import { readJson, sleep, torusHome, writeJson } from "./fsutil.js";
+import { projectKey, projectStateDir, readJson, sleep, torusHome, writeJson } from "./fsutil.js";
 import { DEFAULT_MEMBER_MODEL } from "./providers/index.js";
 import { AGENT_NAME_RE, repoRoot } from "./registry.js";
 import { AGENTS, resolveModels } from "./roster/index.js";
 import { RpcChild } from "./rpc.js";
 
+/** Pre-namespacing flat store (~/.torus/teams/<id>/) — read for legacy teams; migrated on spec write. */
 const TEAMS_ROOT = path.join(torusHome(), "teams");
+/**
+ * Global team index (~/.torus/teams.json): team id → project key. Member children
+ * resolve their team from foreign cwds (worktrees, other projects), so teamDir(id)
+ * needs a cwd-independent resolver — the index is it.
+ */
+const TEAMS_INDEX = path.join(torusHome(), "teams.json");
 const POLL_MS = 2_000;
 
 export interface MemberSpec {
@@ -40,8 +48,54 @@ export interface MemberHandle {
 	readonly exited: Promise<number>;
 }
 
+/** Canonical team location: ${TORUS_HOME}/state/--<project>--/teams/<id>/. */
+function canonicalTeamDir(key: string, teamId: string): string {
+	return path.join(torusHome(), "state", key, "teams", teamId);
+}
+
+type TeamsIndex = Record<string, string>;
+
+function readTeamsIndex(): TeamsIndex {
+	return readJson<TeamsIndex>(TEAMS_INDEX, {});
+}
+
+function writeTeamsIndex(index: TeamsIndex): void {
+	writeJson(TEAMS_INDEX, index);
+}
+
+/** Visit (projectKey, teamId) for every team dir under any project's state store. */
+function scanStateTeams(visit: (key: string, teamId: string) => void): void {
+	const stateRoot = path.join(torusHome(), "state");
+	let keys: string[] = [];
+	try {
+		keys = readdirSync(stateRoot, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory())
+			.map((entry) => entry.name);
+	} catch {
+		return;
+	}
+	for (const key of keys) {
+		const dir = path.join(stateRoot, key, "teams");
+		let ids: string[] = [];
+		try {
+			ids = readdirSync(dir, { withFileTypes: true })
+				.filter((entry) => entry.isDirectory())
+				.map((entry) => entry.name);
+		} catch {
+			continue;
+		}
+		for (const id of ids) {
+			if (existsSync(path.join(dir, id, "team.json"))) visit(key, id);
+		}
+	}
+}
+
 export function teamDir(teamId: string): string {
-	return path.join(TEAMS_ROOT, teamId);
+	const key = readTeamsIndex()[teamId];
+	if (key) return canonicalTeamDir(key, teamId);
+	const legacy = path.join(TEAMS_ROOT, teamId);
+	if (existsSync(legacy)) return legacy;
+	return path.join(projectStateDir(), "teams", teamId);
 }
 
 export interface TeamSpec {
@@ -53,16 +107,45 @@ export interface TeamSpec {
 	parentSession?: string | null;
 	/** Opt-in: members are taught the atomic self-claim CLI protocol in their objective. Default off — absent behaves as false. */
 	selfClaim?: boolean;
-	/** Project key of the cwd that created the team. Absent on legacy specs — those match any project. */
+	/** Project key that pins the team's state dir (state/--<key>--/teams/<id>/). Absent on unmigrated legacy specs — those match any project until first rewrite. */
 	project?: string;
 }
 
 export function writeTeamSpec(teamId: string, spec: TeamSpec): void {
-	writeJson(path.join(teamDir(teamId), "team.json"), { id: teamId, ...spec });
+	const key = spec.project ?? projectKey(process.cwd());
+	const canonical = canonicalTeamDir(key, teamId);
+	const legacy = path.join(TEAMS_ROOT, teamId);
+	if (existsSync(legacy)) {
+		// Move-on-write migration: legacy flat team → project-scoped store. Spec
+		// writes happen at create/respawn/status boundaries — never mid-cycle —
+		// so no supervisor holds stale mailbox paths across the rename.
+		try {
+			mkdirSync(path.dirname(canonical), { recursive: true });
+			renameSync(legacy, canonical);
+		} catch {}
+	}
+	writeJson(path.join(canonical, "team.json"), { id: teamId, ...spec, project: key });
+	const index = readTeamsIndex();
+	if (index[teamId] !== key) writeTeamsIndex({ ...index, [teamId]: key });
 }
 
 export function readTeamSpec(teamId: string): (TeamSpec & { id: string }) | null {
-	const parsed = readJson<Partial<TeamSpec> | null>(path.join(teamDir(teamId), "team.json"), null);
+	let file = path.join(teamDir(teamId), "team.json");
+	if (!existsSync(file)) {
+		// Index lost the entry (crash between rename and index write) or another
+		// project planted the team: sweep the state stores and self-heal the index.
+		let found: string | null = null;
+		scanStateTeams((key, id) => {
+			if (id === teamId && found === null) found = key;
+		});
+		const healed = found;
+		if (healed !== null) {
+			const index = readTeamsIndex();
+			if (index[teamId] !== healed) writeTeamsIndex({ ...index, [teamId]: healed });
+			file = path.join(canonicalTeamDir(healed, teamId), "team.json");
+		}
+	}
+	const parsed = readJson<Partial<TeamSpec> | null>(file, null);
 	if (typeof parsed !== "object" || parsed === null) return null;
 	if (
 		typeof parsed.name !== "string" ||
@@ -91,13 +174,19 @@ export function markTeamStatus(teamId: string, status: "active" | "shutdown"): v
 }
 
 export function listTeamIds(): string[] {
+	// Every project's state store (explicit team ids are cross-project; default
+	// resolution filters by spec project afterwards) plus the pre-namespacing
+	// flat store — legacy specs match any project.
+	const ids = new Set<string>();
+	scanStateTeams((_key, id) => ids.add(id));
 	try {
-		return readdirSync(TEAMS_ROOT).filter((dir) =>
-			existsSync(path.join(TEAMS_ROOT, dir, "team.json")),
-		);
-	} catch {
-		return [];
-	}
+		for (const entry of readdirSync(TEAMS_ROOT, { withFileTypes: true })) {
+			if (entry.isDirectory() && existsSync(path.join(TEAMS_ROOT, entry.name, "team.json"))) {
+				ids.add(entry.name);
+			}
+		}
+	} catch {}
+	return [...ids];
 }
 
 export function memberMailbox(teamId: string, member: string): string {

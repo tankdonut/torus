@@ -17,6 +17,7 @@ process.env.TORUS_TMUX = "0";
 
 const registry = await import("../extensions/registry.ts");
 const team = await import("../extensions/team/index.ts");
+const runtime = await import("../extensions/team-runtime.ts");
 
 function fakeSpawner() {
 	const spawned = [];
@@ -172,7 +173,7 @@ test("registry steer reaches the member mailbox and registry stop finishes the r
 
 	assert.equal(registry.steerDelegation(memberId, "please check the flaky test"), true);
 	const inbox = readFileSync(
-		path.join(HOME, "teams", teamId, "mailboxes", "worker", "inbox.md"),
+		path.join(runtime.teamDir(teamId), "mailboxes", "worker", "inbox.md"),
 		"utf8",
 	);
 	assert.match(inbox, /please check the flaky test/);

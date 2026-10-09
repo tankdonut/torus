@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -525,19 +525,53 @@ test("default resolution reports none when only foreign-project teams exist", as
 	assert.match(explicit.content[0].text, /^team scoped-only-foreign \[active\]/m);
 });
 
-test("legacy specs without a project match any project and stay unstamped by status writes", async () => {
+test("legacy flat specs match any project until rewritten; a status write migrates and pins them", async () => {
 	const statusTool = craftStatusTool();
-	registerCraftedTeam("scoped-legacy", { project: undefined, createdAt: 1000 });
-	registerCraftedTeam("scoped-foreign-two", { project: OTHER_PROJECT, createdAt: 9000 });
+	// Plant a pre-namespacing team: flat dir under TORUS_HOME/teams, spec without
+	// a project field, no index entry.
+	mkdirSync(path.join(HOME, "teams", "scoped-legacy"), { recursive: true });
+	writeFileSync(
+		path.join(HOME, "teams", "scoped-legacy", "team.json"),
+		JSON.stringify({
+			id: "scoped-legacy",
+			name: "scoped-legacy",
+			objective: "scoped-legacy standing objective",
+			members: [{ name: "solo", agent: "builder" }],
+			status: "active",
+		}),
+	);
+	registry.registerTeam({
+		id: "scoped-legacy",
+		name: "scoped-legacy",
+		objective: "scoped-legacy standing objective",
+		status: "active",
+		dir: runtime.teamDir("scoped-legacy"),
+		members: [
+			{
+				id: "scoped-legacy/solo",
+				name: "solo",
+				agent: "builder",
+				model: "test-model",
+				status: "idle",
+			},
+		],
+		createdAt: 1000,
+	});
 	const byDefault = await statusTool.execute("call", {});
 	assert.match(byDefault.content[0].text, /^team scoped-legacy \[active\]/m);
 
 	runtime.markTeamStatus("scoped-legacy", "shutdown");
 	const reread = runtime.readTeamSpec("scoped-legacy");
 	assert.equal(reread?.status, "shutdown");
+	assert.equal(reread?.project, CURRENT_PROJECT, "a spec rewrite pins the writing project's key");
 	assert.equal(
-		reread?.project,
-		undefined,
-		"a status rewrite must not stamp a project onto a legacy spec",
+		runtime.teamDir("scoped-legacy"),
+		path.join(HOME, "state", CURRENT_PROJECT, "teams", "scoped-legacy"),
+		"the team resolves to the project-scoped store after migration",
+	);
+	assert.equal(
+		existsSync(path.join(HOME, "teams", "scoped-legacy")),
+		false,
+		"the legacy flat dir is gone after migration",
 	);
 });
