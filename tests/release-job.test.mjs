@@ -30,7 +30,7 @@ test("release job: tag-gated, gated on every job, staged outside the artifact tr
 		"release job must be gated to v* tag refs",
 	);
 	assert.ok(
-		ciWorkflow.includes("needs: [lint-typecheck, smoke, build, container]"),
+		ciWorkflow.includes("needs: [lint-typecheck, smoke, build, container-publish]"),
 		"release job must depend on every gate job",
 	);
 	assert.ok(

@@ -1,6 +1,6 @@
 # Container image
 
-torus ships as a prebuilt image on GHCR: `ghcr.io/tankdonut/torus`, built by the `container` CI job from the multi-stage `Dockerfile` — the build stage compiles the single-file bun launcher from a source snapshot and bakes the payload tree with its npm dependencies (the pinned pi engine included) installed; the runtime stage is the `.tool-versions`-pinned `node:*-slim` base plus the agent runtime tools, with the baked payload at `/opt/torus` (`TORUS_ROOT`) so containers boot without network access. Images are multi-arch (`linux/amd64` + `linux/arm64`); `latest` is published on merges to main, `X.Y.Z` and `X.Y` on version tags. The image runs as the non-root user `torus` (uid 1000), with `WORKDIR /workspace`, `TERM=xterm-256color`, and `ENTRYPOINT torus`.
+torus ships as a prebuilt image on GHCR: `ghcr.io/tankdonut/torus`, built by the container CI pipeline — each platform builds exactly once per run (amd64 on the test runner, arm64 on a native ARM runner) and pushes by digest, and the multi-arch tags are assembled from those digests only after the container test suite has passed against the amd64 build. The build stage compiles the single-file bun launcher from a source snapshot and bakes the payload tree with its npm dependencies (the pinned pi engine included) installed; the runtime stage is the `.tool-versions`-pinned `node:*-slim` base plus the agent runtime tools, with the baked payload at `/opt/torus` (`TORUS_ROOT`) so containers boot without network access. Images are multi-arch (`linux/amd64` + `linux/arm64`); `latest` is published on merges to main, `X.Y.Z` and `X.Y` on version tags. The image runs as the non-root user `torus` (uid 1000), with `WORKDIR /workspace`, `TERM=xterm-256color`, and `ENTRYPOINT torus`.
 
 ## Quick start
 
@@ -37,7 +37,7 @@ The suite's static drift guards (Dockerfile ARG pins, runtime deps, entrypoint/u
 
 ## Versions & updating
 
-`.tool-versions` is the single source of truth for the node and bun versions. CI reads it (`setup-node` `node-version-file`, `setup-bun` `bun-version-file`); `./make.sh image` and the CI publish build pass it as build args — the Dockerfile declares `NODE_VERSION`/`BUN_VERSION` without defaults, so Renovate's asdf updates move the container image versions with no separate bump.
+`.tool-versions` is the single source of truth for the node and bun versions. CI reads it (`setup-node` `node-version-file`, `setup-bun` `bun-version-file`); `./make.sh image` and the CI platform builds pass it as build args — the Dockerfile declares `NODE_VERSION`/`BUN_VERSION` without defaults, so Renovate's asdf updates move the container image versions with no separate bump.
 
 Two pins are renovate blind spots and must be bumped by hand: the Dockerfile `ARG AST_GREP_VERSION` and the global npm pins for `typescript-language-server`/`typescript`.
 
