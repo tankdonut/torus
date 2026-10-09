@@ -1,25 +1,54 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
+
+// RUNS_DIR is pinned at module load, so the whole file sandboxes TORUS_HOME
+// before the registry import — beacons never reach the real ~/.torus/runs.
+const HOME = mkdtempSync(path.join(tmpdir(), "torus-logs-perms-"));
+process.env["TORUS_HOME"] = HOME;
 
 const registry = await import("../extensions/registry.ts");
 
-test("delegation log surface: dir 0700, log file 0600, steer text redacted", () => {
-	const home = mkdtempSync(path.join(tmpdir(), "torus-logs-perms-"));
-	const prevHome = process.env["TORUS_HOME"];
-	process.env["TORUS_HOME"] = home;
-	try {
-		const id = `perm-${Date.now()}`;
-		const record = registry.startDelegation(id, "tester", "some-model", null, null);
-		assert.equal(statSync(registry.logsDir()).mode & 0o777, 0o700, "logs dir must be owner-only");
-		assert.equal(statSync(record.logFile).mode & 0o777, 0o600, "log file must be owner-only");
-		registry.finishDelegation(id, true, "done");
-	} finally {
-		process.env["TORUS_HOME"] = prevHome;
-		rmSync(home, { recursive: true, force: true });
-	}
+after(() => {
+	rmSync(HOME, { recursive: true, force: true });
+});
+
+const projectKeyFor = (cwd) => `--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`;
+
+test("delegation log surface: project dir 0700, log file 0600, steer text redacted", () => {
+	const id = `perm-${Date.now()}`;
+	const record = registry.startDelegation(id, "tester", "some-model", null, null);
+	const projectLogs = path.join(HOME, "state", projectKeyFor(process.cwd()), "logs");
+	assert.equal(registry.logsDir(), projectLogs, "logsDir resolves into the project state dir");
+	assert.equal(
+		path.dirname(record.logFile),
+		projectLogs,
+		"log must land under state/--<project>--/logs",
+	);
+	assert.equal(statSync(projectLogs).mode & 0o777, 0o700, "logs dir must be owner-only");
+	assert.equal(statSync(record.logFile).mode & 0o777, 0o600, "log file must be owner-only");
+	assert.equal(record.project, projectKeyFor(process.cwd()), "record carries the project key");
+	const beacon = JSON.parse(readFileSync(path.join(HOME, "runs", `${id}.json`), "utf8"));
+	assert.equal(beacon.project, projectKeyFor(process.cwd()), "beacon carries the project key");
+	registry.finishDelegation(id, true, "done");
+});
+
+test("startDelegation(cwd) writes into that project's state dir and tags record + beacon", () => {
+	const otherCwd = path.join(HOME, "worktree", "other");
+	const key = projectKeyFor(otherCwd);
+	const id = `cwd-${Date.now()}`;
+	const record = registry.startDelegation(id, "tester", "some-model", null, null, otherCwd);
+	const otherLogs = path.join(HOME, "state", key, "logs");
+	assert.equal(path.dirname(record.logFile), otherLogs, "explicit cwd routes the log");
+	assert.equal(statSync(otherLogs).mode & 0o777, 0o700, "logs dir must be owner-only");
+	assert.equal(statSync(record.logFile).mode & 0o777, 0o600, "log file must be owner-only");
+	assert.equal(record.project, key);
+	const beacon = JSON.parse(readFileSync(path.join(HOME, "runs", `${id}.json`), "utf8"));
+	assert.equal(beacon.project, key);
+	assert.equal(beacon.logFile, record.logFile);
+	registry.finishDelegation(id, true, "done");
 });
 
 test("steerLogLine redacts credential shapes and keeps benign prose", () => {

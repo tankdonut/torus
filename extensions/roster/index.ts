@@ -763,7 +763,7 @@ export async function runDelegation(
 	const promptBody = systemPromptFor(agent);
 	const dir = await mkdtemp(path.join(tmpdir(), `torus-${agent.name}-`));
 	const delegationId = randomUUID();
-	startDelegation(delegationId, agent.name, firstModel, parentSession, handle);
+	startDelegation(delegationId, agent.name, firstModel, parentSession, handle, workingDir);
 	// Batch callers (fan-out, teams) pass announce=false and emit one combined
 	// marker instead of N per-run events staggering across turn boundaries.
 	const announcement = announceText(announce, task);

@@ -21,7 +21,13 @@ import {
 	unlinkLegacyReflectState,
 	writeReflectState,
 } from "../reflect-state.js";
-import { currentSessionId, emitTorusCustom, logsDir, recentLogFiles } from "../registry.js";
+import {
+	currentSessionId,
+	emitTorusCustom,
+	legacyLogsDir,
+	logsDir,
+	recentLogFiles,
+} from "../registry.js";
 import { gitEnv } from "../worktrees/index.js";
 
 const MEMORY_ROOT = path.join(torusHome(), "memory");
@@ -960,14 +966,23 @@ function markDreamed(): void {
 export function undreamedActivity(): boolean {
 	try {
 		// the dreamer's own delegation logs are outputs, not activity —
-		// counting them would let dreams self-trigger forever
-		const logs = readdirSync(logsDir())
-			.filter((f) => f.endsWith(".log"))
-			.filter((f) => !f.endsWith("-dreamer.log"));
+		// counting them would let dreams self-trigger forever. The trigger must
+		// see the same log set dream itself reads: this project's dir plus the
+		// legacy flat dir.
+		const logs = [logsDir(), legacyLogsDir()].flatMap((dir) => {
+			try {
+				return readdirSync(dir)
+					.filter((f) => f.endsWith(".log"))
+					.filter((f) => !f.endsWith("-dreamer.log"))
+					.map((f) => path.join(dir, f));
+			} catch {
+				return [];
+			}
+		});
 		const newest = logs
-			.map((f) => {
+			.map((file) => {
 				try {
-					return statSync(path.join(logsDir(), f)).mtimeMs;
+					return statSync(file).mtimeMs;
 				} catch {
 					return 0;
 				}
@@ -984,7 +999,7 @@ async function dream(_pi: ExtensionAPI): Promise<void> {
 	if (Date.now() - lastDreamAt() < DREAM_INTERVAL_MS) return;
 	if (!undreamedActivity()) return;
 	markDreamed();
-	const recentLogs = recentLogFiles(6).join(" ");
+	const recentLogs = recentLogFiles(6, [logsDir(), legacyLogsDir()]).join(" ");
 	if (!recentLogs) return;
 	const task = [
 		"You are dreaming: consolidating torus's memory store during idle time.",

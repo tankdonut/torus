@@ -16,7 +16,14 @@ import {
 	statSync,
 } from "node:fs";
 import path from "node:path";
-import { formatCost, torusHome, writeJson } from "./fsutil.js";
+import {
+	formatCost,
+	listDirUnion,
+	projectKey,
+	projectStateDir,
+	torusHome,
+	writeJson,
+} from "./fsutil.js";
 import { type DelegationToastInfo, notifyDelegation, RUNNING_LATE_MS } from "./osnotify.js";
 
 export interface DelegationRecord {
@@ -40,6 +47,8 @@ export interface DelegationRecord {
 	logFile: string;
 	sessionId: string | null;
 	parentSession: string | null;
+	/** Project key (state-dir identity) of the cwd the delegation runs in. */
+	project: string;
 	paneId: string | null;
 }
 
@@ -109,23 +118,35 @@ export function stableColorIndex(name: string, buckets: number): number {
 	return Math.abs(hash) % Math.max(1, buckets);
 }
 
-/** Absolute path of the shared delegation-log directory (~/.torus/logs). */
-export function logsDir(): string {
+/** Absolute path of this project's delegation-log directory (state/--<project>--/logs). */
+export function logsDir(cwd: string = process.cwd()): string {
+	return path.join(projectStateDir(cwd), "logs");
+}
+
+/** Pre-project flat delegation-log directory (~/.torus/logs); read for old runs. */
+export function legacyLogsDir(): string {
 	return path.join(torusHome(), "logs");
 }
 
-/** Newest-first (lexicographic) delegation log file paths, at most `n`. */
-export function recentLogFiles(n: number): string[] {
-	try {
-		return readdirSync(logsDir())
-			.filter((file) => file.endsWith(".log"))
-			.sort()
-			.reverse()
-			.slice(0, n)
-			.map((file) => path.join(logsDir(), file));
-	} catch {
-		return [];
+/**
+ * Newest-first (lexicographic) delegation log file paths, at most `n`. Pass
+ * `dirs` to collect across several directories (dream reads this project's
+ * logs plus the legacy flat dir); without it, only this project's dir scans.
+ */
+export function recentLogFiles(n: number, dirs?: string[]): string[] {
+	const scanDirs = dirs ?? [logsDir()];
+	const found: Array<{ dir: string; file: string }> = [];
+	for (const dir of scanDirs) {
+		try {
+			for (const file of readdirSync(dir)) {
+				if (file.endsWith(".log")) found.push({ dir, file });
+			}
+		} catch {}
 	}
+	return found
+		.sort((a, b) => (a.file < b.file ? 1 : a.file > b.file ? -1 : 0))
+		.slice(0, n)
+		.map((entry) => path.join(entry.dir, entry.file));
 }
 
 /**
@@ -349,6 +370,8 @@ interface RunBeacon {
 	uid?: number;
 	parentSession: string | null;
 	sessionId: string | null;
+	/** Project key of the delegation's cwd — the fleet is cross-project by design. */
+	project: string;
 	/** Action-log path so foreign runs can render output before the first turn. */
 	logFile?: string;
 }
@@ -637,14 +660,13 @@ export function startDelegation(
 	model: string,
 	parentSession: string | null = null,
 	handle: string | null = null,
+	cwd: string = process.cwd(),
 ): DelegationRecord {
-	mkdirSync(logsDir(), { recursive: true, mode: 0o700 });
+	const dir = logsDir(cwd);
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	// chmod covers a pre-existing directory created with wider perms
-	chmodSync(logsDir(), 0o700);
-	const logFile = path.join(
-		logsDir(),
-		`${new Date().toISOString().replace(/[:.]/g, "-")}-${agent}.log`,
-	);
+	chmodSync(dir, 0o700);
+	const logFile = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}-${agent}.log`);
 	// delegation logs capture tool args — enforce owner-only from birth
 	appendFileSync(logFile, "");
 	chmodSync(logFile, 0o600);
@@ -666,6 +688,7 @@ export function startDelegation(
 		logFile,
 		sessionId: null,
 		parentSession,
+		project: projectKey(cwd),
 		paneId: tmuxPaneFor(logFile, agent, normalizedHandle),
 	};
 	registry.set(id, record);
@@ -688,6 +711,7 @@ export function startDelegation(
 		pid: process.pid,
 		parentSession,
 		sessionId: null,
+		project: projectKey(cwd),
 		logFile,
 	});
 	appendFileSync(
@@ -756,6 +780,7 @@ export function updateDelegation(
 		pid: process.pid,
 		parentSession: record.parentSession,
 		sessionId: record.sessionId,
+		project: record.project,
 		logFile: record.logFile,
 	});
 	const cost = formatCost(snapshot.usage.cost, snapshot.usage.input + snapshot.usage.output > 0);
@@ -806,6 +831,7 @@ export function finishDelegation(
 		pid: process.pid,
 		parentSession: record.parentSession,
 		sessionId,
+		project: record.project,
 		logFile: record.logFile,
 	});
 	appendFileSync(
@@ -842,14 +868,15 @@ const TURN_RE =
 /**
  * The registry lives in process memory; a resumed session starts a fresh
  * engine with an empty registry even though logs and sub-agent sessions
- * persist on disk. Rebuild records from the log files so alt+t and the fleet
- * work across resumes.
+ * persist on disk. Logs live under per-project state dirs with a legacy flat
+ * fallback (~/.torus/logs), so both are scanned. Rebuild records from the
+ * log files so alt+t and the fleet work across resumes.
  */
 export function rehydrateFromLogs(currentSessionId?: string): void {
 	if (registry.size > 0) return;
 	let files: string[];
 	try {
-		files = readdirSync(logsDir())
+		files = listDirUnion(logsDir(), legacyLogsDir())
 			.filter((file) => file.endsWith(".log"))
 			.sort()
 			.reverse();
@@ -861,13 +888,17 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 	const beacons = beaconsByLogFile();
 	for (const file of files) {
 		if (count >= REHYDRATE_LIMIT) break;
-		const logFile = path.join(logsDir(), file);
-		let raw: string;
-		try {
-			raw = readFileSync(logFile, "utf8");
-		} catch {
-			continue;
+		// union order is lost — prefer the project dir, then the legacy flat dir
+		let logFile = path.join(logsDir(), file);
+		let raw: string | undefined;
+		for (const candidate of [logFile, path.join(legacyLogsDir(), file)]) {
+			try {
+				raw = readFileSync(candidate, "utf8");
+				logFile = candidate;
+				break;
+			} catch {}
 		}
+		if (raw === undefined) continue;
 		const start = parseTagStart(raw) ?? legacyStart(raw);
 		if (!start) continue;
 		const parentSession = start.groups.parent;
@@ -925,6 +956,7 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 			logFile,
 			sessionId: end?.groups.session ?? null,
 			parentSession,
+			project: projectKey(process.cwd()),
 			paneId: null,
 		});
 		count += 1;

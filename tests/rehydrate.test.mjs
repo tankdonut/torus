@@ -7,11 +7,17 @@ import { after, test } from "node:test";
 
 // rehydrateFromLogs: log writer/reader round-trip against the exact on-disk
 // format contract, parent-session filtering, and the no-clobber guard.
-// Fixtures are planted in a TORUS_HOME sandbox (must be set before the
-// registry import — it derives the logs dir at module load).
+// Fixtures are planted in a TORUS_HOME sandbox; rehydration scans the project
+// state logs dir plus the legacy flat dir.
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-rehydrate-test-"));
 process.env.TORUS_HOME = HOME;
 const LOGS = path.join(HOME, "logs");
+const PROJECT_LOGS = path.join(
+	HOME,
+	"state",
+	`--${process.cwd().replace(/^\/+/, "").replaceAll("/", "-")}--`,
+	"logs",
+);
 const STAMP = Date.now().toString(36);
 
 const registry = await import("../extensions/registry.ts");
@@ -20,9 +26,9 @@ after(() => {
 	rmSync(HOME, { recursive: true, force: true });
 });
 
-function plantLog(name, agent, model, parent, end) {
-	mkdirSync(LOGS, { recursive: true });
-	const file = path.join(LOGS, `${name}.log`);
+function plantLogIn(dir, name, agent, model, parent, end) {
+	mkdirSync(dir, { recursive: true });
+	const file = path.join(dir, `${name}.log`);
 	const lines = [
 		`[2026-09-30T00:00:00.000Z] delegate ${agent} (${model}) start${parent ? ` · parent ${parent}` : ""}`,
 		"--- turn 2 (120/480 tok) ---",
@@ -35,6 +41,9 @@ function plantLog(name, agent, model, parent, end) {
 	writeFileSync(file, `${lines.join("\n")}\n`, "utf8");
 	return file;
 }
+
+const plantLog = (name, agent, model, parent, end) =>
+	plantLogIn(LOGS, name, agent, model, parent, end);
 
 test("rehydrates records from the log format: status, session, turns, tokens, last-turn text", () => {
 	registry.resetRegistryForTesting();
@@ -178,6 +187,29 @@ test("unfinished log + terminal beacon: beacon status preferred over the failed 
 		rmSync(file, { force: true });
 		registry.resetRegistryForTesting();
 	}
+});
+
+test("rehydrates from both the project state logs dir and the legacy flat dir", () => {
+	registry.resetRegistryForTesting();
+	const inProject = plantLogIn(
+		PROJECT_LOGS,
+		`rehy-${STAMP}-p`,
+		"explore",
+		"zai/glm-5.3-flash",
+		"parent-4",
+		"done",
+	);
+	plantLog(`rehy-${STAMP}-l`, "build", "zai/glm-5.3", "parent-4", "failed");
+	registry.rehydrateFromLogs("parent-4");
+	const recs = registry.listDelegations();
+	const p = recs.find((r) => r.id === `rehy-${STAMP}-p`);
+	const l = recs.find((r) => r.id === `rehy-${STAMP}-l`);
+	assert.ok(p, "project-dir log missing after rehydrate");
+	assert.ok(l, "legacy flat log missing after rehydrate");
+	assert.equal(p.logFile, inProject, "project log keeps its project-dir path");
+	rmSync(inProject, { force: true });
+	rmSync(path.join(LOGS, `rehy-${STAMP}-l.log`), { force: true });
+	registry.resetRegistryForTesting();
 });
 
 test("cleanup: fixtures removed and registry reset for other suites", () => {

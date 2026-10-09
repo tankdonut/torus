@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -8,6 +16,7 @@ const home = mkdtempSync(path.join(tmpdir(), "torus-dream-applied-"));
 process.env["TORUS_HOME"] = home;
 
 const memory = await import("../extensions/memory/index.ts");
+const registry = await import("../extensions/registry.ts");
 
 test("applyDreamProposal reports per-kind counts and applies the store changes", () => {
 	try {
@@ -194,6 +203,46 @@ test("applyDreamProposal updates a high-overlap near-duplicate in place (score >
 		updated.includes("topic: container build gotchas and lessons"),
 		"topic frontmatter carries the proposal's topic",
 	);
+});
+
+test("dream log feed: project logs plus legacy flat, other projects excluded", () => {
+	const projectLogs = path.join(
+		home,
+		"state",
+		`--${process.cwd().replace(/^\/+/, "").replaceAll("/", "-")}--`,
+		"logs",
+	);
+	const otherLogs = path.join(home, "state", "--elsewhere--", "logs");
+	const legacyLogs = path.join(home, "logs");
+	mkdirSync(projectLogs, { recursive: true });
+	mkdirSync(otherLogs, { recursive: true });
+	mkdirSync(legacyLogs, { recursive: true });
+	writeFileSync(path.join(projectLogs, "2026-10-09T10-00-00-000Z-build.log"), "project\n", "utf8");
+	writeFileSync(path.join(legacyLogs, "2026-10-09T09-00-00-000Z-old.log"), "legacy\n", "utf8");
+	// newest of all three — must NOT leak into this project's feed
+	writeFileSync(path.join(otherLogs, "2026-10-09T11-00-00-000Z-other.log"), "foreign\n", "utf8");
+	try {
+		const feed = registry.recentLogFiles(6, [registry.logsDir(), registry.legacyLogsDir()]);
+		assert.ok(
+			feed.includes(path.join(projectLogs, "2026-10-09T10-00-00-000Z-build.log")),
+			"project log is in the feed",
+		);
+		assert.ok(
+			feed.includes(path.join(legacyLogs, "2026-10-09T09-00-00-000Z-old.log")),
+			"legacy flat log is in the feed",
+		);
+		assert.ok(!feed.some((f) => f.includes("other.log")), "another project's newer log leaked in");
+		assert.ok(feed[0]?.includes("10-00-00"), `newest first across dirs: ${feed[0]}`);
+		const mine = registry.recentLogFiles(6);
+		assert.ok(
+			mine.some((f) => f.includes("build.log")),
+			"project log in default scan",
+		);
+		assert.ok(!mine.some((f) => f.includes("old.log")), "legacy excluded from default scan");
+	} finally {
+		rmSync(path.join(home, "state"), { recursive: true, force: true });
+		rmSync(legacyLogs, { recursive: true, force: true });
+	}
 });
 
 test("applyDreamProposal writes a new file when no near-duplicate exists", () => {
