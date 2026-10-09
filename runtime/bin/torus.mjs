@@ -118,21 +118,28 @@ const pin =
 	pkg.devDependencies?.["@earendil-works/pi-coding-agent"];
 const argv = process.argv.slice(2);
 
-// torus serve — the authenticated delegation API (extensions/serve/index.ts).
-// Intercepted before the pi passthrough: the server process IS the surface,
-// not an extension inside an engine session. The serve module is TypeScript
-// with .js import specifiers, so this plain .mjs launcher uses the same
-// bootstrap as team-task.mjs: a .js→.ts resolve hook after an optional
-// one-shot strip-types re-exec on older Node.
-if (argv[0] === "serve") {
-	if (!process.features.typescript && !process.env["TORUS_SERVE_BOOTSTRAPPED"]) {
-		const reexec = spawnSync(
-			process.execPath,
-			["--experimental-strip-types", "--no-warnings", process.argv[1], ...argv],
-			{ stdio: "inherit", env: { ...process.env, TORUS_SERVE_BOOTSTRAPPED: "1" } },
-		);
-		process.exit(reexec.status ?? 1);
-	}
+// torus serve / torus acp-agent — process-per-surface subcommands, never pi
+// manifest extensions. Intercepted before the pi passthrough: the process IS
+// the surface, not an extension inside an engine session. Their modules are
+// TypeScript with .js import specifiers, so this plain .mjs launcher uses a
+// .js→.ts resolve hook after an optional one-shot strip-types re-exec on
+// older Node (guarded per subcommand so the re-exec cannot loop).
+
+/**
+ * Re-exec this launcher under --experimental-strip-types and exit with its
+ * status. `flag` marks the re-executed child so the second pass skips this.
+ */
+function reexecStripTypes(flag) {
+	const reexec = spawnSync(
+		process.execPath,
+		["--experimental-strip-types", "--no-warnings", process.argv[1], ...argv],
+		{ stdio: "inherit", env: { ...process.env, [flag]: "1" } },
+	);
+	process.exit(reexec.status ?? 1);
+}
+
+/** Rewrite non-node_modules .js specifiers to their .ts sources on import. */
+async function enableTsResolveHook() {
 	const { registerHooks } = await import("node:module");
 	registerHooks({
 		resolve(specifier, context, nextResolve) {
@@ -152,6 +159,13 @@ if (argv[0] === "serve") {
 			return nextResolve(specifier, context);
 		},
 	});
+}
+
+if (argv[0] === "serve") {
+	if (!process.features.typescript && !process.env["TORUS_SERVE_BOOTSTRAPPED"]) {
+		reexecStripTypes("TORUS_SERVE_BOOTSTRAPPED");
+	}
+	await enableTsResolveHook();
 	process.env["TORUS_ROOT"] = root;
 	if (!process.env["TORUS_ENGINE_BIN"]) process.env["TORUS_ENGINE_BIN"] = resolveBinary();
 	const serve = await import(new URL("../../extensions/serve/index.ts", import.meta.url).href);
@@ -169,6 +183,26 @@ if (argv[0] === "serve") {
 	// The listening socket keeps the process alive; nothing below (engine
 	// passthrough) applies to serve.
 	await new Promise(() => {});
+}
+
+// torus acp-agent — serve torus as an ACP v1 agent over stdio for editors
+// (Zed, JetBrains). runAcpAgentRole() owns stdin/stdout; stdout is
+// protocol-only. EOF on stdin kills all engine children and exits 0.
+if (argv[0] === "acp-agent") {
+	if (!process.features.typescript && !process.env["TORUS_ACP_BOOTSTRAPPED"]) {
+		reexecStripTypes("TORUS_ACP_BOOTSTRAPPED");
+	}
+	await enableTsResolveHook();
+	process.env["TORUS_ROOT"] = root;
+	if (!process.env["TORUS_ENGINE_BIN"]) process.env["TORUS_ENGINE_BIN"] = resolveBinary();
+	const acp = await import(new URL("../../extensions/acp/index.ts", import.meta.url).href);
+	try {
+		await acp.runAcpAgentRole();
+	} catch (err) {
+		process.stderr.write(`torus: acp-agent failed: ${err?.message ?? err}\n`);
+		process.exit(1);
+	}
+	process.exit(0);
 }
 
 if (argv[0] === "--version") {

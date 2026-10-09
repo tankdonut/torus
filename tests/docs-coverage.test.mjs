@@ -196,6 +196,27 @@ test("efficiency doc notes ambient routing follows the fast tier", () => {
 	}
 });
 
+test("ACP consume section documents the external-agent transport", () => {
+	const start = doc.indexOf("### `acp`");
+	assert.ok(start !== -1, "docs/extensions.md missing the acp section");
+	const end = doc.indexOf("\n### ", start);
+	const section = doc.slice(start, end === -1 ? undefined : end);
+	for (const token of [
+		"acp.json",
+		"session/prompt",
+		"end_turn",
+		"fail-closed",
+		"session/request_permission",
+		"cancelled",
+		"initialize",
+		"ea16b093",
+		"session/load",
+		"TORUS_HOME",
+	]) {
+		assert.ok(section.includes(token), `acp section missing token: ${token}`);
+	}
+});
+
 test("torus serve section documents routes, auth, config, and the kill switch", () => {
 	const start = doc.indexOf("## `torus serve`");
 	assert.ok(start !== -1, "docs/extensions.md missing the torus serve section");
@@ -225,5 +246,40 @@ test("docs/pi-packages.md exists and documents the pi-package distribution chann
 	const piPackagesDoc = readFileSync(piPackagesDocPath, "utf8");
 	for (const token of ["pi install git:", "+path", "pi-package"]) {
 		assert.ok(piPackagesDoc.includes(token), `docs/pi-packages.md missing token: ${token}`);
+	}
+});
+
+test("ACP agent serve half is documented", () => {
+	const serveDoc = readFileSync(path.join(root, "docs", "serve.md"), "utf8");
+	const serveStart = serveDoc.indexOf("## ACP agent (`torus acp-agent`)");
+	assert.ok(serveStart !== -1, "docs/serve.md missing the ACP agent section");
+	const serveSection = serveDoc.slice(serveStart);
+	for (const token of [
+		"acp-agent",
+		"session/cancel",
+		"-32601",
+		"loadSession",
+		"-32002",
+		"stopReason",
+		"end_turn",
+		"cancelled",
+	]) {
+		assert.ok(serveSection.includes(token), `serve.md ACP section missing token: ${token}`);
+	}
+
+	const doc = readFileSync(path.join(root, "docs", "extensions.md"), "utf8");
+	const start = doc.indexOf("### `acp`");
+	assert.ok(start !== -1, "docs/extensions.md missing the acp section");
+	const end = doc.indexOf("\n### ", start);
+	const section = doc.slice(start, end === -1 ? undefined : end);
+	for (const token of [
+		"acp-agent",
+		"runAcpAgentRole",
+		"session/update",
+		"agent_message_chunk",
+		"method-not-found",
+		"fresh headless engine child",
+	]) {
+		assert.ok(section.includes(token), `acp section missing serve token: ${token}`);
 	}
 });

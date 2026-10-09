@@ -16,6 +16,7 @@
       "./extensions/mcp",
       "./extensions/providers",
       "./extensions/roster",
+      "./extensions/acp",
       "./extensions/prompts",
       "./extensions/browser",
       "./extensions/comment-checker",

@@ -137,3 +137,22 @@ Webhooks are explicit events: **every request fires a new delegation**, even if 
 ### Security posture
 
 The per-trigger secret is the trust boundary: anyone holding it can make the trigger's agent run its (payload-templated) task with your models. The payload is rendered as data, but the templated task itself is still acted on — see the serve section of [SECURITY.md](../SECURITY.md) for the full picture (bearer boundary, prompt-injection residual, bind exposure). Bind stays loopback by default; exposing webhooks beyond localhost means putting secrets on a network — prefer a TLS-terminating reverse proxy if you must.
+
+## ACP agent (`torus acp-agent`)
+
+`torus acp-agent` serves torus as an Agent Client Protocol v1 (stable) agent over stdio, so ACP-speaking editors (Zed, JetBrains) can drive it: newline-delimited JSON-RPC in on stdin, out on stdout — stdout is protocol-only, logs go to stderr. Spec pin (same as the consume half in `extensions/acp/index.ts`): github.com/agentclientprotocol/agent-client-protocol, docs/protocol/v1/ (repo formerly zed-industries), accessed 2026-10-09; initialization.mdx blob ea16b093. No `@agentclientprotocol/sdk` — the same node primitives as `extensions/rpc.ts`. The launcher intercepts the subcommand before the pi passthrough (serve pattern): the agent process is the surface, never an extension inside an engine session.
+
+Wire flow: `initialize` → `session/new` → `session/prompt`, plus `session/update` notifications streamed during a prompt.
+
+| Method | Behavior |
+|---|---|
+| `initialize` | `{protocolVersion: 1, agentCapabilities: {loadSession: false, promptCapabilities: {embeddedContext: false}}, agentInfo: {name: "torus", version: <repo version>, title: "torus"}, authMethods: []}` |
+| `session/new` | spawns a **fresh headless engine child** (one per ACP session, `--mode rpc` plus the canonical child extension set — no persona file, no `--model`; the editor drives the default torus engine) → `{sessionId: <opaque id>}`. `cwd` from params (fallback: the agent's cwd); `mcpServers` ignored — torus advertises no `mcpCapabilities` |
+| `session/prompt` | text blocks concatenated into one task → the engine child's events stream back as `session/update` (below); when the run settles → `{stopReason: "end_turn"}` |
+| `session/cancel` (notification) | kills that session's engine child; the pending prompt (if any) settles `{stopReason: "cancelled"}` |
+| `session/load` | JSON-RPC error `-32601` method-not-found — torus children are fresh-per-session; `loadSession: false` at initialize already gates it client-side |
+| anything else (`fs/*`, `terminal/*`, …) | JSON-RPC error `-32601` method-not-found — capability-gated off at initialize (clientCapabilities from the editor govern; torus simply does not implement them) |
+
+Any `session/*` request before `initialize` answers `-32002` — the LSP-style ServerNotInitialized code, borrowed by convention (ACP itself does not define one). Engine-child event mapping: assistant `text_delta` → `agent_message_chunk` (one `messageId` per prompt turn); `tool_execution_start` → `tool_call` (`status: "pending"`, `kind: "other"`, title = tool name) followed by `tool_call_update` `in_progress`; `tool_execution_end` → `tool_call_update` `completed` (`failed` on engine error); every other engine event (session, message_start/end, auto-retry, compaction) is omitted — the editor sees the stream, not the transcript. An engine child that dies mid-prompt settles the prompt request with a JSON-RPC error (`-32603`) naming the failure — no hang, and no trailing `agent_message_chunk`: the error is the whole surface for a dead child. A second `session/prompt` while one is in flight for that session answers `-32602`.
+
+Shutdown: EOF on stdin kills every engine child and exits 0 (SIGINT/SIGTERM do the same). Cancellation is kill-shaped on purpose — `session/cancel` SIGTERMs the session's child rather than steering an abort, so a cancelled prompt never leaves work running. Trust boundary: the editor process already controls spawning torus, so ACP adds no auth of its own (`authMethods: []`); the engine children inherit the agent process environment — provider credentials included — exactly like every other torus child.

@@ -23,6 +23,7 @@ import { StringDecoder } from "node:string_decoder";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, loadSkills } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { type AcpAgentSpec, acpAgents, runAcpAgent } from "../acp/index.js";
 import {
 	childExtensionArgs,
 	type EngineTally,
@@ -306,7 +307,10 @@ export function rosterText(): string {
 		const model = resolveModel(agent.chain) ?? "NO-CREDENTIALED-MODEL";
 		return `${agent.name}: ${agent.description} [chain=${agent.chain} -> ${model}]`;
 	});
-	return [providers, ...agents].join("\n");
+	const lines = [providers, ...agents];
+	const acp = Object.keys(acpAgents()).sort();
+	if (acp.length > 0) lines.push(`acp agents (external, own models): ${acp.join(", ")}`);
+	return lines.join("\n");
 }
 
 interface SpawnResult {
@@ -668,6 +672,153 @@ export function announceText(announce: boolean | string, task: string): string |
 	return (typeof announce === "string" ? announce : task).slice(0, 400);
 }
 
+/**
+ * ACP delegation: an external agent from acp.json run through the AcpChild
+ * transport. No engine spawn, no model chain, no skills — the agent brings
+ * its own model, so usage/cost are best-effort zeros and the registry model
+ * label is an `acp/<name>` marker rather than a resolved id.
+ */
+async function runAcpDelegation(
+	agentName: string,
+	spec: AcpAgentSpec,
+	task: string,
+	cwd: string | undefined,
+	onTurn: ((snapshot: DelegationSnapshot) => void) | undefined,
+	parentSession: string | null,
+	handle: string | null,
+	skills: string[] | null,
+	announce: boolean | string,
+	emitResult: boolean,
+): Promise<DelegationOutcome> {
+	if (skills && skills.length > 0) {
+		return {
+			ok: false,
+			text: `Agent "${agentName}" runs as an external ACP process — skills apply only to engine agents. Pass the needed context in the task text.`,
+			details: { error: "acp-skills-unsupported", agent: agentName },
+			delegationId: null,
+		};
+	}
+	const workingDir = cwd ?? process.cwd();
+	const startedAt = Date.now();
+	const delegationId = randomUUID();
+	const modelLabel = `acp/${agentName}`;
+	startDelegation(delegationId, agentName, modelLabel, parentSession, handle);
+	const announcement = announceText(announce, task);
+	if (announcement !== null) {
+		emitTorusCustom(
+			{
+				customType: "torus.delegation-start",
+				content: [{ type: "text", text: announcement }],
+				display: true,
+				details: { agent: agentName, delegationId, handle },
+			},
+			{ triggerTurn: false },
+		);
+	}
+	const onActionWrapped = (actionLine: string) => appendAction(delegationId, actionLine);
+	try {
+		const run = await runAcpAgent(agentName, spec, workingDir, task, {
+			onAction: onActionWrapped,
+			onSession: (sessionId) => attachSessionId(delegationId, sessionId),
+			onControl: (control) =>
+				attachControl(delegationId, { stop: control.stop, steer: () => false }),
+		});
+		const text = run.ok
+			? run.finalText
+			: `${run.finalText}${run.finalText ? "\n" : ""}[acp failure: ${run.stopReason}]${
+					run.stderr ? `\n${run.stderr.slice(0, 2000)}` : ""
+				}`;
+		if (run.turns > 0) {
+			updateDelegation(delegationId, {
+				text: run.finalText,
+				turns: run.turns,
+				usage: { input: 0, output: 0 },
+			});
+			onTurn?.({
+				text: run.finalText,
+				turns: run.turns,
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+				delegationId,
+			});
+		}
+		finishDelegation(delegationId, run.ok, text, run.sessionId);
+		if (emitResult) {
+			emitTorusCustom(
+				{
+					customType: "torus.delegation-result",
+					content: [
+						{
+							type: "text",
+							text: `${agentName} ${run.ok ? "finished" : "failed"}`,
+						},
+					],
+					display: true,
+					details: {
+						agent: agentName,
+						ok: run.ok,
+						delegationId,
+						sessionId: run.sessionId,
+						handle,
+						durationMs: Date.now() - startedAt,
+						turns: run.turns,
+						stopReason: run.stopReason,
+					},
+				},
+				{ triggerTurn: false },
+			);
+		}
+		return {
+			ok: run.ok,
+			text,
+			delegationId,
+			details: {
+				agent: agentName,
+				model: modelLabel,
+				exitCode: run.ok ? 0 : 1,
+				sessionId: run.sessionId,
+				delegationId,
+				turns: run.turns,
+				stopReason: run.stopReason,
+				usage: {
+					input: 0,
+					output: 0,
+					turns: run.turns,
+					cacheRead: 0,
+					cacheWrite: 0,
+					cost: 0,
+				},
+			},
+		};
+	} catch (runError) {
+		// Crash path mirrors the engine branch: finish best-effort so a start
+		// marker is never stranded without a failure marker, then rethrow.
+		try {
+			finishDelegation(delegationId, false, `acp delegation crashed: ${String(runError)}`);
+		} catch {
+			// registry finish failed (e.g. log unwritable); the marker below still goes out
+		}
+		if (emitResult) {
+			emitTorusCustom(
+				{
+					customType: "torus.delegation-result",
+					content: [{ type: "text", text: `${agentName} failed` }],
+					display: true,
+					details: {
+						agent: agentName,
+						ok: false,
+						delegationId,
+						handle,
+						durationMs: Date.now() - startedAt,
+						error: String(runError),
+					},
+				},
+				{ triggerTurn: false },
+			);
+		}
+		throw runError;
+	}
+}
+
 export async function runDelegation(
 	agentName: string,
 	task: string,
@@ -693,6 +844,23 @@ export async function runDelegation(
 	 */
 	options?: { model?: string | null },
 ): Promise<DelegationOutcome> {
+	// ACP agents from acp.json run their own models and win over same-named
+	// roster agents; the engine path below is untouched when acp.json is absent.
+	const acpSpec = acpAgents()[agentName];
+	if (acpSpec) {
+		return runAcpDelegation(
+			agentName,
+			acpSpec,
+			task,
+			cwd,
+			onTurn,
+			parentSession,
+			handle,
+			skills,
+			announce,
+			emitResult,
+		);
+	}
 	const agent = firstDelegatable(agentName);
 	if (!agent) {
 		return {
