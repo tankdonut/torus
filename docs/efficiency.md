@@ -219,5 +219,6 @@ Cells are medians; `±` is half the interquartile range across measured runs. Ve
 - Cost deltas are small but above noise on glm-5.3; on flash pricing they sit closer to the noise floor.
 - Wall-clock overhead per run is dominated by extension loading at spawn; amortized in real sessions that run many turns.
 - Ambient roles (dream/reflect, session-title) resolve via the fast tier, so a `chains.json` fast override pointing at a local model moves all ambient work to it.
+- Consumed ACP agents bypass the chain machinery entirely (they run their own models), so their usage/cost figures are best-effort zeros — see the acp section in `docs/extensions.md`.
 - Compare models only within their own section — pricing and token behavior differ.
 
