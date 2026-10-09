@@ -142,48 +142,106 @@ test("container: image bakes payload deps — no first-run npm bootstrap", () =>
 	}
 });
 
-test("container: ci.yml container job builds, tests, and publishes multi-arch (ref-gated)", () => {
+test("container: ci.yml builds each platform once, tests the pushed digest, merges multi-arch after tests", () => {
 	assert.ok(
 		/^ {2}container:$/m.test(ciWorkflow),
 		"ci.yml must define a container: job (2-space indent)",
 	);
-	// The image is built once: buildx with load:true yields the amd64 test image
-	// and exports its layers to the GHA cache, so the multi-arch publish is a
-	// cache hit on amd64. (A plain `make.sh image` docker build cannot share
-	// cache with buildx — it would recompile binary + payload per platform.)
+	// PR path: one loaded amd64 image feeds the suite — no registry push, no arm64.
 	assert.ok(
 		/platforms: linux\/amd64\n\s+load: true/.test(ciWorkflow),
-		"test image must be built via buildx with load:true on linux/amd64",
+		"PR test image must be built via buildx with load:true on linux/amd64",
 	);
 	assert.ok(
 		ciWorkflow.includes("tags: torus:ci"),
 		"loaded test image must be tagged torus:ci for image-test",
 	);
 	assert.ok(
-		ciWorkflow.includes("cache-from: type=gha") &&
-			ciWorkflow.includes("cache-to: type=gha,mode=max"),
-		"both buildx calls must share the GHA cache so publish reuses the test build's layers",
-	);
-	assert.ok(
 		ciWorkflow.includes("./make.sh image-test torus:ci"),
 		"container job must run the container suite via ./make.sh image-test torus:ci",
 	);
+	// Publish path: the build pushes unnamed by digest, and the suite runs
+	// against that exact digest pulled back from the registry — the tested
+	// image IS the published object. (Multi-output type=docker+push-by-digest
+	// silently skips the push: docker/build-push-action#1318.)
 	assert.ok(
-		ciWorkflow.includes("platforms: linux/amd64,linux/arm64"),
-		"container job must publish linux/amd64,linux/arm64",
+		ciWorkflow.includes(
+			"outputs: type=image,name=ghcr.io/tankdonut/torus,push-by-digest=true,push=true",
+		),
+		"amd64 publish build must push by digest (tagged only by container-publish, after tests)",
 	);
-	const pushLine = ciWorkflow.split("\n").find((line) => line.trim().startsWith("push: ${{"));
-	assert.ok(pushLine, "container job must set a push: expression on build-push-action");
-	assert.ok(pushLine.includes("refs/heads/main"), "push must be gated on refs/heads/main");
-	assert.ok(pushLine.includes("refs/tags/v"), "push must be gated on refs/tags/v");
+	assert.ok(
+		/docker pull "ghcr\.io\/tankdonut\/torus@\$\{\{ steps\.build\.outputs\.digest \}\}"/.test(
+			ciWorkflow,
+		),
+		"test suite must run against the pulled-back pushed digest, not a rebuilt image",
+	);
+	assert.ok(
+		(ciWorkflow.match(/provenance: mode=max/g) ?? []).length >= 2,
+		"both platform builds must attach provenance attestations",
+	);
+	// arm64: separate native-runner job, gated to main/tags, pushes by digest.
+	assert.ok(/^ {2}container-arm64:$/m.test(ciWorkflow), "ci.yml must define a container-arm64 job");
+	const arm64Gate = /container-arm64:\n[\s\S]*?\n {4}if: ([^\n]+)/.exec(ciWorkflow)?.[1] ?? "";
+	assert.ok(
+		arm64Gate.includes("refs/heads/main") && arm64Gate.includes("refs/tags/v"),
+		"arm64 build must be gated to main/tags only",
+	);
+	assert.ok(
+		/container-arm64:[\s\S]*?runs-on: ubuntu-24\.04-arm/.test(ciWorkflow),
+		"arm64 build must run on a native arm64 runner (no QEMU)",
+	);
+	assert.ok(ciWorkflow.includes("platforms: linux/arm64"), "arm64 job must build linux/arm64");
+	// Merge: multi-arch tags assembled from the two digests, only after both
+	// platform jobs (including the tested amd64 build) succeeded.
+	assert.ok(
+		/^ {2}container-publish:$/m.test(ciWorkflow),
+		"ci.yml must define a container-publish job",
+	);
+	assert.ok(
+		/container-publish:\n[\s\S]*?\n {4}needs: \[container, container-arm64\]/.test(ciWorkflow),
+		"publish job must gate on both platform jobs",
+	);
+	assert.ok(
+		ciWorkflow.includes("docker buildx imagetools create"),
+		"multi-arch tags must be assembled via imagetools create",
+	);
+	assert.ok(
+		ciWorkflow.includes("needs.container.outputs.amd64_digest") &&
+			ciWorkflow.includes("needs.container-arm64.outputs.arm64_digest"),
+		"merge must reference the digests pushed by the platform jobs",
+	);
+	assert.ok(
+		ciWorkflow.includes("type=raw,value=latest,enable={{is_default_branch}}"),
+		"latest must stay on the default branch (docs/container.md tag policy)",
+	);
+	assert.ok(
+		/release:\n[\s\S]*?\n {4}needs: \[lint-typecheck, smoke, build, container-publish\]/.test(
+			ciWorkflow,
+		),
+		"release must gate on container-publish (transitively: tests + both platforms)",
+	);
+	// Cache: scopes split per arch so parallel platform builds never race the
+	// same GHA cache record, while shared layers still cross-hit.
+	assert.ok(
+		ciWorkflow.includes("cache-to: type=gha,mode=max,scope=torus-amd64") &&
+			ciWorkflow.includes("cache-to: type=gha,mode=max,scope=torus-arm64"),
+		"each platform build must export its own GHA cache scope",
+	);
+	assert.ok(
+		/cache-from:[^\n]*\n\s+type=gha,scope=torus-amd64\n\s+type=gha,scope=torus-arm64/.test(
+			ciWorkflow,
+		),
+		"platform builds must read both GHA cache scopes",
+	);
 	for (const arg of ["NODE_VERSION", "BUN_VERSION"]) {
 		assert.ok(
 			ciWorkflow.includes(`${arg}=$(awk`),
-			`container job must resolve ${arg} from .tool-versions for the publish build args`,
+			`container jobs must resolve ${arg} from .tool-versions for the build args`,
 		);
 		assert.ok(
 			new RegExp(`build-args:[\\s\\S]*?${arg}=\\$\\{\\{ env\\.${arg} \\}}`).test(ciWorkflow),
-			`container publish must pass ${arg} build-arg (Dockerfile declares no default)`,
+			`platform builds must pass ${arg} build-arg (Dockerfile declares no default)`,
 		);
 	}
 });

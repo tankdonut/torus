@@ -5,18 +5,23 @@
 # the stage via ./make.sh npmrc and never committed), then bake the payload
 # tree + its npm dependencies (pinned pi engine included) into /out/torus.
 #
-# runtime stage: node-slim base plus the baked payload at /opt/torus — the
+# runtime stage: node-slim base (via mirror.gcr.io) plus the baked payload at
+# /opt/torus — the
 # launcher resolves TORUS_ROOT and boots without extracting to
 # ~/.torus/runtime or npm-installing over the network — plus the tools the
 # agent needs at runtime: tmux, bubblewrap, socat, git, ripgrep,
 # notify-send, ast-grep (sg) and a pinned typescript-language-server.
 
 # required build-args, no defaults — ./make.sh image and CI resolve them from .tool-versions
+# Base image comes from mirror.gcr.io (Google's pull-through mirror of Docker
+# Official Images): anonymous pulls are not subject to Docker Hub's per-IP
+# rate limits, which intermittently red CI on shared runner egress IPs.
+# ./make.sh image builds against the same mirror.
 ARG NODE_VERSION
 ARG BUN_VERSION
 ARG AST_GREP_VERSION=0.45.3
 
-FROM node:${NODE_VERSION}-slim AS build
+FROM mirror.gcr.io/library/node:${NODE_VERSION}-slim AS build
 
 # global ARGs only apply to FROM; re-declare to use inside the stage
 ARG BUN_VERSION
@@ -55,7 +60,7 @@ RUN set -eux; \
     npm install --no-fund --no-audit --omit=dev --legacy-peer-deps; \
     node_modules/.bin/pi --version
 
-FROM node:${NODE_VERSION}-slim
+FROM mirror.gcr.io/library/node:${NODE_VERSION}-slim
 
 # tmux bubblewrap socat git ripgrep libnotify-bin ca-certificates: agent
 # runtime deps. curl + unzip: only to fetch/extract the pinned ast-grep

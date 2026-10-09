@@ -73,27 +73,49 @@ jobs:
           path: dist/torus
           if-no-files-found: error
 
+  # Container pipeline: each platform builds exactly once per run and pushes
+  # by digest; the multi-arch tag is assembled from those digests only after
+  # the container test suite has passed against the amd64 image. PRs run the
+  # amd64 build + test suite only — no arm64, no registry traffic.
   container:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    outputs:
+      amd64_digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version-file: .tool-versions
       - uses: docker/setup-buildx-action@v4
-      - name: Resolve .tool-versions pins for build args
+      - name: Resolve .tool-versions pins + publish flag
         run: |
           echo "NODE_VERSION=$(awk '$1=="nodejs"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
           echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
-      # One buildx pipeline: the amd64 test image is loaded into the daemon AND
-      # exported to the GHA cache, so the publish build below reuses those
-      # layers instead of recompiling the binary + payload per platform.
-      # (A plain `docker build` — `make.sh image` — cannot share buildx cache,
-      # which is what made this job build the image twice from scratch.)
-      - name: Build test image (amd64, cache-warming for publish)
+          publishing=false
+          case "$GITHUB_REF" in
+            refs/heads/main|refs/tags/v*) publishing=true ;;
+          esac
+          echo "PUBLISHING=$publishing" >> "$GITHUB_ENV"
+      - name: Login to GHCR
+        if: env.PUBLISHING == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Docker meta (image labels)
+        if: env.PUBLISHING == 'true'
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/tankdonut/torus
+      # PR path: one docker-format load for the test suite. No registry push,
+      # no arm64 — the publish machinery below is skipped entirely.
+      - name: Build test image (amd64)
+        if: env.PUBLISHING != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -103,11 +125,104 @@ jobs:
           build-args: |
             NODE_VERSION=${{ env.NODE_VERSION }}
             BUN_VERSION=${{ env.BUN_VERSION }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha,scope=torus-amd64
+            type=gha,scope=torus-arm64
+          cache-to: type=gha,mode=max,scope=torus-amd64
+      # Publish path: one build, pushed unnamed by digest; the step below
+      # pulls that exact digest back as torus:ci so the suite tests the
+      # published object itself. Multi-output builds (type=docker +
+      # push-by-digest in one build) silently skip the registry push — see
+      # docker/build-push-action#1318 — hence the pull-back.
+      - name: Build amd64 image (push by digest)
+        if: env.PUBLISHING == 'true'
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          build-args: |
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            BUN_VERSION=${{ env.BUN_VERSION }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          outputs: type=image,name=ghcr.io/tankdonut/torus,push-by-digest=true,push=true
+          cache-from: |
+            type=gha,scope=torus-amd64
+            type=gha,scope=torus-arm64
+          cache-to: type=gha,mode=max,scope=torus-amd64
+      - name: Stage pushed digest as torus:ci for the test suite
+        if: env.PUBLISHING == 'true'
+        run: |
+          docker pull "ghcr.io/tankdonut/torus@${{ steps.build.outputs.digest }}"
+          docker tag "ghcr.io/tankdonut/torus@${{ steps.build.outputs.digest }}" torus:ci
       - name: Container test suite
         run: ./make.sh image-test torus:ci
-      - name: Docker meta
+
+  # Native arm64 runner (free for public repos) — no QEMU emulation tax. Runs
+  # parallel with the amd64 job; its digest is only ever tagged by
+  # container-publish, which also gates on the tested amd64 build.
+  container-arm64:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      arm64_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Resolve .tool-versions pins for build args
+        run: |
+          echo "NODE_VERSION=$(awk '$1=="nodejs"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
+          echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Docker meta (image labels)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/tankdonut/torus
+      - name: Build arm64 image (push by digest)
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/arm64
+          build-args: |
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            BUN_VERSION=${{ env.BUN_VERSION }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          outputs: type=image,name=ghcr.io/tankdonut/torus,push-by-digest=true,push=true
+          cache-from: |
+            type=gha,scope=torus-amd64
+            type=gha,scope=torus-arm64
+          cache-to: type=gha,mode=max,scope=torus-arm64
+
+  # Assembles the multi-arch tags from the two platform digests. Runs only
+  # when both platform jobs succeeded — a failing test suite means the digests
+  # stay untagged (invisible to pullers) instead of publishing an untested image.
+  container-publish:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    needs: [container, container-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Docker meta (published tags)
         id: meta
         uses: docker/metadata-action@v6
         with:
@@ -116,31 +231,22 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-      - name: Login to GHCR
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish multi-arch image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          build-args: |
-            NODE_VERSION=${{ env.NODE_VERSION }}
-            BUN_VERSION=${{ env.BUN_VERSION }}
-          provenance: mode=max
-          push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Merge platform digests into multi-arch tags
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -eu
+          tag_args=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && tag_args+=("-t" "$tag")
+          done <<< "$IMAGE_TAGS"
+          docker buildx imagetools create "${tag_args[@]}" \
+            "ghcr.io/tankdonut/torus@${{ needs.container.outputs.amd64_digest }}" \
+            "ghcr.io/tankdonut/torus@${{ needs.container-arm64.outputs.arm64_digest }}"
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [lint-typecheck, smoke, build, container]
+    needs: [lint-typecheck, smoke, build, container-publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write
