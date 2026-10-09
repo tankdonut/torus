@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.8.0](https://github.com/tankdonut/torus/compare/v0.7.0...v0.8.0) (2026-10-09)
+
+
+### Features
+
+* **acp:** speak the Agent Client Protocol in both directions ([94472e9](https://github.com/tankdonut/torus/commit/94472e9d5bed7505935c331c6826488b25237ab3))
+* doctor reports legacy state layout residue ([76a8649](https://github.com/tankdonut/torus/commit/76a86499e0135274182733cc5dde230a054771e1))
+* **models:** user-configurable chains and alternate providers via chains.json ([e022cd3](https://github.com/tankdonut/torus/commit/e022cd311ef8d23b0968a3d11b7b2d4c5d95d357))
+* project-scoped delegation logs and dream scoping ([5a79fd8](https://github.com/tankdonut/torus/commit/5a79fd8e6abc512a76ffbfb4536e8bfb45030a1f))
+* project-scoped goal store with orphan-only GC ([e8be887](https://github.com/tankdonut/torus/commit/e8be887e1e91ae2a45a1b0a6f0edd14a2ff7b86a))
+* project-scoped monitor logs ([b613225](https://github.com/tankdonut/torus/commit/b61322522fb575d2cea9c5f6585927814a54fc0f))
+* project-scoped persona state with orphan-only GC ([9199f06](https://github.com/tankdonut/torus/commit/9199f063283bad1f7ad4a6ec1b45694a6199aea4))
+* project-scoped plans and work ledgers ([003c728](https://github.com/tankdonut/torus/commit/003c728a1b4f48bd010d96e68c4a64d0b6209f96))
+* project-scoped reflect state with orphan-only GC ([34c491d](https://github.com/tankdonut/torus/commit/34c491d445154cddaa3a42e56a9de4ad35415cbb))
+* project-scoped todo store with orphan-only GC ([5e436a9](https://github.com/tankdonut/torus/commit/5e436a9bc68b5cef4e93e63254586b668a5e0e9f))
+* sandbox host approvals stored per project ([8780f8a](https://github.com/tankdonut/torus/commit/8780f8a7bbaccb13eeaee91d0ce9ae58cb43f399))
+* **skills:** expand torus-lsp-setup with full server table and config semantics ([8ff77f4](https://github.com/tankdonut/torus/commit/8ff77f4a820a2c7edb02e0f29db310249c9f7ea6))
+* **state:** pi-style project key and per-project state dir helpers ([e998a75](https://github.com/tankdonut/torus/commit/e998a7583e8c4b11c0d1f88087e4b062b8cb7158))
+* teams carry a project field with scoped defaults ([1b4d471](https://github.com/tankdonut/torus/commit/1b4d4712af9b93dd63617436a583b4d95dade16b))
+* worktrees keyed by canonical project identity ([6caa7fe](https://github.com/tankdonut/torus/commit/6caa7fee864a5fbef2ab8b761fee419e3f716a65))
+
+
+### Bug Fixes
+
+* **deps:** force @modelcontextprotocol/sdk to 1.31.0 (Dependabot alert [#2](https://github.com/tankdonut/torus/issues/2)) ([ad489a2](https://github.com/tankdonut/torus/commit/ad489a2f7db9432f4071fc23f736a72418abb388))
+* **payload:** pin payload installs to the baked repo lockfile ([e8f4bec](https://github.com/tankdonut/torus/commit/e8f4becd93db370d4196d6a99f2f06d0028aaba4))
+
 ## [0.7.0](https://github.com/tankdonut/torus/compare/v0.6.0...v0.7.0) (2026-10-09)
 
 
