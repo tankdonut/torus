@@ -147,9 +147,22 @@ test("container: ci.yml container job builds, tests, and publishes multi-arch (r
 		/^ {2}container:$/m.test(ciWorkflow),
 		"ci.yml must define a container: job (2-space indent)",
 	);
+	// The image is built once: buildx with load:true yields the amd64 test image
+	// and exports its layers to the GHA cache, so the multi-arch publish is a
+	// cache hit on amd64. (A plain `make.sh image` docker build cannot share
+	// cache with buildx — it would recompile binary + payload per platform.)
 	assert.ok(
-		ciWorkflow.includes("./make.sh image torus:ci"),
-		"container job must build the image via ./make.sh image torus:ci",
+		/platforms: linux\/amd64\n\s+load: true/.test(ciWorkflow),
+		"test image must be built via buildx with load:true on linux/amd64",
+	);
+	assert.ok(
+		ciWorkflow.includes("tags: torus:ci"),
+		"loaded test image must be tagged torus:ci for image-test",
+	);
+	assert.ok(
+		ciWorkflow.includes("cache-from: type=gha") &&
+			ciWorkflow.includes("cache-to: type=gha,mode=max"),
+		"both buildx calls must share the GHA cache so publish reuses the test build's layers",
 	);
 	assert.ok(
 		ciWorkflow.includes("./make.sh image-test torus:ci"),
