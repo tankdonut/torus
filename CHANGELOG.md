@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0](https://github.com/tankdonut/torus/compare/v0.8.0...v0.9.0) (2026-10-09)
+
+
+### Features
+
+* export TORUS_STATE_DIR and abbreviate state paths in output ([868f78b](https://github.com/tankdonut/torus/commit/868f78b94f0da916ad85b79e14b35afc5e28f874))
+
+
+### Bug Fixes
+
+* **deps:** update dependency pi-web-access to ^0.38.0 ([#32](https://github.com/tankdonut/torus/issues/32)) ([659730d](https://github.com/tankdonut/torus/commit/659730d01a2e4ffde67af16620cf1a4f653e81fe))
+* **teams:** scope team state to the project namespace ([5f1ebfa](https://github.com/tankdonut/torus/commit/5f1ebfa32aa576991241ce6a28fd8b58bf5f7065))
+
 ## [0.8.0](https://github.com/tankdonut/torus/compare/v0.7.0...v0.8.0) (2026-10-09)
 
 
