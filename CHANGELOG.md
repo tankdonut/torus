@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.0](https://github.com/tankdonut/torus/compare/v0.9.0...v0.10.0) (2026-10-10)
+
+
+### Features
+
+* add systematic-debugging skill and confidence-gated security lens ([4e6de5f](https://github.com/tankdonut/torus/commit/4e6de5fdb4423d66b5d520800f40e9167e1bc9ca))
+
+
+### Bug Fixes
+
+* fleet steer input can no longer trap the footer off screen ([df27744](https://github.com/tankdonut/torus/commit/df2774423989054dbb4c517197808cfad7c054a2))
+* fleet view stays operable by mouse on narrow terminals and esc-less hosts ([0acf522](https://github.com/tankdonut/torus/commit/0acf522db8e1e2301c012f29646eb55df6e853f5))
+
 ## [0.9.0](https://github.com/tankdonut/torus/compare/v0.8.0...v0.9.0) (2026-10-09)
 
 
