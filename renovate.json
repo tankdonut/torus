@@ -9,7 +9,7 @@
   "packageRules": [
     {
       "matchManagers": ["asdf"],
-      "matchDatasources": ["node-version"],
+      "matchDatasources": ["node-version", "bun-version"],
       "minimumReleaseAge": "3 days"
     },
     {
