@@ -733,22 +733,13 @@ class FleetBrowser implements Component {
 
 	private renderDetail(item: FleetItem, theme: Theme, width: number): string[] {
 		const rows = process.stdout.rows ?? 40;
-		// rows - 4 feeds the outer frame (top rule, bottom rule, two blank rows);
-		// one more row stays blank between the transcript and the footer rule — the
-		// same breathing room the main session window keeps above the editor border.
-		const visible = Math.max(1, rows - 5);
-		const body =
-			item.kind === "delegation"
-				? this.delegationDetailBody(item.record, theme, width)
-				: this.externalDetailBody(item.run, theme, width);
-		if (this.follow) this.scroll = Math.max(0, body.length - visible);
-		this.scroll = Math.min(this.scroll, Math.max(0, body.length - visible));
-		this.detailMaxScroll = Math.max(0, body.length - visible);
-		const page = body.slice(this.scroll, this.scroll + visible);
 		const canSteer = item.kind === "delegation" && item.record.status === "running";
 		const stopPrompt = this.stopConfirm && canSteer;
 		// The status header builds first: on narrow terminals it wraps its chip
-		// row onto an extra line, which the filler budget below must reserve.
+		// row onto an extra line, and the steer box / stop prompt claim their own
+		// footer rows. The transcript window shrinks by that footer height so the
+		// footer — with its [esc] back chip, the only mouse exit while steer input
+		// owns the keyboard — stays on screen even when the transcript fills it.
 		const header =
 			item.kind === "delegation"
 				? this.delegationHeader(
@@ -758,11 +749,20 @@ class FleetBrowser implements Component {
 						canSteer && !this.steerMode && !stopPrompt,
 					)
 				: this.externalHeader(item.run, theme, width);
-		// Footer rows under the transcript: one blank padding row + rule + status
-		// header; the steer box and the y/n stop prompt each claim one extra row,
-		// as does each wrapped header line past the first.
-		const reserved = (this.steerMode && canSteer ? 5 : stopPrompt ? 4 : 3) + header.length - 1;
-		const filler = Math.max(0, visible - page.length - reserved);
+		const footerLines = (this.steerMode && canSteer ? 3 : stopPrompt ? 2 : 1) + header.length;
+		// rows - 3: top rule, bottom rule, and the blank that keeps the transcript
+		// clear of the footer rule — the same breathing room the main session
+		// window keeps above the editor border.
+		const visible = Math.max(1, rows - 3 - footerLines);
+		const body =
+			item.kind === "delegation"
+				? this.delegationDetailBody(item.record, theme, width)
+				: this.externalDetailBody(item.run, theme, width);
+		if (this.follow) this.scroll = Math.max(0, body.length - visible);
+		this.scroll = Math.min(this.scroll, Math.max(0, body.length - visible));
+		this.detailMaxScroll = Math.max(0, body.length - visible);
+		const page = body.slice(this.scroll, this.scroll + visible);
+		const filler = Math.max(0, visible - page.length);
 		const steerColor = entityColor(
 			item.kind === "delegation"
 				? (item.record.handle ?? item.record.agent)

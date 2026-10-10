@@ -579,6 +579,67 @@ test("narrow terminal: detail footer wraps its chips onto a second row, all clic
 	}
 });
 
+test("steer mode: the footer with its [esc] back chip stays on screen over a full transcript", () => {
+	registry.resetRegistryForTesting();
+	const sid = "0f0e0d0c-eeee-4bbb-8ccc-444455557777";
+	mkdirSync(path.join(SESSIONS, "proj"), { recursive: true });
+	const lines = [JSON.stringify({ type: "session", id: sid, timestamp: Date.now(), cwd: "/tmp" })];
+	for (let i = 0; i < 30; i += 1) {
+		lines.push(
+			JSON.stringify({
+				type: "message",
+				id: `s${i}`,
+				message: {
+					role: "user",
+					content: [{ type: "text", text: `msg ${i}\nsecond line\nthird line` }],
+				},
+			}),
+		);
+	}
+	writeFileSync(
+		path.join(SESSIONS, "proj", `2026-10-10T00-00-00-000Z_${sid}.jsonl`),
+		`${lines.join("\n")}\n`,
+		"utf8",
+	);
+	registry.startDelegation("w-steer-fit", "builder", "zai/glm-5.3", sid, "steery");
+	registry.attachControl("w-steer-fit", { stop: () => {}, steer: () => true });
+	const { hooks } = registerExtension();
+	const driver = makeCtx("fullscreen", { fg: (_c, t) => t, bold: (t) => `*${t}*` });
+	hooks.get("session_start")(undefined, driver.ctx);
+	globalThis[registry.FLEET_OPENER]("w-steer-fit");
+	const component = driver.component();
+	const rowsDesc = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+	Object.defineProperty(process.stdout, "rows", { value: 24, configurable: true });
+	try {
+		component.render(160); // seeds items for the focused detail
+		component.handleInput("s"); // steer box claims two extra footer rows
+		const rendered = component.render(160);
+		const box = component.footerButtons;
+		assert.ok(box?.back, "back chip zone registered in steer mode");
+		assert.ok(box.y < 24, `back chip row ${box.y} must sit inside the 24-row screen`);
+		assert.ok(
+			rendered.some((l) => l.includes("steer>")),
+			"steer input visible",
+		);
+		assert.ok(
+			(rendered[box.y] ?? "").includes("[esc] back"),
+			"status header with the back chip renders on screen",
+		);
+		assert.deepEqual(
+			component.handleMouse({ type: "click", button: "left", x: box.back[0], y: box.y }),
+			{ handled: true },
+		);
+		assert.ok(
+			!component.render(160).some((l) => l.includes("steer>")),
+			"back click leaves steer mode — the mouse-only exit",
+		);
+	} finally {
+		if (rowsDesc) Object.defineProperty(process.stdout, "rows", rowsDesc);
+		else delete process.stdout.rows;
+		component.dispose();
+	}
+});
+
 test("list view: [esc] close chip closes the overlay by mouse", () => {
 	registry.resetRegistryForTesting();
 	registry.startDelegation("w-close", "builder", "zai/glm-5.3", null, "closey");
