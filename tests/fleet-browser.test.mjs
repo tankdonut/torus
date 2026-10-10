@@ -384,7 +384,7 @@ test("detail footer: [steer]/[stop] ride the status line, stop needs y/n, hover 
 	const component = driver.component();
 	try {
 		const buttonLine = () => {
-			const lines = component.render(120);
+			const lines = component.render(160);
 			const y = lines.findIndex((l) => l.includes("[s] steer"));
 			assert.ok(y >= 0, "footer status line with steer button rendered");
 			assert.ok(lines[y]?.includes("torus fleet"), "buttons ride the footer status line");
@@ -403,7 +403,7 @@ test("detail footer: [steer]/[stop] ride the status line, stop needs y/n, hover 
 			undefined,
 		);
 		assert.ok(
-			component.render(120).some((l) => l.includes("*[s] steer*")),
+			component.render(160).some((l) => l.includes("*[s] steer*")),
 			"hovered steer button renders bold",
 		);
 
@@ -414,7 +414,7 @@ test("detail footer: [steer]/[stop] ride the status line, stop needs y/n, hover 
 			{ handled: true },
 		);
 		assert.ok(
-			component.render(120).some((l) => l.includes("steer>")),
+			component.render(160).some((l) => l.includes("steer>")),
 			"steer click opens the steer box",
 		);
 		component.handleInput(ESC);
@@ -426,16 +426,16 @@ test("detail footer: [steer]/[stop] ride the status line, stop needs y/n, hover 
 			{ handled: true },
 		);
 		assert.ok(
-			component.render(120).some((l) => l.includes("stop @scout? y/n")),
+			component.render(160).some((l) => l.includes("stop @scout? y/n")),
 			"stop click arms the y/n prompt",
 		);
 		component.handleInput("n");
 		assert.equal(stops, 0, "n must cancel without stopping");
-		assert.ok(!component.render(120).some((l) => l.includes("y/n")), "prompt cleared after cancel");
+		assert.ok(!component.render(160).some((l) => l.includes("y/n")), "prompt cleared after cancel");
 
 		component.handleInput("x");
 		assert.ok(
-			component.render(120).some((l) => l.includes("stop @scout? y/n")),
+			component.render(160).some((l) => l.includes("stop @scout? y/n")),
 			"x key arms the prompt too",
 		);
 		component.handleInput("y");
@@ -449,7 +449,7 @@ test("detail footer: [steer]/[stop] ride the status line, stop needs y/n, hover 
 			undefined,
 		);
 		assert.ok(
-			component.render(120).some((l) => l.startsWith("*")),
+			component.render(160).some((l) => l.startsWith("*")),
 			"hovered list row renders bold",
 		);
 	} finally {
@@ -509,7 +509,7 @@ test("detail footer: back label is colored, hoverable, and click-routed", () => 
 			{ handled: true },
 		);
 		assert.ok(
-			component.render(160).some((l) => l.includes("esc close")),
+			component.render(160).some((l) => l.includes("[esc] close")),
 			"back click returns to the list view",
 		);
 		component.handleInput(ENTER);
@@ -528,9 +528,15 @@ test("detail footer: back label is colored, hoverable, and click-routed", () => 
 			"back click leaves steer mode",
 		);
 
-		// A clipped chip must not register a phantom click zone.
-		component.render(30);
-		assert.ok(!component.footerButtons?.back, "clipped back chip registers no click zone");
+		// Narrow width: the footer wraps its chips onto their own row; the back
+		// chip stays whole and clickable (steer/stop drop before it does).
+		const narrow = component.render(30);
+		assert.ok(component.footerButtons?.back, "wrapped back chip keeps its click zone");
+		assert.ok(!component.footerButtons?.steer, "steer drops when its row cannot fit the pair");
+		assert.ok(
+			(narrow[component.footerButtons.y] ?? "").includes("[esc] back"),
+			"wrapped chip row carries the back chip",
+		);
 
 		// With no list behind the detail, back click closes the overlay.
 		component.listSeen = false;
@@ -545,8 +551,85 @@ test("detail footer: back label is colored, hoverable, and click-routed", () => 
 	}
 });
 
+test("narrow terminal: detail footer wraps its chips onto a second row, all clickable", () => {
+	registry.resetRegistryForTesting();
+	const theme = { fg: (_c, t) => t, bold: (t) => `*${t}*` };
+	registry.startDelegation("w-narrow", "builder", "zai/glm-5.3", null, "narrow");
+	registry.attachControl("w-narrow", { stop: () => {}, steer: () => true });
+	const { hooks } = registerExtension();
+	const driver = makeCtx("fullscreen", theme);
+	hooks.get("session_start")(undefined, driver.ctx);
+	globalThis[registry.FLEET_OPENER]("w-narrow");
+	const component = driver.component();
+	try {
+		const lines = component.render(40);
+		const box = component.footerButtons;
+		assert.ok(box, "footer hit-boxes registered");
+		assert.ok(box.steer && box.stop && box.back, "all three chips keep spans at width 40");
+		const chipRow = lines[box.y] ?? "";
+		assert.ok(chipRow.startsWith("[s] steer"), "chips lead their own wrapped row");
+		assert.ok(!chipRow.includes("torus fleet"), "info head lives on the row above");
+		assert.deepEqual(
+			component.handleMouse({ type: "click", button: "left", x: box.back[0], y: box.y }),
+			{ handled: true },
+		);
+		assert.equal(driver.doneCount(), 1, "back click closes the directly-opened detail");
+	} finally {
+		component.dispose();
+	}
+});
+
+test("list view: [esc] close chip closes the overlay by mouse", () => {
+	registry.resetRegistryForTesting();
+	registry.startDelegation("w-close", "builder", "zai/glm-5.3", null, "closey");
+	const { shortcuts } = registerExtension();
+	const driver = makeCtx("fullscreen", { fg: (_c, t) => t, bold: (t) => `*${t}*` });
+	shortcuts.get("alt+t").handler(driver.ctx);
+	const component = driver.component();
+	try {
+		const lines = component.render(100);
+		const box = component.listButtons;
+		assert.ok(box, "list close hit-box registered");
+		assert.equal(box.y, 1, "close chip rides the pinned header row");
+		assert.ok((lines[1] ?? "").includes("[esc] close"), "close chip rendered in the header");
+		assert.deepEqual(
+			component.handleMouse({ type: "click", button: "left", x: box.close[0], y: box.y }),
+			{ handled: true },
+		);
+		assert.equal(driver.doneCount(), 1, "close click exits the fleet view");
+	} finally {
+		component.dispose();
+	}
+});
+
+test("regular mode: raw SGR clicks open rows and the close chip without esc", () => {
+	registry.resetRegistryForTesting();
+	registry.startDelegation("w-raw", "builder", "zai/glm-5.3", null, "rawclick");
+	const { shortcuts } = registerExtension();
+	const driver = makeCtx("regular", { fg: (_c, t) => t, bold: (t) => `*${t}*` });
+	shortcuts.get("alt+t").handler(driver.ctx);
+	const component = driver.component();
+	try {
+		component.render(100);
+		// First delegation row is overlay y=3 → SGR row 4; click routes through clickAt.
+		component.handleInput("\x1b[<0;3;4M");
+		assert.equal(component.mode, "detail", "raw click opens the row's detail");
+		component.handleInput(ESC);
+		assert.equal(component.mode, "list", "esc still backs out to the list");
+		const box = component.listButtons;
+		assert.ok(box, "close chip hit-box present");
+		component.handleInput(`\x1b[<0;${box.close[0] + 1};2M`);
+		assert.equal(driver.doneCount(), 1, "raw close-chip click exits the overlay");
+	} finally {
+		component.dispose();
+	}
+});
+
 test("splitMouseBuffer: arrow keys pass through; dead mouse fragments still stripped", () => {
 	const wheels = [];
+	const clicks = [];
+	const wheelCb = (d) => wheels.push(d);
+	const clickCb = (x, y) => clicks.push([x, y]);
 	assert.deepEqual(
 		browser.splitMouseBuffer("\x1b[A", (d) => wheels.push(d)),
 		{
@@ -588,6 +671,17 @@ test("splitMouseBuffer: arrow keys pass through; dead mouse fragments still stri
 		},
 	);
 	assert.deepEqual(wheels, [-1], "complete wheel sequence still routes to the wheel handler");
+	assert.deepEqual(browser.splitMouseBuffer("\x1b[<0;5;4M", wheelCb, clickCb), {
+		keys: "",
+		held: "",
+	});
+	assert.deepEqual(clicks, [[5, 4]], "left press routes as a click with 1-based coords");
+	assert.deepEqual(
+		browser.splitMouseBuffer("\x1b[<0;5;4m", wheelCb, clickCb),
+		{ keys: "", held: "" },
+		"release events consume without clicking",
+	);
+	assert.deepEqual(clicks, [[5, 4]], "release must not fire the click handler");
 });
 
 test("list: windows past ten rows, arrow keys drive the cursor, clicks track the window", () => {

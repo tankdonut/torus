@@ -162,7 +162,7 @@ const CTRL_C = "\x03";
 // here — enable or disable — can clobber it and kill host clicks until restart.
 const ENABLE_WHEEL = "\x1b[?1000h\x1b[?1006h";
 const DISABLE_WHEEL = "\x1b[?1006l\x1b[?1000l";
-const SGR_MOUSE = /\x1b\[<(\d+);\d+;\d+[Mm]/g;
+const SGR_MOUSE = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
 // Wheel sequences can arrive split across reads; hold a strict prefix until it completes.
 const PARTIAL_SGR_MOUSE = /^\x1b\[<\d*(?:;\d*){0,2}$/;
 const WHEEL_UP = 64;
@@ -196,13 +196,20 @@ function headerLine(record: DelegationRecord, theme: Theme, tick: number, width:
 export function splitMouseBuffer(
 	combined: string,
 	wheel: (delta: -1 | 1) => void,
+	click?: (x: number, y: number) => void,
 ): { keys: string; held: string } {
-	let rest = combined.replace(SGR_MOUSE, (_match, button: string) => {
-		const code = Number(button);
-		if (code === WHEEL_UP) wheel(-1);
-		else if (code === WHEEL_DOWN) wheel(1);
-		return "";
-	});
+	let rest = combined.replace(
+		SGR_MOUSE,
+		(_match, button: string, col: string, row: string, final: string) => {
+			const code = Number(button);
+			if (code === WHEEL_UP) wheel(-1);
+			else if (code === WHEEL_DOWN) wheel(1);
+			// 1000h reports press ('M') and release ('m'); only a plain left press
+			// is a click — releases and modifier variants are dropped.
+			else if (click !== undefined && final === "M" && code === 0) click(Number(col), Number(row));
+			return "";
+		},
+	);
 	// A mouse-shaped prefix followed by content that can neither finish a CSI
 	// sequence (final byte 0x40–0x7e, e.g. the A/B of arrow keys) nor continue
 	// its parameter run (0x30–0x3f) is a dead fragment — dropping it keeps a
@@ -218,13 +225,11 @@ function withinSpan(x: number, span: readonly [number, number] | undefined): boo
 
 /** The footer's back affordance: colored text, click-routed like the buttons. */
 const BACK_LABEL = "[esc] back";
-
-/** Screen-space span for BACK_LABEL at `leadWidth` visible columns into the
- * footer line — undefined when the label would be clipped by `width`. */
-function backSpan(leadWidth: number, width: number): [number, number] | undefined {
-	const start = leadWidth + 3; // the dim " · " separator before the label
-	return start + BACK_LABEL.length <= width ? [start, start + BACK_LABEL.length - 1] : undefined;
-}
+/** The list header's close chip — the mouse-only exit from the fleet view. */
+const CLOSE_LABEL = "[esc] close";
+const STEER_LABEL = "[s] steer";
+const STOP_LABEL = "[x] stop";
+const SEP = " · ";
 
 class FleetBrowser implements Component {
 	private tui: TUI;
@@ -248,7 +253,7 @@ class FleetBrowser implements Component {
 	private stopConfirm = false;
 	/** Hovered list row index / footer button for bold-on-hover; null = none. */
 	private hoverRow: number | null = null;
-	private hoverButton: "steer" | "stop" | "back" | null = null;
+	private hoverButton: "steer" | "stop" | "back" | "close" | null = null;
 	/** Screen-space hit-boxes in the detail footer line: the [steer]/[stop]
 	 * buttons and the colored back label, each present only when fully rendered. */
 	private footerButtons: {
@@ -257,6 +262,8 @@ class FleetBrowser implements Component {
 		stop?: [number, number];
 		back?: [number, number];
 	} | null = null;
+	/** Hit-box for the list header's pinned [esc] close chip (y is always 1). */
+	private listButtons: { y: number; close: [number, number] } | null = null;
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private readonly componentCache = new Map<
 		string,
@@ -403,8 +410,9 @@ class FleetBrowser implements Component {
 		this.tui.requestRender();
 	}
 
-	/** Host-dispatched mouse (fullscreen): wheel scrolls, clicks open list rows.
-	 * Regular mode never calls this — wheel arrives as raw SGR in handleInput. */
+	/** Host-dispatched mouse (fullscreen): wheel scrolls, clicks route through
+	 * clickAt. Regular mode never calls this — its mouse arrives as raw SGR in
+	 * handleInput and routes through the same clickAt. */
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (event.type === "wheel") {
 			const lines = event.wheelDelta ?? 0;
@@ -423,7 +431,12 @@ class FleetBrowser implements Component {
 							: withinSpan(event.x, this.footerButtons.back)
 								? "back"
 								: null
-					: null;
+					: this.mode === "list" &&
+							this.listButtons &&
+							event.y === this.listButtons.y &&
+							withinSpan(event.x, this.listButtons.close)
+						? "close"
+						: null;
 			if (row !== this.hoverRow) {
 				this.hoverRow = row;
 				changed = true;
@@ -435,14 +448,34 @@ class FleetBrowser implements Component {
 			if (changed) this.tui.requestRender();
 			return undefined;
 		}
-		if (
-			event.type === "click" &&
-			event.button === "left" &&
-			this.mode === "detail" &&
-			this.footerButtons &&
-			event.y === this.footerButtons.y
-		) {
-			if (withinSpan(event.x, this.footerButtons.back)) {
+		if (event.type === "click" && event.button === "left") return this.clickAt(event.x, event.y);
+		return undefined;
+	}
+
+	/** Shared click routing for host-dispatched and raw-SGR clicks; `x`/`y` are
+	 * overlay-local (0-based). The list close chip goes first — it is the only
+	 * mouse path back to the main window on terminals that swallow esc. */
+	private clickAt(x: number, y: number): TuiMouseEventResult | undefined {
+		if (this.mode === "list") {
+			if (
+				this.listButtons !== null &&
+				y === this.listButtons.y &&
+				withinSpan(x, this.listButtons.close)
+			) {
+				this.close();
+				this.tui.requestRender();
+				return { handled: true };
+			}
+			const index = this.listRows.get(y);
+			if (index === undefined || index >= this.items.length) return undefined;
+			this.cursor = index;
+			this.mode = "detail";
+			this.follow = true;
+			this.scroll = 0;
+			return { handled: true };
+		}
+		if (this.footerButtons !== null && y === this.footerButtons.y) {
+			if (withinSpan(x, this.footerButtons.back)) {
 				// Same as pressing esc: leave steer/stop states, or back out of detail.
 				if (this.steerMode) {
 					this.steerMode = false;
@@ -459,27 +492,17 @@ class FleetBrowser implements Component {
 			}
 			const selected = this.items[this.cursor];
 			const running = selected?.kind === "delegation" && selected.record.status === "running";
-			if (running && withinSpan(event.x, this.footerButtons.steer)) {
+			if (running && withinSpan(x, this.footerButtons.steer)) {
 				this.steerMode = true;
 				this.steerText = "";
 				this.tui.requestRender();
 				return { handled: true };
 			}
-			if (running && withinSpan(event.x, this.footerButtons.stop)) {
+			if (running && withinSpan(x, this.footerButtons.stop)) {
 				this.stopConfirm = true;
 				this.tui.requestRender();
 				return { handled: true };
 			}
-			return undefined;
-		}
-		if (event.type === "click" && event.button === "left" && this.mode === "list") {
-			const index = this.listRows.get(event.y);
-			if (index === undefined || index >= this.items.length) return undefined;
-			this.cursor = index;
-			this.mode = "detail";
-			this.follow = true;
-			this.scroll = 0;
-			return { handled: true };
 		}
 		return undefined;
 	}
@@ -487,7 +510,13 @@ class FleetBrowser implements Component {
 	private consumeMouse(chunk: string): string {
 		const combined = this.pendingMouse + chunk;
 		this.pendingMouse = "";
-		const { keys, held } = splitMouseBuffer(combined, (delta) => this.wheel(delta));
+		const { keys, held } = splitMouseBuffer(
+			combined,
+			(delta) => this.wheel(delta),
+			// SGR reports 1-based screen cells and the overlay anchors top-left at
+			// full width, so screen position minus one is overlay-local.
+			(col, row) => this.clickAt(col - 1, row - 1),
+		);
 		this.pendingMouse = held;
 		return keys;
 	}
@@ -531,6 +560,7 @@ class FleetBrowser implements Component {
 		let body: string[];
 		if (this.mode === "detail" && this.items.length > 0) {
 			const item = this.items[this.cursor];
+			this.listButtons = null;
 			body = item
 				? this.renderDetail(item, theme, width)
 				: this.renderList(records, runningExternals, theme, width);
@@ -551,12 +581,10 @@ class FleetBrowser implements Component {
 		width: number,
 	): string[] {
 		this.listRows.clear();
-		const mouse = this.tui.mode === "fullscreen";
+		this.footerButtons = null;
 		const bar = theme.fg("dim", "─".repeat(Math.max(0, Math.min(width - 2, 72))));
-		const lines: string[] = [
-			`${theme.bold("torus fleet")} ${theme.fg("dim", `· ↑↓ move · enter${mouse ? "/click" : ""} open · x stop (y/n) · esc close`)}`,
-			bar,
-		];
+		const header = this.listHeader(theme, width);
+		const lines: string[] = [];
 		/** items index → row in `lines`, for click routing and cursor windowing. */
 		const itemRow = new Map<number, number>();
 
@@ -591,9 +619,10 @@ class FleetBrowser implements Component {
 
 		// The list shows the whole fleet: window the rows around the cursor so
 		// every item stays reachable by key, wheel, and click no matter how many
-		// runs exist. Frame rules, the scroll hint, the stop prompt, and the
-		// trailing blank live outside the window.
-		const available = Math.max(3, (process.stdout.rows ?? 40) - 5 - (this.stopConfirm ? 1 : 0));
+		// runs exist. The pinned header (with its [esc] close chip), the frame
+		// rules, the scroll hint, the stop prompt, and the trailing blank live
+		// outside the window — header and bar claim two of its rows.
+		const available = Math.max(3, (process.stdout.rows ?? 40) - 7 - (this.stopConfirm ? 1 : 0));
 		this.listScroll = Math.max(0, Math.min(this.listScroll, lines.length - available));
 		const cursorRow = itemRow.get(this.cursor) ?? 0;
 		if (cursorRow < this.listScroll) this.listScroll = cursorRow;
@@ -602,10 +631,10 @@ class FleetBrowser implements Component {
 		const below = lines.length - Math.min(lines.length, this.listScroll + available);
 		for (const [item, row] of itemRow) {
 			if (row >= this.listScroll && row < this.listScroll + available) {
-				this.listRows.set(row - this.listScroll + 1, item); // +1: top frame rule
+				this.listRows.set(row - this.listScroll + 3, item); // +3: rule, header, bar
 			}
 		}
-		const out = lines.slice(this.listScroll, this.listScroll + available);
+		const out = [header, bar, ...lines.slice(this.listScroll, this.listScroll + available)];
 		if (above > 0 || below > 0) {
 			const parts = [`↑↓/j/k ${this.cursor + 1}/${this.items.length}`];
 			if (above > 0) parts.push(`↑${above} above`);
@@ -624,6 +653,32 @@ class FleetBrowser implements Component {
 		}
 		out.push("");
 		return out;
+	}
+
+	/** List header line. The [esc] close chip is pinned (the header never
+	 * scrolls) and click-routed — the mouse-only way back to the main window on
+	 * terminals (e.g. VSCode's) where esc never reaches the overlay. The key
+	 * hints truncate before the chip does. */
+	private listHeader(theme: Theme, width: number): string {
+		const chip = `${theme.fg("dim", SEP)}${theme.fg(
+			"accent",
+			this.hoverButton === "close" ? theme.bold(CLOSE_LABEL) : CLOSE_LABEL,
+		)}`;
+		const chipW = SEP.length + CLOSE_LABEL.length;
+		const lead = `${theme.bold("torus fleet")} ${theme.fg(
+			"dim",
+			"· ↑↓ move · enter/click open · x stop (y/n)",
+		)}`;
+		const leadSeg =
+			visibleWidth(lead) + chipW <= width
+				? lead
+				: truncateToWidth(lead, Math.max(0, width - chipW), "…");
+		const start = visibleWidth(leadSeg) + SEP.length;
+		this.listButtons =
+			start + CLOSE_LABEL.length <= width
+				? { y: 1, close: [start, start + CLOSE_LABEL.length - 1] }
+				: null;
+		return truncateToWidth(leadSeg + chip, width);
 	}
 
 	private componentForItem(sessionId: string, item: TranscriptItem): Component | null {
@@ -692,16 +747,8 @@ class FleetBrowser implements Component {
 		const page = body.slice(this.scroll, this.scroll + visible);
 		const canSteer = item.kind === "delegation" && item.record.status === "running";
 		const stopPrompt = this.stopConfirm && canSteer;
-		// Footer rows under the transcript: one blank padding row + rule + status
-		// line; the steer box and the y/n stop prompt each claim one extra row.
-		const reserved = this.steerMode && canSteer ? 5 : stopPrompt ? 4 : 3;
-		const filler = Math.max(0, visible - page.length - reserved);
-		const steerColor = entityColor(
-			item.kind === "delegation"
-				? (item.record.handle ?? item.record.agent)
-				: (item.run.handle ?? item.run.label),
-		);
-		const frameRule = rule(theme, Math.max(0, width), steerColor);
+		// The status header builds first: on narrow terminals it wraps its chip
+		// row onto an extra line, which the filler budget below must reserve.
 		const header =
 			item.kind === "delegation"
 				? this.delegationHeader(
@@ -711,17 +758,28 @@ class FleetBrowser implements Component {
 						canSteer && !this.steerMode && !stopPrompt,
 					)
 				: this.externalHeader(item.run, theme, width);
+		// Footer rows under the transcript: one blank padding row + rule + status
+		// header; the steer box and the y/n stop prompt each claim one extra row,
+		// as does each wrapped header line past the first.
+		const reserved = (this.steerMode && canSteer ? 5 : stopPrompt ? 4 : 3) + header.length - 1;
+		const filler = Math.max(0, visible - page.length - reserved);
+		const steerColor = entityColor(
+			item.kind === "delegation"
+				? (item.record.handle ?? item.record.agent)
+				: (item.run.handle ?? item.run.label),
+		);
+		const frameRule = rule(theme, Math.max(0, width), steerColor);
 		let footer: string[];
 		// The header call above already left footerButtons holding exactly the
 		// zones it rendered — back-only in steer/stop states, back+buttons otherwise.
 		if (this.steerMode && canSteer) {
 			const input = ` ${theme.fg(steerColor, `steer> ${this.steerText}█`)}`;
-			footer = [frameRule, input, frameRule, header];
+			footer = [frameRule, input, frameRule, ...header];
 		} else if (stopPrompt && item.kind === "delegation") {
 			const who = item.record.handle ? `@${item.record.handle}` : item.record.agent;
-			footer = [` ${theme.fg("error", theme.bold(`stop ${who}? y/n`))}`, frameRule, header];
+			footer = [` ${theme.fg("error", theme.bold(`stop ${who}? y/n`))}`, frameRule, ...header];
 		} else {
-			footer = [frameRule, header];
+			footer = [frameRule, ...header];
 		}
 		// One blank row keeps the transcript clear of the footer rule.
 		const gap = [""];
@@ -732,17 +790,92 @@ class FleetBrowser implements Component {
 		return result;
 	}
 
-	/** Detail footer status line. With `buttons`, the colored [steer]/[stop] pair
-	 * renders inline where the grey key tips used to sit and records its
-	 * screen-space hit-box for click routing; the tail absorbs truncation so the
-	 * buttons stay intact while they fit. The back label gets the same
-	 * treatment — colored, bold-on-hover, click-routed — whenever it fully fits. */
+	/** Detail footer status header: the informational head plus the colored,
+	 * click-routed control chips. Everything rides one line while it fits; when
+	 * it cannot, the chips wrap onto their own row so nothing is clipped — the
+	 * back chip is the only guaranteed mouse exit, so it never drops (steer/stop
+	 * go first, the dim session id truncates last). Chips sit on the last line;
+	 * renderDetail finalizes footerButtons.y from the footer block length. */
+	private statusHeader(
+		head: string,
+		theme: Theme,
+		width: number,
+		chips: boolean,
+		id: string,
+	): string[] {
+		const dim = (text: string) => theme.fg("dim", text);
+		const back = theme.fg(
+			"accent",
+			this.hoverButton === "back" ? theme.bold(BACK_LABEL) : BACK_LABEL,
+		);
+		const steer = theme.fg(
+			"accent",
+			this.hoverButton === "steer" ? theme.bold(STEER_LABEL) : STEER_LABEL,
+		);
+		const stop = theme.fg(
+			"error",
+			this.hoverButton === "stop" ? theme.bold(STOP_LABEL) : STOP_LABEL,
+		);
+		const backSeg = `${dim(SEP)}${back}`;
+		const chipsSeg = `${dim(SEP)}${steer}${dim(SEP)}${stop}`;
+		const backW = SEP.length + BACK_LABEL.length;
+		const chipsW = SEP.length + STEER_LABEL.length + SEP.length + STOP_LABEL.length;
+		const idSeg = dim(`${SEP}${id}`);
+		const spans: {
+			steer?: [number, number];
+			stop?: [number, number];
+			back?: [number, number];
+		} = {};
+		let lines: string[];
+		if (visibleWidth(head) + (chips ? chipsW : 0) + backW <= width) {
+			let col = visibleWidth(head);
+			if (chips) {
+				spans.steer = [col + SEP.length, col + SEP.length + STEER_LABEL.length - 1];
+				col += SEP.length + STEER_LABEL.length;
+				spans.stop = [col + SEP.length, col + SEP.length + STOP_LABEL.length - 1];
+				col += SEP.length + STOP_LABEL.length;
+			}
+			spans.back = [col + SEP.length, col + SEP.length + BACK_LABEL.length - 1];
+			col += backW;
+			const line = head + (chips ? chipsSeg : "") + backSeg;
+			const room = width - col;
+			lines = [room >= SEP.length + 1 ? line + truncateToWidth(idSeg, room, "…") : line];
+		} else {
+			// Wrapped: the head keeps the full width, the chips get their own row.
+			lines = [truncateToWidth(head, width, "…")];
+			let row = "";
+			let col = 0;
+			if (chips && width >= STEER_LABEL.length + SEP.length + STOP_LABEL.length + backW) {
+				spans.steer = [0, STEER_LABEL.length - 1];
+				spans.stop = [
+					STEER_LABEL.length + SEP.length,
+					STEER_LABEL.length + SEP.length + STOP_LABEL.length - 1,
+				];
+				col = STEER_LABEL.length + SEP.length + STOP_LABEL.length;
+				row = `${steer}${dim(SEP)}${stop}`;
+			}
+			const room = width - col;
+			if (room >= backW) {
+				spans.back = [col + SEP.length, col + SEP.length + BACK_LABEL.length - 1];
+				row += backSeg;
+				const left = room - backW;
+				if (left >= SEP.length + 1) row += truncateToWidth(idSeg, left, "…");
+			} else {
+				row = truncateToWidth(row + backSeg, width, "…");
+			}
+			lines.push(row);
+		}
+		this.footerButtons =
+			spans.back !== undefined || spans.steer !== undefined ? { y: 0, ...spans } : null;
+		return lines;
+	}
+
 	private delegationHeader(
 		record: DelegationRecord,
 		theme: Theme,
 		width: number,
 		buttons: boolean,
-	): string {
+	): string[] {
 		const statusIcon =
 			record.status === "running"
 				? theme.fg("warning", `${SPINNER[this.tick % SPINNER.length] ?? "•"} live`)
@@ -756,36 +889,11 @@ class FleetBrowser implements Component {
 		}`;
 		const who = record.handle ? `@${record.handle} (${record.agent})` : record.agent;
 		const head = `${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(record.handle ?? record.agent), who)} ${theme.fg("dim", record.model)} ${statusIcon} ${stats}${theme.fg("dim", " · j/k scroll · g/G ends")}`;
-		const back = this.hoverButton === "back" ? theme.bold(BACK_LABEL) : BACK_LABEL;
-		const tail = `${theme.fg("dim", " · ")}${theme.fg("accent", back)}${theme.fg("dim", ` · ${record.sessionId ?? "no session"}`)}`;
-		if (!buttons) {
-			this.footerButtons = null;
-			const zone = backSpan(visibleWidth(head), width);
-			if (zone) this.footerButtons = { y: 0, back: zone };
-			return truncateToWidth(head + tail, width);
-		}
-		const steer = this.hoverButton === "steer" ? theme.bold("[s] steer") : "[s] steer";
-		const stop = this.hoverButton === "stop" ? theme.bold("[x] stop") : "[x] stop";
-		const mid = `${theme.fg("dim", " · ")}${theme.fg("accent", steer)}${theme.fg("dim", " · ")}${theme.fg("error", stop)}`;
-		const lead = head + mid;
-		if (visibleWidth(lead) > width) {
-			this.footerButtons = null; // buttons clipped — drop the click zones with them
-			return truncateToWidth(lead, width);
-		}
-		const steerStart = visibleWidth(head) + 3; // the dim " · " separator before the button
-		const stopStart = steerStart + "[s] steer".length + 3;
-		this.footerButtons = {
-			y: 0,
-			steer: [steerStart, steerStart + "[s] steer".length - 1],
-			stop: [stopStart, stopStart + "[x] stop".length - 1],
-		};
-		const zone = backSpan(visibleWidth(lead), width);
-		if (zone) this.footerButtons.back = zone;
-		return lead + truncateToWidth(tail, width - visibleWidth(lead));
+		return this.statusHeader(head, theme, width, buttons, record.sessionId ?? "no session");
 	}
 
-	private externalHeader(run: ExternalRun, theme: Theme, width: number): string {
-		// External runs have no steer/stop controls, but the back label below
+	private externalHeader(run: ExternalRun, theme: Theme, width: number): string[] {
+		// External runs have no steer/stop controls, but the back chip below
 		// still gets its colored render and click zone.
 		const statusIcon =
 			run.state === "running"
@@ -794,13 +902,14 @@ class FleetBrowser implements Component {
 					? theme.fg("success", "✓ done")
 					: theme.fg("error", "✗ failed");
 		const stats = `turn ${run.turns ?? 0} · ${formatTokens(run.tokensIn ?? 0)}→${formatTokens(run.tokensOut ?? 0)} tok`;
-		const back = this.hoverButton === "back" ? theme.bold(BACK_LABEL) : BACK_LABEL;
 		const head = `${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(run.handle ?? run.label), `@${sanitizeRender(run.handle ?? run.label)}`)} ${theme.fg("dim", `[${sanitizeRender(run.source)}]`)} ${run.model ? theme.fg("dim", sanitizeRender(run.model)) : ""} ${statusIcon} ${stats}${theme.fg("dim", " · j/k scroll · g/G ends")}`;
-		const tail = `${theme.fg("dim", " · ")}${theme.fg("accent", back)}${theme.fg("dim", ` · ${sanitizeRender(run.sessionId ?? "no session")}`)}`;
-		this.footerButtons = null;
-		const zone = backSpan(visibleWidth(head), width);
-		if (zone) this.footerButtons = { y: 0, back: zone };
-		return truncateToWidth(head + tail, width);
+		return this.statusHeader(
+			head,
+			theme,
+			width,
+			false,
+			sanitizeRender(run.sessionId ?? "no session"),
+		);
 	}
 
 	private actionLogLines(logFile: string, theme: Theme, width: number): string[] {
