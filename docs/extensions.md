@@ -35,7 +35,7 @@ Interactions: roster's `runDelegation()` dispatches to the `AcpChild` transport 
 
 ### `prompts`
 System-prompt composition and persona switching. Appends the active persona's prompt, the delegation policy section, and any keyword-triggered execution mode to the system prompt each turn; owns the persona cycle (`alt+p` forward, `alt+shift+p` backward — leader → builder → dreamer → explorer → librarian → looker → reviewer), per-session persistence (`$TORUS_STATE_DIR/persona/<session>.json`), and the persona-themed editor border. Switching persona also switches the session model.
-No tools. Commands: `/persona-<name>` for every agent (7). Hooks: `session_start` (restore persona + theme), `message_end` (keyword gates `ultrawork` / `hyperplan` / `team`; user-extendable via `~/.torus/keywords.json`), `before_agent_start` (inject persona + policy + mode).
+No tools. Commands: `/persona-<name>` for every agent (7). Hooks: `session_start` (restore persona + theme), `message_end` (keyword gates `deepwork` / `blueprint` / `team`; user-extendable via `~/.torus/keywords.json`), `before_agent_start` (inject persona + policy + mode).
 Env: none directly (`persona-theme.ts` reads `TORUS_THEME_DEBUG`).
 
 ### `browser`

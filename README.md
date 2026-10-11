@@ -38,7 +38,7 @@ As a single binary — download from [releases](https://github.com/tankdonut/tor
 
 1. `/roster` — the agents, their model chains, and credentialed providers.
 2. Delegate something small: `/explorer where does the roster load from?` — watch the right-hand pane, then **alt+t** for the live transcript.
-3. Say `team` in a message (or `ultrawork`, `hyperplan`) — keyword gates switch the session's execution mode.
+3. Say `team` in a message (or `deepwork`, `blueprint`) — keyword gates switch the session's execution mode.
 4. `/goal` to pin a standing objective; `/reflect` to distill the session into memory.
 
 ## Where to go next

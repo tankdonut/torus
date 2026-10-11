@@ -141,9 +141,9 @@ export function detectKeyword(text: string, keywords: Record<string, string>): s
 }
 
 export const DEFAULT_KEYWORDS: Record<string, string> = {
-	ultrawork:
+	deepwork:
 		"FULL PRECISION: the requested outcome is a contract — no scope reduction, no partial completion, no 'should work' claims without executed evidence. Define pass conditions before editing, verify each increment on the real surface, and report failures explicitly.",
-	hyperplan:
+	blueprint:
 		"PLAN-FIRST: no implementation until a plan exists. Survey the affected surface, write the plan (waves, per-wave verification command, stopping condition — /skill:torus-plan for the full protocol), and get user approval before the first edit.",
 	team: "TEAM MODE: this is multi-axis work — orchestrate through torus_fanout/torus_chain or the team_* tools instead of doing every axis serially yourself. One axis per delegated run, results synthesized centrally.",
 };

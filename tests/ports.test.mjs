@@ -328,11 +328,11 @@ test("goalChipFor: active/paused heads truncated to 48 chars, complete and empty
 });
 
 test("built-in keywords: trio present, user file overrides same key, new keys merge", () => {
-	assert.deepEqual(Object.keys(DEFAULT_KEYWORDS).sort(), ["hyperplan", "team", "ultrawork"]);
-	const merged = mergeKeywords({ ultrawork: "custom", mine: "new" });
-	assert.equal(merged.ultrawork, "custom");
+	assert.deepEqual(Object.keys(DEFAULT_KEYWORDS).sort(), ["blueprint", "deepwork", "team"]);
+	const merged = mergeKeywords({ deepwork: "custom", mine: "new" });
+	assert.equal(merged.deepwork, "custom");
 	assert.equal(merged.mine, "new");
-	assert.equal(merged.hyperplan, DEFAULT_KEYWORDS.hyperplan);
+	assert.equal(merged.blueprint, DEFAULT_KEYWORDS.blueprint);
 });
 const { validateMonitorSpec } = await import("../extensions/monitor/index.ts");
 
@@ -401,9 +401,9 @@ test("findSessionFile: uuid-suffix match across project dirs; null when absent",
 });
 
 test("detectKeyword: word-boundary match, regex metachars safe, first hit wins", () => {
-	const map = { ultrawork: "full precision mode", "c++": "lang mode" };
-	assert.equal(detectKeyword("let's ultrawork this", map), "ultrawork");
-	assert.equal(detectKeyword("ultraworking is not a keyword hit", map), null);
+	const map = { deepwork: "full precision mode", "c++": "lang mode" };
+	assert.equal(detectKeyword("let's deepwork this", map), "deepwork");
+	assert.equal(detectKeyword("deepworking is not a keyword hit", map), null);
 	assert.equal(detectKeyword("regex c++ literal", map), "c++");
 });
 
