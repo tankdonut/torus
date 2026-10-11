@@ -308,14 +308,21 @@ const fanoutTool = defineTool({
 		const summary = outcomes
 			.map((o) => `## ${o.agent} — ${o.ok ? "done" : "failed"}\n${o.text.slice(0, 2000)}`)
 			.join("\n\n");
+		// The TUI colors the block on isError: a green block over "## builder —
+		// failed" hides failed runs from the lead, so any failure flags the batch.
+		const okCount = outcomes.filter((o) => o.ok).length;
 		return {
 			content: [
 				{
 					type: "text",
-					text: `fan-out complete in ${Math.round((Date.now() - started) / 1000)}s\n\n${summary}`,
+					text:
+						`fan-out complete in ${Math.round((Date.now() - started) / 1000)}s` +
+						(okCount === outcomes.length ? "" : ` · ${okCount}/${outcomes.length} ok`) +
+						`\n\n${summary}`,
 				},
 			],
-			details: { runs: outcomes.length, ok: outcomes.filter((o) => o.ok).length },
+			details: { runs: outcomes.length, ok: okCount },
+			...(okCount === outcomes.length ? {} : { isError: true }),
 		};
 	},
 });
@@ -421,14 +428,23 @@ const chainTool = defineTool({
 		const summary = outcomes
 			.map((o) => `## ${o.agent} — ${o.ok ? "done" : "failed"}\n${o.text.slice(0, 2000)}`)
 			.join("\n\n");
+		// A chain that broke early never completed its pipeline; flag the block red
+		// the same way delegate and fan-out do.
+		const okCount = outcomes.filter((o) => o.ok).length;
 		return {
 			content: [
 				{
 					type: "text",
-					text: `chain complete in ${Math.round((Date.now() - started) / 1000)}s\n\n${summary}`,
+					text:
+						`chain complete in ${Math.round((Date.now() - started) / 1000)}s` +
+						(okCount === outcomes.length
+							? ""
+							: ` · stopped after ${okCount} of ${params.steps.length} steps`) +
+						`\n\n${summary}`,
 				},
 			],
-			details: { steps: outcomes.length, ok: outcomes.filter((o) => o.ok).length },
+			details: { steps: outcomes.length, ok: okCount },
+			...(okCount === outcomes.length ? {} : { isError: true }),
 		};
 	},
 });

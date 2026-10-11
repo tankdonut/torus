@@ -145,6 +145,23 @@ writeFileSync(
 	"utf8",
 );
 chmodSync(HEALTHY_TAIL_ENGINE, 0o755);
+// One engine, two behaviors: a task whose text carries "fail me" exits 1
+// (runDelegation reports that shape as ok:false with a text/exit headline),
+// every other task completes the healthy message_end. One binary lets a
+// single fan-out batch mix failed and successful runs.
+const MIXED_ENGINE = path.join(ENGINE_DIR, "mixed-engine.sh");
+writeFileSync(
+	MIXED_ENGINE,
+	[
+		"#!/bin/sh",
+		'case "$*" in *"fail me"*) echo "engine exploded" >&2; exit 1 ;; esac',
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":10,"output":20}}}\'',
+		"exit 0",
+		"",
+	].join("\n"),
+	"utf8",
+);
+chmodSync(MIXED_ENGINE, 0o755);
 
 const registry = await import("../extensions/registry.ts");
 const roster = await import("../extensions/roster/index.ts");
@@ -751,6 +768,116 @@ test("fan-out staggered completions flush per-run markers carrying the bare hand
 		assert.equal(marker.details.runs, 1);
 	}
 	registry.setCustomSender(() => {});
+});
+
+test("fan-out flags isError so failed runs render red; healthy batches stay green", async () => {
+	registry.resetRegistryForTesting();
+	registry.setCustomSender(() => {});
+	const fanoutTool = registeredTools().find((t) => t.name === "torus_fanout");
+	assert.ok(fanoutTool, "torus_fanout not registered");
+	const ctx = {
+		sessionManager: { getSessionId: () => "sess-fanout-red" },
+		ui: { setStatus: () => {} },
+	};
+
+	let allFailed = null;
+	let mixed = null;
+	let healthy = null;
+	await withEngine(MIXED_ENGINE, async () => {
+		allFailed = await fanoutTool.execute(
+			"call",
+			{
+				runs: [
+					{ agent: "builder", task: "fail me a", handle: "dead1" },
+					{ agent: "builder", task: "fail me b", handle: "dead2" },
+				],
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		mixed = await fanoutTool.execute(
+			"call",
+			{
+				runs: [
+					{ agent: "builder", task: "succeed a", handle: "alive" },
+					{ agent: "builder", task: "fail me b", handle: "dead" },
+				],
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		healthy = await fanoutTool.execute(
+			"call",
+			{
+				runs: [
+					{ agent: "builder", task: "succeed a", handle: "alpha" },
+					{ agent: "builder", task: "succeed b", handle: "beta" },
+				],
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+	});
+	assert.equal(allFailed.isError, true, "a batch where every run failed must render red");
+	assert.equal(allFailed.details.ok, 0);
+	assert.match(allFailed.content[0].text, /0\/2 ok/, "headline carries the ok count");
+	assert.match(allFailed.content[0].text, /## builder — failed/);
+	assert.equal(mixed.isError, true, "one failed run still flags the whole batch red");
+	assert.equal(mixed.details.ok, 1);
+	assert.match(mixed.content[0].text, /1\/2 ok/);
+	assert.match(mixed.content[0].text, /exit=1/, "the failed run's exit code stays visible in text");
+	assert.equal(healthy.isError, undefined, "a fully successful batch is not an error");
+	assert.equal(healthy.details.ok, 2);
+	assert.doesNotMatch(healthy.content[0].text, /ok\n/);
+});
+
+test("chain flags isError when a step fails and stays green when every step passes", async () => {
+	registry.resetRegistryForTesting();
+	registry.setCustomSender(() => {});
+	const chainTool = registeredTools().find((t) => t.name === "torus_chain");
+	assert.ok(chainTool, "torus_chain not registered");
+	const ctx = {
+		sessionManager: { getSessionId: () => "sess-chain-red" },
+		ui: { setStatus: () => {} },
+	};
+
+	let broken = null;
+	let healthy = null;
+	await withEngine(MIXED_ENGINE, async () => {
+		broken = await chainTool.execute(
+			"call",
+			{
+				steps: [
+					{ agent: "reviewer", task: "fail me now" },
+					{ agent: "builder", task: "build it" },
+				],
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		healthy = await chainTool.execute(
+			"call",
+			{
+				steps: [
+					{ agent: "reviewer", task: "review it" },
+					{ agent: "builder", task: "build it" },
+				],
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+	});
+	assert.equal(broken.isError, true, "a chain whose step failed must render red");
+	assert.equal(broken.details.steps, 1, "the chain stops at the failed step");
+	assert.equal(broken.details.ok, 0);
+	assert.match(broken.content[0].text, /stopped after 0 of 2 steps/);
+	assert.equal(healthy.isError, undefined);
+	assert.equal(healthy.details.ok, 2);
 });
 
 test("delegation markers defer to the turn boundary and snapshots carry the run id", async () => {
