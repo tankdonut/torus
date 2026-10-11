@@ -177,7 +177,7 @@ export function registerPrompts(pi: ExtensionAPI): void {
 		applyPersonaTheme(ctx, sessionPersona());
 	});
 
-	const applyPersona = (name: string, ctx: ExtensionContext) => {
+	const applyPersona = async (name: string, ctx: ExtensionContext) => {
 		setSessionPersona(name);
 		persistPersona(ctx.sessionManager.getSessionId(), name);
 		applyPersonaTheme(ctx, name);
@@ -185,7 +185,7 @@ export function registerPrompts(pi: ExtensionAPI): void {
 		if (modelId) {
 			const [provider, id] = modelId.split("/");
 			const model = provider && id ? ctx.modelRegistry.find(provider, id) : undefined;
-			if (model) void pi.setModel(model);
+			if (model) await pi.setModel(model);
 		}
 		ctx.ui.notify(`persona: ${name}`, "info");
 		refreshToruStatus(ctx);
@@ -194,14 +194,14 @@ export function registerPrompts(pi: ExtensionAPI): void {
 	pi.registerShortcut("alt+p", {
 		description: "Cycle torus persona (leader/builder/dreamer/explorer/librarian/looker/reviewer)",
 		handler: async (ctx) => {
-			applyPersona(nextPersona(sessionPersona()), ctx);
+			await applyPersona(nextPersona(sessionPersona()), ctx);
 		},
 	});
 
 	pi.registerShortcut("alt+shift+p", {
 		description: "Cycle torus persona backwards",
 		handler: async (ctx) => {
-			applyPersona(nextPersona(sessionPersona(), true), ctx);
+			await applyPersona(nextPersona(sessionPersona(), true), ctx);
 		},
 	});
 
@@ -209,7 +209,7 @@ export function registerPrompts(pi: ExtensionAPI): void {
 		pi.registerCommand(`persona-${agent.name}`, {
 			description: `Switch persona to ${agent.name}`,
 			handler: async (_args, ctx) => {
-				applyPersona(agent.name, ctx);
+				await applyPersona(agent.name, ctx);
 			},
 		});
 	}

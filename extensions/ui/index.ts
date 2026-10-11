@@ -172,14 +172,15 @@ export function buildStatus(theme?: StatusPainter): string {
 }
 
 /**
- * Single render path for the torus statusline key: backfills missing
- * model/effort state from live ctx, then paints. Self-heals the case where
- * the initial selection never reached our listeners (restore-before-load,
- * same-model persona switch, setModel refused for missing auth).
+ * Single render path for the torus statusline key. Live ctx wins over the
+ * cached model/effort: other manifest entries (prompts, goal) repaint through
+ * their own module instance of this file, where the event-fed cache never
+ * receives model_select — and same-model persona switches emit no event at
+ * all — so any stale cache would paint a model the engine already left.
  */
 export function refreshToruStatus(ctx: ExtensionContext): void {
-	currentModel ??= ctx.model?.id;
-	currentEffort ??= ctx.thinkingLevel;
+	currentModel = ctx.model?.id ?? currentModel;
+	currentEffort = ctx.thinkingLevel ?? currentEffort;
 	ctx.ui.setStatus(STATUS_KEY, buildStatus(ctx.ui.theme));
 }
 

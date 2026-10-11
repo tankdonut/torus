@@ -120,6 +120,33 @@ test("registerUi: model/effort state self-heals from ctx when events were missed
 	setStatusModel(undefined, undefined);
 });
 
+test("statusline: stale cached model loses to live ctx.model on repaint", () => {
+	const handlers = {};
+	registerUi({
+		on: (event, handler) => (handlers[event] = handler),
+		getMcpServers: () => [],
+		getActiveTools: () => [],
+	});
+	const paints = [];
+	const ctx = {
+		ui: { setStatus: (key, value) => paints.push([key, value]) },
+		sessionManager: { getSessionId: () => "sess-stale-model" },
+		model: { id: "zai/glm-5.3-flash" },
+		thinkingLevel: undefined,
+	};
+	setSessionPersona("explorer");
+	// the engine moved to flash without emitting model_select (same-model
+	// persona switch): a stale cache must never override the live ctx model
+	setStatusModel("zai/glm-5.3", undefined);
+	handlers["turn_start"]({ type: "turn_start" }, ctx);
+	assert.ok(
+		paints.at(-1)[1].includes(personaFg("explorer", "glm-5.3-flash")),
+		"repaint must take the model from ctx.model, not a stale cache",
+	);
+	setSessionPersona(null);
+	setStatusModel(undefined, undefined);
+});
+
 test("buildStatus: engine tag only when overridden", () => {
 	setSessionPersona("leader");
 	setStatusModel(undefined, undefined);
@@ -454,4 +481,90 @@ test("personaModel maps personas to session models (explicit model field honored
 		"---\nname: probe\ndescription: probe agent\nchain: fast\nmodel: zai/glm-5.3-flash\n---\nbody",
 	);
 	assert.equal(pinned?.model, "zai/glm-5.3-flash", "explicit model frontmatter parses");
+});
+
+test("alt+p paints the engine's live model even across duplicated ui module instances", async () => {
+	const home = mkdtempSync(path.join(tmpdir(), "torus-altp-model-"));
+	const prevHome = process.env["TORUS_HOME"];
+	process.env["TORUS_HOME"] = home;
+	try {
+		// pi loads every manifest entry with its own module graph, so the ui
+		// copy the prompts entry repaints through never sees model_select
+		// events — only the query-busted copy below owns the listeners
+		const uiEntry = await import(`../extensions/ui/index.ts?entry-copy=${Date.now()}`);
+		const promptsMod = await import("../extensions/prompts/index.ts");
+
+		const engine = { model: { id: "glm-5.3", provider: "zai" } };
+		const listeners = new Map();
+		const paints = [];
+		const shortcuts = new Map();
+		const sameModel = (a, b) => a?.provider === b?.provider && a?.id === b?.id;
+		const pi = {
+			on: (event, handler) => {
+				if (!listeners.has(event)) listeners.set(event, []);
+				listeners.get(event).push(handler);
+			},
+			emit: async (event, payload) => {
+				for (const handler of listeners.get(event) ?? []) await handler(payload, ctx);
+			},
+			registerShortcut: (keys, def) => shortcuts.set(keys, def),
+			registerCommand: () => {},
+			getMcpServers: () => [],
+			getActiveTools: () => [],
+			setModel: async (model) => {
+				const previous = engine.model;
+				engine.model = model;
+				if (!sameModel(previous, model)) {
+					await pi.emit("model_select", {
+						type: "model_select",
+						model,
+						previousModel: previous,
+						source: "set",
+					});
+				}
+				return true;
+			},
+		};
+		const ctx = {
+			get model() {
+				return engine.model;
+			},
+			thinkingLevel: undefined,
+			modelRegistry: {
+				find: (provider, id) =>
+					provider === "zai" && id === "glm-5.3-flash"
+						? { id: "glm-5.3-flash", provider: "zai" }
+						: { id: "glm-5.3", provider: "zai" },
+			},
+			sessionManager: { getSessionId: () => `sess-altp-${Date.now()}` },
+			ui: {
+				setStatus: (key, value) => paints.push([key, value]),
+				notify: () => {},
+				theme: undefined,
+			},
+		};
+
+		promptsMod.registerPrompts(pi);
+		uiEntry.registerUi(pi);
+		await pi.emit("session_start", { type: "session_start" });
+
+		// land on explorer like the user: the final dreamer->explorer hop is a
+		// same-model switch, so the engine never emits model_select for it
+		for (let i = 0; i < 8; i++) {
+			await shortcuts.get("alt+p").handler(ctx);
+			const plain = (paints.at(-1)?.[1] ?? "").replaceAll(/\x1b\[[0-9;]*m/g, "").split(" · ");
+			if (plain[1] === "explorer") break;
+		}
+
+		const finalPaint = (paints.at(-1)?.[1] ?? "").replaceAll(/\x1b\[[0-9;]*m/g, "");
+		assert.ok(finalPaint.includes("explorer"), `expected explorer persona, got: ${finalPaint}`);
+		assert.ok(
+			finalPaint.includes("glm-5.3-flash"),
+			`same-model switch must repaint the engine's live model, got: ${finalPaint}`,
+		);
+		setSessionPersona(null);
+	} finally {
+		if (prevHome === undefined) delete process.env["TORUS_HOME"];
+		else process.env["TORUS_HOME"] = prevHome;
+	}
 });
