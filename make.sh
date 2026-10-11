@@ -13,7 +13,7 @@ case "$cmd" in
 		npx tsc --noEmit
 		;;
 	lint)
-		npx biome check .
+		npm run lint
 		;;
 	test)
 		npm test

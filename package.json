@@ -52,8 +52,9 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write .",
+    "lint": "biome check . && markdownlint-cli2",
+    "lint:docs": "markdownlint-cli2",
+    "lint:fix": "biome check --write . && markdownlint-cli2 --fix",
     "test": "node --experimental-strip-types --import ./tests/resolve-ts-hook.mjs --test tests/",
     "bench:overhead": "node scripts/bench.mjs",
     "bench": "node scripts/bench.mjs",
@@ -71,6 +72,7 @@
     "@earendil-works/pi-tui": "1.1.0",
     "@types/node": "^24.0.0",
     "husky": "^9.1.7",
+    "markdownlint-cli2": "^0.23.3",
     "typescript": "~7.0.0"
   },
   "engines": {

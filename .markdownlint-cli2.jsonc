@@ -1,0 +1,30 @@
+{
+	// Structural markdown hygiene for the docs surface; prose rules live in
+	// docs/style.md and are enforced by tests/docs-style.test.mjs.
+	"config": {
+		"default": true,
+		// Paragraphs are single long source lines by repo convention.
+		"MD013": false,
+		// Agent prompt bodies are consumed by the engine, not rendered as
+		// pages: H2-only skeletons (no H1), XML output-grammar tags, and
+		// label/separator lines like "ENTRY:" + "---" that read to a linter
+		// as setext headings with trailing punctuation. Docs show the same
+		// grammar tags when they describe those templates.
+		"MD033": false,
+		"MD041": false,
+		"MD003": false,
+		"MD026": false,
+		// Repo table style: spaces around cell content, columns not aligned.
+		"MD060": { "style": "padded" },
+		// The skill template in skills/agents-md legitimately shows a second
+		// H1 inside its fenced example.
+		"MD025": { "front_matter_title": "" }
+	},
+	"globs": [
+		"**/*.md",
+		"!node_modules/**",
+		"!dist/**",
+		"!CHANGELOG.md",
+		"!docs/efficiency.md"
+	]
+}
