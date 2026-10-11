@@ -14,6 +14,16 @@ Rules for producing and auditing technical prose, adapted from the Vercel writin
 - Reviewing a documentation change, or auditing a docs surface
 - A reader says the prose is unclear, padded, or reads like it was generated
 
+## Ground truth first
+
+Before writing or reviewing in a repository, look for its own style rules. Local rules win wherever they conflict with this skill:
+
+- Style guides: a `docs/style.md` or equivalent, or style pointers in `AGENTS.md`, `CONTRIBUTING.md`, or the README
+- Lint configs: `.markdownlint*`, `vale.ini`, `.textlintrc*`; enforced conventions reveal the house style even where no guide exists
+- Existing pages: match the terminology, heading depth, and table conventions the repo already uses
+
+This skill is the universal floor. Repositories extend and override it; when they do, follow the repository.
+
 ## WRITE mode
 
 ### Voice
