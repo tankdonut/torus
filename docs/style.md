@@ -2,7 +2,7 @@
 
 torus docs follow one rubric, adapted from the Vercel writing handbook and Google's technical-writing courses and developer documentation style guide. `tests/docs-style.test.mjs` enforces the mechanical rules below; `markdownlint` (part of `npm run lint`) enforces the structural ones. This page is the source of truth for both. Deviations on purpose: straight quotes (git and code context), plain markdown (no frontmatter), no non-breaking spaces, and no em dashes in prose (Google permits them; we ban them for scanning consistency and to avoid generated-text tells).
 
-Generated files are exempt: `CHANGELOG.md`, `docs/efficiency.md`, `docs/efficiency.html`, `docs/bench-records.json`.
+Generated files are exempt where the machine owns the bytes: `CHANGELOG.md` (release-please) and, outside markdown entirely, `docs/efficiency.html` and `docs/bench-records.json` (bench renderer output). `docs/efficiency.md` is hand-maintained: its pasted bench numbers are exempt from the repo's no-hand-written-numbers rule, but its prose follows this rubric like any other page.
 
 ## Voice
 

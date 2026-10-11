@@ -1,10 +1,10 @@
-# Efficiency — torus vs stock pi overhead
+# Efficiency: torus vs stock pi overhead
 
 torus layers a harness (child extension set, tool registrations, system-prompt
 additions) on top of the stock pi engine. This page documents how that
 harness-layer context overhead is measured. The comparison the bench makes:
 **stock pi** (bare engine, no extensions) vs **torus** (engine + the same
-child-extension set delegations get), on identical prompts — the delta is
+child-extension set delegations get), on identical prompts; the delta is
 torus's overhead.
 
 ## Method
@@ -12,11 +12,11 @@ torus's overhead.
 - **Task set.** Six fixed, read-only, repo-local prompts in three difficulty
   tiers (trivial lookup / aggregate sweep / multi-file reasoning), defined in
   `scripts/bench/tasks.mjs`. Deterministic inputs, no file writes, no network
-  beyond the model API — so any token delta comes from the harness layer, not
+  beyond the model API, so any token delta comes from the harness layer, not
   the task.
 - **Configs.** Per task, the pinned engine (`resolveEngineBin`) is spawned with
   `--mode json`: **stock** gets the bare argv, **torus** gets the same argv
-  plus the canonical `childExtensionArgs` list and `TORUS_ENGINE_CHILD=1` —
+  plus the canonical `childExtensionArgs` list and `TORUS_ENGINE_CHILD=1`;
   byte-for-byte the spawn a delegation receives.
 - **Warmup discarded.** One warmup run per task × config executes first and is
   excluded from statistics, so measured runs start from a steady-state prompt
@@ -37,7 +37,7 @@ torus's overhead.
   and counted, never fatal.
 - **Cache accounting.** zai/GLM speaks the OpenAI-compatible schema, which
   reports cache *reads* (`cached_tokens`) but has no cache-*write* token
-  accounting — so the cache-write column reads 0 on this provider by
+  accounting, so the cache-write column reads 0 on this provider by
   construction (writes happen implicitly, unbilled and unreported; they
   surface later as cache reads). On providers with explicit cache-write
   usage (e.g. Anthropic-style `cache_creation` tokens) the column fills.
@@ -47,7 +47,7 @@ torus's overhead.
 
 ## Running it
 
-The bench spawns the real engine and calls the model API — run it with valid
+The bench spawns the real engine and calls the model API; run it with valid
 credentials, from the repo root:
 
 ```sh
@@ -211,14 +211,12 @@ Cells are medians; `±` is half the interquartile range across measured runs. Ve
 | engine-pin-report      |        cost | +$0.0039 |     $0.0008 |       signal |
 | engine-pin-report      |          ms |   +4,985 |    2,957 ms |       signal |
 
-
 ### Reading them
 
-- Cache read is the dominant, consistent overhead signal — the extension declaration surface, cached by the provider at a fraction of input price.
+- Cache read is the dominant, consistent overhead signal: the extension declaration surface, cached by the provider at a fraction of input price.
 - Non-cached tokens-in deltas are mostly within run-to-run noise, and can be negative: on the multi-file reasoning task the stock engine flails (more turns, more fresh input) while the torus context reaches the answer directly.
 - Cost deltas are small but above noise on glm-5.3; on flash pricing they sit closer to the noise floor.
 - Wall-clock overhead per run is dominated by extension loading at spawn; amortized in real sessions that run many turns.
 - Ambient roles (dream/reflect, session-title) resolve via the fast tier, so a `chains.json` fast override pointing at a local model moves all ambient work to it.
-- Consumed ACP agents bypass the chain machinery entirely (they run their own models), so their usage/cost figures are best-effort zeros — see the acp section in `docs/extensions.md`.
-- Compare models only within their own section — pricing and token behavior differ.
-
+- Consumed ACP agents bypass the chain machinery entirely (they run their own models), so their usage/cost figures are best-effort zeros; see the acp section in `docs/extensions.md`.
+- Compare models only within their own section; pricing and token behavior differ.

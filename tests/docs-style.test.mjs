@@ -10,7 +10,10 @@ const RETIRED_KEYWORDS = /\b(ultrawork|hyperplan)\b/i;
 const FILLER = /\b(easy|simple|quick|just|very|really|simply)\b/i;
 const EMDASH = /—/;
 
-const GENERATED = new Set(["CHANGELOG.md", path.join("docs", "efficiency.md")]);
+// CHANGELOG.md is release-please output; everything else under test is
+// hand-written. docs/efficiency.md is hand-maintained (numbers pasted from
+// bench runs), so its prose follows the rubric like any other page.
+const GENERATED = new Set(["CHANGELOG.md"]);
 
 // Lines whose em dash is an output-format grammar token rather than prose.
 const EMDASH_ALLOWLIST = [{ file: path.join("agents", "dreamer.md"), pattern: /^DELETE: </ }];

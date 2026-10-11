@@ -45,7 +45,7 @@
 - `.npmrc` is agent-blocked by `cc-safety-net` by design; humans create it via `./make.sh npmrc`.
 - Guarded writes and reads: bare `cat`/`head`/`tail` of an absolute path is blocked: use the read tool; overwriting an existing similar file via `write` is blocked: use `edit` (`extensions/guards/index.ts`).
 - The engine is pinned in `package.json` (`@earendil-works/pi-coding-agent`); `TORUS_PI_BIN` overrides the binary path.
-- Repo docs (README, CONTRIBUTING, docs/) make no hand-written numerical claims that duplicate a machine source of truth: tool/skill/agent counts, version floors, model context sizes. They go stale silently; reference the authoritative file (`package.json`, `agents/`, `docs/extensions.md`) instead. Regenerated benchmark output (`docs/efficiency.md`, `docs/efficiency.html`, `docs/bench-records.json`) is exempt.
+- Repo docs (README, CONTRIBUTING, docs/) make no hand-written numerical claims that duplicate a machine source of truth: tool/skill/agent counts, version floors, model context sizes. They go stale silently; reference the authoritative file (`package.json`, `agents/`, `docs/extensions.md`) instead. Benchmark numbers pasted into `docs/efficiency.md` are the machine's report and stay exempt from this rule; the file itself is hand-maintained and follows `docs/style.md` like any other page. Truly regenerated output (`docs/efficiency.html`, `docs/bench-records.json`, `CHANGELOG.md`) is never hand-edited.
 
 ## Commit convention
 
@@ -58,7 +58,7 @@ Commit subjects are release-mechanical: release-please maps them to version bump
 | `!` or `BREAKING CHANGE:` footer | minor while 0.x (`bump-minor-pre-major`), major after 1.0 |
 | `chore:`, `ci:`, `docs:`, `test:` | no bump, no changelog entry |
 
-- Docs follow `docs/style.md`; `tests/docs-style.test.mjs` enforces its mechanical rules (banned filler, prose em dashes, retired keywords, link resolution, README quickstart ordering) and markdownlint enforces the structural ones via `npm run lint`. Generated files (`CHANGELOG.md`, `docs/efficiency.*`, `docs/bench-records.json`) are exempt.
+- Docs follow `docs/style.md`; `tests/docs-style.test.mjs` enforces its mechanical rules (banned filler, prose em dashes, retired keywords, link resolution, README quickstart ordering) and markdownlint enforces the structural ones via `npm run lint`. Exemptions: `CHANGELOG.md` (release-please output) and non-markdown regenerated artifacts (`docs/efficiency.html`, `docs/bench-records.json`). `docs/efficiency.md` is hand-maintained and fully in purview; only its pasted bench numbers are exempt from the no-hand-written-numbers rule.
 - Engine-pin bumps (`@earendil-works/pi-*` in `package.json`) land as `feat(deps):` (every shipped binary carries the pin, so they are user-visible). Renovate applies this automatically (`renovate.json` `packageRules`); hand-bumped pins keep the same subject. Engine-pin bumps also require the release-workflow env-audit step before merge: re-run `tests/env-hygiene.test.mjs` and re-verify the engine's `.env` autoload behavior (`docs/release-workflow.md`).
 - Squash-merges keep the PR title verbatim as the commit subject; get the subject right at merge time.
 - No plan coordinates (wave/task numbers, plan slugs, ledger paths) in commit messages or code comments; history reads as the repo's own work.
