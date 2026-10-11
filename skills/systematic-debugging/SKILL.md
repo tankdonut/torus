@@ -1,10 +1,10 @@
 ---
 name: systematic-debugging
 license: MIT
-description: "Use when encountering any bug, test failure, build failure, or unexpected behavior — before proposing fixes. Root cause first: investigate, compare patterns, test one hypothesis at a time, then fix with a failing test. Symptom patches without root cause are failure."
+description: "Use when encountering any bug, test failure, build failure, or unexpected behavior, before proposing fixes. Root cause first: investigate, compare patterns, test one hypothesis at a time, then fix with a failing test. Symptom patches without root cause are failure."
 ---
 
-# Systematic Debugging
+# systematic-debugging
 
 **Core principle:** ALWAYS find root cause before attempting fixes. Symptom fixes are failure.
 
@@ -12,7 +12,7 @@ description: "Use when encountering any bug, test failure, build failure, or une
 
 ## The Iron Law
 
-```
+```text
 NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST
 ```
 
@@ -45,7 +45,7 @@ You MUST complete each phase before proceeding to the next.
 **BEFORE attempting ANY fix:**
 
 1. **Read Error Messages Carefully**
-   - Don't skip past errors or warnings — they often contain the exact solution
+   - Don't skip past errors or warnings: they often contain the exact solution
    - Read stack traces completely; note line numbers, file paths, error codes
    - For type errors: `lsp_diagnostics` on the file or directory beats re-reading code
 
@@ -63,7 +63,7 @@ You MUST complete each phase before proceeding to the next.
 
    **BEFORE proposing fixes, add diagnostic instrumentation:**
 
-   ```
+   ```text
    For EACH component boundary:
      - Log what data enters the component
      - Log what data exits the component
@@ -89,18 +89,18 @@ You MUST complete each phase before proceeding to the next.
 
 5. **Trace Data Flow**
 
-   WHEN the error is deep in a call stack: walk backward with `lsp_goto_definition` / `lsp_find_references` — where does the bad value originate? What called this with the bad value? Keep tracing up until you find the source. Fix at source, not at symptom.
+   WHEN the error is deep in a call stack: walk backward with `lsp_goto_definition` / `lsp_find_references`. Where does the bad value originate? What called this with the bad value? Keep tracing up until you find the source. Fix at source, not at symptom.
 
 ### Phase 2: Pattern Analysis
 
 **Find the pattern before fixing:**
 
 1. **Find Working Examples**
-   - Locate similar working code in the same codebase — what works that's similar to what's broken?
+   - Locate similar working code in the same codebase: what works that's similar to what's broken?
    - `torus_astgrep` finds structurally similar call sites; grep finds the obvious ones
 
 2. **Compare Against References**
-   - If implementing a known pattern, read the reference implementation COMPLETELY — every line, no skimming
+   - If implementing a known pattern, read the reference implementation COMPLETELY: every line, no skimming
    - Understand the pattern fully before applying
 
 3. **Identify Differences**
@@ -125,10 +125,10 @@ You MUST complete each phase before proceeding to the next.
 
 3. **Verify Before Continuing**
    - Did it work? Yes → Phase 4
-   - Didn't work? Form a NEW hypothesis — DON'T add more fixes on top
+   - Didn't work? Form a NEW hypothesis: DON'T add more fixes on top
 
 4. **When You Don't Know**
-   - Say "I don't understand X". Don't pretend to know — research more or ask
+   - Say "I don't understand X". Don't pretend to know: research more or ask
 
 ### Phase 4: Implementation
 
@@ -136,7 +136,7 @@ You MUST complete each phase before proceeding to the next.
 
 1. **Create Failing Test Case**
    - Simplest possible reproduction, automated in the repo's test framework (one-off script only if no framework fits)
-   - MUST exist before fixing — a fix without a failing test is an opinion
+   - MUST exist before fixing: a fix without a failing test is an opinion
 
 2. **Implement Single Fix**
    - Address the root cause identified. ONE change at a time
@@ -144,12 +144,12 @@ You MUST complete each phase before proceeding to the next.
 
 3. **Verify Fix**
    - The failing test passes now; no other tests broke; the issue is actually resolved
-   - Run the repo's own gate before claiming success — the smallest check that proves the behavior (adjacent test file, typecheck), not just the one test you wrote
+   - Run the repo's own gate before claiming success: the smallest check that proves the behavior (adjacent test file, typecheck), not only the one test you wrote
 
 4. **If Fix Doesn't Work**
    - STOP. Count: how many fixes have you tried?
    - If < 3: return to Phase 1, re-analyze with the new information
-   - **If ≥ 3: STOP and question the architecture (below) — don't attempt fix #4**
+   - **If ≥ 3: STOP and question the architecture (below), don't attempt fix #4**
 
 5. **If 3+ Fixes Failed: Question Architecture**
 
@@ -159,9 +159,9 @@ You MUST complete each phase before proceeding to the next.
    - Fixes require "massive refactoring" to implement
    - Each fix creates new symptoms elsewhere
 
-   STOP and question fundamentals: Is this pattern fundamentally sound? Are we sticking with it through sheer inertia? Should the architecture change instead of another symptom patch? Discuss with the user before attempting more fixes. This is NOT a failed hypothesis — this is a wrong architecture.
+   STOP and question fundamentals: Is this pattern fundamentally sound? Are we sticking with it through sheer inertia? Should the architecture change instead of another symptom patch? Discuss with the user before attempting more fixes. This is NOT a failed hypothesis: this is a wrong architecture.
 
-## Red Flags — STOP and Follow Process
+## Red Flags: STOP and Follow Process
 
 If you catch yourself thinking:
 
@@ -182,10 +182,10 @@ If you catch yourself thinking:
 
 Watch for these redirections:
 
-- "Is that not happening?" — you assumed without verifying
-- "Will it show us...?" — you should have added evidence gathering
-- "Stop guessing" — you're proposing fixes without understanding
-- "We're stuck?" (frustration) — your approach isn't working
+- "Is that not happening?" means you assumed without verifying
+- "Will it show us...?" means you should have added evidence gathering
+- "Stop guessing" means you're proposing fixes without understanding
+- "We're stuck?" (frustration) means your approach isn't working
 
 **When you see these:** STOP. Return to Phase 1.
 
@@ -202,7 +202,7 @@ Watch for these redirections:
 | "I see the problem, let me fix it" | Seeing symptoms ≠ understanding root cause. |
 | "One more fix attempt" (after 2+ failures) | 3+ failures = architectural problem. Question the pattern, don't fix again. |
 
-## Quick Reference
+## Four phases at a glance
 
 | Phase | Key Activities | Success Criteria |
 |-------|---------------|------------------|
@@ -215,8 +215,8 @@ Watch for these redirections:
 
 If systematic investigation reveals the issue is truly environmental, timing-dependent, or external:
 
-1. You've completed the process — document what you investigated
+1. You've completed the process: document what you investigated
 2. Implement appropriate handling (retry, timeout, error message)
 3. Add logging/monitoring for future investigation
 
-**But:** 95% of "no root cause" cases are incomplete investigation.
+**But:** almost all "no root cause" outcomes are incomplete investigation.

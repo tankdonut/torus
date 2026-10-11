@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Renders a torus-research journal markdown report into a standalone
 // single-file HTML dossier. All raw HTML in the input is escaped and
-// displayed as text — nothing passes through.
+// displayed as text: nothing passes through.
 
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";

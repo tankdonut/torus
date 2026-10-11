@@ -1,6 +1,6 @@
 ---
 name: torus-research
-description: "Maximum-saturation research with parallel delegate swarms, a file journal, and a cited synthesis. Use when the user explicitly asks for research, deep investigation, or a landscape survey — codebase, external, or both."
+description: "Maximum-saturation research with parallel delegate swarms, a file journal, and a cited synthesis. Use when the user explicitly asks for research, deep investigation, or a landscape survey: codebase, external, or both."
 ---
 
 # torus-research
@@ -11,21 +11,20 @@ You are the research orchestrator. Exhaustive coverage is the assignment: fan de
 
 Create the journal directory first: `$TORUS_STATE_DIR/research/<yyyy-mm-dd>-<slug>/` (env var exported by every torus session; never hand-derive the dashed project key) with (legacy journals from `~/.torus/research/` remain readable by absolute path):
 
-- `brief.md` — the core question, 3+ orthogonal axes (codebase / external / browsing as applicable), expected truths, and the deliverable format.
-- `sources-ledger.md` — one line per source the moment it is read: `[S<n>] <url-or-path> — what it is`.
-- `wave-<N>.md` — your digest of each delegate return: findings, sources, and its `## EXPAND` leads verbatim.
+- `brief.md`: the core question, 3+ orthogonal axes (codebase / external / browsing as applicable), expected truths, and the deliverable format.
+- `sources-ledger.md`: one line per source the moment it is read, `[S<n>] <url-or-path> — what it is`.
+- `wave-<N>.md`, your digest of each delegate return: findings, sources, and its `## EXPAND` leads verbatim.
 
-Every finding, number, and quote lands in the journal THE INSTANT it arrives — never held for an end-of-run dump.
+Every finding, number, and quote lands in the journal THE INSTANT it arrives: never held for an end-of-run dump.
 
 ## Waves
 
 Launch an entire wave at once via `torus_fanout`:
 
 - Codebase axes → `explorer` delegates (grep patterns, structure, history via git).
-- External axes → `librarian` delegates (websearch/webfetch, context7 docs, grep.app code search — they have these tools).
+- External axes → `librarian` delegates (websearch/webfetch, context7 docs, grep.app code search; they have these tools).
 
-Each delegate task must be self-contained: name the axis, the exact queries/paths to hit, and require in the reply:
-`## EXPAND` — leads not yet investigated (`LEAD: <x> — WHY: <why> — ANGLE: <search>`), or `none — <reason>`.
+Each delegate task must be self-contained: name the axis, the exact queries/paths to hit, and require in the reply a `## EXPAND` section: leads not yet investigated (`LEAD: <x> — WHY: <why> — ANGLE: <search>`), or `none — <reason>`.
 
 After each wave: journal the returns, deduplicate leads against what you already chased, and dispatch the next wave for every unchecked lead.
 
@@ -33,10 +32,10 @@ After each wave: journal the returns, deduplicate leads against what you already
 
 Run at least 2 waves before claiming convergence on multi-axis questions. Stop only when one holds:
 
-1. Zero unchecked leads remain (investigated or closed as duplicate/dead end — record which).
+1. Zero unchecked leads remain (investigated or closed as duplicate/dead end: record which).
 2. 3 consecutive waves produced no new actionable leads.
 
-Reserve the last fifth of effort for synthesis — never end on delegates finishing.
+Reserve the last fifth of effort for synthesis: never end on delegates finishing.
 
 ## Claims
 
@@ -47,13 +46,13 @@ Contested or load-bearing assertions get settled, not narrated:
 
 ## Synthesis
 
-Write `REPORT.md` in the journal: executive summary, findings by theme (each with `[S<n>]` citations), contradictions and resolutions, gaps, and the wave trace. The final chat answer carries the answer itself — a few sentences, the numbers that matter, and the REPORT.md path.
+Write `REPORT.md` in the journal: executive summary, findings by theme (each with `[S<n>]` citations), contradictions and resolutions, gaps, and the wave trace. The final chat answer carries the answer itself: a few sentences, the numbers that matter, and the REPORT.md path.
 
 ## Rendering
 
 After writing `REPORT.md`, render it: `node skills/torus-research/bin/render-report.mjs <journal-dir>` (a markdown file path also works; output defaults to `<stem>.html` next to the input). Mention the emitted HTML in the final chat answer alongside the REPORT.md path.
 
-The HTML is standalone — it opens offline, defaults to the reader's `prefers-color-scheme`, and carries a dark/light toggle. Print to PDF from the browser; light theme recommended.
+The HTML is standalone: it opens offline, defaults to the reader's `prefers-color-scheme`, and carries a dark/light toggle. Print to PDF from the browser; light theme recommended.
 
 ## Rules
 

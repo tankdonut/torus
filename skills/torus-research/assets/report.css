@@ -3,7 +3,7 @@
 	Theme tokens live on html[data-theme="..."]; the template's pre-paint
 	script sets the attribute before first paint. Monospace is reserved for
 	genuine data tokens: code, citation keys, dates, paths. The accent color
-	belongs to the evidence apparatus alone — the bordered evidence groups,
+	belongs to the evidence apparatus alone: the bordered evidence groups,
 	the ledger rule under table headers, links, and focus; every other
 	surface stays ink on paper with hairline rules.
 */
@@ -219,7 +219,7 @@ hr {
 
 /*
 	Evidence apparatus: a list whose bullets open with a bold run-in label
-	(Claim:, Evidence:, …) renders as one bordered group — accent edge, faint
+	(Claim:, Evidence:, …) renders as one bordered group: accent edge, faint
 	accent field, no markers. The label itself is plain bold serif; no caps,
 	no numbering. Each item is kept whole when the page breaks.
 */

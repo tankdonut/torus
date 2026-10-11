@@ -3,7 +3,7 @@ name: git-ops
 description: "Handles git work: atomic commits, rebase, squash, blame, bisect, reflog, and history questions. Use whenever a task needs a commit or a git-history investigation; skip for ordinary code edits."
 ---
 
-# Git Ops
+# git-ops
 
 Use this skill when the user asks you to operate on Git history or answer a Git-history question. Be exact, conservative, and evidence-led. Read the repository state before you infer anything.
 
@@ -45,7 +45,7 @@ When a PR body needs screenshots or terminal PNGs, the allowed hosting path is G
 Commit only the user's requested changes. Preserve unrelated dirty work.
 
 1. Detect message style from recent history. Use the dominant local pattern, language, and casing. Do not default to Conventional Commits unless the repo uses them.
-2. Messages describe the change, not the planning process. Strip execution artifacts — wave/task numbers, plan or branch slugs, ledger/session references, "as per the plan" phrasing. History must read as the repo's own narrative; planning context belongs in the plan file or work ledger, never in the commit.
+2. Messages describe the change, not the planning process. Strip execution artifacts: wave/task numbers, plan or branch slugs, ledger/session references, "as per the plan" phrasing. History must read as the repo's own narrative; planning context belongs in the plan file or work ledger, never in the commit.
 3. Inspect the full diff, not only filenames. Separate unrelated user edits from the requested commit.
 4. Build atomic groups by behavior, module, and revertability. Keep implementation and its direct tests together.
 5. Prefer multiple commits for unrelated concerns. A single commit is acceptable only when the changed files form one indivisible behavior or the user explicitly asks for one commit.
