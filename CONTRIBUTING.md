@@ -1,6 +1,6 @@
 # Contributing to torus
 
-PRs welcome — especially **new agents** and **new skills**, both designed as drop-in surfaces (a file in `agents/` or `skills/`). Issues are equally welcome: bug reports with a transcript snippet, or ideas for roster agents.
+PRs welcome, especially **new agents** and **new skills**, both designed as drop-in surfaces (a file in `agents/` or `skills/`). Issues are equally welcome: bug reports with a transcript snippet, or ideas for roster agents.
 
 ## Setup
 
@@ -14,11 +14,11 @@ Run `./runtime/bin/torus.mjs` and work against a real repo.
 
 ## The gate
 
-`./make.sh check` runs typecheck + lint + test + smoke. The husky pre-commit hook runs typecheck + lint + test on every commit — if it passes locally, CI won't surprise you. Auto-fix formatting with `npm run lint:fix`.
+`./make.sh check` runs typecheck + lint + test + smoke (boots the launcher keyless: `node runtime/bin/torus.mjs --list-models`). The husky pre-commit hook runs typecheck + lint + test on every commit. If it passes locally, CI won't surprise you. Auto-fix formatting with `npm run lint:fix`.
 
 ## PR mechanics
 
-Squash-merge is the rule, and **your PR title becomes the release commit verbatim** — release-please maps it to a version bump and changelog entry:
+Squash-merge is the rule, and **your PR title becomes the release commit verbatim**. release-please maps it to a version bump and changelog entry:
 
 | Subject | Effect |
 |---|---|
@@ -32,7 +32,7 @@ Details and rationale: [docs/release-workflow.md](docs/release-workflow.md).
 ## Gotchas
 
 - A new extension needs both a `extensions/registry.ts` entry and the `pi.extensions` array in `package.json`.
-- [docs/extensions.md](docs/extensions.md) is coverage-tested (`tests/docs-coverage.test.mjs`) — document new tools, commands, and env vars in the same PR.
+- [docs/extensions.md](docs/extensions.md) is coverage-tested (`tests/docs-coverage.test.mjs`). Document new tools, commands, and env vars in the same PR.
 - `agents/*.md` and `skills/*/SKILL.md` are contract-tested (`tests/agents-contract.test.mjs`, `tests/skills-spec.test.mjs`); the contracts live in [docs/agents.md](docs/agents.md) and [docs/skills.md](docs/skills.md).
 
 ## Everything else

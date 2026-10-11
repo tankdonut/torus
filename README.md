@@ -1,50 +1,63 @@
 # torus
 
-A multi-agent coding harness on the pinned stock [pi](https://github.com/earendil-works/pi) engine: a lead session that delegates to a roster of specialist agents — builder, explorer, librarian, reviewer, … — with live visibility into everything they do.
+A multi-agent coding harness on the pinned stock [pi](https://github.com/earendil-works/pi) engine: a lead session that delegates to a roster of specialist agents (builder, explorer, librarian, reviewer, …) with live visibility into everything they do.
 
-torus owns the harness layer — roster, delegation, ambient UI, memory. The engine beneath it is a pinned, replaceable dependency.
+torus owns the harness layer: roster, delegation, ambient UI, memory. The engine beneath it is a pinned, replaceable dependency.
 
 ## What you get
 
-- **Delegation & teams** — hand work to any agent with `/<agent> <task>`, or let the session delegate: parallel fan-outs, sequential pipelines, and persistent teams with shared tasklists that survive restarts.
-- **Live visibility** — every delegation opens a tmux pane tailing what the agent does, live statusline entries, and **alt+t**, a fleet browser with live transcripts — steer (`s`) or stop (`x`) a running agent mid-run.
-- **Persistent memory** — git-backed notes injected into future sessions; `/reflect` distills a session into durable memory, and `/goal` pins a standing objective.
-- **Personas** — the main session itself runs as any roster agent (**alt+p** to cycle); every agent is both a persona and a delegatable child.
-- **Open-standard skills** — skills follow the [Agent Skills](https://agentskills.io) standard: they work in Claude Code and Codex unchanged, and external skills drop into `~/.agents/skills/`.
-- **Guards by default** — context-integrity guards, credential redaction in delegation logs, and a read-only dreamer for memory writes; the full threat model is [SECURITY.md](SECURITY.md).
+- **Delegation & teams**: hand work to any agent with `/<agent> <task>`, or let the session delegate into parallel fan-outs, sequential pipelines, and persistent teams with shared tasklists that survive restarts.
+- **Live visibility**: every delegation opens a tmux pane tailing what the agent does, live statusline entries, and **alt+t**, a fleet browser with live transcripts. Steer (`s`) or stop (`x`) a running agent mid-run.
+- **Persistent memory**: git-backed notes injected into future sessions; `/reflect` distills a session into durable memory, and `/goal` pins a standing objective.
+- **Personas**: the main session itself runs as any roster agent (**alt+p** to cycle); every agent is both a persona and a delegatable child.
+- **Open-standard skills**: skills follow the [Agent Skills](https://agentskills.io) standard, so they work in Claude Code and Codex unchanged; external skills drop into `~/.agents/skills/`.
+- **Guards by default**: context-integrity guards, credential redaction in delegation logs, and a read-only dreamer for memory writes; the full threat model is [SECURITY.md](SECURITY.md).
 
 ## Quickstart
 
-From source (Node per `engines.node`; tmux optional — delegation panes only appear inside tmux):
+**As a pi package**: you need [pi](https://github.com/earendil-works/pi) installed first; its README covers installation. Then one command loads the full extension pack, skills, and agent roster, with no clone and no build:
 
 ```sh
-git clone https://github.com/tankdonut/torus.git && cd torus
-./make.sh npmrc      # one-time; agent-blocked by design
-npm install
-./runtime/bin/torus.mjs
+pi install git:github.com/tankdonut/torus@vX.Y.Z
 ```
 
-Authenticate the built-in GLM provider with `/login zai` on first run.
+Launcher-only surfaces (`torus serve`, `torus acp-agent`) are not part of this mode; see [docs/pi-packages.md](docs/pi-packages.md).
 
-In a container — full toolchain, no host install:
+**As a single binary**: download `torus-<os>-<arch>` from [releases](https://github.com/tankdonut/torus/releases), make it executable, and run it. The first launch self-bootstraps the runtime:
+
+```sh
+chmod +x torus-<os>-<arch> && ./torus-<os>-<arch>
+```
+
+**In a container** (full toolchain, no host install):
 
 ```sh
 docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus
 ```
 
-As a single binary — download from [releases](https://github.com/tankdonut/torus/releases) (`torus-<os>-<arch>`, `chmod +x`); the first launch self-bootstraps the runtime. Or load just the extension pack into a stock pi: `pi install git:github.com/tankdonut/torus@vX.Y.Z` — take only part of it via consume-time filtering; see [docs/pi-packages.md](docs/pi-packages.md).
+**From source** (contributor path). You need Node >= 22.12; tmux is optional, since delegation panes only appear inside tmux:
+
+```sh
+git clone https://github.com/tankdonut/torus.git && cd torus
+./make.sh npmrc      # one-time: writes .npmrc (agents are blocked from writing it by design)
+npm install
+./runtime/bin/torus.mjs
+```
+
+All paths need provider auth on first run: `/login zai` signs in to the built-in Z.ai provider (GLM models). In containers, mount credentials read-only instead; see [docs/container.md](docs/container.md).
 
 ## First five minutes
 
-1. `/roster` — the agents, their model chains, and credentialed providers.
-2. Delegate something small: `/explorer where does the roster load from?` — watch the right-hand pane, then **alt+t** for the live transcript.
-3. Say `team` in a message (or `deepwork`, `blueprint`) — keyword gates switch the session's execution mode.
+1. `/roster`: the agents, their model chains, and credentialed providers.
+2. Delegate something small: `/explorer where does the roster load from?` Watch the right-hand pane, then **alt+t** for the live transcript.
+3. Say `team` in a message (or `deepwork`, `blueprint`). Keyword gates switch the session's execution mode.
 4. `/goal` to pin a standing objective; `/reflect` to distill the session into memory.
 
 ## Where to go next
 
 | Want | Read |
 |---|---|
+| Install as a pi package (extension pack) | [docs/pi-packages.md](docs/pi-packages.md) |
 | Every tool, command, and env var | [docs/extensions.md](docs/extensions.md) |
 | The agent contract (add an agent) | [docs/agents.md](docs/agents.md) |
 | Skills import/export | [docs/skills.md](docs/skills.md) |
@@ -55,8 +68,8 @@ As a single binary — download from [releases](https://github.com/tankdonut/tor
 
 ## Developing torus
 
-PRs welcome — especially new agents and skills, both drop-in. [CONTRIBUTING.md](CONTRIBUTING.md) covers the gate and PR mechanics; [AGENTS.md](AGENTS.md) has the full layout and conventions. `./make.sh check` is the full gate.
+PRs welcome, especially new agents and skills (both drop-in). [CONTRIBUTING.md](CONTRIBUTING.md) covers the gate and PR mechanics; [AGENTS.md](AGENTS.md) has the full layout and conventions. `./make.sh check` is the full gate.
 
 ## Security & license
 
-torus runs an agent with file, shell, and network access on your machine — read [SECURITY.md](SECURITY.md) before pointing it at untrusted repositories. MIT, see [LICENSE](LICENSE).
+torus runs an agent with file, shell, and network access on your machine. Read [SECURITY.md](SECURITY.md) before pointing it at untrusted repositories. MIT, see [LICENSE](LICENSE).
