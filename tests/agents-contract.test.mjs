@@ -100,7 +100,7 @@ function toolEntryProblem(entry) {
 
 const KNOWN_FIELDS = new Set(["name", "description", "chain", "mode", "tools", "aliases", "model"]);
 
-// Port artifacts and phantom conventions from the OmO-era prompts
+// Port artifacts and phantom conventions inherited from earlier persona prompts
 // (docs/agents.md "No phantom tools"), plus literal \uXXXX escape sequences —
 // prompts must carry real characters, not escape-sequence text.
 const DENYLIST = [

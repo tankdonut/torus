@@ -75,7 +75,7 @@ Maps for current sections: dreamer's "Hard Boundary" → `Boundaries` + `Role`; 
 
 ## Content invariants (machine-enforced)
 
-1. **No phantom tools.** Bodies must not reference retired or never-existed names. Denylist (test-enforced): `websearch_`, `websearch_exa`, `webfetch`, `web fetch via curl`, the `mcp({ … })` calling convention, and `mcp proxy tool` — the MCP servers expose tools directly as `mcp__<server>__<tool>`. These are port artifacts from the OmO prompts; two prior repair passes (`ffee534`, `a01263e`) missed some, which is why the denylist is now a test.
+1. **No phantom tools.** Bodies must not reference retired or never-existed names. Denylist (test-enforced): `websearch_`, `websearch_exa`, `webfetch`, `web fetch via curl`, the `mcp({ … })` calling convention, and `mcp proxy tool` — the MCP servers expose tools directly as `mcp__<server>__<tool>`. These are port artifacts inherited from earlier persona prompts; two prior repair passes (`ffee534`, `a01263e`) missed some, which is why the denylist is now a test.
 2. **Markers.** `{{AGENTS}}` and `{{DELEGATION}}` substitute live (roster block). `{{TOOLS}}`, `{{SKILLS}}`, `{{DYNAMIC}}` substitute to **empty** — vestigial; forbidden in new files.
 3. **Whitelist⇄body coupling.** If `tools:` is set, every whitelisted name must appear in the body (the prompt must teach what the allowlist grants).
 4. **Body required.** Minimum real content (≥40 chars); the loader's description-only fallback is for emergencies, not authoring.
