@@ -56,7 +56,7 @@ All paths need provider auth on first run: `/login zai` signs in to the built-in
 ## Where to go next
 
 | Want | Read |
-|---|---|
+| --- | --- |
 | Install as a pi package (extension pack) | [docs/pi-packages.md](docs/pi-packages.md) |
 | Every tool, command, and env var | [docs/extensions.md](docs/extensions.md) |
 | The agent contract (add an agent) | [docs/agents.md](docs/agents.md) |

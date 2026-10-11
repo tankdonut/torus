@@ -14,7 +14,7 @@ Source of truth for built-in servers is `node_modules/pi-lsp-client/src/lsp/serv
 1. **Identify the language** from the failing file's extension. Server id in backticks; the executable to check is the first token of its command.
 
    | Extensions | Server (default pick) | Install |
-   |---|---|---|
+   | --- | --- | --- |
    | `.ts` `.tsx` `.js` `.jsx` `.mjs` `.cjs` `.mts` `.cts` | `typescript` (`typescript-language-server`) | `npm i -g typescript-language-server typescript` |
    | `.vue` | `vue` (`vue-language-server`) | `npm i -g @vue/language-server` |
    | `.svelte` | `svelte` (`svelteserver`) | `npm i -g svelte-language-server` |
@@ -92,7 +92,7 @@ Rules enforced by pi-lsp-client's config loader:
 ### Common swaps
 
 | Want | Do |
-|---|---|
+| --- | --- |
 | Deno to serve `.ts` | install `deno`, disable `typescript` |
 | Biome as the only `.ts` server | `npm i -g @biomejs/biome`, disable `typescript` |
 | `pyright` instead of `basedpyright` | install it, disable `basedpyright` |

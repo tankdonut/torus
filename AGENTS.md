@@ -1,13 +1,14 @@
 # Agent Instructions
 
 ## Commands
+
 | Task | Command |
-|------|---------|
+| ------ | --------- |
 | Test one file | `node --experimental-strip-types --import ./tests/resolve-ts-hook.mjs --test tests/hashline.test.mjs` |
 | Test all | `npm test` |
 | Typecheck | `npm run typecheck` |
 | Lint/format one file | `npx biome check extensions/hashline/index.ts` |
-| Lint all | `npm run lint` |
+| Lint all | `npm run lint` (biome + markdownlint) |
 | Auto-fix lint+format | `npm run lint:fix` |
 | Full gate | `./make.sh check` (typecheck + lint + test + smoke) |
 | Build binary | `./make.sh build` |
@@ -16,23 +17,26 @@
 | Overhead bench (spawns engine, costs tokens) | `npm run bench:overhead` |
 
 ## Layout
+
 | Area | Purpose | Entry point |
-|------|---------|-------------|
+| ------ | --------- | ------------- |
 | `extensions/` | All source: one extension dir each plus shared modules | `extensions/registry.ts` |
 | `agents/` | Roster persona prompts (frontmatter: name/description/chain; children add `tools:`, session personas `mode:`; schema in `docs/agents.md`) | `agents/leader.md` |
 | `skills/` | Packaged skills: a `SKILL.md` per dir, may also ship assets (`assets/`, `bin/`; torus-research ships a report renderer) | `skills/torus-plan/SKILL.md` |
 | `tests/` | `node:test` suites (`.test.mjs`) + TS import hook | `tests/resolve-ts-hook.mjs` |
 | `runtime/bin/` | Launcher that spawns the pinned pi engine | `runtime/bin/torus.mjs` |
 | `scripts/` | Bench framework, binary build + payload-bake scripts | `scripts/bench.mjs` |
-| `docs/` | Reference docs (`docs/extensions.md`, coverage-tested; `docs/agents.md`, agent-file contract + enforcement; `docs/smoke-checklist.md`, manual TTY smokes) | `docs/extensions.md` |
+| `docs/` | Reference docs (`docs/extensions.md`, coverage-tested; `docs/agents.md`, agent-file contract + enforcement; `docs/style.md`, the writing rubric both linters enforce; `docs/smoke-checklist.md`, manual TTY smokes) | `docs/extensions.md` |
 
 ## External References
+
 | Need | File |
 |------|------|
 | Install, env config, extension composition, personas | `README.md` |
 | Releases, versioning, bump rules, changelog semantics | `docs/release-workflow.md` |
 
 ## Conventions
+
 - Quality gates: Biome lint/format (`biome.json`) + strict `tsc --noEmit` + `node:test`, enforced by husky pre-commit (typecheck + lint + test); CI (`.github/workflows/ci.yml`) runs lint + typecheck + smoke.
 - Bracket member access (`process.env["X"]`) is the repo convention (`useLiteralKeys` is off in `biome.json`); regexes matching ANSI/OSC control sequences are intentional (`noControlCharactersInRegex` off).
 - TypeScript is type-stripped at runtime (`--experimental-strip-types`), never compiled; `tsconfig.json` is `noEmit`; keep imports runtime-resolvable ESM.
@@ -48,12 +52,13 @@
 Commit subjects are release-mechanical: release-please maps them to version bumps and changelog entries (see `docs/release-workflow.md`).
 
 | Subject | Effect |
-|---------|--------|
+| --------- | -------- |
 | `feat:` | minor bump, Features in changelog |
 | `fix:` | patch bump, Bug Fixes in changelog |
 | `!` or `BREAKING CHANGE:` footer | minor while 0.x (`bump-minor-pre-major`), major after 1.0 |
 | `chore:`, `ci:`, `docs:`, `test:` | no bump, no changelog entry |
 
+- Docs follow `docs/style.md`; `tests/docs-style.test.mjs` enforces its mechanical rules (banned filler, prose em dashes, retired keywords, link resolution, README quickstart ordering) and markdownlint enforces the structural ones via `npm run lint`. Generated files (`CHANGELOG.md`, `docs/efficiency.*`, `docs/bench-records.json`) are exempt.
 - Engine-pin bumps (`@earendil-works/pi-*` in `package.json`) land as `feat(deps):` (every shipped binary carries the pin, so they are user-visible). Renovate applies this automatically (`renovate.json` `packageRules`); hand-bumped pins keep the same subject. Engine-pin bumps also require the release-workflow env-audit step before merge: re-run `tests/env-hygiene.test.mjs` and re-verify the engine's `.env` autoload behavior (`docs/release-workflow.md`).
 - Squash-merges keep the PR title verbatim as the commit subject; get the subject right at merge time.
 - No plan coordinates (wave/task numbers, plan slugs, ledger paths) in commit messages or code comments; history reads as the repo's own work.

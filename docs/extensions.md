@@ -47,7 +47,7 @@ torus holds no SDK dependency of its own. When the engine moves to an SDK line s
 Both servers keep `exposure: "direct"`: the lead session uses context7 and grep_app daily, so their `mcp__<server>__<tool>` tools are declared there like built-ins. Delegated children reach MCP only through their `tools:` whitelist globs. `--tools` replaces the whole selection, so a glob like `mcp__grep_app__*` is what makes a registered server callable in that child:
 
 | Persona | MCP access |
-|---|---|
+| --- | --- |
 | `explorer` | grep_app, via the `mcp__grep_app__*` glob |
 | `librarian` | context7 and grep_app |
 | `builder`, `dreamer`, `looker`, `reviewer` | none (MCP is a researcher surface, and builder's web tools already cover doc lookup) |
@@ -70,7 +70,7 @@ Does not re-register the built-in `zai` provider: stock pi provides the GLM mode
 `chains.json` under `TORUS_HOME` (default `~/.torus`) overrides either built-in chain wholesale. Shape `{"primary": ["provider/model", …], "fast": […]}`, read per call so edits apply without a restart:
 
 | Condition | Result |
-|---|---|
+| --- | --- |
 | A tier is a non-empty array of non-empty model ids | That tier is overridden |
 | An absent, empty, or malformed tier | falls back to that tier's built-in chain (mixed validity is fine: a valid `primary` beside a malformed `fast` overrides only `primary`) |
 | A file that is not valid JSON | Warns on stderr naming the file; both chains stay at the built-in defaults |
@@ -83,7 +83,7 @@ Overridden entries ride the same provider-availability filter as the defaults: a
 The same file's `providers` map registers compatible endpoints through the engine's `pi.registerProvider`: one entry per server, models addressable in chains as `<provider-name>/<model-id>`.
 
 | Field | Rule |
-|---|---|
+| --- | --- |
 | `baseUrl` | Non-empty |
 | `api` | One of the engine's supported ids: `openai-completions`, `openai-responses`, `azure-openai-responses`, `openai-codex-responses`, `anthropic-messages`, `mistral-conversations`, `bedrock-converse-stream`, `google-generative-ai`, `google-vertex`, `pi-messages` |
 | `models` | Non-empty array; each takes a non-empty `id`, optional `name`, and the knobs the engine already knows (`contextWindow`, `maxTokens`, `reasoning`, `input`), defaulted the way the engine's own bare entries default: text-only, no reasoning, zero cost, 128k context, 16k output. Unknown extra fields ignored |
@@ -110,7 +110,7 @@ openrouter is a `KnownProvider`, but registering it here wires the env-ref key w
 The delegation core: parses `agents/*.md` into the roster and spawns the pinned engine as a child per delegation.
 
 | Tool | Purpose |
-|---|---|
+| --- | --- |
 | `torus_roster` | List agents, chains, credentialed providers |
 | `torus_delegate` | Run one self-contained task on a roster agent; accepts `agent`, `task`, `handle`, `skills`, `cwd`, `model`; live `renderCall`/`renderResult` |
 
@@ -147,7 +147,7 @@ Name resolution: an exact name match in `acp.json` **wins over a roster agent** 
 One delegation spawns a fresh child speaking Agent Client Protocol v1 (stable) over stdio. Spec pin: github.com/agentclientprotocol/agent-client-protocol, docs/protocol/v1/ (repo formerly zed-industries), accessed 2026-10-09; initialization.mdx blob ea16b093. No `@agentclientprotocol/sdk` dependency: node primitives mirroring `rpc.ts`'s line-buffered stdio handling.
 
 | Wire step | Behavior |
-|---|---|
+| --- | --- |
 | `initialize` | Empty `clientCapabilities` (fs/terminal unsupported, so the agent cannot lean on torus-side capabilities); a response protocolVersion other than 1 fails the run naming it |
 | `session/new` | `cwd` = delegation cwd, `mcpServers: []` |
 | `session/prompt` | Settles the run (below) |
@@ -165,7 +165,7 @@ ACP agents skip model chains entirely (they run their own models): usage/cost fi
 `torus acp-agent` answers the same protocol as the AGENT over stdio so editors (Zed, JetBrains) can drive torus. The launcher intercepts the subcommand before the pi passthrough (serve pattern) and runs `runAcpAgentRole()` from this module. The agent process is the surface, never an engine session, and stdout is protocol-only (logs to stderr).
 
 | Method | Behavior |
-|---|---|
+| --- | --- |
 | `initialize` | Answers `loadSession: false`, `promptCapabilities.embeddedContext: false`, no `mcpCapabilities`, `authMethods: []` |
 | Any `session/*` before `initialize` | `-32002` (LSP-style ServerNotInitialized, borrowed by convention) |
 | `session/new` | Spawns a **fresh headless engine child** via `RpcChild` (`--mode rpc` + the canonical child extension set; no persona file, no `--model`) and returns an opaque `sessionId`; `mcpServers` params are ignored |
@@ -200,7 +200,7 @@ Switching persona also switches the session model when the agent's frontmatter p
 Typing a keyword in a user message arms a one-shot mode injected into the next turn's system prompt:
 
 | Keyword | Mode |
-|---|---|
+| --- | --- |
 | `deepwork` | Full precision: the outcome is a contract, no scope reduction, no unverified claims |
 | `blueprint` | Plan first: survey, write the plan, get approval before any edit |
 | `team` | Multi-axis work: orchestrate via `torus_fanout` / `torus_chain` / team tools |
@@ -284,7 +284,7 @@ No tools or commands.
 - **Interactions:** exports `truncateText` (used by astgrep); documented in AGENTS.md conventions
 
 | Guard | Behavior |
-|---|---|
+| --- | --- |
 | Output truncation | Truncates oversized tool outputs |
 | Bare dumps | Blocks bare `cat`/`head`/`tail`/`less`/`more` of absolute file paths; redirects to the read tool |
 | Full-file rewrites | Blocks near-identical full-file rewrites via write; redirects to `hashline_edit`/edit |
@@ -306,7 +306,7 @@ No tools or commands.
 With `TORUS_SANDBOX` in the on family, every bash tool call is rewritten through bwrap (Linux) or Seatbelt (macOS):
 
 | Boundary | Rule |
-|---|---|
+| --- | --- |
 | Writes | Confined to the workspace + `/tmp` + `TORUS_SANDBOX_WRITABLE` extras + git plumbing (the repo's git common dir and the torus worktrees root; linked worktrees share refs/objects with the main repo) |
 | Network | Restricted to a curated exact-host allowlist (npm/PyPI/crates/GitHub/Golang proxy hosts; keeps installs and git-over-https working) |
 
@@ -366,7 +366,7 @@ Default root `~/.pi/agent/sessions`. Resume via pi's `/resume` or `pi --session-
 Periodic command watcher: runs a shell command on an interval, hashes its output, and desktop-notifies + stops when the output changes or the command fails.
 
 | Tool | Purpose |
-|---|---|
+| --- | --- |
 | `torus_monitor` | Start a monitor (name, command, intervalSec ≥ 5, stopOn) |
 | `torus_monitor_stop` | Stop one monitor (name) |
 
@@ -392,7 +392,7 @@ Rows are numbered oldest-running-first (numbers stay stable while agents run) an
 Multi-agent orchestration: parallel fan-out, sequential chains, and persistent teams with long-lived members.
 
 | Tool | Purpose |
-|---|---|
+| --- | --- |
 | `torus_fanout` | 2–8 parallel delegations (per-run `model` override accepted) |
 | `torus_chain` | 2–6 sequential steps, each fed the prior output, bounded to 4k chars (per-step `model` override accepted) |
 | `team_create` | Create a persistent team (1–8 members); accepts `selfClaim` |
@@ -422,7 +422,7 @@ Task dependencies: tasks may declare `dependsOn` (prerequisite task ids). Create
 `team_status` surfaces two problem states (read-only; no timers, no auto-reap):
 
 | State | Definition | Handling |
-|---|---|---|
+| --- | --- | --- |
 | Orphaned | In-progress rows whose member has stopped | Crashed members never leave work lingering invisible; `team_task_update` reassigns or completes it |
 | Stale | An in-progress row under an idle (not stopped, not working; stopped stays the orphan case, never both) member whose tasklist clock (`updatedAt`) has not moved for more than `TORUS_TASK_STALE_MIN` minutes | Renders a read-only `stale:` line naming the elapsed minutes and the nudge (`team_msg`) or release (`team-task`/`team_task_update`) path |
 
@@ -458,7 +458,7 @@ No tools or commands.
 Durable, git-backed memory store at `~/.torus/memory` (entries + `profile.md`, auto-init git repo).
 
 | Tool | Purpose |
-|---|---|
+| --- | --- |
 | `torus_remember` | Add an entry (topic/content/tags/scope: project\|global\|profile/force/pinned); blocks near-duplicate topics unless `force: true` (updates the existing entry in place) |
 | `torus_recall` | Query the store (query/scope) |
 | `torus_memories` | List entries; warns about unparseable ones |
@@ -520,7 +520,7 @@ The write-only tool replaces the full list. Pending items inject as a context bl
 Plan-execution state: binds a torus-plan plan file to a session so execution survives compaction and restarts.
 
 | Tool | Purpose |
-|---|---|
+| --- | --- |
 | `work_start` | Bind a plan: absolute path or unique stem/prefix under the project's plans dir (`$TORUS_STATE_DIR/plans`, legacy `~/.torus/plans` still read). Approval gate: refuses unless the plan carries a column-zero `Approval: <user/date>` line or the recorded escape `Approval: skipped (--yes)`; `assumeApproved` binds an unmarked plan and journals `approval: "assumed"` in the start row. Creates or rebinds (rebinding resumes, elapsed spans runs). Parent sessions only |
 | `work_note` | Append a typed ledger row (event: task-done\|verified\|blocked\|wave-gate\|note\|converge, + wave/task/verification/evidence/verifiedBy) and return the tail. With an explicit `slug` any session appends: slug resolution is exact → unique prefix → unique substring, with ambiguity/miss errors listing candidates so a paraphrased dispatch slug costs at most one retry. Delegated builders journal gotchas this way, and rows carry the writer's session id |
 | `work_complete` | Complete the work (summary). Machine gate: refuses while any column-zero checkbox is unchecked or the plan is missing, then records elapsed and stops the per-turn block. Parent sessions only |
@@ -537,7 +537,7 @@ Companion skill: `torus-execute` (writes checkboxes in the plan, journals via `w
 Git-worktree lifecycle under one canonical root outside the repo (`~/.torus/worktrees/--<repo>--/<branch>`; the legacy bare-basename layout still resolves for existing worktrees).
 
 | Tool | Purpose |
-|---|---|
+| --- | --- |
 | `worktree_create` | Create a worktree (branch, base, setupCommand); sets up dependencies (explicit command or detected: go/npm/cargo/uv/pip) |
 | `worktree_merge` | Merge back (branch, subject, strategy squash\|ff, keep, mainBranch): rebase → squash (or opt-in ff) → tree-identity proof → only then branch delete, with clean conflict aborts |
 | `worktree_remove` | Remove (branch, force, teardownCommand); never deletes the branch |
@@ -590,7 +590,7 @@ Two more chips: a warning `delegate ×N` chip while `torus_delegate` executions 
 ## Shared modules
 
 | Module | Provides | Consumers |
-|---|---|---|
+| --- | --- | --- |
 | `extensions/registry.ts` | DelegationRecord store (globalThis-hosted), run beacons + foreign-process scan, team records, session/persona slots, log rehydration, tmux pane mgmt, `repoRoot()`, sanitize/redact/shellQuote/name gates | roster, team, browser, fleet, notify, memory, goal, prompts, ui, engine-child |
 | `extensions/rpc.ts` | `RpcChild`: newline-JSON RPC client for engine children (prompt/steer/getState/kill) | roster, team-runtime, acp (serve) |
 | `extensions/engine-child.ts` | `engineChildEnv` (sets `TORUS_ENGINE_CHILD=1`, carries the pinned `TORUS_STATE_DIR`), event parse/reduce, `childExtensionArgs` (the child set), `resolveEngineBin` | roster, team-runtime, doctor, ui, acp (serve) |
@@ -622,7 +622,7 @@ Registers a `tool_call` guard that parses bash commands (posix shell analysis; w
 Web access suite.
 
 | Tool | Purpose |
-|---|---|
+| --- | --- |
 | `web_search` | Search (30+ providers, fallback chains, batch queries) |
 | `fetch_content` | Fetch (readable/raw/answer modes; GitHub repos/PRs/issues, YouTube + local video with frame extraction, PDFs, images) |
 | `get_search_content` | Bounded retrieval from the private cache, with findText |
@@ -650,7 +650,7 @@ LSP tools over a shared server pool (lazy spawn, refcount, idle reaping, crash r
 Routes (plain `node:http`, no framework):
 
 | Route | Auth | Behavior |
-|---|---|---|
+| --- | --- | --- |
 | `GET /health` | none | `{ok: true, version}` |
 | `POST /run` | bearer | `{agent, task, model?, cwd?, wait?}`: default responds `{delegationId}` immediately; `wait: true` awaits the outcome (10-min cap → 504) and returns `{ok, text, usage, model, delegationId, error?}`. Agent/model validation is roster's own pre-flight (invalid agent or model → 400 naming the reason, no engine spawned) |
 | `GET /runs` | bearer | Delegation list from the shared registry (id, agent, model, handle, status, usage counters, `parentSession`) |
@@ -671,7 +671,7 @@ Full guide: [docs/serve.md](serve.md).
 Where torus itself spends model calls (and where it looks like it might but doesn't), recorded with the decision on adopting the engine's classifier Models API: `ctx.modelRegistry.classify()` with in-pin `@cf/cloudflare/clef*` catalog models. The bar for adoption: a genuine classification, a binary or few-label decision on short text, not generation.
 
 | Call site | Trigger | Model today | Kind | Adoptable |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `session-title` (`generateTitle`, torus's only direct `modelRegistry.complete` call) | first `turn_end` with a real user prompt and no session name (background, 3 attempts); `/rename` regenerates from the transcript | fast chain head `zai/glm-5.3-flash` via `resolveTitleModel` (`TORUS_TITLE_MODEL` → authed fast default → session model) | Generation: a novel ≤50-char title from free text | No: `classify()` answers fixed-label choice/bool/score questions and cannot mint a title; picking among canned titles would gut the feature |
 | `memory` dream + reflect (`runDelegation` to the `dreamer` agent; gating itself, `reflectDecision` over `reflect-state` counters, is pure arithmetic) | `agent_settled`: dream after 6 h with undreamed log activity, reflect after `TORUS_REFLECT_TURNS` settles or 10 min idle; `/reflect` | full engine-child delegation walking the agent's model chain (read-only tools) | Generation + tool use: reads store/transcript/logs, authors ENTRY:/DELETE:/PROFILE: blocks | No: a one-shot classifier over JSON state cannot read files or author structured proposals |
 | `comment-checker` | every `edit`/`write` tool call | none: language comment-prefix table plus regexes over added lines | Deterministic check (no model) | No: no call to replace, and prefix matching is exact; a classifier would be slower and less reliable |
@@ -685,7 +685,7 @@ Decision: no-op. No ambient call site is a genuine classification, so `TORUS_CLA
 Engine-owned configuration torus users can ride directly; torus's own code touches none of it, so behavior follows the engine's docs (`mcp.md`, `models.md`, and the engine changelog under `node_modules/@earendil-works/pi-coding-agent/`). Sibling of [Ambient model calls](#ambient-model-calls).
 
 | Surface | What it gives |
-|---|---|
+| --- | --- |
 | Project MCP overrides | A file-configured server (project `.pi/mcp.json`, read only after project trust; user-level `~/.pi/agent/mcp.json` likewise) takes precedence over torus's in-session `registerMcpServer` registrations: context7 and grep_app can be replaced or disabled per-project without code; `/mcp` lists the overridden registration and `/reload` picks up file changes |
 | MCP OAuth `clientRegistration: "cimd"` | Identifies pi by its Client ID Metadata Document on pi.dev instead of dynamic client registration, for authorization servers that allow-list clients by that URL; cannot be combined with `clientId` or `clientName` |
 | `samplingParamsByThinkingLevel` | models.json per-model map of sampling parameters keyed by pi thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), merged over the model's `samplingParams` per key; applies only to the `openai-completions`, `openai-responses`, and `azure-openai-responses` APIs. Torus's registered gateway models set none, so a user-supplied entry has full effect |
@@ -694,7 +694,7 @@ Engine-owned configuration torus users can ride directly; torus's own code touch
 ## Environment variables
 
 | Variable | Consumer | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `TORUS_OCGO_API_KEY` + `TORUS_OCGO_BASE_URL` | providers | Register the `opencode-go` tail-fallback provider (both required) |
 | `TORUS_PI_BIN` | launcher | Explicit engine binary path (overrides `node_modules/.bin/pi`) |
 | `TORUS_ROOT` | launcher → registry | Payload root override (source layout otherwise) |

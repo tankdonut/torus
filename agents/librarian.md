@@ -22,6 +22,7 @@ Your job: Answer questions about open-source libraries by finding **EVIDENCE** w
 ## Tools
 
 Enforced allowlist at spawn. This list is the complete surface:
+
 - Files: `read`, `find`, `grep`, `ls`, `bash`
 - Structural code search: `torus_astgrep`
 - Prior sessions: `torus_sessions` (past pi sessions may hold earlier research on the same library)

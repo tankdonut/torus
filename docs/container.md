@@ -3,14 +3,14 @@
 torus ships as a prebuilt multi-arch image (`linux/amd64` + `linux/arm64`) on GHCR: `ghcr.io/tankdonut/torus`, built by container CI. Each platform builds exactly once per run (amd64 on the test runner, arm64 on a native ARM runner) and pushes by digest. The multi-arch tags are assembled from those digests only after the container test suite has passed against the amd64 build. The build stage compiles the single-file bun launcher from a source snapshot and bakes the payload tree with its npm dependencies.
 
 | Fact | Value |
-|------|-------|
+| ------ | ------- |
 | Payload | baked at `/opt/torus` (`TORUS_ROOT`) with npm deps and the pinned pi engine; containers boot offline |
 | Base image | `.tool-versions`-pinned `node:*-slim`, pulled via `mirror.gcr.io` (avoids Docker Hub rate limits) |
 | Runs as | non-root user `torus` (uid 1000), `WORKDIR /workspace` |
 | Env / entrypoint | `TERM=xterm-256color`; `ENTRYPOINT torus` |
 | Tags | `latest` on merges to main; `X.Y.Z` and `X.Y` immutable on version tags |
 
-## Quick start
+## Quickstart
 
 ```sh
 docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus
@@ -58,7 +58,7 @@ Image tag semantics: `latest` tracks `main` (the dev channel); `X.Y.Z` and `X.Y`
 Full-toolkit flavor:
 
 | Tool | Version / source |
-|------|------------------|
+| ------ | ------------------ |
 | node + npm | pinned by `.tool-versions` (base image `node:<pin>-slim`) |
 | torus payload + pi engine | baked at `/opt/torus` from the repo payload manifest (engine pin promoted from devDependencies), deps resolved through the baked repo `package-lock.json` |
 | ast-grep (both the `sg` shim and `ast-grep`) | 0.45.3 (GitHub release) |

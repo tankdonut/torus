@@ -12,7 +12,7 @@ Notes:
   adds `/mcp` visibility, the statusline count, and removal via `/reload`.
 
 | # | Surface | Steps | Pass criteria |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | `interactive_bash` overlay | Ask the session to run `bash` (or anything prompting) via `interactive_bash`; type into the overlay; press `ctrl-]` | Bordered overlay streams child output; typing reaches the child; detach returns captured output to the conversation; child exits cleanly |
 | 2 | Fleet browser open/detail | Start a delegation, press `alt+t` (or `/torus`), `enter` on the running row, scroll with `j/k`; narrow the terminal until the detail footer wraps; click `[esc] close` in the list header (fullscreen click and regular-mode raw SGR alike) | Detail shows the live action feed; after completion it shows the full transcript; `esc` closes; on narrow terminals the footer wraps into info line + chips row with `[s] steer`/`[x] stop`/`[esc] back` all whole and clickable (back never drops); the list-header close chip exits the fleet view by mouse alone |
 | 3 | Fleet stop/steer | In the detail view of a running delegation (transcript long enough to fill the window), press `x`; steer another with `s` + a message | `x` kills the child (row flips to failed/stopped); `s` logs `~ steer accepted` (or `REJECTED`) in the action feed; entering steer mode shrinks the transcript window so the footer (including the `[esc] back` chip) stays on screen and clickable |

@@ -32,7 +32,7 @@ Use for ANY technical issue: test failures, production bugs, unexpected behavior
 
 **Don't skip when:**
 
-- Issue seems simple (simple bugs have root causes too)
+- Issue seems `simple` (`simple` bugs have root causes too)
 - You're in a hurry (rushing guarantees rework)
 - The user wants it fixed NOW (systematic is faster than thrashing)
 
@@ -76,6 +76,7 @@ You MUST complete each phase before proceeding to the next.
    ```
 
    **Example (Node pipeline):**
+
    ```bash
    # Layer 1: env resolution
    node -e 'console.log("env keys:", Object.keys(process.env).filter(k=>k.startsWith("TORUS")).join(","))'
@@ -192,8 +193,8 @@ Watch for these redirections:
 ## Common Rationalizations
 
 | Excuse | Reality |
-|--------|---------|
-| "Issue is simple, don't need process" | Simple issues have root causes too. Process is fast for simple bugs. |
+| -------- | --------- |
+| "Issue is simple, don't need process" | `Simple` issues have root causes too. Process is fast for `simple` bugs. |
 | "Emergency, no time for process" | Systematic debugging is FASTER than guess-and-check thrashing. |
 | "Just try this first, then investigate" | First fix sets the pattern. Do it right from the start. |
 | "I'll write the test after confirming the fix works" | Untested fixes don't stick. The test proves it. |
@@ -205,7 +206,7 @@ Watch for these redirections:
 ## Four phases at a glance
 
 | Phase | Key Activities | Success Criteria |
-|-------|---------------|------------------|
+| ------- | --------------- | ------------------ |
 | **1. Root Cause** | Read errors, reproduce, check changes, gather evidence | Understand WHAT and WHY |
 | **2. Pattern** | Find working examples, compare | Identify differences |
 | **3. Hypothesis** | Form theory, test minimally | Confirmed or new hypothesis |

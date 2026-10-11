@@ -21,7 +21,7 @@ Run `./runtime/bin/torus.mjs` and work against a real repo.
 Squash-merge is the rule, and **your PR title becomes the release commit verbatim**. release-please maps it to a version bump and changelog entry:
 
 | Subject | Effect |
-|---|---|
+| --- | --- |
 | `feat:` | minor bump, Features in changelog |
 | `fix:` | patch bump, Bug Fixes in changelog |
 | `chore:` `docs:` `test:` `ci:` | no bump, no changelog entry |
@@ -33,6 +33,7 @@ Details and rationale: [docs/release-workflow.md](docs/release-workflow.md).
 
 - A new extension needs both a `extensions/registry.ts` entry and the `pi.extensions` array in `package.json`.
 - [docs/extensions.md](docs/extensions.md) is coverage-tested (`tests/docs-coverage.test.mjs`). Document new tools, commands, and env vars in the same PR.
+- All hand-written docs follow [docs/style.md](docs/style.md); `tests/docs-style.test.mjs` and markdownlint (via `npm run lint`) enforce its rules.
 - `agents/*.md` and `skills/*/SKILL.md` are contract-tested (`tests/agents-contract.test.mjs`, `tests/skills-spec.test.mjs`); the contracts live in [docs/agents.md](docs/agents.md) and [docs/skills.md](docs/skills.md).
 
 ## Everything else

@@ -12,14 +12,18 @@ Full playbooks backing the librarian agent (`agents/librarian.md`). Tool truth: 
 **When to execute**: Before TYPE A or TYPE D investigations involving external libraries/frameworks.
 
 ### Step 1: Find Official Documentation
+
 ```text
 web_search("library-name official documentation site")
 ```
+
 - Identify the **official documentation URL** (not blogs, not tutorials)
 - Note the base URL (e.g., `https://docs.example.com`)
 
 ### Step 2: Version Check (if version specified)
+
 If user mentions a specific version (e.g., "React 18", "Next.js 14", "v2.x"):
+
 ```text
 web_search("library-name v{version} documentation")
 // OR check if docs have version selector:
@@ -27,28 +31,34 @@ fetch_content(official_docs_url + "/versions")
 // or
 fetch_content(official_docs_url + "/v{version}")
 ```
+
 - Confirm you're looking at the **correct version's documentation**
 - Many docs have versioned URLs: `/docs/v2/`, `/v14/`, etc.
 
 ### Step 3: Sitemap Discovery (understand doc structure)
+
 ```text
 fetch_content(official_docs_base_url + "/sitemap.xml")
 // Fallback options:
 fetch_content(official_docs_base_url + "/sitemap-0.xml")
 fetch_content(official_docs_base_url + "/docs/sitemap.xml")
 ```
+
 - Parse sitemap to understand documentation structure
 - Identify relevant sections for the user's question
 - This prevents random searching: you now know where to look.
 
 ### Step 4: Targeted Investigation
+
 With sitemap knowledge, fetch the SPECIFIC documentation pages relevant to the query:
+
 ```text
 fetch_content(specific_doc_page_from_sitemap)
 mcp__context7__query_docs(libraryId: id, query: "specific topic")
 ```
 
 **Skip Doc Discovery when**:
+
 - TYPE B (implementation) - you're cloning repos anyway
 - TYPE C (context/history) - you're looking at issues/PRs
 - Library has no official docs (rare OSS projects)
@@ -56,9 +66,11 @@ mcp__context7__query_docs(libraryId: id, query: "specific topic")
 ## Phase 1: execute by request type
 
 ### Type A: conceptual question
+
 **Trigger**: "How do I...", "What is...", "Best practice for...", rough/general questions
 
 **Execute Documentation Discovery FIRST (Phase 0.5)**, then:
+
 ```text
 Tool 1: mcp__context7__resolve_library_id("library-name")
         → then mcp__context7__query_docs(libraryId: id, query: "specific-topic")
@@ -69,9 +81,11 @@ Tool 3: mcp__grep_app__searchGitHub(query: "usage pattern", language: ["TypeScri
 **Output**: Summarize findings with links to official docs (versioned if applicable) and real-world examples.
 
 ### Type B: implementation reference
+
 **Trigger**: "How does X implement...", "Show me the source...", "Internal logic of..."
 
 **Execute in sequence**:
+
 ```text
 Step 1: Clone to temp directory
         git clone --depth 1 https://github.com/owner/repo /tmp/torus-librarian/repo-name
@@ -89,6 +103,7 @@ Step 4: Construct permalink
 ```
 
 **Parallel acceleration (4+ calls)**:
+
 ```text
 Tool 1: git clone --depth 1 https://github.com/owner/repo /tmp/torus-librarian/repo
 Tool 2: mcp__grep_app__searchGitHub(query: "function_name", repo: "owner/repo")
@@ -97,9 +112,11 @@ Tool 4: mcp__context7__query_docs(libraryId: id, query: "relevant-api")
 ```
 
 ### Type C: context and history
+
 **Trigger**: "Why was this changed?", "What's the history?", "Related issues/PRs?"
 
 **Execute in parallel (4+ calls)**:
+
 ```text
 Tool 1: gh search issues "keyword" --repo owner/repo --state all --limit 10
 Tool 2: gh search prs "keyword" --repo owner/repo --state merged --limit 10
@@ -110,6 +127,7 @@ Tool 4: gh api repos/owner/repo/releases --jq '.[0:5]'
 ```
 
 **For specific issue/PR context**:
+
 ```text
 gh issue view <number> --repo owner/repo --comments
 gh pr view <number> --repo owner/repo --comments
@@ -117,9 +135,11 @@ gh api repos/owner/repo/pulls/<number>/files
 ```
 
 ### Type D: comprehensive research
+
 **Trigger**: Complex questions, ambiguous requests, "deep dive into..."
 
 **Execute Documentation Discovery FIRST (Phase 0.5)**, then execute in parallel (6+ calls):
+
 ```text
 // Documentation (informed by sitemap discovery)
 Tool 1: mcp__context7__resolve_library_id → mcp__context7__query_docs
@@ -146,6 +166,7 @@ https://github.com/tanstack/query/blob/abc123def/packages/react-query/src/useQue
 ```
 
 **Getting SHA**:
+
 - From clone: `git rev-parse HEAD`
 - From API: `gh api repos/owner/repo/commits/HEAD --jq '.sha'`
 - From tag: `gh api repos/owner/repo/git/refs/tags/v1.0.0 --jq '.object.sha'`
@@ -176,6 +197,7 @@ https://github.com/tanstack/query/blob/abc123def/packages/react-query/src/useQue
 **Main phase is PARALLEL** once you know where to look.
 
 **Always vary queries** when using grep_app:
+
 ```text
 // GOOD: Different angles
 mcp__grep_app__searchGitHub(query: "useQuery(", language: ["TypeScript"])

@@ -13,7 +13,7 @@ The `pi` key in [`package.json`](../package.json) is the manifest, and that file
 Dependency shape, per pi's package rules:
 
 | Kind | Packages | Why |
-|---|---|---|
+| --- | --- | --- |
 | `peerDependencies` | `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui` | Host-provided: pi supplies them at load time; bundling a copy would duplicate engine classes and registries |
 | `dependencies` | `cc-safety-net`, `pi-web-access`, `pi-lsp-client` | Third-party extensions the pack wires in: a git-source install installs and connects them |
 
@@ -21,7 +21,7 @@ The roster rides along without launcher support: the `roster` extension resolves
 
 ## Install and update
 
-```
+```sh
 pi install git:github.com/tankdonut/torus@vX.Y.Z
 ```
 
@@ -36,7 +36,7 @@ pi install git:github.com/tankdonut/torus@vX.Y.Z
 torus is one package and stays one package. Granularity is not repo splitting: it is filtering at load time, through the settings object form of the package declaration. Filters narrow the manifest: they select from what `package.json` declares and never expose more.
 
 | Form | Effect |
-|---|---|
+| --- | --- |
 | omit the property | load everything the package declares of that type |
 | `[]` | load none of that type |
 | `!pattern` | exclude glob matches |
@@ -47,12 +47,12 @@ Only the skills, with extensions off:
 
 ```json
 {
-	"packages": [
-		{
-			"source": "git:github.com/tankdonut/torus@vX.Y.Z",
-			"extensions": []
-		}
-	]
+ "packages": [
+  {
+   "source": "git:github.com/tankdonut/torus@vX.Y.Z",
+   "extensions": []
+  }
+ ]
 }
 ```
 
@@ -60,12 +60,12 @@ Everything but the roster:
 
 ```json
 {
-	"packages": [
-		{
-			"source": "git:github.com/tankdonut/torus@vX.Y.Z",
-			"extensions": ["!extensions/roster"]
-		}
-	]
+ "packages": [
+  {
+   "source": "git:github.com/tankdonut/torus@vX.Y.Z",
+   "extensions": ["!extensions/roster"]
+  }
+ ]
 }
 ```
 
@@ -75,12 +75,12 @@ Drop specific extensions:
 
 ```json
 {
-	"packages": [
-		{
-			"source": "git:github.com/tankdonut/torus@vX.Y.Z",
-			"extensions": ["-extensions/notify", "-extensions/goal"]
-		}
-	]
+ "packages": [
+  {
+   "source": "git:github.com/tankdonut/torus@vX.Y.Z",
+   "extensions": ["-extensions/notify", "-extensions/goal"]
+  }
+ ]
 }
 ```
 
@@ -88,12 +88,12 @@ Or whitelist via `+path` entries, which name exact allowed paths:
 
 ```json
 {
-	"packages": [
-		{
-			"source": "git:github.com/tankdonut/torus@vX.Y.Z",
-			"extensions": ["+extensions/memory", "+extensions/todo", "+extensions/work"]
-		}
-	]
+ "packages": [
+  {
+   "source": "git:github.com/tankdonut/torus@vX.Y.Z",
+   "extensions": ["+extensions/memory", "+extensions/todo", "+extensions/work"]
+  }
+ ]
 }
 ```
 

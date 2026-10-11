@@ -17,7 +17,7 @@ Status: **implemented**. This document laid out torus's release workflow from fi
 A single version `X.Y.Z` flows from one source of truth to every artifact:
 
 | Surface | Form | Mechanism |
-|---|---|---|
+| --- | --- | --- |
 | `package.json` `version` | `X.Y.Z` | **Source of truth**: moved only by the release flow (§4), never hand-edited |
 | Git tag | `vX.Y.Z` | Created by release automation via the GitHub API (not annotated; the Release carries the notes); anchors the GitHub Release |
 | GitHub Release | notes + 5 platform binaries + `sha256sums.txt` | CI release job attaches binaries built from the tag's SHA |
@@ -99,7 +99,7 @@ Inside that tag-ref run, one new job completes it, gated `if: startsWith(github.
 Everything below shipped. Each row points at the file that enforces it.
 
 | Landed piece | Enforcing file |
-|---|---|
+| --- | --- |
 | `"private": true`, so an accidental `npm publish` can never fire | `package.json` |
 | release-please config (`bump-minor-pre-major`) plus the Release PR workflow whose final step dispatches `ci.yml` at `ref: vX.Y.Z` | `release-please-config.json`, `.github/workflows/release-please.yml` |
 | Version stamping: the payload manifest carries the version, the launcher intercepts `--version`, `/doctor` reports the torus version | `scripts/payload-manifest.mjs`, `runtime/bin/torus.mjs` |
