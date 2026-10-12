@@ -86,7 +86,7 @@ function emitMonitorFired(
 			content: [
 				{
 					type: "text",
-					text: `monitor "${entry.name}" ${what}${exit !== null ? ` (exit ${exit})` : ""}${tail.length > 0 ? `: ${tail}` : ""}`,
+					text: `monitor "${entry.name}" ${what}${exit !== null ? ` (exit ${exit})` : ""}${tail.length > 0 ? `: ${tail}` : ""} — monitor stopped itself, no torus_monitor_stop needed`,
 				},
 			],
 			display: true,
@@ -201,7 +201,7 @@ const monitorTool = defineTool({
 			content: [
 				{
 					type: "text",
-					text: `monitor "${params.name}" running every ${intervalSec}s (${entry.stopOn}) — first check logged; torus_monitor_stop to cancel`,
+					text: `monitor "${params.name}" running every ${intervalSec}s (${entry.stopOn}) — first check logged; auto-stops itself when it fires; torus_monitor_stop only to cancel before that`,
 				},
 			],
 			details: toolDetails({ name: params.name, intervalSec, active: monitors().size }),
@@ -220,7 +220,9 @@ const monitorStopTool = defineTool({
 			content: [
 				{
 					type: "text",
-					text: stopped ? `monitor "${params.name}" stopped` : `no monitor named "${params.name}"`,
+					text: stopped
+						? `monitor "${params.name}" stopped`
+						: `no monitor named "${params.name}" — monitors stop themselves when they fire, so a fired one is already gone`,
 				},
 			],
 			details: toolDetails({ stopped }),
