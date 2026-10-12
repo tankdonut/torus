@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.1](https://github.com/tankdonut/torus/compare/v0.10.0...v0.10.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **monitor:** say monitors stop themselves in tool feedback ([462ac3b](https://github.com/tankdonut/torus/commit/462ac3b50fd2167d0d88c420b6bff939a8746c13))
+* statusline chip showed a stale model after persona switches ([8598cc4](https://github.com/tankdonut/torus/commit/8598cc441cc6cabec71f5409eedbd2c26e473b1f))
+* **team:** flag failed fan-out and chain runs as tool errors ([a8c4437](https://github.com/tankdonut/torus/commit/a8c4437a0c2cedce931a76af23bf1643e81d3ba5))
+
 ## [0.10.0](https://github.com/tankdonut/torus/compare/v0.9.0...v0.10.0) (2026-10-11)
 
 
