@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.11.0](https://github.com/tankdonut/torus/compare/v0.10.1...v0.11.0) (2026-10-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** Update dependency @earendil-works/pi-tui to v1.2.0
+* **deps:** Update dependency @earendil-works/pi-coding-agent to v1.2.0
+
+### Features
+
+* **deps:** Update dependency @earendil-works/pi-ai to v1.2.0 ([df09bf0](https://github.com/tankdonut/torus/commit/df09bf0a07dd2c06e2f463ca779913ecc9900e00))
+* **deps:** Update dependency @earendil-works/pi-coding-agent to v1.2.0 ([b8c62a5](https://github.com/tankdonut/torus/commit/b8c62a544c7100db7d356dd6047629ea2cce7e1a))
+* **deps:** Update dependency @earendil-works/pi-tui to v1.2.0 ([e7e16e7](https://github.com/tankdonut/torus/commit/e7e16e73d192e046e6e2decf711b7d084426ae03))
+
+
+### Bug Fixes
+
+* **deps:** update dependency pi-web-access to ^0.40.0 ([7a97c0d](https://github.com/tankdonut/torus/commit/7a97c0d31a43b58c7a9977187558326bf652c584))
+
 ## [0.10.1](https://github.com/tankdonut/torus/compare/v0.10.0...v0.10.1) (2026-10-12)
 
 
