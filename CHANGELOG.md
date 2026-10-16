@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/tankdonut/torus/compare/v0.12.0...v0.13.0) (2026-10-16)
+
+
+### Features
+
+* **deps:** Update dependency @earendil-works/pi-tui to v1.3.0 ([#57](https://github.com/tankdonut/torus/issues/57)) ([bdc0890](https://github.com/tankdonut/torus/commit/bdc089033f70e6dd18ec43831d9646900953e73a))
+
 ## [0.12.0](https://github.com/tankdonut/torus/compare/v0.11.1...v0.12.0) (2026-10-16)
 
 
