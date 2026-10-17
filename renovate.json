@@ -6,6 +6,8 @@
   "reviewers": [
     "tankdonut"
   ],
+  "platformAutomerge": true,
+  "automergeStrategy": "squash",
   "packageRules": [
     {
       "matchManagers": ["asdf"],
@@ -24,6 +26,30 @@
       ],
       "groupName": "engine",
       "commitMessagePrefix": "feat(deps): "
+    },
+    {
+      "description": "Automerge non-major updates once CI passes and the approval workflow approves.",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Automerge development dependencies.",
+      "matchDepTypes": ["devDependencies"],
+      "automerge": true
+    },
+    {
+      "description": "Engine pins stay manual: the release-workflow env-audit is required before merge.",
+      "matchPackageNames": [
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-coding-agent",
+        "@earendil-works/pi-tui"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Major updates require manual review.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
     }
   ]
 }
