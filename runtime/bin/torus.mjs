@@ -161,6 +161,81 @@ async function enableTsResolveHook() {
 	});
 }
 
+function serveHelp() {
+	return [
+		"torus serve - authenticated HTTP server over the delegation core",
+		"",
+		"Usage:",
+		"  torus serve",
+		"",
+		"No CLI flags. Bind, port, auth token path, and webhook triggers come from",
+		"serve config and the environment; auth is a bearer token minted into",
+		"~/.torus/serve/auth.json on first start (printed exactly once);",
+		"TORUS_SERVE=0 refuses startup. POST /run spawns session-free,",
+		"fleet-visible delegations; GET /health is unauthenticated; every other",
+		"route requires the bearer token. The process is the server, never an",
+		"engine session, and it never starts implicitly.",
+		"",
+		"See docs/serve.md for routes, webhooks, and the trust boundary.",
+		"",
+	].join("\n");
+}
+
+function acpHelp() {
+	return [
+		"torus acp-agent - Agent Client Protocol v1 agent over stdio",
+		"",
+		"Usage:",
+		"  torus acp-agent",
+		"",
+		"Speaks ACP v1 (newline-delimited JSON-RPC on stdin/stdout) so ACP",
+		"editors such as Zed or JetBrains can drive torus. No CLI flags:",
+		"configuration is the environment. Stdout is protocol-only; logs go to",
+		"stderr. EOF on stdin stops all engine children and exits 0. The process",
+		"is the agent, never an engine session.",
+		"",
+		"See docs/serve.md (ACP agent section).",
+		"",
+	].join("\n");
+}
+
+function torusHelp(versionLine) {
+	return [
+		versionLine,
+		"",
+		"Usage:",
+		"  torus [options] [--] [@files...] [messages]    engine session (default)",
+		"  torus serve                                    authenticated HTTP server",
+		"  torus acp-agent                                ACP v1 agent over stdio",
+		"  torus --version, -v                            print torus + engine versions",
+		"  torus --help, -h, help                         show this help",
+		"",
+		"torus-native subcommands: this process is the surface, never an engine",
+		"session; neither takes CLI flags (config comes from env and state files).",
+		"",
+		"  serve        HTTP server over the delegation core: POST /run spawns",
+		"               session-free, fleet-visible delegations; bearer-token auth,",
+		"               loopback bind by default, TORUS_SERVE=0 is a kill switch.",
+		"               See docs/serve.md. `torus serve --help` for details.",
+		"  acp-agent    Agent Client Protocol v1 over stdio so ACP editors (Zed,",
+		"               JetBrains) can drive torus; stdout is protocol-only.",
+		"               See docs/serve.md. `torus acp-agent --help` for details.",
+		"",
+		"Everything else passes through to the pinned pi engine with the torus",
+		"extension package loaded, so all engine options and subcommands work",
+		"unchanged under torus (e.g. `torus auth --help`, `torus mcp --help`).",
+		"Engine help follows.",
+		"",
+		"----------------- pi engine (passthrough) -----------------",
+		"",
+	].join("\n");
+}
+
+if (argv[0] === "serve" && (argv[1] === "--help" || argv[1] === "-h")) {
+	process.stdout.write(serveHelp());
+	process.exit(0);
+}
+
 if (argv[0] === "serve") {
 	if (!process.features.typescript && !process.env["TORUS_SERVE_BOOTSTRAPPED"]) {
 		reexecStripTypes("TORUS_SERVE_BOOTSTRAPPED");
@@ -188,6 +263,11 @@ if (argv[0] === "serve") {
 // torus acp-agent — serve torus as an ACP v1 agent over stdio for editors
 // (Zed, JetBrains). runAcpAgentRole() owns stdin/stdout; stdout is
 // protocol-only. EOF on stdin kills all engine children and exits 0.
+if (argv[0] === "acp-agent" && (argv[1] === "--help" || argv[1] === "-h")) {
+	process.stdout.write(acpHelp());
+	process.exit(0);
+}
+
 if (argv[0] === "acp-agent") {
 	if (!process.features.typescript && !process.env["TORUS_ACP_BOOTSTRAPPED"]) {
 		reexecStripTypes("TORUS_ACP_BOOTSTRAPPED");
@@ -205,9 +285,21 @@ if (argv[0] === "acp-agent") {
 	process.exit(0);
 }
 
-if (argv[0] === "--version") {
+if (argv[0] === "--version" || argv[0] === "-v") {
 	process.stdout.write(`torus ${pkg.version}${pin ? ` (pi@${pin})` : ""}\n`);
 	process.exit(0);
+}
+
+// Only argv[0] is intercepted so engine per-command help (`torus auth --help`)
+// still reaches the engine; the option list below stays machine-generated.
+if (argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
+	const versionLine = `torus ${pkg.version}${pin ? ` (pi@${pin})` : ""}`;
+	process.stdout.write(torusHelp(versionLine));
+	const bin = resolveBinary();
+	const help = spawnSync(bin, ["--extension", root, "--help"], {
+		stdio: ["ignore", "inherit", "inherit"],
+	});
+	process.exit(help.status ?? 1);
 }
 
 function resolveBinary() {
