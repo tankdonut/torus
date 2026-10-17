@@ -577,14 +577,16 @@ Structured user questions: labeled-option select dialogs (1–4 questions, 2–6
 
 ### `ui`
 
-The `torus` statusline segment.
+The `torus` statusline segment and the torus startup banner.
 
 - **Hooks:** `session_start`, `turn_start`, `model_select`, `message_end`, `tool_execution_start`, `tool_execution_end` (`torus_delegate` only)
-- **Env:** `TORUS_ENGINE` (display only; the engine tag appears only when overridden); `TORUS_STATUSLINE_COST=0` disables the session-cost chip
+- **Env:** `TORUS_ENGINE` (display only; the engine tag appears only when overridden); `TORUS_STATUSLINE_COST=0` disables the session-cost chip; `TORUS_BANNER=0` keeps pi's built-in startup header
 
 Renders the brand, then the identity block (persona, shortened model id, thinking effort, all in the persona's truecolor RGB), then dim provider availability. Health and objective follow: the MCP connected count (`MCP N`, success/warning; polled as the `mcp` section describes) and the session goal as a compact chip (`▶ <48-char head>` warning while active, `⏸` dim while paused, absent when unset or complete; pushed by the goal extension). Model and effort are event-tracked module state, so every writer renders the same line.
 
 Two more chips: a warning `delegate ×N` chip while `torus_delegate` executions are in flight (ref-counted), and a persistent session-cost chip on its own `torus:cost` statusline key beside the torus segment. Assistant `message_end` usage is folded through the shared engine-child tally reducer and rendered with `formatCost`: `$0` shows only once tokens were spent, and the chip stays absent until something measurable happens. Source of the persona color map used by persona-theming.
+
+On `session_start` (interactive only) the same extension swaps pi's built-in startup header for a torus banner: the torus wordmark with the payload and engine versions in the same shape `torus --version` prints, the engine's compact keybinding hints rebuilt through `keyHint`/`keyText` from the live keybinding config, and an onboarding line pointing at both torus and pi. `ctrl+o` keeps working because the component implements `setExpanded`: the expanded view adds the fleet row (`/roster`, `/doctor`, `alt+t`) and the launcher row (`torus serve`, `torus acp-agent`, `torus --help`) above the engine's full keybinding sheet. `quietStartup: true` leaves the header silenced, `quietStartup: "header"` drops the loaded-resources suffix, and `TORUS_BANNER=0` restores pi's own header. The hint rows mirror the engine's built-in header lists and follow the pinned engine, so pin bumps should re-check them.
 
 ## Shared modules
 
@@ -709,6 +711,7 @@ Engine-owned configuration torus users can ride directly; torus's own code touch
 | `TORUS_INTERACTIVE=0` | interactive | Disable `interactive_bash` overlay |
 | `TORUS_MONITOR=0` | monitor | Disable monitors |
 | `TORUS_STATUSLINE_COST=0` | ui | Disable the session-cost statusline chip |
+| `TORUS_BANNER=0` | ui | Keep pi's built-in startup header instead of the torus banner |
 | `TORUS_TEAM_NOTIFY=0` | team | Disable the per-member idle/crash wake-up markers (result markers still render) |
 | `TORUS_TASK_STALE_MIN=<minutes>` | team | Stale-task threshold for `team_status`: an in_progress task under an idle member with no tasklist update for more than N minutes renders a read-only stale line (default 30; invalid values fall back to 30) |
 | `TORUS_COMMENT_CHECKER=0` / `TORUS_COMMENT_CHECKER_PROMPT` | comment-checker | Disable / override the challenge text |

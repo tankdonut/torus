@@ -1,4 +1,14 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	keyHint,
+	keyText,
+	rawKeyHint,
+	VERSION,
+} from "@earendil-works/pi-coding-agent";
 import { type EngineTally, reduceEngineEvent } from "../engine-child.js";
 import { formatCost } from "../fsutil.js";
 import { connectedServerCount, mcpStatusText } from "../mcp/index.js";
@@ -184,6 +194,146 @@ export function refreshToruStatus(ctx: ExtensionContext): void {
 	ctx.ui.setStatus(STATUS_KEY, buildStatus(ctx.ui.theme));
 }
 
+/** TORUS_BANNER=0 keeps pi's built-in startup header instead of the torus banner. */
+function bannerSuppressed(): boolean {
+	return process.env["TORUS_BANNER"] === "0";
+}
+
+/** torus payload version from the package manifest; engine version is VERSION. */
+function torusVersion(): string {
+	const candidates = [
+		process.env["TORUS_ROOT"],
+		path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+	];
+	for (const root of candidates) {
+		if (!root) continue;
+		try {
+			return JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+		} catch {
+			// manifest missing or unreadable: fall through to the next candidate
+		}
+	}
+	return "unknown";
+}
+
+/** Compact keybinding hint line, mirroring the engine's collapsed header. */
+function compactHints(painter: StatusPainter): string {
+	return [
+		keyHint("app.interrupt", "interrupt"),
+		rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
+		rawKeyHint("/", "commands"),
+		rawKeyHint("!", "bash"),
+		keyHint("app.tools.expand", "more"),
+	].join(painter.fg("muted", " · "));
+}
+
+/** Full keybinding hint rows, mirroring the engine's expanded header. */
+function expandedHints(): string[] {
+	return [
+		keyHint("app.interrupt", "to interrupt"),
+		keyHint("app.clear", "to clear"),
+		rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
+		keyHint("app.exit", "to exit (empty)"),
+		keyHint("app.suspend", "to suspend"),
+		keyHint("tui.editor.deleteToLineEnd", "to delete to end"),
+		keyHint("app.thinking.cycle", "to cycle thinking level"),
+		rawKeyHint(
+			`${keyText("app.model.cycleForward")}/${keyText("app.model.cycleBackward")}`,
+			"to cycle models",
+		),
+		keyHint("app.model.select", "to select model"),
+		keyHint("app.tools.expand", "to expand tools"),
+		keyHint("app.thinking.toggle", "to expand thinking"),
+		keyHint("app.editor.external", "for external editor"),
+		rawKeyHint("/", "for commands"),
+		rawKeyHint("!", "to run bash"),
+		rawKeyHint("!!", "to run bash (no context)"),
+		keyHint("app.message.followUp", "to queue follow-up"),
+		keyHint("app.message.dequeue", "to edit all queued messages"),
+		keyHint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"),
+		rawKeyHint("drop files", "to attach"),
+	];
+}
+
+/** Torus-native rows for the expanded banner: fleet and launcher surfaces. */
+function torusHintRows(painter: StatusPainter): string[] {
+	const sep = painter.fg("muted", " · ");
+	return [
+		[
+			rawKeyHint("/roster", "list agents"),
+			rawKeyHint("/doctor", "health check"),
+			rawKeyHint("alt+t", "fleet view"),
+		].join(sep),
+		[
+			rawKeyHint("torus serve", "HTTP server"),
+			rawKeyHint("torus acp-agent", "ACP over stdio"),
+			rawKeyHint("torus --help", "full CLI help"),
+		].join(sep),
+	];
+}
+
+export interface BannerOptions {
+	expanded: boolean;
+	version: string;
+	engineVersion: string;
+	/** Whether the loaded-resources listing is visible (quietStartup "header" hides it). */
+	showDetails: boolean;
+}
+
+/** Startup banner lines: torus branding and native surfaces, engine hints below. */
+export function bannerLines(painter: StatusPainter, options: BannerOptions): string[] {
+	const brand = painter.fg("accent", painter.bold("torus"));
+	const versionLine = `${brand} ${options.version} ${painter.fg("dim", `(pi@${options.engineVersion})`)}`;
+	const onboarding = painter.fg(
+		"dim",
+		"Ask how to use or extend torus; pi can explain its own features and docs.",
+	);
+	if (options.expanded) {
+		return [versionLine, ...torusHintRows(painter), "", ...expandedHints(), "", onboarding];
+	}
+	const detailsSuffix = options.showDetails ? " and loaded resources" : "";
+	return [
+		versionLine,
+		compactHints(painter),
+		painter.fg(
+			"dim",
+			`Press ${keyText("app.tools.expand")} to show full startup help${detailsSuffix}.`,
+		),
+		"",
+		onboarding,
+	];
+}
+
+/**
+ * Replace pi's built-in startup header with the torus banner (interactive
+ * only). Respects quietStartup: true silencing and TORUS_BANNER=0; hint rows
+ * come from the live keybinding config, and ctrl+o expansion keeps working
+ * because the component implements setExpanded.
+ */
+function installStartupBanner(pi: ExtensionAPI, ctx: ExtensionContext): void {
+	if (ctx.mode !== "tui") return;
+	if (pi.getSettings().quietStartup === true) return;
+	if (bannerSuppressed()) return;
+	const showDetails = pi.getSettings().quietStartup !== "header";
+	let expanded = false;
+	ctx.ui.setHeader((_tui, theme) => {
+		const header = {
+			render: (_width: number): string[] =>
+				bannerLines(theme, {
+					expanded,
+					version: torusVersion(),
+					engineVersion: VERSION,
+					showDetails,
+				}),
+			invalidate: () => {},
+			setExpanded: (value: boolean) => {
+				expanded = value;
+			},
+		};
+		return header;
+	});
+}
+
 export function registerUi(pi: ExtensionAPI): void {
 	const refreshMcp = () => {
 		const registered = pi.getMcpServers().map((server) => server.name);
@@ -224,6 +374,7 @@ export function registerUi(pi: ExtensionAPI): void {
 		refreshToruStatus(ctx);
 		// a fresh session has spent nothing yet — drop any chip from the prior one
 		paintSessionCost(ctx);
+		installStartupBanner(pi, ctx);
 	});
 
 	pi.on("turn_start", (_event, ctx: ExtensionContext) => {
