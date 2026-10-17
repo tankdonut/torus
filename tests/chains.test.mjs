@@ -66,12 +66,9 @@ writeFileSync(
 );
 process.env.TORUS_ROOT = ROOT;
 
-// Deterministic defaults: without this, an ambient opencode-go credential set
-// would add the gateway entries to the "no override" expectations below.
-const PREV_OCGO_KEY = process.env.TORUS_OCGO_API_KEY;
-const PREV_OCGO_URL = process.env.TORUS_OCGO_BASE_URL;
-delete process.env.TORUS_OCGO_API_KEY;
-delete process.env.TORUS_OCGO_BASE_URL;
+const CHAINS_JSON = path.join(HOME, "chains.json");
+const DEFAULT_PRIMARY = ["zai/glm-5.3", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"];
+const DEFAULT_FAST = ["zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"];
 
 const ENGINE_DIR = mkdtempSync(path.join(tmpdir(), "torus-chains-fake-engines-"));
 const ARGS_ENGINE = path.join(ENGINE_DIR, "args-engine.sh");
@@ -87,17 +84,9 @@ const providers = await import("../extensions/providers/index.ts");
 const roster = await import("../extensions/roster/index.ts");
 const sessionTitle = await import("../extensions/session-title/index.ts");
 
-const CHAINS_JSON = path.join(HOME, "chains.json");
-const DEFAULT_PRIMARY = ["zai/glm-5.3", "zai/glm-5.3-flash"];
-const DEFAULT_FAST = ["zai/glm-5.3-flash"];
-
 const PREV_ENGINE_BIN = process.env.TORUS_ENGINE_BIN;
 
 after(() => {
-	if (PREV_OCGO_KEY === undefined) delete process.env.TORUS_OCGO_API_KEY;
-	else process.env.TORUS_OCGO_API_KEY = PREV_OCGO_KEY;
-	if (PREV_OCGO_URL === undefined) delete process.env.TORUS_OCGO_BASE_URL;
-	else process.env.TORUS_OCGO_BASE_URL = PREV_OCGO_URL;
 	process.env.TORUS_ENGINE_BIN = PREV_ENGINE_BIN;
 	registry.resetRegistryForTesting();
 	rmSync(HOME, { recursive: true, force: true });
@@ -133,7 +122,7 @@ test("no chains.json → built-in defaults, byte-identical", () => {
 	assert.equal(roster.personaModel("worker"), DEFAULT_PRIMARY[0]);
 	assert.deepEqual(
 		roster.availableModels(),
-		["zai/glm-5.3", "zai/glm-5.3-flash"],
+		["zai/glm-5.3", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
 		"deduped union of both chains",
 	);
 });

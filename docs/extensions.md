@@ -60,12 +60,11 @@ GLM model routing: the model fallback chains every delegation path walks, plus u
 
 No tools, commands, or hooks.
 
-- **Env:** `TORUS_OCGO_API_KEY` + `TORUS_OCGO_BASE_URL` (both required)
 - **Interactions:** roster and team-runtime resolve chains through it; the `ui` statusline shows provider availability
 
 #### Model chains
 
-Does not re-register the built-in `zai` provider: stock pi provides the GLM models, so authenticate via `/login zai`. When both env vars are present, it registers the `opencode-go` gateway as an OpenAI-completions tail fallback. Built-in chains: primary `zai/glm-5.3 → zai/glm-5.3-flash → opencode-go/glm-5.3-flash`, fast `zai/glm-5.3-flash → opencode-go/glm-5.3-flash`.
+Registers no providers of its own: both chain providers are built into stock pi, so authenticate via `/login zai` and `/login opencode-go` (the gateway also reads `OPENCODE_API_KEY`). Built-in chains: primary `zai/glm-5.3 → zai/glm-5.3-flash → opencode-go/glm-5.3-flash`, fast `zai/glm-5.3-flash → opencode-go/glm-5.3-flash`.
 
 `chains.json` under `TORUS_HOME` (default `~/.torus`) overrides either built-in chain wholesale. Shape `{"primary": ["provider/model", …], "fast": […]}`, read per call so edits apply without a restart:
 
@@ -87,7 +86,7 @@ The same file's `providers` map registers compatible endpoints through the engin
 | `baseUrl` | Non-empty |
 | `api` | One of the engine's supported ids: `openai-completions`, `openai-responses`, `azure-openai-responses`, `openai-codex-responses`, `anthropic-messages`, `mistral-conversations`, `bedrock-converse-stream`, `google-generative-ai`, `google-vertex`, `pi-messages` |
 | `models` | Non-empty array; each takes a non-empty `id`, optional `name`, and the knobs the engine already knows (`contextWindow`, `maxTokens`, `reasoning`, `input`), defaulted the way the engine's own bare entries default: text-only, no reasoning, zero cost, 128k context, 16k output. Unknown extra fields ignored |
-| `apiKey` | Optional; an env ref the engine expands at request time (same convention as the `opencode-go` gateway, e.g. `"$OPENROUTER_API_KEY"`) |
+| `apiKey` | Optional; an env ref the engine expands at request time (e.g. `"$OPENROUTER_API_KEY"`) |
 
 A keyless local endpoint needs none: a dummy key equal to the provider name is supplied, the exact trick the pinned engine's own `docs/models.md` compatible-endpoint example uses for Ollama (`{"providers": {"ollama": {"baseUrl": "http://localhost:11434/v1", "api": "openai-completions", "apiKey": "ollama", "models": [{"id": "qwen2.5-coder:7b"}]}}}`, there via the engine's `models.json`, here via chains.json so torus chains can route to it).
 
@@ -688,14 +687,13 @@ Engine-owned configuration torus users can ride directly; torus's own code touch
 | --- | --- |
 | Project MCP overrides | A file-configured server (project `.pi/mcp.json`, read only after project trust; user-level `~/.pi/agent/mcp.json` likewise) takes precedence over torus's in-session `registerMcpServer` registrations: context7 and grep_app can be replaced or disabled per-project without code; `/mcp` lists the overridden registration and `/reload` picks up file changes |
 | MCP OAuth `clientRegistration: "cimd"` | Identifies pi by its Client ID Metadata Document on pi.dev instead of dynamic client registration, for authorization servers that allow-list clients by that URL; cannot be combined with `clientId` or `clientName` |
-| `samplingParamsByThinkingLevel` | models.json per-model map of sampling parameters keyed by pi thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), merged over the model's `samplingParams` per key; applies only to the `openai-completions`, `openai-responses`, and `azure-openai-responses` APIs. Torus's registered gateway models set none, so a user-supplied entry has full effect |
+| `samplingParamsByThinkingLevel` | models.json per-model map of sampling parameters keyed by pi thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), merged over the model's `samplingParams` per key; applies only to the `openai-completions`, `openai-responses`, and `azure-openai-responses` APIs. The engine's built-in GLM catalog entries set none, so a user-supplied entry has full effect |
 | Azure provider rename | The engine renamed `azure-openai-responses` to `azure` (engine changelog 1.0.3, inside torus's pin): rename the provider key in `auth.json`, `models.json`, and `settings.json` (`defaultProvider`, `enabledModels`, `modelThinkingLevels`); `AZURE_OPENAI_*` env vars are unchanged |
 
 ## Environment variables
 
 | Variable | Consumer | Purpose |
 | --- | --- | --- |
-| `TORUS_OCGO_API_KEY` + `TORUS_OCGO_BASE_URL` | providers | Register the `opencode-go` tail-fallback provider (both required) |
 | `TORUS_PI_BIN` | launcher | Explicit engine binary path (overrides `node_modules/.bin/pi`) |
 | `TORUS_ROOT` | launcher → registry | Payload root override (source layout otherwise) |
 | `TORUS_ENGINE` | launcher sets, ui reads | Engine tag (display) |

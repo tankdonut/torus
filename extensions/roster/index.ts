@@ -875,7 +875,7 @@ export async function runDelegation(
 	if (!chainHead) {
 		return {
 			ok: false,
-			text: "No credentialed model in chain. Authenticate zai (/login zai) or set the opencode-go env.",
+			text: "No available model in chain. Every entry must name a declared provider: the engine built-ins (zai, opencode-go) or a chains.json providers entry.",
 			details: { error: "no-model" },
 			delegationId: null,
 		};

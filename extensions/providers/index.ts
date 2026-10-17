@@ -1,16 +1,12 @@
 /**
  * torus — GLM provider routing.
  *
- * The `zai` provider is BUILT IN to stock pi (verified via
- * --list-models against the pinned engine: glm-5.3 1M/131K, glm-5.3-flash 1M with image input) —
- * authenticate via pi's `/login zai`. torus does not re-register it.
+ * Both chain providers are BUILT IN to stock pi: `zai` and `opencode-go` are
+ * engine KnownProviders, so torus registers neither. Authenticate via pi's
+ * `/login zai` and `/login opencode-go` (the gateway also reads
+ * OPENCODE_API_KEY); credential resolution is the engine's job.
  *
- * This module registers only the opencode-go gateway as the tail fallback:
- *   glm-5.3 -> glm-5.3-flash -> opencode-go glm-5.3-flash.
- * It registers ONLY when its credentials are present, so keyless runs (CI,
- * --list-models) stay clean.
- *
- * chains.json also carries a `providers` map of compatible-endpoint
+ * chains.json carries a `providers` map of compatible-endpoint
  * registrations — local Ollama/LM Studio, OpenRouter, anything speaking an API
  * the engine already supports. Each entry becomes one pi.registerProvider call
  * in registerProviders(), and its models are chain-addressable as
@@ -27,31 +23,6 @@ import type {
 	ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
 import { torusHome } from "../fsutil.js";
-
-const TEXT: ("text" | "image")[] = ["text"];
-const TEXT_IMAGE: ("text" | "image")[] = ["text", "image"];
-
-/** GLM catalog for gateway providers (caps mirrored from pi's built-in zai entries). */
-const GLM_MODELS = [
-	{
-		id: "glm-5.3",
-		name: "GLM-5.3",
-		contextWindow: 1_000_000,
-		maxTokens: 131_072,
-		reasoning: true,
-		input: TEXT,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	},
-	{
-		id: "glm-5.3-flash",
-		name: "GLM-5.3 Flash",
-		contextWindow: 1_000_000,
-		maxTokens: 131_072,
-		reasoning: true,
-		input: TEXT_IMAGE,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	},
-];
 
 export const MODEL_CHAINS = {
 	primary: ["zai/glm-5.3", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
@@ -273,17 +244,16 @@ function chainProviderRegistrations(file: string): {
 export const DEFAULT_MEMBER_MODEL = MODEL_CHAINS.fast[0];
 
 /**
- * Providers whose models chains may resolve to: built-in `zai`, the
- * env-gated `opencode-go` gateway, and every validly-declared chains.json
- * provider. Declared = available: credential resolution is the engine's job
- * (the entry's apiKey env-ref, or its dummy key on keyless endpoints), so the
- * roster filter never drops chains.json models for lacking a torus-side
- * credential gate.
+ * Providers whose models chains may resolve to: the engine's built-in `zai`
+ * and `opencode-go` (declared = available; credential resolution is the
+ * engine's job, so the roster filter never drops their chain entries for
+ * lacking a torus-side credential gate), and every validly-declared
+ * chains.json provider.
  */
 export function providerAvailabilities(): Record<string, boolean> {
 	const available: Record<string, boolean> = {
 		zai: true,
-		"opencode-go": Boolean(process.env["TORUS_OCGO_API_KEY"] && process.env["TORUS_OCGO_BASE_URL"]),
+		"opencode-go": true,
 	};
 	for (const { name } of chainProviderRegistrations(chainsFile()).valid) {
 		available[name] = true;
@@ -292,14 +262,6 @@ export function providerAvailabilities(): Record<string, boolean> {
 }
 
 export function registerProviders(pi: ExtensionAPI): void {
-	if (providerAvailabilities()["opencode-go"]) {
-		pi.registerProvider("opencode-go", {
-			baseUrl: process.env["TORUS_OCGO_BASE_URL"] as string,
-			api: "openai-completions",
-			apiKey: "$TORUS_OCGO_API_KEY",
-			models: GLM_MODELS,
-		});
-	}
 	const file = chainsFile();
 	const { valid, warnings } = chainProviderRegistrations(file);
 	for (const warning of warnings) console.error(warning);
