@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1](https://github.com/tankdonut/torus/compare/v0.13.0...v0.13.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **deps:** update dependency @anthropic-ai/sandbox-runtime to v0.0.80 ([#59](https://github.com/tankdonut/torus/issues/59)) ([55c2bca](https://github.com/tankdonut/torus/commit/55c2bcaa9d2fc55e60e5d37da91578a391ceffbd))
+* **deps:** update dependency pi-web-access to ^0.42.0 ([#62](https://github.com/tankdonut/torus/issues/62)) ([d62f737](https://github.com/tankdonut/torus/commit/d62f737334a73836ee606264fc078faaf8a68b1e))
+
 ## [0.13.0](https://github.com/tankdonut/torus/compare/v0.12.0...v0.13.0) (2026-10-16)
 
 
