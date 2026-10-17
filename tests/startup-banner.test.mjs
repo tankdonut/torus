@@ -2,15 +2,20 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 const { VERSION, initTheme } = await import("@earendil-works/pi-coding-agent");
-const { registerUi, bannerLines } = await import("../extensions/ui/index.ts");
+const { registerUi, bannerLines, torusLogoLines, torusWordmark } = await import(
+	"../extensions/ui/index.ts"
+);
 
 // keyHint/keyText paint through the engine's theme singleton; the TUI
 // initializes it before the first header paint, tests must do it themselves.
 initTheme();
 
+const stripAnsi = (text) => text.replace(/\x1b\[[0-9;]*m/g, "");
+
 const painter = {
 	fg: (color, text) => `<${color}>${text}</${color}>`,
 	bold: (text) => `*${text}*`,
+	getColorMode: () => "truecolor",
 };
 
 const baseOptions = {
@@ -19,13 +24,26 @@ const baseOptions = {
 	showDetails: true,
 };
 
+test("torus mark: half-block ring lines and text wordmark", () => {
+	const [top, bottom] = torusLogoLines("truecolor");
+	assert.equal(stripAnsi(top), "▄▄▀▀▄▄", "top line is the ring's upper half-blocks");
+	assert.equal(stripAnsi(bottom), "▀▀▄▄▀▀", "bottom line carries the amber glint cell");
+	assert.ok(top.includes("\x1b[38;2;111;179;168m"), "ring renders in brand teal truecolor");
+	assert.ok(
+		bottom.includes("\x1b[48;2;111;179;168m") && bottom.includes("\x1b[38;2;230;182;93m"),
+		"glint cell stacks amber fg over teal bg",
+	);
+	assert.equal(stripAnsi(torusWordmark("truecolor")), "torus", "wordmark fallback text");
+});
+
 test("bannerLines collapsed: torus version line, compact hints, onboarding", () => {
-	const lines = bannerLines(painter, { ...baseOptions, expanded: false });
+	const lines = bannerLines(painter, { ...baseOptions, expanded: false, logo: true });
 	const text = lines.join("\n");
 	assert.ok(
-		text.includes("*torus*") && text.includes("9.9.9"),
-		"collapsed banner must lead with the torus brand and version",
+		stripAnsi(lines[0]).startsWith("▄▄▀▀▄▄ ") && stripAnsi(lines[0]).includes("9.9.9"),
+		"collapsed banner must lead with the mark and version",
 	);
+	assert.ok(stripAnsi(lines[1]).startsWith("▀▀▄▄▀▀ "), "second line carries the mark's bottom");
 	assert.ok(text.includes("(pi@8.8.8)"), "engine version must ride the version line");
 	assert.ok(text.includes("interrupt"), "compact keybinding hints must be present");
 	assert.ok(
@@ -50,9 +68,20 @@ test("bannerLines collapsed without details drops the loaded-resources suffix", 
 	assert.ok(!text.includes("loaded resources"), "details suffix must follow quietStartup header");
 });
 
+test("bannerLines wordmark path (logo: false) keeps a single lead line", () => {
+	const lines = bannerLines(painter, { ...baseOptions, expanded: false, logo: false });
+	assert.equal(
+		stripAnsi(lines[0]),
+		"torus 9.9.9 <dim>(pi@8.8.8)</dim>",
+		"wordmark fallback puts brand and version on one line",
+	);
+	assert.ok(stripAnsi(lines[1]).includes("interrupt"), "hints follow on the next line");
+});
+
 test("bannerLines expanded: torus-native rows plus the full keybinding sheet", () => {
-	const lines = bannerLines(painter, { ...baseOptions, expanded: true });
+	const lines = bannerLines(painter, { ...baseOptions, expanded: true, logo: true });
 	const text = lines.join("\n");
+	assert.ok(stripAnsi(lines[0]).startsWith("▄▄▀▀▄▄ "), "expanded banner leads with the mark too");
 	for (const expected of [
 		"torus serve",
 		"torus acp-agent",

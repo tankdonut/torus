@@ -9,6 +9,13 @@ import {
 	rawKeyHint,
 	VERSION,
 } from "@earendil-works/pi-coding-agent";
+import {
+	backgroundAnsi,
+	foregroundAnsi,
+	isAppleTerminalSession,
+	rgbColor,
+	type TerminalColorMode,
+} from "@earendil-works/pi-tui";
 import { type EngineTally, reduceEngineEvent } from "../engine-child.js";
 import { formatCost } from "../fsutil.js";
 import { connectedServerCount, mcpStatusText } from "../mcp/index.js";
@@ -199,6 +206,46 @@ function bannerSuppressed(): boolean {
 	return process.env["TORUS_BANNER"] === "0";
 }
 
+const RESET = "\x1b[0m";
+
+/** torus brand palette: muted teal ring with a single amber glint, fixed across themes (like pi's coral/blue/yellow). */
+const TORUS_TEAL = rgbColor(111, 179, 168);
+const TORUS_AMBER = rgbColor(230, 182, 93);
+
+/**
+ * The torus mark: a 6x4 pixel ring in brand teal with an amber glint nested
+ * in the bottom-right notch. Two text lines of half blocks (each cell is two
+ * vertical pixels); the glint cell stacks teal over amber via fg+bg.
+ */
+export function torusLogoLines(mode: TerminalColorMode): [string, string] {
+	const teal = (text: string) => foregroundAnsi(TORUS_TEAL, mode) + text + RESET;
+	const top = teal("▄▄▀▀▄▄");
+	const bottom =
+		teal("▀▀▄▄▀") +
+		foregroundAnsi(TORUS_AMBER, mode) +
+		backgroundAnsi(TORUS_TEAL, mode) +
+		"▀" +
+		RESET;
+	return [top, bottom];
+}
+
+/** Text fallback for the mark: "torus" in the brand teal and amber. */
+export function torusWordmark(mode: TerminalColorMode): string {
+	return (
+		foregroundAnsi(TORUS_TEAL, mode) +
+		"to" +
+		RESET +
+		foregroundAnsi(TORUS_AMBER, mode) +
+		"rus" +
+		RESET
+	);
+}
+
+/** Apple Terminal draws gaps between rows and misaligns half blocks; it gets the wordmark instead. */
+export function supportsTorusLogo(): boolean {
+	return !isAppleTerminalSession();
+}
+
 /** torus payload version from the package manifest; engine version is VERSION. */
 function torusVersion(): string {
 	const candidates = [
@@ -256,7 +303,7 @@ function expandedHints(): string[] {
 }
 
 /** Torus-native rows for the expanded banner: fleet and launcher surfaces. */
-function torusHintRows(painter: StatusPainter): string[] {
+function torusHintRows(painter: StatusPainter): [string, string] {
 	const sep = painter.fg("muted", " · ");
 	return [
 		[
@@ -278,23 +325,34 @@ export interface BannerOptions {
 	engineVersion: string;
 	/** Whether the loaded-resources listing is visible (quietStartup "header" hides it). */
 	showDetails: boolean;
+	/** Render the half-block mark; false forces the text wordmark. Defaults to terminal support. */
+	logo?: boolean;
 }
 
+/** Painter subset the banner needs: theme colors plus the terminal color mode for brand ANSI. */
+export type BannerPainter = StatusPainter & { getColorMode(): TerminalColorMode };
+
 /** Startup banner lines: torus branding and native surfaces, engine hints below. */
-export function bannerLines(painter: StatusPainter, options: BannerOptions): string[] {
-	const brand = painter.fg("accent", painter.bold("torus"));
-	const versionLine = `${brand} ${options.version} ${painter.fg("dim", `(pi@${options.engineVersion})`)}`;
+export function bannerLines(painter: BannerPainter, options: BannerOptions): string[] {
+	const version = `${options.version} ${painter.fg("dim", `(pi@${options.engineVersion})`)}`;
 	const onboarding = painter.fg(
 		"dim",
 		"Ask how to use or extend torus; pi can explain its own features and docs.",
 	);
+	const logo = options.logo ?? supportsTorusLogo();
+	// The mark's first line carries the version, its second line the first hint row, mirroring pi's logo layout.
+	const lead = (firstRow: string): string[] => {
+		if (!logo) return [`${torusWordmark(painter.getColorMode())} ${version}`, firstRow];
+		const [top, bottom] = torusLogoLines(painter.getColorMode());
+		return [`${top} ${version}`, `${bottom} ${firstRow}`];
+	};
 	if (options.expanded) {
-		return [versionLine, ...torusHintRows(painter), "", ...expandedHints(), "", onboarding];
+		const [fleet, launcher] = torusHintRows(painter);
+		return [...lead(fleet), launcher, "", ...expandedHints(), "", onboarding];
 	}
 	const detailsSuffix = options.showDetails ? " and loaded resources" : "";
 	return [
-		versionLine,
-		compactHints(painter),
+		...lead(compactHints(painter)),
 		painter.fg(
 			"dim",
 			`Press ${keyText("app.tools.expand")} to show full startup help${detailsSuffix}.`,
