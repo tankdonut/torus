@@ -2,8 +2,9 @@
  * torus — vision.
  *
  * `look_at` loads image files into the conversation as ImageContent blocks
- * so the model (glm-5.3-flash is image-capable) can actually see them.
- * The looker roster agent consumes this tool as a vision specialist.
+ * so an image-capable model can actually see them; non-image models get a
+ * red refusal pointing at the looker agent instead of silently omitted
+ * images. The looker roster agent consumes this tool as a vision specialist.
  */
 
 import { readFileSync, statSync } from "node:fs";
@@ -30,7 +31,7 @@ const lookAtTool = defineTool({
 	name: "look_at",
 	label: "Look At",
 	description:
-		"Load image file(s) into the conversation so you can see them (screenshots, diagrams, photos). Pass 1-3 absolute paths and what you want to determine from them; the images are attached to your next view of the conversation.",
+		"Load image file(s) into the conversation so you can see them (screenshots, diagrams, photos). Pass 1-3 absolute paths and what you want to determine from them; the images are attached to your next view of the conversation. Refuses (red) when the active model is not image-capable: delegate to the looker agent instead.",
 	parameters: Type.Object({
 		paths: Type.Array(
 			Type.String({ description: "Absolute image file paths (png/jpg/jpeg/webp/gif)" }),
@@ -41,7 +42,22 @@ const lookAtTool = defineTool({
 		),
 		goal: Type.Optional(Type.String({ description: "What to look for or determine" })),
 	}),
-	async execute(_toolCallId, params) {
+	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		// Same capability signal the engine's read tool uses: attached images are
+		// silently dropped for models without image input, which reads as success.
+		const model = ctx?.model;
+		if (!model?.input?.includes("image")) {
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `look_at refused: the current model (${model?.id ?? "unknown"}) is not image-capable, so attached images would be omitted from the request. Delegate the sighting to the looker agent instead; it runs an image-capable model.`,
+					},
+				],
+				details: { attached: 0, skipped: [], reason: "model-not-image-capable" },
+				isError: true,
+			};
+		}
 		const content: Array<
 			{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
 		> = [];

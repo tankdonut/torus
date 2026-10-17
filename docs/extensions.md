@@ -270,6 +270,8 @@ Lets image-capable models see images.
 |---|---|
 | `look_at` | Load 1–3 local image files (png/jpg/jpeg/webp/gif, ≤4 MB each) into the conversation as base64 image blocks with a goal annotation |
 
+The tool checks the active model's input modalities before attaching (the same signal the engine's own image handling uses): a model without image input would silently drop the attachments, so `look_at` refuses with an error result naming the `looker` agent as the route instead. Zero successful attachments is an error too, so partial failures never read as success.
+
 - **Interactions:** the `looker` roster agent is the designated consumer
 
 ### `guards`
