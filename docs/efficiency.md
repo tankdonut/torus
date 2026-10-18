@@ -7,6 +7,32 @@ harness-layer context overhead is measured. The comparison the bench makes:
 child-extension set delegations get), on identical prompts; the delta is
 torus's overhead.
 
+## Summary
+
+Headline results first: totals per config across all six tasks, the overhead
+delta (torus − stock), and how that delta moved since the prior release's
+run. The table is pasted from the torus 0.14.0 bench output; the HTML report
+carries the same table, regenerated on every run.
+
+| model             |      field |     stock |     torus | Δ overhead |                Δ change |
+| ----------------- | :--------- | :-------- | :-------- | :--------- | :---------------------- |
+| zai/glm-5.3-flash |  tokens in |     8,195 |    11,899 |     +3,704 |   +2,797 vs torus 0.6.0 |
+| zai/glm-5.3-flash | cache read |    64,768 |   180,480 |   +115,712 |   -5,696 vs torus 0.6.0 |
+| zai/glm-5.3-flash |       cost |   $0.0039 |   $0.0084 |   +$0.0045 | +$0.0007 vs torus 0.6.0 |
+| zai/glm-5.3-flash |         ms | 72,276 ms | 96,867 ms |    +24,591 |  -31,036 vs torus 0.6.0 |
+| zai/glm-5.3       |  tokens in |    25,053 |    14,730 |    -10,323 |     -664 vs torus 0.6.0 |
+| zai/glm-5.3       | cache read |    56,768 |   146,048 |    +89,280 |   -1,408 vs torus 0.6.0 |
+| zai/glm-5.3       |       cost |   $0.0569 |   $0.0646 |   +$0.0077 | -$0.0028 vs torus 0.6.0 |
+| zai/glm-5.3       |         ms | 61,132 ms | 89,135 ms |    +28,003 |  -10,581 vs torus 0.6.0 |
+
+What the 0.14.0 numbers say: the overhead is structural, not behavioral.
+Cache read dominates because the extension declaration surface is cached
+input, billed at a fraction of fresh-input price. A full sweep costs under
+half a cent more on flash and $0.0077 more on glm-5.3. Both models came in
+below 0.6.0 on cache read, cost, and wall-clock; the flash tokens-in delta
+grew by 2,797 tokens, and the per-task verdicts below place most of that
+movement within run-to-run noise.
+
 ## Method
 
 - **Task set.** Six fixed, read-only, repo-local prompts in three difficulty
@@ -46,8 +72,10 @@ torus's overhead.
   reproducible claims.
 - **Run history.** The JSON sidecar accumulates one entry per run, so
   re-benchmarking at each release appends rather than overwrites; legacy
-  single-run sidecar files migrate to the envelope on first append, and the
-  HTML report carries a run-history table of per-release overhead deltas.
+  single-run sidecar files migrate to the envelope on first append. Both
+  reports open with a summary table (newest totals plus movement since the
+  prior release), and the HTML report adds a run-history table of
+  per-release overhead deltas.
 
 ## Running it
 
@@ -372,3 +400,7 @@ Cells are medians; `±` is half the interquartile range across measured runs. Ve
 - Ambient roles (dream/reflect, session-title) resolve via the fast tier, so a `chains.json` fast override pointing at a local model moves all ambient work to it.
 - Consumed ACP agents bypass the chain machinery entirely (they run their own models), so their usage/cost figures are best-effort zeros; see the acp section in `docs/extensions.md`.
 - Compare models only within their own section; pricing and token behavior differ.
+- For release gating, cache read and cost deltas are the dependable signals.
+  Each run compares torus with stock on the same engine pin, so the overhead
+  delta is engine-normalized. Tokens in, turns, and wall-clock move with task
+  behavior and network jitter; treat them as context, not gate conditions.

@@ -33,6 +33,7 @@ const {
 	renderTable,
 	rollupRecords,
 	serializeRuns,
+	summaryRows,
 } = await import("../scripts/bench/report.mjs");
 
 const messageEnd = (usage, text = "done") =>
@@ -521,6 +522,95 @@ test("buildHtml: run-history section renders prior sidecar runs and the current 
 	assert.ok((html.match(/<tr><td>[^<]*<\/td><td>m1<\/td>/g) ?? []).length === 2, "one row per run");
 	assert.ok(html.includes("+100"), "Δ cells computed from rolled records (torus 220 − stock 120)");
 	assert.ok(!/src="http|href="http/.test(html), "still self-contained");
+});
+
+// Prior sidecar run for summary comparisons: m2-only entry is skipped, the m1
+// entry is the comparison base (stock medians: tokensIn 110, ms 900; torus
+// medians: tokensIn 150, ms 1,500).
+const priorRunHistory = () => {
+	const priorAgg = (tokensIn, cost) => ({
+		turns: 2,
+		tokensIn,
+		tokensOut: 30,
+		cacheRead: 500,
+		cacheWrite: 0,
+		cost,
+		malformed: 0,
+	});
+	const tasks = [{ id: "t1", tier: "trivial" }];
+	return [
+		{
+			meta: { models: ["m2"], tasks, configs: ["stock", "torus"], torusVersion: "0.5.0" },
+			records: [],
+		},
+		{
+			meta: { models: ["m1"], tasks, configs: ["stock", "torus"], torusVersion: "0.6.0" },
+			records: [
+				rec({ config: "stock", run: 1, ms: 900, aggregate: priorAgg(110, 0.001) }),
+				rec({ config: "torus", run: 1, ms: 1500, aggregate: priorAgg(150, 0.002) }),
+			],
+		},
+	];
+};
+
+test("summaryRows: headline totals, overhead delta, and movement vs the prior comparable run", () => {
+	const { stock, torusOk, warmups } = fixtureDataset();
+	const records = [...warmups, ...stock, ...torusOk];
+	const tasks = [{ id: "t1", tier: "trivial" }];
+	const rollup = rollupRecords(records, tasks, ["stock", "torus"], ["m1"]);
+
+	const first = summaryRows(rollup, []);
+	assert.equal(first.length, 4, "one row per headline field");
+	const byKey = Object.fromEntries(first.map((r) => [r.key, r.cells]));
+	assert.deepEqual(byKey.tokensIn, ["120", "220", "+100", "first recorded run"]);
+	assert.deepEqual(byKey.cacheRead, ["500", "500", "0", "first recorded run"]);
+	assert.deepEqual(byKey.cost, ["$0.0010", "$0.0020", "+$0.0010", "first recorded run"]);
+
+	const withPrior = summaryRows(rollup, priorRunHistory());
+	const prior = Object.fromEntries(withPrior.map((r) => [r.key, r.cells]));
+	// current Δ tokensIn 100 vs prior 40 → +60; Δ ms 1,000 vs 600 → +400;
+	// Δ cacheRead 0 vs 0 → 0; Δ cost $0.0010 vs $0.0010 → $0.
+	assert.deepEqual(prior.tokensIn, ["120", "220", "+100", "+60 vs torus 0.6.0"]);
+	assert.deepEqual(prior.ms, ["1,200 ms", "2,200 ms", "+1,000", "+400 vs torus 0.6.0"]);
+	assert.deepEqual(prior.cacheRead, ["500", "500", "0", "0 vs torus 0.6.0"]);
+	assert.deepEqual(prior.cost, ["$0.0010", "$0.0020", "+$0.0010", "$0 vs torus 0.6.0"]);
+});
+
+test("buildMarkdown and buildHtml lead with the summary; single-config sweeps skip it", () => {
+	const { stock, torusOk, warmups } = fixtureDataset();
+	const records = [...warmups, ...stock, ...torusOk];
+	const tasks = [{ id: "t1", tier: "trivial" }];
+	const meta = {
+		generatedAt: "2027-01-01T00:00:00.000Z",
+		models: ["m1"],
+		engineBin: "/bin/pi",
+		enginePin: "1.3.0",
+		torusVersion: "0.14.0",
+		commit: "feed<beef",
+		runs: 3,
+		warmup: 1,
+		tasks,
+		configs: ["stock", "torus"],
+	};
+	const rollup = rollupRecords(records, tasks, ["stock", "torus"], ["m1"]);
+
+	const md = buildMarkdown(rollup, meta, records, priorRunHistory());
+	const summaryAt = md.indexOf("## Summary · torus 0.14.0 overhead vs stock");
+	assert.ok(summaryAt > 0, "summary present");
+	assert.ok(md.indexOf("## m1") > summaryAt, "summary precedes per-model detail");
+	assert.ok(md.includes("+60 vs torus 0.6.0"), "movement vs prior release rendered");
+
+	const html = buildHtml(rollup, meta, records, priorRunHistory());
+	assert.ok(html.includes("<h2>Summary</h2>"), "html summary section present");
+	assert.ok(
+		html.indexOf("<h2>Summary</h2>") < html.indexOf("<h2>Run history</h2>"),
+		"summary leads the run history",
+	);
+
+	const stockOnly = rollupRecords(stock, tasks, ["stock"], ["m1"]);
+	assert.deepEqual(summaryRows(stockOnly, []), [], "no delta basis without both configs");
+	assert.ok(!buildMarkdown(stockOnly, meta, stock).includes("## Summary"), "markdown omits it");
+	assert.ok(!buildHtml(stockOnly, meta, stock, []).includes("<h2>Summary</h2>"), "html omits it");
 });
 
 test("runEngineOnce resolves with collected lines and exit code (local node, never the engine)", async () => {

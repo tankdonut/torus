@@ -28,7 +28,8 @@ Usage:
 Runs a fixed set of read-only repo-local tasks through two engine configs,
 interleaved with rotated config order, discards warmup runs, and prints a
 markdown report of medians ± half-IQR per task × config, plus Δ-vs-noise
-verdict tables.
+verdict tables and (with --json history) a summary comparing this run's
+overhead with the prior release.
 
 Options:
   --model <ids>     comma-separated model ids, one full sweep each (default: zai/glm-5.3-flash)
@@ -212,7 +213,7 @@ for (const model of opts.models) {
 }
 
 const rollup = rollupRecords(records, tasks, configs, opts.models);
-console.log(buildMarkdown(rollup, meta, records));
+console.log(buildMarkdown(rollup, meta, records, sidecarRuns));
 if (opts.htmlPath) {
 	writeFileSync(path.resolve(opts.htmlPath), buildHtml(rollup, meta, records, sidecarRuns));
 	console.error(`html report: ${path.resolve(opts.htmlPath)}`);

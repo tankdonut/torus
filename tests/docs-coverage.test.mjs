@@ -113,7 +113,7 @@ test("docs/efficiency.md documents the overhead bench method", () => {
 	const benchDocPath = path.join(root, "docs/efficiency.md");
 	assert.ok(existsSync(benchDocPath), "docs/efficiency.md does not exist");
 	const benchDoc = readFileSync(benchDocPath, "utf8");
-	for (const token of ["bench:overhead", "cache"]) {
+	for (const token of ["bench:overhead", "cache", "## Summary"]) {
 		assert.ok(benchDoc.includes(token), `docs/efficiency.md missing token: ${token}`);
 	}
 });

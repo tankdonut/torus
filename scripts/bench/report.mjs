@@ -182,13 +182,15 @@ export function configTotals(tasks) {
 }
 
 /**
- * Full markdown report: header metadata, per-model medians tables (totals
- * included), per-model delta-vs-noise tables, failure footnotes.
+ * Full markdown report: header metadata, summary table, per-model medians
+ * tables (totals included), per-model delta-vs-noise tables, failure footnotes.
  * @param {ReturnType<typeof rollupRecords>} rollup
  * @param {Record<string, unknown>} meta
  * @param {Array<Record<string, unknown>>} records
+ * @param {Array<{meta: Record<string, unknown>, records: Array<Record<string, unknown>>}=} history
+ * @returns {string}
  */
-export function buildMarkdown(rollup, meta, records) {
+export function buildMarkdown(rollup, meta, records, history = []) {
 	const runs = Number(meta.runs ?? 1);
 	const lines = [
 		`# torus overhead bench — ${meta.taskCount} task(s) · ${runs} measured run(s) per task per config`,
@@ -198,6 +200,7 @@ export function buildMarkdown(rollup, meta, records) {
 		"Cells are medians; `±` is half the interquartile range across measured runs. Verdicts: `signal` means the delta exceeds run-to-run noise (max IQR of the two configs).",
 		"",
 	];
+	lines.push(...summaryMarkdown(rollup, meta, history));
 	for (const m of rollup) {
 		lines.push(`## ${m.model}`, "");
 		const rows = [["task", "config", ...FIELDS.map((f) => f.label)]];
@@ -394,7 +397,113 @@ function historySection(rollup, meta, history) {
 }
 
 /**
- * Self-contained HTML report: metadata header, run-history table, per-model
+ * Most recent prior sidecar run that measured this model with both configs
+ * completing at least one measured run, so the summary can state how the
+ * overhead moved since the previous release. Null when no comparable prior
+ * run exists (first bench of the model, or only single-config sweeps).
+ * @param {Array<{meta: Record<string, unknown>, records: Array<Record<string, unknown>>}>} history
+ * @param {string} model
+ */
+function prevModelTotals(history, model) {
+	for (const run of [...history].reverse()) {
+		const rm = run.meta ?? {};
+		const models = Array.isArray(rm.models) ? rm.models : [];
+		if (!models.includes(model)) continue;
+		const tasks = Array.isArray(rm.tasks) ? rm.tasks : [];
+		const configs = Array.isArray(rm.configs) ? rm.configs : ["stock", "torus"];
+		const rollup = rollupRecords(run.records ?? [], tasks, configs, [model]);
+		const totals = configTotals(rollup[0]?.tasks ?? []);
+		if ((totals.stock?.n ?? 0) > 0 && (totals.torus?.n ?? 0) > 0) return { meta: rm, totals };
+	}
+	return null;
+}
+
+/**
+ * Headline summary rows: per model with both configs complete, per headline
+ * field, stock total, torus total, the overhead delta, and how that delta
+ * moved since the model's most recent prior sidecar run. Shared by the
+ * markdown and HTML reports so "what did the bench find" reads at a glance,
+ * with the release-over-release trend attached.
+ * @param {ReturnType<typeof rollupRecords>} rollup
+ * @param {Array<{meta: Record<string, unknown>, records: Array<Record<string, unknown>>}>} history
+ * @returns {Array<{model: string, key: string, cells: string[]}>}
+ */
+export function summaryRows(rollup, history) {
+	const rows = [];
+	for (const m of rollup) {
+		const totals = configTotals(m.tasks);
+		const a = totals.torus;
+		const b = totals.stock;
+		if (!a || !b || a.n === 0 || b.n === 0) continue;
+		const prev = prevModelTotals(history, m.model);
+		for (const key of HISTORY_FIELDS) {
+			const f = fieldByKey(key);
+			const delta = a[key] - b[key];
+			let change = "first recorded run";
+			if (prev) {
+				const prevDelta = prev.totals.torus[key] - prev.totals.stock[key];
+				change = `${f.fmtDelta(delta - prevDelta)} vs torus ${prev.meta.torusVersion ?? "?"}`;
+			}
+			rows.push({
+				model: m.model,
+				key,
+				cells: [f.fmt(b[key]), f.fmt(a[key]), f.fmtDelta(delta), change],
+			});
+		}
+	}
+	return rows;
+}
+
+const SUMMARY_HEAD = ["model", "field", "stock", "torus", "Δ overhead", "Δ change"];
+
+/**
+ * Markdown summary block: headline table placed ahead of the per-model detail
+ * so results read first. Empty array when no model has both configs complete.
+ * @param {ReturnType<typeof rollupRecords>} rollup
+ * @param {Record<string, unknown>} meta
+ * @param {Array<{meta: Record<string, unknown>, records: Array<Record<string, unknown>>}>} history
+ * @returns {string[]}
+ */
+function summaryMarkdown(rollup, meta, history) {
+	const rows = summaryRows(rollup, history);
+	if (rows.length === 0) return [];
+	const table = [SUMMARY_HEAD.slice()];
+	for (const r of rows) table.push([r.model, fieldByKey(r.key)?.label ?? r.key, ...r.cells]);
+	return [
+		`## Summary · torus ${meta.torusVersion} overhead vs stock`,
+		"",
+		`Totals across ${meta.taskCount} task(s): sum of per-task medians per config. Δ overhead = torus − stock; Δ change = that delta's movement since the model's prior run in the sidecar history.`,
+		"",
+		renderTable(table),
+		"",
+	];
+}
+
+/**
+ * HTML summary section: the same headline table, ahead of the run history.
+ * Empty string when no model has both configs complete.
+ * @param {ReturnType<typeof rollupRecords>} rollup
+ * @param {Record<string, unknown>} meta
+ * @param {Array<{meta: Record<string, unknown>, records: Array<Record<string, unknown>>}>} history
+ */
+function summarySection(rollup, meta, history) {
+	const rows = summaryRows(rollup, history);
+	if (rows.length === 0) return "";
+	const body = rows
+		.map(
+			(r) =>
+				`<tr><td>${escapeHtml(r.model)}</td><td>${escapeHtml(fieldByKey(r.key)?.label ?? r.key)}</td>${r.cells
+					.map((c) => `<td>${escapeHtml(c)}</td>`)
+					.join("")}</tr>`,
+		)
+		.join("");
+	const head = SUMMARY_HEAD.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
+	return `<h2>Summary</h2><p>torus ${escapeHtml(String(meta.torusVersion))} vs stock per model: totals (sum of per-task medians), the overhead delta, and its movement since the model's prior sidecar run.</p><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+/**
+ * Self-contained HTML report: metadata header, summary and run-history
+ * tables, per-model
  * SVG distribution charts for every field, delta-vs-noise tables, method
  * block. No external assets — every style and chart is inline.
  * @param {ReturnType<typeof rollupRecords>} rollup
@@ -451,7 +560,10 @@ footer { margin-top: 3rem; font-size: 0.8rem; color: var(--fg-muted); }
 <dt>Runs</dt><dd>${escapeHtml(String(meta.runs))} measured per task × config, ${escapeHtml(String(meta.warmup))} warmup discarded, config order rotated per pass</dd>
 </dl>`;
 
-	const body = [historySection(rollup, meta, history)];
+	const body = [
+		summarySection(rollup, meta, history),
+		historySection(rollup, meta, history),
+	].filter(Boolean);
 	for (const m of rollup) {
 		body.push(`<h2>${escapeHtml(m.model)}</h2>`);
 		const taskRows = m.tasks.map((t) => ({
