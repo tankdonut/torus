@@ -3,8 +3,7 @@ import { test } from "node:test";
 
 // osnotify toast composition: pure formatters, the summary/body layout, and
 // the exact notify-send argv (grouping hints, transient policy, replaces-id
-// chaining). Spawning is not exercised — osNotify is a thin best-effort
-// spawnSync wrapper around toastArgs.
+// chaining). The spawn path itself lives in osnotify-spawn.test.mjs.
 const osnotify = await import("../extensions/osnotify.ts");
 
 const INFO = {
