@@ -315,6 +315,17 @@ With `TORUS_SANDBOX` in the on family, every bash tool call is rewritten through
 
 Known srt gaps: unreliable signal/exit-code propagation (upstream #602/#603/#635/#610), no SIGWINCH on Linux (#642), macOS raw-mode TUIs need `allowPty` (#480).
 
+#### srt behavior notes
+
+These notes describe the pinned `@anthropic-ai/sandbox-runtime`; `package.json` carries the exact pin.
+
+- **User namespaces:** A Linux sandboxed command cannot create user or mount namespaces. Commands that sandbox themselves that way (rootless podman, Chromium's namespace sandbox, a nested bubblewrap) fail with `EPERM`. The upstream opt-out is `allowNestedUserNamespaces`, which torus does not expose.
+- **Write precedence:** A `denyWrite` entry takes precedence over a nested `allowWrite`.
+- **Credential files:** With `credentials.files` configured, an `allowRead` or `allowWrite` entry covering that path grants nothing.
+- **aws-vault:** Its keyring backends need D-Bus and gpg sockets, which the sandbox blocks. Run `aws-vault exec` outside sandboxed bash (`interactive_bash` is never wrapped) and let only the resulting environment reach the sandbox.
+- **git over SSH:** Pushes and fetches over SSH need the ssh-agent socket, a Unix socket the sandbox blocks; on Linux such sockets cannot be allowlisted by path. Use https remotes with the gh CLI.
+- **Upstream watch items:** srt #738 (Node's built-in fetch ignores the sandbox proxy); srt #714 (masked credentials can round-trip via request bodies); srt #654 (`/tmp/claude` is shared across concurrent sandboxes).
+
 ### `approval`
 
 Trust-on-denial UX for the sandbox network allowlist.
