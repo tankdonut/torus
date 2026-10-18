@@ -537,10 +537,12 @@ Companion skill: `torus-execute` (writes checkboxes in the plan, journals via `w
 
 Folds the torus session context into the engine's compaction summary, so the goal, work, todo, and memory context blocks survive compaction instead of vanishing with the summarized turns.
 
-- **Hooks:** `session_start`: record session id; `session_before_compact`: generate a summary that carries the four context blocks (goal, work, todos, memory) as summarization focus
+- **Hooks:** `session_start`: record session id, repaint context chip; `message_end` + `session_compact`: repaint context chip; `session_before_compact`: generate a summary that carries the four context blocks (goal, work, todos, memory) as summarization focus
 - **Interactions:** registered last in `pi.extensions` because hook composition across extensions is last-wins: this extension generates the whole summary itself and returns it as the compaction result, since the engine has no way for an extension to mutate the built-in summary's custom instructions
 
 The hook fires for every compaction reason (`/compact`, context threshold, overflow recovery). When all four blocks are empty (no active goal, work, todos, or memories) the handler is a no-op and the engine's default compaction runs unchanged; the same fallback covers a failed summary call, and the handler never cancels a compaction.
+
+The extension also owns the live context-usage chip: a `torus:ctx` statusline segment reading exactly `ctx NN%` (a rounded percentage of the model's context window, no thresholds, colors, or raw token counts), repainted on `session_start`, every `message_end`, and `session_compact`. When usage is unavailable (no active model, or the token estimate still unknown right after compaction), the segment is cleared via the same `undefined` convention the `torus:todo` chip uses.
 
 ### `worktrees`
 

@@ -13,7 +13,7 @@ const todo = await import("../extensions/todo/index.ts");
 
 const SID = "33333333-3333-7333-8333-333333333333";
 
-function harness(deps) {
+function harness(deps, opts = {}) {
 	const handlers = {};
 	const fakePi = {
 		on: (event, handler) => {
@@ -25,9 +25,24 @@ function harness(deps) {
 		{ type: "session_start", reason: "startup" },
 		{
 			sessionManager: { getSessionId: () => SID },
+			getContextUsage: () => opts.usage,
+			ui: { setStatus: () => {} },
 		},
 	);
 	return handlers;
+}
+
+/** Context fake that records every setStatus call, with a fixed usage snapshot. */
+function chipCtx(usage) {
+	const calls = [];
+	return {
+		ctx: {
+			sessionManager: { getSessionId: () => SID },
+			getContextUsage: () => usage,
+			ui: { setStatus: (key, text) => calls.push({ key, text }) },
+		},
+		calls,
+	};
 }
 
 function compactEvent(overrides = {}) {
@@ -167,4 +182,62 @@ test("aborted signal skips generation even with state to fold", async () => {
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}
+});
+
+test('context chip paints "ctx 42%" on message_end', () => {
+	const handlers = harness();
+	const { ctx, calls } = chipCtx({ tokens: 84000, contextWindow: 200000, percent: 42 });
+	handlers["message_end"]({ type: "message_end" }, ctx);
+	assert.deepEqual(
+		calls,
+		[{ key: "torus:ctx", text: "ctx 42%" }],
+		"exact chip text, no tokens or thresholds",
+	);
+});
+
+test("context chip repaints on session_start and rounds the percentage", () => {
+	const handlers = harness();
+	const { ctx, calls } = chipCtx({ tokens: 168800, contextWindow: 200000, percent: 84.4 });
+	handlers["session_start"]({ type: "session_start", reason: "startup" }, ctx);
+	assert.deepEqual(
+		calls,
+		[{ key: "torus:ctx", text: "ctx 84%" }],
+		"session_start repaints with Math.round",
+	);
+});
+
+test("context chip clears when the token estimate is unknown right after compaction", () => {
+	const handlers = harness();
+	const { ctx, calls } = chipCtx({ tokens: null, contextWindow: 200000, percent: null });
+	handlers["message_end"]({ type: "message_end" }, ctx);
+	assert.deepEqual(
+		calls,
+		[{ key: "torus:ctx", text: undefined }],
+		"null percent clears the segment",
+	);
+});
+
+test("context chip clears when getContextUsage returns undefined", () => {
+	const handlers = harness();
+	const { ctx, calls } = chipCtx(undefined);
+	handlers["message_end"]({ type: "message_end" }, ctx);
+	assert.deepEqual(
+		calls,
+		[{ key: "torus:ctx", text: undefined }],
+		"no usage at all clears the segment",
+	);
+});
+
+test("session_compact repaints so the chip clears immediately after compaction", () => {
+	const handlers = harness();
+	const { ctx, calls } = chipCtx({ tokens: null, contextWindow: 200000, percent: null });
+	handlers["session_compact"](
+		{ type: "session_compact", reason: "manual", fromExtension: false, willRetry: false },
+		ctx,
+	);
+	assert.deepEqual(
+		calls,
+		[{ key: "torus:ctx", text: undefined }],
+		"compaction resets the chip right away",
+	);
 });
