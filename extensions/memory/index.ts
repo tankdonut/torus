@@ -875,16 +875,22 @@ function scheduleIdleReflection(pi: ExtensionAPI, sessionId: string | null): voi
 /**
  * Idle reflection is scoped to the invoking session: the shared logs dir holds
  * every session's delegations, and feeding foreign logs to the dreamer produced
- * cross-session reflection entries. Null-parent runs (the reflect dreamer
- * itself) never match.
+ * cross-session reflection entries. Dreamer runs are excluded by agent —
+ * including this session's own reflect/dream output — so reflection input is
+ * work activity only.
  */
 export function sessionActivityLogs(
-	delegations: Array<{ parentSession: string | null; startedAt: number; logFile: string }>,
+	delegations: Array<{
+		agent: string;
+		parentSession: string | null;
+		startedAt: number;
+		logFile: string;
+	}>,
 	sessionId: string,
 	cap = 3,
 ): string[] {
 	return delegations
-		.filter((record) => record.parentSession === sessionId)
+		.filter((record) => record.parentSession === sessionId && record.agent !== "dreamer")
 		.sort((a, b) => b.startedAt - a.startedAt)
 		.map((record) => record.logFile)
 		.slice(0, cap);
@@ -934,7 +940,7 @@ async function runIdleReflection(
 			task,
 			undefined,
 			undefined,
-			null,
+			sessionId,
 			"reflect",
 			null,
 			REFLECT_ANNOUNCE,
@@ -1015,7 +1021,7 @@ async function dream(_pi: ExtensionAPI): Promise<void> {
 		task,
 		undefined,
 		undefined,
-		null,
+		currentSessionId(),
 		"dream",
 		null,
 		DREAM_ANNOUNCE,

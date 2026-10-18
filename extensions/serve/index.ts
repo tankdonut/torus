@@ -512,8 +512,8 @@ function fireRun(
 	model: string | null,
 ): { handleTag: string; guarded: Promise<GuardedOutcome> } {
 	const handleTag = `srv-${randomUUID().slice(0, 8)}`;
-	// parentSession null: session-free, the production default for background
-	// runs. announce/emitResult false: this process has no transcript sender,
+	// parentSession null: no session to attribute in a headless server.
+	// announce/emitResult false: this process has no transcript sender,
 	// so markers would be no-ops anyway — a headless server stays deliberate.
 	const outcome = runDelegation(
 		agent,

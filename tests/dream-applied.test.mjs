@@ -76,15 +76,22 @@ test("dreamAppliedLine summarizes counts, names, and the no-change case", () => 
 	);
 });
 
-test("sessionActivityLogs scopes idle reflection to the invoking session only", () => {
+test("sessionActivityLogs scopes idle reflection to work activity only", () => {
 	const mine = [
-		{ parentSession: "sess-a", startedAt: 300, logFile: "/logs/a3.log" },
-		{ parentSession: "sess-a", startedAt: 100, logFile: "/logs/a1.log" },
-		{ parentSession: "sess-a", startedAt: 200, logFile: "/logs/a2.log" },
+		{ agent: "builder", parentSession: "sess-a", startedAt: 300, logFile: "/logs/a3.log" },
+		{ agent: "builder", parentSession: "sess-a", startedAt: 100, logFile: "/logs/a1.log" },
+		{ agent: "builder", parentSession: "sess-a", startedAt: 200, logFile: "/logs/a2.log" },
 	];
-	const foreign = [{ parentSession: "sess-b", startedAt: 400, logFile: "/logs/b-newest.log" }];
-	const parentless = [
-		{ parentSession: null, startedAt: 500, logFile: "/logs/reflect-dreamer.log" },
+	const foreign = [
+		{ agent: "builder", parentSession: "sess-b", startedAt: 400, logFile: "/logs/b-newest.log" },
+	];
+	const dreamer = [
+		{
+			agent: "dreamer",
+			parentSession: "sess-a",
+			startedAt: 500,
+			logFile: "/logs/reflect-dreamer.log",
+		},
 	];
 
 	// newest first, capped at 3, foreign sessions never included even when newer
@@ -93,7 +100,9 @@ test("sessionActivityLogs scopes idle reflection to the invoking session only", 
 		"/logs/a2.log",
 		"/logs/a1.log",
 	]);
-	assert.deepEqual(memory.sessionActivityLogs([...parentless, ...foreign], "sess-a"), []);
+	// this session's own dreamer runs are memory maintenance, not work input,
+	// even though they carry the session as parent
+	assert.deepEqual(memory.sessionActivityLogs([...dreamer, ...foreign], "sess-a"), []);
 	assert.deepEqual(memory.sessionActivityLogs([...mine.slice(0, 2)], "sess-a", 1), [
 		"/logs/a3.log",
 	]);
