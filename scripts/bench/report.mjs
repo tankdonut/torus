@@ -158,6 +158,30 @@ export function deltaRows(perConfig, measuredRuns) {
 }
 
 /**
+ * Per-config totals across one model's rolled-up tasks: the sum of task
+ * medians (and summed half-IQRs) over tasks that completed at least one
+ * measured run. Configs where every run failed keep n = 0 and contribute
+ * nothing. Shared by the markdown totals rows and the HTML run history.
+ * @param {ReturnType<typeof rollupRecords>[number]["tasks"]} tasks
+ */
+export function configTotals(tasks) {
+	const totals = {};
+	for (const t of tasks) {
+		for (const [cfg, c] of Object.entries(t.perConfig)) {
+			if (totals[cfg] === undefined) totals[cfg] = { n: 0 };
+			const tot = totals[cfg];
+			if (c.okCount === 0) continue;
+			tot.n += 1;
+			for (const f of FIELDS) {
+				tot[f.key] = (tot[f.key] ?? 0) + c.fields[f.key].med;
+				tot[`${f.key}Half`] = (tot[`${f.key}Half`] ?? 0) + c.fields[f.key].iqr / 2;
+			}
+		}
+	}
+	return totals;
+}
+
+/**
  * Full markdown report: header metadata, per-model medians tables (totals
  * included), per-model delta-vs-noise tables, failure footnotes.
  * @param {ReturnType<typeof rollupRecords>} rollup
@@ -177,19 +201,11 @@ export function buildMarkdown(rollup, meta, records) {
 	for (const m of rollup) {
 		lines.push(`## ${m.model}`, "");
 		const rows = [["task", "config", ...FIELDS.map((f) => f.label)]];
-		const totals = Object.fromEntries(
-			Object.keys(m.tasks[0]?.perConfig ?? {}).map((cfg) => [cfg, { n: 0 }]),
-		);
+		const totals = configTotals(m.tasks);
 		for (const t of m.tasks) {
 			for (const [cfg, c] of Object.entries(t.perConfig)) {
 				if (c.okCount > 0) {
 					rows.push([t.task.id, cfg, ...FIELDS.map((f) => medCell(c.fields[f.key], f.fmt))]);
-					const tot = totals[cfg];
-					tot.n += 1;
-					for (const f of FIELDS) {
-						tot[f.key] = (tot[f.key] ?? 0) + c.fields[f.key].med;
-						tot[`${f.key}Half`] = (tot[`${f.key}Half`] ?? 0) + c.fields[f.key].iqr / 2;
-					}
 				} else {
 					rows.push([t.task.id, cfg, `failed (${c.failCount} run(s))`, "", "", "", "", "", ""]);
 				}
@@ -328,15 +344,65 @@ const METHOD_HTML = `
 </ol>
 <p><strong>Caveats.</strong> Cache read/write deltas remain indicative: provider prompt caches can survive between runs, and torus's larger declaration surface inflates fresh-cache writes by construction. Tokens-in and cost deltas are the stable signals. Wall-clock includes extension loading at spawn. Numbers are self-reported by the engine per run.</p>`;
 
+const HISTORY_FIELDS = ["tokensIn", "cacheRead", "cost", "ms"];
+const fieldByKey = (key) => FIELDS.find((f) => f.key === key);
+
 /**
- * Self-contained HTML report: metadata header, per-model SVG distribution
- * charts for every field, delta-vs-noise tables, method block. No external
- * assets — every style and chart is inline.
+ * One run-history row: run identity (date · version · commit · engine pin)
+ * plus the headline overhead deltas (torus − stock totals) for one model.
+ * @param {Record<string, unknown>} runMeta
+ * @param {ReturnType<typeof rollupRecords>[number]} modelRollup
+ */
+function historyRow(runMeta, modelRollup) {
+	const label = `${String(runMeta.generatedAt ?? "").slice(0, 10)} · torus ${runMeta.torusVersion ?? "?"} · ${runMeta.commit ?? "?"} · engine ${runMeta.enginePin ?? "?"}`;
+	const totals = configTotals(modelRollup.tasks);
+	const a = totals.torus;
+	const b = totals.stock;
+	const cells = HISTORY_FIELDS.map((key) => {
+		const f = fieldByKey(key);
+		if (!f || !a || !b || a.n === 0 || b.n === 0) return "—";
+		return f.fmtDelta(a[key] - b[key]);
+	});
+	return `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(modelRollup.model)}</td>${cells
+		.map((c) => `<td>${escapeHtml(c)}</td>`)
+		.join("")}</tr>`;
+}
+
+/**
+ * Run-history table: one row per prior sidecar run × model plus the current
+ * run, so the per-release overhead trend reads at a glance. Prior runs
+ * re-roll from their own records; a run without both configs completed
+ * degrades to em-dash cells instead of breaking the report.
+ * @param {ReturnType<typeof rollupRecords>} rollup
+ * @param {Record<string, unknown>} meta
+ * @param {Array<{meta: Record<string, unknown>, records: Array<Record<string, unknown>>}>} history
+ */
+function historySection(rollup, meta, history) {
+	const rows = [];
+	for (const run of history) {
+		const rm = run.meta ?? {};
+		const tasks = Array.isArray(rm.tasks) ? rm.tasks : [];
+		const configs = Array.isArray(rm.configs) ? rm.configs : ["stock", "torus"];
+		const models = Array.isArray(rm.models) ? rm.models : [];
+		for (const m of rollupRecords(run.records ?? [], tasks, configs, models)) {
+			rows.push(historyRow(rm, m));
+		}
+	}
+	for (const m of rollup) rows.push(historyRow(meta, m));
+	const head = HISTORY_FIELDS.map((key) => `<th>Δ ${fieldByKey(key)?.label ?? key}</th>`).join("");
+	return `<h2>Run history</h2><p>Δ = torus − stock totals (sum of per-task medians) per model and run; history accumulates in the JSON sidecar.</p><table><thead><tr><th>run</th><th>model</th>${head}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
+}
+
+/**
+ * Self-contained HTML report: metadata header, run-history table, per-model
+ * SVG distribution charts for every field, delta-vs-noise tables, method
+ * block. No external assets — every style and chart is inline.
  * @param {ReturnType<typeof rollupRecords>} rollup
  * @param {Record<string, unknown>} meta
  * @param {Array<Record<string, unknown>>} records
+ * @param {Array<{meta: Record<string, unknown>, records: Array<Record<string, unknown>>}=} history
  */
-export function buildHtml(rollup, meta, records) {
+export function buildHtml(rollup, meta, records, history = []) {
 	const head = `<!doctype html>
 <html lang="en">
 <head>
@@ -385,7 +451,7 @@ footer { margin-top: 3rem; font-size: 0.8rem; color: var(--fg-muted); }
 <dt>Runs</dt><dd>${escapeHtml(String(meta.runs))} measured per task × config, ${escapeHtml(String(meta.warmup))} warmup discarded, config order rotated per pass</dd>
 </dl>`;
 
-	const body = [];
+	const body = [historySection(rollup, meta, history)];
 	for (const m of rollup) {
 		body.push(`<h2>${escapeHtml(m.model)}</h2>`);
 		const taskRows = m.tasks.map((t) => ({
@@ -429,12 +495,47 @@ footer { margin-top: 3rem; font-size: 0.8rem; color: var(--fg-muted); }
 }
 
 /**
- * JSON sidecar: meta plus every run record (warmups included), exactly as
- * executed, so the published numbers stay auditable and re-renderable
+ * @typedef {{meta: Record<string, unknown>, records: Array<Record<string, unknown>>}} BenchRun
+ */
+
+/**
+ * Serialize run history to sidecar text: a schema-2 envelope carrying every
+ * recorded run so the file accumulates across releases instead of being
+ * overwritten. Each run is its meta plus every record (warmups included),
+ * exactly as executed, so published numbers stay auditable and re-renderable
  * without re-spending tokens.
+ * @param {BenchRun[]} runs
+ */
+export function serializeRuns(runs) {
+	return `${JSON.stringify({ schema: 2, runs }, null, 2)}\n`;
+}
+
+/**
+ * Parse sidecar text into run history. Accepts the current {schema, runs}
+ * envelope and the legacy single-run {meta, records} shape (migrated in
+ * place); anything else throws so a corrupt sidecar fails loud instead of
+ * being silently replaced.
+ * @param {string} text
+ * @returns {BenchRun[]}
+ */
+export function parseRunsHistory(text) {
+	const data = JSON.parse(text);
+	if (Array.isArray(data?.runs)) {
+		for (const run of data.runs) {
+			if (run === null || typeof run !== "object" || !Array.isArray(run.records))
+				throw new Error("bench sidecar: run entry missing records");
+		}
+		return data.runs;
+	}
+	if (data !== null && typeof data === "object" && Array.isArray(data.records)) return [data];
+	throw new Error("bench sidecar: expected {runs: [...]} or legacy {meta, records}");
+}
+
+/**
+ * Single-run sidecar text: the schema-2 envelope with one run.
  * @param {Record<string, unknown>} meta
  * @param {Array<Record<string, unknown>>} records
  */
 export function buildJson(meta, records) {
-	return `${JSON.stringify({ meta, records }, null, 2)}\n`;
+	return serializeRuns([{ meta, records }]);
 }

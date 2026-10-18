@@ -24,12 +24,15 @@ const {
 	buildHtml,
 	buildJson,
 	buildMarkdown,
+	configTotals,
 	deltaRows,
 	engineBinLabel,
 	fieldValue,
 	FIELDS,
+	parseRunsHistory,
 	renderTable,
 	rollupRecords,
+	serializeRuns,
 } = await import("../scripts/bench/report.mjs");
 
 const messageEnd = (usage, text = "done") =>
@@ -419,16 +422,105 @@ test("buildHtml: self-contained report with inline SVG, meta, delta table, no ex
 	assert.ok(html.endsWith("</html>"));
 });
 
-test("buildJson: meta + every record (warmups included), JSON round-trip", () => {
+test("buildJson: schema-2 envelope, one run, every record (warmups included)", () => {
 	const { stock, torusOk, torusFailed, warmups } = fixtureDataset();
 	const records = [...warmups, ...stock, ...torusOk, torusFailed];
 	const parsed = JSON.parse(buildJson({ runs: 3, models: ["m1"] }, records));
-	assert.equal(parsed.meta.runs, 3);
-	assert.equal(parsed.records.length, records.length);
-	const warmupRecord = parsed.records.find((r) => r.warmup && r.config === "torus");
+	assert.equal(parsed.schema, 2);
+	assert.equal(parsed.runs.length, 1);
+	const run = parsed.runs[0];
+	assert.equal(run.meta.runs, 3);
+	assert.equal(run.records.length, records.length);
+	const warmupRecord = run.records.find((r) => r.warmup && r.config === "torus");
 	assert.ok(warmupRecord, "warmup runs ship in the sidecar");
 	assert.equal(warmupRecord.aggregate.tokensIn, 9999);
-	assert.ok(parsed.records.some((r) => r.ok === false));
+	assert.ok(run.records.some((r) => r.ok === false));
+});
+
+test("sidecar history: legacy single-run files migrate; envelopes round-trip; garbage fails loud", () => {
+	const legacy = JSON.stringify({ meta: { torusVersion: "0.6.0" }, records: [{ ok: true }] });
+	const migrated = parseRunsHistory(legacy);
+	assert.equal(migrated.length, 1);
+	assert.equal(migrated[0].meta.torusVersion, "0.6.0");
+
+	const roundTrip = parseRunsHistory(
+		serializeRuns([...migrated, { meta: { torusVersion: "0.14.0" }, records: [] }]),
+	);
+	assert.deepEqual(
+		roundTrip.map((r) => r.meta.torusVersion),
+		["0.6.0", "0.14.0"],
+	);
+
+	assert.throws(() => parseRunsHistory('{"nope": true}'), /sidecar/);
+	assert.throws(() => parseRunsHistory('{"runs": [{"meta": {}}]}'), /missing records/);
+	assert.throws(() => parseRunsHistory("not json"), SyntaxError);
+});
+
+test("configTotals: sums task medians per config; all-failed configs contribute nothing", () => {
+	const { stock, torusOk, torusFailed, warmups } = fixtureDataset();
+	const records = [...warmups, ...stock, ...torusOk, torusFailed];
+	const rollup = rollupRecords(
+		records,
+		[{ id: "t1", tier: "trivial" }],
+		["stock", "torus"],
+		["m1"],
+	);
+	const totals = configTotals(rollup[0].tasks);
+	assert.equal(totals.stock.n, 1);
+	assert.equal(totals.stock.tokensIn, 120);
+	assert.equal(totals.stock.tokensInHalf, 10);
+	assert.equal(totals.torus.n, 1);
+	assert.equal(totals.torus.tokensIn, 220);
+
+	const failedOnly = rollupRecords(
+		[torusFailed],
+		[{ id: "t1", tier: "trivial" }],
+		["stock", "torus"],
+		["m1"],
+	);
+	const failedTotals = configTotals(failedOnly[0].tasks);
+	assert.equal(failedTotals.stock.n, 0);
+	assert.equal(failedTotals.torus.n, 0);
+	assert.equal(failedTotals.torus.tokensIn ?? 0, 0);
+});
+
+test("buildHtml: run-history section renders prior sidecar runs and the current one", () => {
+	const { stock, torusOk, torusFailed, warmups } = fixtureDataset();
+	const records = [...warmups, ...stock, ...torusOk, torusFailed];
+	const tasks = [{ id: "t1", tier: "trivial" }];
+	const rollup = rollupRecords(records, tasks, ["stock", "torus"], ["m1"]);
+	const meta = {
+		generatedAt: "2027-01-01T00:00:00.000Z",
+		models: ["m1"],
+		engineBin: "/bin/pi",
+		enginePin: "1.3.0",
+		torusVersion: "0.14.0",
+		commit: "feed<beef",
+		runs: 3,
+		warmup: 1,
+		tasks,
+		configs: ["stock", "torus"],
+	};
+	const history = [
+		{
+			meta: {
+				...meta,
+				generatedAt: "2026-10-07T21:49:34.141Z",
+				torusVersion: "0.6.0",
+				commit: "1c7256e",
+				enginePin: "1.0.4",
+			},
+			records,
+		},
+	];
+	const html = buildHtml(rollup, meta, records, history);
+	assert.ok(html.includes("Run history"), "history section present");
+	assert.ok(html.includes("torus 0.6.0"), "prior run identity rendered");
+	assert.ok(html.includes("2026-10-07"), "prior run date rendered");
+	assert.ok(html.includes("feed&lt;beef"), "current run commit escaped");
+	assert.ok((html.match(/<tr><td>[^<]*<\/td><td>m1<\/td>/g) ?? []).length === 2, "one row per run");
+	assert.ok(html.includes("+100"), "Δ cells computed from rolled records (torus 220 − stock 120)");
+	assert.ok(!/src="http|href="http/.test(html), "still self-contained");
 });
 
 test("runEngineOnce resolves with collected lines and exit code (local node, never the engine)", async () => {

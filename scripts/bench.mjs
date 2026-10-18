@@ -38,8 +38,11 @@ Options:
   --stock-only      run only the bare-engine config (no delta rows)
   --torus-only      run only the torus-extension config (no delta rows)
   --timeout <sec>   per-run wall-clock cap, SIGKILL after (default: 600)
-  --json <path>     write the raw-records JSON sidecar to <path>
-  --html <path>     write the self-contained HTML report to <path>
+  --json <path>     write the raw-records JSON sidecar to <path>; the file
+                    accumulates one entry per run (legacy single-run files
+                    migrate; delete it to start a fresh history)
+  --html <path>     write the self-contained HTML report to <path> (carries
+                    the sidecar's run history when --json is given)
   --help            print this usage
 
 Exit status: 0 when every run (warmups included) completed, 1 otherwise;
@@ -121,7 +124,8 @@ const { buildSchedule } = await import("./bench/stats.mjs");
 const { CONFIGS, aggregateEventLines, buildArgs, runEngineOnce } = await import(
 	"./bench/engine-run.mjs"
 );
-const { buildHtml, buildJson, buildMarkdown, rollupRecords } = await import("./bench/report.mjs");
+const { buildHtml, buildMarkdown, engineBinLabel, parseRunsHistory, rollupRecords, serializeRuns } =
+	await import("./bench/report.mjs");
 const { engineChildEnv, resolveEngineBin } = await import("../extensions/engine-child.ts");
 
 const packageJson = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
@@ -150,6 +154,20 @@ const meta = {
 	tasks: tasks.map((t) => ({ id: t.id, tier: t.tier })),
 	configs,
 };
+
+// Sidecar history is read up front: a corrupt target fails loud before any
+// tokens are spent, and prior runs feed the HTML run-history section.
+const jsonPath = opts.jsonPath ? path.resolve(opts.jsonPath) : "";
+let sidecarRuns = [];
+if (jsonPath) {
+	let existing = "";
+	try {
+		existing = readFileSync(jsonPath, "utf8");
+	} catch {
+		// no sidecar yet — history starts with this run
+	}
+	if (existing.trim()) sidecarRuns = parseRunsHistory(existing);
+}
 
 const records = [];
 for (const model of opts.models) {
@@ -196,11 +214,14 @@ for (const model of opts.models) {
 const rollup = rollupRecords(records, tasks, configs, opts.models);
 console.log(buildMarkdown(rollup, meta, records));
 if (opts.htmlPath) {
-	writeFileSync(path.resolve(opts.htmlPath), buildHtml(rollup, meta, records));
+	writeFileSync(path.resolve(opts.htmlPath), buildHtml(rollup, meta, records, sidecarRuns));
 	console.error(`html report: ${path.resolve(opts.htmlPath)}`);
 }
-if (opts.jsonPath) {
-	writeFileSync(path.resolve(opts.jsonPath), buildJson(meta, records));
-	console.error(`json sidecar: ${path.resolve(opts.jsonPath)}`);
+if (jsonPath) {
+	writeFileSync(jsonPath, serializeRuns([...sidecarRuns, { meta, records }]));
+	const versions = [...sidecarRuns, { meta }].map((r) => r.meta.torusVersion).join(" → ");
+	console.error(
+		`json sidecar: ${jsonPath} — ${sidecarRuns.length + 1} run(s) in history (torus ${versions})`,
+	);
 }
 process.exit(records.some((r) => !r.ok) ? 1 : 0);
