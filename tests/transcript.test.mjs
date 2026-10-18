@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
 // transcript.ts session-file parsing: suffix matching against
 // <timestamp>_<uuid>.jsonl names, block shapes (toolCall/arguments,
 // role-toolResult with toolCallId pairing), malformed-line tolerance.
-// Fixtures are planted in a temp slug dir under the REAL sessions root
-// because findSessionFile scans ~/.pi/agent/sessions/<slug>/ by suffix —
-// the dashed-vs-dotted slug lesson is pinned here.
-
-const SESSIONS = path.join(homedir(), ".pi", "agent", "sessions");
+// Fixtures are planted in a temp slug dir under an isolated agent home
+// (PI_CODING_AGENT_DIR) because findSessionFile scans <agentDir>/sessions/
+// <slug>/ by suffix — the dashed-vs-dotted slug lesson is pinned here —
+// and nothing may write the real ~/.pi/agent/sessions (sandbox hermeticity).
+const AGENT_DIR = mkdtempSync(path.join(tmpdir(), "torus-transcript-agent-"));
+process.env["PI_CODING_AGENT_DIR"] = AGENT_DIR;
+const SESSIONS = path.join(AGENT_DIR, "sessions");
 const SLUG = "torus-test-transcript";
 const DIR = path.join(SESSIONS, SLUG);
 
@@ -249,6 +251,6 @@ test("custom entries of other customTypes render nothing", () => {
 });
 
 test("cleanup: planted fixtures removed", () => {
-	rmSync(DIR, { recursive: true, force: true });
+	rmSync(AGENT_DIR, { recursive: true, force: true });
 	assert.equal(transcriptItems(UUID, 40).length, 0);
 });

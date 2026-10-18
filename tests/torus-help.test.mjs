@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -20,10 +20,17 @@ function launcherEnv() {
 	return env;
 }
 
+// --help, -h, help, and auth --help boot the real engine, which writes
+// models-store.json/auth.json under its agent dir at startup and dies when
+// that dir is unwritable. Point PI_CODING_AGENT_DIR at a temp home so the
+// spawns stay hermetic and never touch the real ~/.pi/agent.
+const agentDir = mkdtempSync(path.join(tmpdir(), "torus-help-agent-"));
+after(() => rmSync(agentDir, { recursive: true, force: true }));
+
 function runLauncher(args, envOverride = {}) {
 	return spawnSync(process.execPath, [path.join(root, "runtime", "bin", "torus.mjs"), ...args], {
 		encoding: "utf8",
-		env: { ...launcherEnv(), ...envOverride },
+		env: { ...launcherEnv(), PI_CODING_AGENT_DIR: agentDir, ...envOverride },
 	});
 }
 
