@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -120,8 +120,9 @@ test("activateSandbox: successful init activates with workspace in allowWrite", 
 	const manager = fakeManager();
 	const deps = fakeDeps(manager);
 	const notices = [];
+	const extra = mkdtempSync(path.join(tmpdir(), "sbx-extra-"));
 	const state = await activateSandbox(
-		{ mode: "full", requested: "full", writableExtras: ["/extra"] },
+		{ mode: "full", requested: "full", writableExtras: [extra] },
 		deps,
 		(m) => notices.push(m),
 	);
@@ -129,8 +130,87 @@ test("activateSandbox: successful init activates with workspace in allowWrite", 
 	assert.equal(deps.calls.probe, 1);
 	assert.equal(manager.calls.initialize, 1);
 	assert.ok(manager.captured.config.filesystem.allowWrite.includes(process.cwd()));
-	assert.ok(manager.captured.config.filesystem.allowWrite.includes("/extra"));
+	assert.ok(manager.captured.config.filesystem.allowWrite.includes(extra));
 	assert.deepEqual(notices, []);
+});
+
+test("activateSandbox: creates missing writable roots (0700) before initialize", async () => {
+	const base = mkdtempSync(path.join(tmpdir(), "sbx-create-"));
+	const missing = path.join(base, "deep", "extra-root");
+	const manager = fakeManager();
+	const deps = fakeDeps(manager);
+	const notices = [];
+	try {
+		const state = await activateSandbox(
+			{ mode: "full", requested: "full", writableExtras: [missing] },
+			deps,
+			(m) => notices.push(m),
+		);
+		assert.equal(state.active, true);
+		assert.ok(existsSync(missing), "missing writable root is created by activation");
+		assert.equal(statSync(missing).mode & 0o777, 0o700);
+		assert.deepEqual(notices, []);
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+	}
+});
+
+test("activateSandbox: CLAUDE_CODE_TMPDIR points at a fresh private 0700 dir under tmpdir", async () => {
+	const previous = process.env.CLAUDE_CODE_TMPDIR;
+	try {
+		const manager = fakeManager();
+		await activateSandbox(
+			{ mode: "full", requested: "full", writableExtras: [] },
+			fakeDeps(manager),
+		);
+		const first = process.env.CLAUDE_CODE_TMPDIR;
+		assert.ok(first, "activation sets CLAUDE_CODE_TMPDIR");
+		assert.ok(first.startsWith(`${tmpdir()}${path.sep}`), "scratch dir lives under os.tmpdir()");
+		assert.ok(existsSync(first), "scratch dir is created");
+		assert.equal(statSync(first).mode & 0o777, 0o700);
+		assert.ok(
+			!manager.captured.config.filesystem.allowWrite.includes(first),
+			"scratch dir is covered by the tmpdir() allowWrite entry, not added explicitly",
+		);
+
+		await activateSandbox(
+			{ mode: "full", requested: "full", writableExtras: [] },
+			fakeDeps(fakeManager()),
+		);
+		const second = process.env.CLAUDE_CODE_TMPDIR;
+		assert.ok(second && second !== first, "each activation claims a distinct scratch dir");
+		assert.ok(existsSync(second) && (statSync(second).mode & 0o777) === 0o700);
+	} finally {
+		if (previous === undefined) delete process.env.CLAUDE_CODE_TMPDIR;
+		else process.env.CLAUDE_CODE_TMPDIR = previous;
+	}
+});
+
+test("activateSandbox: uncreatable writable root degrades with a notice, activation still succeeds", async () => {
+	const base = mkdtempSync(path.join(tmpdir(), "sbx-blocked-"));
+	const blocker = path.join(base, "blocker");
+	writeFileSync(blocker, "a plain file standing in as a parent directory\n");
+	const doomed = path.join(blocker, "child");
+	const manager = fakeManager();
+	const deps = fakeDeps(manager);
+	const notices = [];
+	const previous = process.env.CLAUDE_CODE_TMPDIR;
+	try {
+		const state = await activateSandbox(
+			{ mode: "full", requested: "full", writableExtras: [doomed] },
+			deps,
+			(m) => notices.push(m),
+		);
+		assert.deepEqual(state, { mode: "full", active: true });
+		assert.equal(manager.calls.initialize, 1, "initialize still runs");
+		assert.equal(notices.length, 1);
+		assert.match(notices[0] ?? "", /could not create writable root/);
+		assert.ok(notices[0]?.includes(doomed), "notice names the root");
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+		if (previous === undefined) delete process.env.CLAUDE_CODE_TMPDIR;
+		else process.env.CLAUDE_CODE_TMPDIR = previous;
+	}
 });
 
 test("activateSandbox: initialize failure degrades with init-failed notice", async () => {

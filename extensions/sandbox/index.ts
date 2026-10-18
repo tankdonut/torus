@@ -15,9 +15,16 @@
  * to it; the git common dir (linked worktrees share refs/objects with the
  * main repo, so commits would otherwise be denied) and the torus worktrees
  * root (parent-side verification of delegated work) are added to allowWrite.
+ *
+ * Activation pre-creates non-existent writable roots (srt silently drops them
+ * from allowWrite otherwise) and claims a fresh private scratch dir via
+ * CLAUDE_CODE_TMPDIR: srt injects it as TMPDIR at wrap time but never creates
+ * the dir, and its default (/tmp/claude) is shared by every sandbox of the
+ * user.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -151,6 +158,33 @@ export function resolveAdditionalWritableRoots(cwd: string): string[] {
 	return [...new Set(roots.filter((root): root is string => root !== null))];
 }
 
+function ensureWritableRoots(roots: string[], sink: (message: string) => void): void {
+	for (const root of new Set(roots)) {
+		if (existsSync(root)) continue;
+		try {
+			mkdirSync(root, { recursive: true, mode: 0o700 });
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			sink(
+				`[torus: sandbox] could not create writable root ${root}: ${reason} — writes there will be denied by the sandbox`,
+			);
+		}
+	}
+}
+
+function ensurePrivateScratchDir(sink: (message: string) => void): void {
+	const scratch = path.join(tmpdir(), `torus-sbx-${randomUUID()}`);
+	try {
+		mkdirSync(scratch, { recursive: true, mode: 0o700 });
+		process.env["CLAUDE_CODE_TMPDIR"] = scratch;
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		sink(
+			`[torus: sandbox] could not create private scratch dir ${scratch}: ${reason} — falling back to the shared tmpdir`,
+		);
+	}
+}
+
 export function buildSandboxConfig(
 	cwd: string,
 	sandboxEnv: SandboxEnv,
@@ -236,6 +270,11 @@ export async function activateSandbox(
 		);
 		return { mode: "full", active: false };
 	}
+	// srt silently drops allowWrite paths that don't exist at init time, so
+	// every root must be on disk before initialize; a root that can't be
+	// created costs only that root (notice above, activation continues).
+	ensureWritableRoots([...sandboxEnv.writableExtras, ...additionalWritableRoots, tmpdir()], sink);
+	ensurePrivateScratchDir(sink);
 	try {
 		await deps.manager.initialize(
 			buildSandboxConfig(process.cwd(), sandboxEnv, additionalWritableRoots),
