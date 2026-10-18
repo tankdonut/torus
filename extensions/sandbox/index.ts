@@ -41,6 +41,8 @@ import {
 	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { torusHome } from "../fsutil.js";
+import { readPersistedHosts } from "../approval/index.js";
+import { loadSandboxPolicy, type ResolvedSandboxPolicy, type SandboxWritableRoot } from "./policy.js";
 
 export type SandboxMode = "off" | "full";
 
@@ -52,6 +54,18 @@ export interface SandboxEnv {
 	netOnly: boolean;
 	netAdd: string[];
 	netDropped: string[];
+	/** Policy-provided literal writable roots (user layer first, then trusted project). */
+	policyWritable: SandboxWritableRoot[];
+	/** Policy host additions layered onto the curated allowlist. */
+	policyHostsAdd: string[];
+	/** User-layer replacement allowlist from the policy (empty = keep curated). */
+	policyHostsOnly: string[];
+	/** Policy-denied hosts. */
+	policyHostsDeny: string[];
+	/** Credential files to deny inside the sandbox (user layer only). */
+	credentialsFiles: string[];
+	/** Credential env vars to deny inside the sandbox (user layer only). */
+	credentialsEnvVars: string[];
 }
 
 const OFF_VALUES = new Set(["0", "off"]);
@@ -92,6 +106,8 @@ export const CURATED_NET_ALLOWLIST: readonly string[] = [
 	"deb.debian.org",
 	"archive.ubuntu.com",
 	"security.ubuntu.com",
+	// cloud APIs — strict subdomains only (srt rejects bare *.tld patterns)
+	"*.amazonaws.com",
 ];
 
 const BROAD_NET_PATTERN = /^(?:\*|\*\.[^.]+)$/;
@@ -112,9 +128,14 @@ export function parseNetEntries(raw: string): {
 	return { entries, dropped };
 }
 
-export function parseSandboxEnv(env: NodeJS.ProcessEnv): SandboxEnv {
+export function parseSandboxEnv(env: NodeJS.ProcessEnv, policy?: ResolvedSandboxPolicy): SandboxEnv {
 	const requested = (env["TORUS_SANDBOX"] ?? "").trim().toLowerCase();
-	const mode: SandboxMode = FULL_VALUES.has(requested) ? "full" : "off";
+	// Precedence: an explicit env value wins over the user-layer policy mode;
+	// unset falls back to the policy, then to off. The policy's mode comes
+	// from the user layer only (projects cannot set it).
+	const explicitFull = FULL_VALUES.has(requested);
+	const explicitOff = OFF_VALUES.has(requested);
+	const mode: SandboxMode = explicitFull ? "full" : explicitOff ? "off" : (policy?.mode ?? "off");
 	const writableExtras = (env["TORUS_SANDBOX_WRITABLE"] ?? "")
 		.split(":")
 		.map((entry) => entry.trim())
@@ -134,6 +155,12 @@ export function parseSandboxEnv(env: NodeJS.ProcessEnv): SandboxEnv {
 		netOnly,
 		netAdd: netAdd.entries,
 		netDropped: netAdd.dropped,
+		policyWritable: policy?.writable ?? [],
+		policyHostsAdd: policy?.hostsAdd ?? [],
+		policyHostsOnly: policy?.hostsOnly ?? [],
+		policyHostsDeny: policy?.hostsDeny ?? [],
+		credentialsFiles: policy?.credentialsFiles ?? [],
+		credentialsEnvVars: policy?.credentialsEnvVars ?? [],
 	};
 }
 
@@ -189,23 +216,57 @@ export function buildSandboxConfig(
 	cwd: string,
 	sandboxEnv: SandboxEnv,
 	additionalRoots: string[] = [],
+	seededHosts: string[] = [],
 ): SandboxRuntimeConfig {
+	// Env-only replacement (TORUS_SANDBOX_NET_ONLY) wins outright; otherwise a
+	// user-layer policy replacement (hosts.only) applies on top of env additions,
+	// else the curated allowlist plus env/policy additions and persisted trust.
+	const allowed = sandboxEnv.netOnly
+		? (sandboxEnv.netAdd ?? [])
+		: (sandboxEnv.policyHostsOnly ?? []).length > 0
+			? [
+					...(sandboxEnv.policyHostsOnly ?? []),
+					...(sandboxEnv.netAdd ?? []),
+					...(sandboxEnv.policyHostsAdd ?? []),
+					...seededHosts,
+				]
+			: [
+					...CURATED_NET_ALLOWLIST,
+					...(sandboxEnv.netAdd ?? []),
+					...(sandboxEnv.policyHostsAdd ?? []),
+					...seededHosts,
+				];
+	const credentials = buildCredentialsConfig(sandboxEnv);
 	return {
 		filesystem: {
 			denyRead: [],
-			allowWrite: [cwd, tmpdir(), ...sandboxEnv.writableExtras, ...additionalRoots],
+			allowWrite: [
+				cwd,
+				tmpdir(),
+				...sandboxEnv.writableExtras,
+				...additionalRoots,
+				...(sandboxEnv.policyWritable ?? []),
+			],
 			denyWrite: [],
 		},
 		network: {
-			allowedDomains: [
-				...new Set(
-					sandboxEnv.netOnly
-						? (sandboxEnv.netAdd ?? [])
-						: [...CURATED_NET_ALLOWLIST, ...(sandboxEnv.netAdd ?? [])],
-				),
-			],
-			deniedDomains: [],
+			allowedDomains: [...new Set(allowed)],
+			deniedDomains: sandboxEnv.policyHostsDeny ?? [],
 		},
+		...(credentials ? { credentials } : {}),
+	};
+}
+
+/** srt credentials config from the policy's user-layer lists (deny mode). */
+function buildCredentialsConfig(
+	sandboxEnv: SandboxEnv,
+): { files: Array<{ path: string; mode: "deny" }>; envVars: Array<{ name: string; mode: "deny" }> } | undefined {
+	const files = sandboxEnv.credentialsFiles ?? [];
+	const envVars = sandboxEnv.credentialsEnvVars ?? [];
+	if (files.length === 0 && envVars.length === 0) return undefined;
+	return {
+		files: files.map((filePath) => ({ path: filePath, mode: "deny" })),
+		envVars: envVars.map((name) => ({ name, mode: "deny" })),
 	};
 }
 
@@ -230,6 +291,8 @@ export interface SandboxManagerLike {
 export interface SandboxDeps {
 	manager: SandboxManagerLike;
 	probe(): Promise<{ errors: string[] }>;
+	/** Hosts the user already trusted for this project (persisted approval). */
+	seededHosts?(): string[];
 }
 
 export interface SandboxState {
@@ -245,6 +308,7 @@ export async function activateSandbox(
 	},
 	additionalWritableRoots: string[] = [],
 	ask: SandboxAskFn | undefined = undefined,
+	seededHosts: string[] = [],
 ): Promise<SandboxState> {
 	const unrecognized =
 		sandboxEnv.requested !== "" &&
@@ -252,7 +316,7 @@ export async function activateSandbox(
 		!OFF_VALUES.has(sandboxEnv.requested);
 	if (unrecognized) {
 		sink(
-			`[torus: sandbox] TORUS_SANDBOX=${sandboxEnv.requested} is not a recognized mode (off | full) — defaulting to off`,
+			`[torus: sandbox] TORUS_SANDBOX=${sandboxEnv.requested} is not a recognized mode (off | full) — defaulting to ${sandboxEnv.mode}`,
 		);
 	}
 	if (sandboxEnv.mode === "off") {
@@ -277,7 +341,7 @@ export async function activateSandbox(
 	ensurePrivateScratchDir(sink);
 	try {
 		await deps.manager.initialize(
-			buildSandboxConfig(process.cwd(), sandboxEnv, additionalWritableRoots),
+			buildSandboxConfig(process.cwd(), sandboxEnv, additionalWritableRoots, seededHosts),
 			ask,
 		);
 	} catch (error) {
@@ -333,8 +397,40 @@ function subscribeChip(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		lastCtx = ctx;
 		setSandboxStatus(ctx, chipText(shared.state));
+		maybeReloadTrustedPolicy();
 		return undefined;
 	});
+}
+
+/**
+ * Project trust is only knowable from a session context (the trust event is
+ * a consent prompt, not a notification). On the first session start under
+ * trust, fold the project policy layer in and live-update the manager.
+ */
+function maybeReloadTrustedPolicy(): void {
+	if (policyLoadedTrusted || activePolicy === null || activeManager === null) return;
+	let trusted = false;
+	try {
+		trusted = lastCtx?.isProjectTrusted() ?? false;
+	} catch {
+		trusted = false;
+	}
+	if (!trusted) return;
+	policyLoadedTrusted = true;
+	const reloaded = loadSandboxPolicy(process.cwd(), { isProjectTrusted: () => true });
+	for (const notice of reloaded.notices) {
+		process.stderr.write(`${notice}\n`);
+	}
+	activePolicy = reloaded.policy;
+	const reloadedEnv = parseSandboxEnv(process.env, activePolicy);
+	if (reloadedEnv.mode !== "full") return;
+	lastConfig = buildSandboxConfig(
+		process.cwd(),
+		reloadedEnv,
+		resolveAdditionalWritableRoots(process.cwd()),
+		activeSeededHosts?.() ?? [],
+	);
+	activeManager.updateConfig(lastConfig);
 }
 
 function subscribeSandboxHandlers(pi: ExtensionAPI): void {
@@ -398,9 +494,15 @@ function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 const defaultDeps: SandboxDeps = {
 	manager: SandboxManager,
 	probe: () => SandboxManager.checkDependenciesAsync(),
+	seededHosts: () => readPersistedHosts(process.cwd()),
 };
 
 let lastConfig: SandboxRuntimeConfig | null = null;
+
+/** Policy resolved at registration; re-read once project trust is active. */
+let activePolicy: ResolvedSandboxPolicy | null = null;
+let policyLoadedTrusted = false;
+let activeSeededHosts: (() => string[]) | undefined;
 
 type ApprovalDecision =
 	| { kind: "allow" }
@@ -447,7 +549,15 @@ export async function registerSandbox(
 	_pi: ExtensionAPI,
 	deps: SandboxDeps = defaultDeps,
 ): Promise<void> {
-	const sandboxEnv = parseSandboxEnv(process.env);
+	// Extension load runs before any session context exists, so the project
+	// layer is read as untrusted; the first trusted session_start re-reads it.
+	const policyResult = loadSandboxPolicy(process.cwd(), { isProjectTrusted: () => policyLoadedTrusted });
+	for (const notice of policyResult.notices) {
+		process.stderr.write(`${notice}\n`);
+	}
+	activePolicy = policyResult.policy;
+	activeSeededHosts = deps.seededHosts;
+	const sandboxEnv = parseSandboxEnv(process.env, activePolicy);
 	if (sandboxEnv.mode === "off") {
 		shared.state = { mode: "off", active: false };
 		subscribeChip(_pi);
@@ -455,13 +565,19 @@ export async function registerSandbox(
 	}
 	subscribeSandboxHandlers(_pi);
 	const additionalRoots = resolveAdditionalWritableRoots(process.cwd());
-	lastConfig = buildSandboxConfig(process.cwd(), sandboxEnv, additionalRoots);
+	lastConfig = buildSandboxConfig(
+		process.cwd(),
+		sandboxEnv,
+		additionalRoots,
+		deps.seededHosts?.() ?? [],
+	);
 	activationPromise = activateSandbox(
 		sandboxEnv,
 		deps,
 		undefined,
 		additionalRoots,
 		buildAskCallback(deps.manager),
+		deps.seededHosts?.() ?? [],
 	);
 	shared.state = await activationPromise;
 	if (lastCtx) setSandboxStatus(lastCtx, chipText(shared.state));

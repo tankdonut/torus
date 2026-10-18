@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -49,6 +49,12 @@ test("parseSandboxEnv: unset defaults to off; on-family opts in; explicit 0/off 
 		netOnly: false,
 		netAdd: [],
 		netDropped: [],
+		policyWritable: [],
+		policyHostsAdd: [],
+		policyHostsOnly: [],
+		policyHostsDeny: [],
+		credentialsFiles: [],
+		credentialsEnvVars: [],
 	});
 	for (const value of ["0", "off"]) {
 		assert.equal(parseSandboxEnv({ TORUS_SANDBOX: value }).mode, "off");
@@ -232,8 +238,11 @@ test("activateSandbox: initialize failure degrades with init-failed notice", asy
 
 test("registerSandbox: unset defaults to off; explicit full subscribes bash interception", async () => {
 	const previous = process.env.TORUS_SANDBOX;
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	const isolatedAgentDir = mkdtempSync(path.join(tmpdir(), "sbx-register-agent-"));
 	try {
 		delete process.env.TORUS_SANDBOX;
+		process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
 		const manager = fakeManager();
 		const deps = fakeDeps(manager);
 		const pi = handlerPi();
@@ -252,6 +261,9 @@ test("registerSandbox: unset defaults to off; explicit full subscribes bash inte
 	} finally {
 		if (previous === undefined) delete process.env.TORUS_SANDBOX;
 		else process.env.TORUS_SANDBOX = previous;
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		rmSync(isolatedAgentDir, { recursive: true, force: true });
 	}
 });
 
@@ -626,8 +638,9 @@ test("doctor sandboxCheck: reflects the shared globalThis slot", async () => {
 	}
 });
 
-test("CURATED_NET_ALLOWLIST: 30 dev-workflow hosts incl. release-assets fix; no generic CDNs", () => {
-	assert.equal(CURATED_NET_ALLOWLIST.length, 30);
+test("CURATED_NET_ALLOWLIST: 31 dev-workflow hosts incl. release-assets fix and the AWS API wildcard; no generic CDNs", () => {
+	assert.equal(CURATED_NET_ALLOWLIST.length, 31);
+	assert.ok(CURATED_NET_ALLOWLIST.includes("*.amazonaws.com"), "AWS API endpoints are curated");
 	for (const host of [
 		"release-assets.githubusercontent.com",
 		"rubygems.org",
@@ -702,4 +715,99 @@ test("ask callback wiring: allow-once grants without updateConfig; custom host g
 	await pi.handlers.session_shutdown(undefined, {
 		ui: { setStatus() {}, theme: { fg: (_c, t) => t } },
 	});
+});
+
+function emptyPolicy(overrides = {}) {
+	return {
+		mode: undefined,
+		writable: [],
+		hostsAdd: [],
+		hostsOnly: [],
+		hostsDeny: [],
+		credentialsFiles: [],
+		credentialsEnvVars: [],
+		exempt: [],
+		env: {},
+		signRelay: false,
+		...overrides,
+	};
+}
+
+test("parseSandboxEnv: user policy mode applies when env is unset; explicit env beats policy", () => {
+	assert.equal(parseSandboxEnv({}, emptyPolicy({ mode: "full" })).mode, "full");
+	assert.equal(parseSandboxEnv({ TORUS_SANDBOX: "off" }, emptyPolicy({ mode: "full" })).mode, "off");
+	assert.equal(parseSandboxEnv({ TORUS_SANDBOX: "wibble" }, emptyPolicy({ mode: "full" })).mode, "full");
+	assert.equal(parseSandboxEnv({}, emptyPolicy()).mode, "off");
+});
+
+test("buildSandboxConfig: policy writable/hosts/credentials and seeded trust shape the config", () => {
+	const env = {
+		mode: "full",
+		requested: "full",
+		writableExtras: [],
+		netOnly: false,
+		netAdd: [],
+		netDropped: [],
+		policyWritable: [{ path: "/opt/extra", literal: true }],
+		policyHostsAdd: ["example.org"],
+		policyHostsOnly: [],
+		policyHostsDeny: ["evil.example"],
+		credentialsFiles: ["/home/u/.aws/credentials"],
+		credentialsEnvVars: ["AWS_SESSION_TOKEN"],
+	};
+	const config = buildSandboxConfig("/repo", env, [], ["granted.example"]);
+	assert.deepEqual(config.filesystem.allowWrite.at(-1), { path: "/opt/extra", literal: true });
+	assert.ok(config.network.allowedDomains.includes("example.org"));
+	assert.ok(config.network.allowedDomains.includes("granted.example"));
+	assert.ok(config.network.allowedDomains.includes("*.amazonaws.com"), "AWS API endpoints are curated");
+	assert.ok(!config.network.allowedDomains.includes("*.com"), "bare TLD wildcards stay rejected");
+	assert.deepEqual(config.network.deniedDomains, ["evil.example"]);
+	assert.deepEqual(config.credentials, {
+		files: [{ path: "/home/u/.aws/credentials", mode: "deny" }],
+		envVars: [{ name: "AWS_SESSION_TOKEN", mode: "deny" }],
+	});
+});
+
+test("buildSandboxConfig: user-layer hosts.only replaces the curated allowlist but keeps additions", () => {
+	const env = {
+		mode: "full",
+		requested: "full",
+		writableExtras: [],
+		netOnly: false,
+		netAdd: ["env.example"],
+		netDropped: [],
+		policyWritable: [],
+		policyHostsAdd: ["policy.example"],
+		policyHostsOnly: ["only.example"],
+		policyHostsDeny: [],
+		credentialsFiles: [],
+		credentialsEnvVars: [],
+	};
+	const config = buildSandboxConfig("/repo", env, [], ["granted.example"]);
+	assert.ok(config.network.allowedDomains.includes("only.example"));
+	assert.ok(config.network.allowedDomains.includes("env.example"), "env additions survive a policy replacement");
+	assert.ok(config.network.allowedDomains.includes("policy.example"));
+	assert.ok(config.network.allowedDomains.includes("granted.example"), "persisted trust survives a policy replacement");
+	assert.ok(!config.network.allowedDomains.includes("registry.npmjs.org"), "curated list is replaced");
+});
+
+test("registerSandbox: seeded trusted hosts flow into the initial allowlist", async () => {
+	const previous = process.env.TORUS_SANDBOX;
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	try {
+		process.env.TORUS_SANDBOX = "full";
+		process.env.PI_CODING_AGENT_DIR = mkdtempSync(path.join(tmpdir(), "sbx-seed-agent-"));
+		const manager = fakeManager();
+		const deps = { ...fakeDeps(manager), seededHosts: () => ["seeded.example"] };
+		await registerSandbox(handlerPi(), deps);
+		assert.ok(
+			manager.captured.config.network.allowedDomains.includes("seeded.example"),
+			"persisted trust is seeded without an ask round-trip",
+		);
+	} finally {
+		if (previous === undefined) delete process.env.TORUS_SANDBOX;
+		else process.env.TORUS_SANDBOX = previous;
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	}
 });
