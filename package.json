@@ -65,6 +65,7 @@
     "bench:overhead": "node scripts/bench.mjs",
     "bench:startup": "node scripts/bench/startup.mjs",
     "bench:fs": "node --experimental-strip-types --import ./tests/resolve-ts-hook.mjs scripts/bench/local-ops.mjs",
+    "bench:gate": "node scripts/bench-gate.mjs",
     "bench": "node scripts/bench.mjs",
     "site:dev": "npm run dev -w site",
     "site:build": "npm run build -w site",
