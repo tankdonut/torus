@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.14.0](https://github.com/tankdonut/torus/compare/v0.13.0...v0.14.0) (2026-10-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* TORUS_OCGO_API_KEY and TORUS_OCGO_BASE_URL are ignored; authenticate the tail fallback with /login opencode-go or OPENCODE_API_KEY.
+
+### Features
+
+* drop the custom opencode-go registration for the engine's built-in provider ([4c10926](https://github.com/tankdonut/torus/commit/4c10926d3240275e968fe38946f0b4ceaee47eae))
+* give the startup banner a torus wordmark and mark ([51489da](https://github.com/tankdonut/torus/commit/51489daf4cf267a455c5c3cc15809b5c9336e614))
+* print torus-native help for --help and the serve/acp-agent subcommands ([31819d5](https://github.com/tankdonut/torus/commit/31819d591ef6aca80a45b8e4f05fd6e8564dc214))
+* replace the startup banner with a torus-branded header ([d4b0ebd](https://github.com/tankdonut/torus/commit/d4b0ebd3ca814e27d584ff6ee98bac8be27bc8dc))
+
+
+### Bug Fixes
+
+* **deps:** update dependency @anthropic-ai/sandbox-runtime to v0.0.80 ([#59](https://github.com/tankdonut/torus/issues/59)) ([55c2bca](https://github.com/tankdonut/torus/commit/55c2bcaa9d2fc55e60e5d37da91578a391ceffbd))
+* **deps:** update dependency pi-web-access to ^0.42.0 ([#62](https://github.com/tankdonut/torus/issues/62)) ([d62f737](https://github.com/tankdonut/torus/commit/d62f737334a73836ee606264fc078faaf8a68b1e))
+* look_at refuses red on models without image input ([044fed6](https://github.com/tankdonut/torus/commit/044fed6571b6aa9ce9f0b8c51e12466dffb28f86))
+
 ## [0.13.0](https://github.com/tankdonut/torus/compare/v0.12.0...v0.13.0) (2026-10-16)
 
 
