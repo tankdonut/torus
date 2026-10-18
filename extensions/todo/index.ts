@@ -21,10 +21,37 @@ const STRIKE_OFF = "\x1b[29m";
 const ORPHAN_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_KEY = Symbol.for("torus.current-session");
 
-interface TodoItem {
+/** Paraphrase match floor for containment similarity between two items. */
+const MATCH_FLOOR = 0.8;
+
+export interface TodoItem {
+	id?: string;
 	content: string;
 	status: "pending" | "in_progress" | "completed";
 	priority?: "high" | "medium" | "low";
+}
+
+/** Write shape: status "dropped" removes the matched item instead of updating it. */
+export type TodoInput = Omit<TodoItem, "status"> & { status: TodoItem["status"] | "dropped" };
+
+export interface TodoStats {
+	/** Distinct items ever assigned an id: the progress denominator never shrinks. */
+	tracked: number;
+	/** High-water mark of completed items; survives removals and clears. */
+	donePeak: number;
+	nextId: number;
+}
+
+export interface TodoState {
+	todos: TodoItem[];
+	stats: TodoStats;
+	done: number;
+	pending: number;
+}
+
+interface TodoFile {
+	todos?: TodoItem[];
+	stats?: Partial<TodoStats>;
 }
 
 function todoDir(): string {
@@ -41,25 +68,136 @@ function legacyTodoFile(sessionId: string): string {
 	return path.join(torusHome(), "todo", `${sessionId}.json`);
 }
 
-export function readTodos(sessionId: string): TodoItem[] {
-	const parsed = readJsonFallback<{ todos?: TodoItem[] }>(
-		todoFile(sessionId),
-		legacyTodoFile(sessionId),
-		{
-			todos: [],
-		},
-	);
-	return Array.isArray(parsed.todos) ? parsed.todos : [];
+export function readTodoState(sessionId: string): TodoState {
+	const parsed = readJsonFallback<TodoFile>(todoFile(sessionId), legacyTodoFile(sessionId), {});
+	const todos = Array.isArray(parsed.todos) ? parsed.todos : [];
+	const raw = parsed.stats ?? {};
+	const stats: TodoStats = {
+		tracked: Math.max(0, Number(raw.tracked) || 0),
+		donePeak: Math.max(0, Number(raw.donePeak) || 0),
+		nextId: Math.max(1, Number(raw.nextId) || 1),
+	};
+	const done = todos.filter((t) => t.status === "completed").length;
+	return { todos, stats, done, pending: todos.length - done };
 }
 
-export function writeTodos(sessionId: string, todos: TodoItem[]): void {
+export function readTodos(sessionId: string): TodoItem[] {
+	return readTodoState(sessionId).todos;
+}
+
+function persistTodos(sessionId: string, todos: TodoItem[], stats: TodoStats): void {
 	const file = todoFile(sessionId);
 	mkdirSync(path.dirname(file), { recursive: true });
-	writeFileSync(file, JSON.stringify({ todos }, null, 2), "utf8");
+	writeFileSync(file, JSON.stringify({ todos, stats }, null, 2), "utf8");
 	try {
 		unlinkSync(legacyTodoFile(sessionId));
 	} catch {}
 	pruneTodoOrphans();
+}
+
+function normTokens(content: string): string[] {
+	return content
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, " ")
+		.trim()
+		.split(/\s+/)
+		.filter(Boolean);
+}
+
+function containment(a: string[], b: string[]): number {
+	if (a.length === 0 || b.length === 0) return 0;
+	const setB = new Set(b);
+	const hits = a.filter((t) => setB.has(t)).length;
+	return hits / Math.min(a.length, b.length);
+}
+
+/**
+ * Merge a full-list write against the stored list. Matching is by id first,
+ * then exact normalized content, then containment similarity, so a paraphrase
+ * updates the original item instead of forking a duplicate. Omitted completed
+ * items are retained (the model cannot lose finished work by dropping it from
+ * a rewrite); omitted pending items are removed as intentional; status
+ * "dropped" removes explicitly; an empty write clears everything.
+ */
+export function writeTodos(sessionId: string, incoming: TodoInput[]): TodoState {
+	const state = readTodoState(sessionId);
+	let nextId = state.stats.nextId;
+	const clearing = incoming.length === 0;
+
+	const prev = state.todos.map((t) => (t.id ? t : { ...t, id: `t${nextId++}` }));
+	const pool = prev.map((item) => ({
+		item,
+		norm: normTokens(item.content).join(" "),
+		tokens: normTokens(item.content),
+		used: false,
+	}));
+
+	const findMatch = (candidate: TodoInput): number => {
+		const norm = normTokens(candidate.content).join(" ");
+		let idx = candidate.id ? pool.findIndex((p) => !p.used && p.item.id === candidate.id) : -1;
+		if (idx >= 0) return idx;
+		if (norm) {
+			idx = pool.findIndex((p) => !p.used && p.norm === norm);
+			if (idx >= 0) return idx;
+		} else {
+			return -1;
+		}
+		const ctokens = normTokens(candidate.content);
+		let best = -1;
+		let bestScore = MATCH_FLOOR;
+		for (const [i, p] of pool.entries()) {
+			if (p.used) continue;
+			const score = Math.max(containment(ctokens, p.tokens), containment(p.tokens, ctokens));
+			if (score > bestScore) {
+				best = i;
+				bestScore = score;
+			}
+		}
+		return best;
+	};
+
+	const merged: TodoItem[] = [];
+	let droppedCompleted = 0;
+
+	for (const input of incoming) {
+		const idx = findMatch(input);
+		const match = idx >= 0 ? pool[idx] : null;
+		if (match) match.used = true;
+		if (input.status === "dropped") {
+			if (match?.item.status === "completed") droppedCompleted++;
+			continue;
+		}
+		if (match) {
+			const priority = input.priority ?? match.item.priority;
+			merged.push({
+				id: match.item.id,
+				content: input.content,
+				status: input.status,
+				...(priority ? { priority } : {}),
+			});
+		} else {
+			merged.push({
+				id: `t${nextId++}`,
+				content: input.content,
+				status: input.status,
+				...(input.priority ? { priority: input.priority } : {}),
+			});
+		}
+	}
+
+	for (const p of pool) {
+		if (p.used) continue;
+		if (!clearing && p.item.status === "completed") merged.push(p.item);
+	}
+
+	const done = merged.filter((t) => t.status === "completed").length;
+	const stats: TodoStats = {
+		tracked: Math.max(state.stats.tracked, nextId - 1),
+		donePeak: Math.max(state.stats.donePeak, done + droppedCompleted),
+		nextId,
+	};
+	persistTodos(sessionId, merged, stats);
+	return { todos: merged, stats, done, pending: merged.length - done };
 }
 
 /** Orphan-only GC: never age-prune, never touch the legacy dir. */
@@ -71,13 +209,22 @@ export function pruneTodoOrphans(
 
 export function todoContextBlock(sessionId: string | null): string {
 	if (!sessionId) return "";
-	const todos = readTodos(sessionId).filter((t) => t.status !== "completed");
+	const { todos } = readTodoState(sessionId);
 	if (todos.length === 0) return "";
-	const lines = todos.map((t) => {
+	const active = todos.filter((t) => t.status !== "completed");
+	const doneItems = todos.filter((t) => t.status === "completed");
+	const lines = [...active, ...doneItems].map((t) => {
 		const icon = t.status === "completed" ? "●" : t.status === "in_progress" ? "◐" : "○";
-		return `- ${icon} (${t.priority ?? "medium"}) ${t.content}`;
+		return `- ${icon} ${t.id ?? "?"} (${t.priority ?? "medium"}) ${t.content}`;
 	});
-	return `[torus todos — the live task list; work it top-down, keep exactly one in_progress, update via torus_todowrite after each change; when all are complete, clear the list]\n${lines.join("\n")}`;
+	const header = [
+		"[torus todos — the live task list; work it top-down, keep exactly one in_progress,",
+		"update via torus_todowrite after each change. Re-include every item in each write,",
+		"completed ones too (same id, status completed): completed items omitted from a write are",
+		'kept, pending ones omitted are removed; mark an item status "dropped" to remove it;',
+		"write an empty list when everything is done]",
+	].join("\n");
+	return `${header}\n${lines.join("\n")}`;
 }
 
 function currentSession(ctx?: ExtensionContext): string | null {
@@ -89,23 +236,27 @@ function currentSession(ctx?: ExtensionContext): string | null {
 	return ((globalThis as Record<symbol, unknown>)[SESSION_KEY] as string | null) ?? null;
 }
 
-function pendingCount(todos: TodoItem[]): number {
-	return todos.filter((t) => t.status !== "completed").length;
+function chipText(state: TodoState): string | undefined {
+	if (state.pending === 0 && state.todos.length === 0) return undefined;
+	const base = `todos ●${state.done} ○${state.pending}`;
+	return state.stats.tracked > state.todos.length ? `${base} of ${state.stats.tracked}` : base;
 }
 
 const todoWriteTool = defineTool({
 	name: "torus_todowrite",
 	label: "Torus TodoWrite",
 	description:
-		"Replace the session todo list (write-only, full list every call). Update after every status change; clear by writing an empty list when everything is done.",
+		'Update the session todo list (full list every call). Items match prior ones by id, then by content, so paraphrases update instead of duplicating. Completed items omitted from the write are kept; pending items omitted are removed; status "dropped" removes an item explicitly. Always re-include completed items (same id, status "completed"). An empty list clears everything when all work is done.',
 	parameters: Type.Object({
 		todos: Type.Array(
 			Type.Object({
+				id: Type.Optional(Type.String()),
 				content: Type.String(),
 				status: Type.Union([
 					Type.Literal("pending"),
 					Type.Literal("in_progress"),
 					Type.Literal("completed"),
+					Type.Literal("dropped"),
 				]),
 				priority: Type.Optional(
 					Type.Union([Type.Literal("high"), Type.Literal("medium"), Type.Literal("low")]),
@@ -115,16 +266,15 @@ const todoWriteTool = defineTool({
 		),
 	}),
 	renderResult(result, { expanded }, theme) {
-		const todos = ((result.details ?? {}) as { todos?: TodoItem[] }).todos ?? [];
-		if (todos.length === 0) {
+		const state = ((result.details ?? {}) as { state?: TodoState }).state;
+		if (!state || state.todos.length === 0) {
 			return new Text(theme.fg("dim", "todos cleared ●"), 0, 0);
 		}
-		const done = todos.filter((t) => t.status === "completed").length;
-		const summary = `${theme.bold("todos")} ${theme.fg("success", `●${done}`)} ${theme.fg("dim", `/ ${todos.length}`)}`;
-		if (!expanded && todos.length > 6) {
+		const summary = `${theme.bold("todos")} ${theme.fg("success", `●${state.done}`)} ${theme.fg("dim", `/ ${state.stats.tracked}`)}`;
+		if (!expanded && state.todos.length > 6) {
 			return new Text(`${summary} ${theme.fg("dim", "(expand for the list)")}`, 0, 0);
 		}
-		const lines = todos.map((t) => {
+		const lines = state.todos.map((t) => {
 			const prio =
 				t.priority === "high"
 					? theme.fg("error", "!")
@@ -132,12 +282,12 @@ const todoWriteTool = defineTool({
 						? theme.fg("dim", "·")
 						: " ";
 			if (t.status === "completed") {
-				return `${prio} ${theme.fg("success", "●")} ${STRIKE_ON}${theme.fg("dim", t.content)}${STRIKE_OFF}`;
+				return `${prio} ${theme.fg("success", "●")} ${STRIKE_ON}${theme.fg("dim", `${t.id ?? "?"} ${t.content}`)}${STRIKE_OFF}`;
 			}
 			if (t.status === "in_progress") {
-				return `${prio} ${theme.fg("warning", "◐")} ${theme.bold(t.content)}`;
+				return `${prio} ${theme.fg("warning", "◐")} ${theme.bold(`${t.id ?? "?"} ${t.content}`)}`;
 			}
-			return `${prio} ${theme.fg("dim", "○")} ${t.content}`;
+			return `${prio} ${theme.fg("dim", "○")} ${t.id ?? "?"} ${t.content}`;
 		});
 		return new Text(`${summary}\n${lines.join("\n")}`, 0, 0);
 	},
@@ -150,15 +300,19 @@ const todoWriteTool = defineTool({
 				isError: true,
 			};
 		}
-		writeTodos(sessionId, params.todos);
-		const pending = pendingCount(params.todos);
-		ctx.ui.setStatus(
-			"torus:todo",
-			pending > 0 ? `todos ●${params.todos.length - pending} ○${pending}` : undefined,
-		);
+		const state = writeTodos(sessionId, params.todos);
+		ctx.ui.setStatus("torus:todo", chipText(state));
 		return {
-			content: [{ type: "text", text: `${pending} pending of ${params.todos.length}` }],
-			details: { todos: params.todos },
+			content: [
+				{
+					type: "text",
+					text:
+						state.todos.length === 0
+							? `cleared · ${state.stats.donePeak}/${state.stats.tracked} done all-time`
+							: `${state.pending} pending · ${state.done}/${state.stats.tracked} done`,
+				},
+			],
+			details: { state },
 		};
 	},
 });
@@ -169,9 +323,8 @@ export function registerTodo(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		currentSession(ctx);
 		const sessionId = currentSession();
-		const todos = readTodos(sessionId ?? "");
-		const pending = pendingCount(todos);
-		if (pending > 0) ctx.ui.setStatus("torus:todo", `todos ●${todos.length - pending} ○${pending}`);
+		if (!sessionId) return;
+		ctx.ui.setStatus("torus:todo", chipText(readTodoState(sessionId)));
 	});
 
 	pi.on("context", (event) => {

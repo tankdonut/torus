@@ -510,11 +510,11 @@ Session-scoped todo list at `$TORUS_STATE_DIR/todo/<session>.json`.
 
 | Tool | Purpose |
 |---|---|
-| `torus_todowrite` | Replace the full list (content/status/priority, ≤30 items) |
+| `torus_todowrite` | Update the full list (id/content/status/priority, ≤30 items); merge semantics below |
 
 - **Hooks:** `session_start`: restore chip; `context`: inject todo block
 
-The write-only tool replaces the full list. Pending items inject as a context block each turn, and a statusline chip shows ●done/○pending counts.
+The write merges against the stored list: incoming items match prior ones by id, then by normalized content (paraphrases update instead of duplicating). Completed items omitted from a write are retained, pending items omitted are removed as intentional, `status: "dropped"` removes an item explicitly, and an empty write clears the list. Items carry stable ids (`t1`, `t2`, ...) shown in the context block, which now injects the full list, completed items included. The same file keeps monotone `tracked`/`donePeak` counters, so the ●done/○pending statusline chip (and the `/ tracked` summary) never regresses when completed items go missing from a rewrite.
 
 ### `work`
 

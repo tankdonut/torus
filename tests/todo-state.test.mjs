@@ -54,7 +54,7 @@ test("writeTodos lands under <TORUS_HOME>/state/--<cwd>--/todo", () => {
 		assert.equal(existsSync(newFile("sess-write")), true);
 		assert.equal(existsSync(legacyFile("sess-write")), false);
 		assert.deepEqual(todo.readTodos("sess-write"), [
-			{ content: "alpha", status: "pending", priority: "high" },
+			{ id: "t1", content: "alpha", status: "pending", priority: "high" },
 		]);
 	} finally {
 		rmSync(home, { recursive: true, force: true });
@@ -79,7 +79,7 @@ test("write migrates: new file appears, legacy twin is unlinked", () => {
 		assert.equal(existsSync(newFile("sess-migrate")), true);
 		assert.equal(existsSync(legacyFile("sess-migrate")), false);
 		assert.deepEqual(todo.readTodos("sess-migrate"), [
-			{ content: "migrated", status: "in_progress" },
+			{ id: "t2", content: "migrated", status: "in_progress" },
 		]);
 	} finally {
 		rmSync(home, { recursive: true, force: true });
@@ -149,6 +149,134 @@ test("GC never deletes a legacy-dir file", () => {
 		const removed = todo.pruneTodoOrphans(() => false);
 		assert.equal(removed, 0);
 		assert.equal(existsSync(legacyFile("sess-legacy-gc")), true);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("write assigns stable ids and a later write updates by id", () => {
+	try {
+		todo.writeTodos("sess-ids", [
+			{ content: "first", status: "pending" },
+			{ content: "second", status: "pending" },
+		]);
+		todo.writeTodos("sess-ids", [
+			{ id: "t1", content: "first", status: "completed" },
+			{ id: "t2", content: "second", status: "in_progress" },
+		]);
+		assert.deepEqual(todo.readTodos("sess-ids"), [
+			{ id: "t1", content: "first", status: "completed" },
+			{ id: "t2", content: "second", status: "in_progress" },
+		]);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("completed items omitted from a write are retained; pending omitted are removed", () => {
+	try {
+		todo.writeTodos("sess-retain", [
+			{ content: "ship it", status: "completed" },
+			{ content: "write tests", status: "pending" },
+		]);
+		const state = todo.writeTodos("sess-retain", [{ content: "ship it", status: "completed" }]);
+		assert.deepEqual(state.todos, [{ id: "t1", content: "ship it", status: "completed" }]);
+		assert.equal(todo.readTodoState("sess-retain").stats.tracked, 2);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("status dropped removes an item explicitly and the tracked count never shrinks", () => {
+	try {
+		todo.writeTodos("sess-drop", [
+			{ content: "done thing", status: "completed" },
+			{ content: "live thing", status: "pending" },
+			{ content: "later thing", status: "pending" },
+		]);
+		const state = todo.writeTodos("sess-drop", [
+			{ id: "t1", content: "done thing", status: "dropped" },
+			{ id: "t2", content: "live thing", status: "in_progress" },
+			{ id: "t3", content: "later thing", status: "pending" },
+		]);
+		assert.deepEqual(state.todos, [
+			{ id: "t2", content: "live thing", status: "in_progress" },
+			{ id: "t3", content: "later thing", status: "pending" },
+		]);
+		const after = todo.readTodoState("sess-drop");
+		assert.equal(after.stats.tracked, 3);
+		assert.equal(after.stats.donePeak, 1);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("a paraphrased rewrite updates the original item instead of duplicating", () => {
+	try {
+		todo.writeTodos("sess-paraphrase", [{ content: "fix the failing tests", status: "pending" }]);
+		const state = todo.writeTodos("sess-paraphrase", [
+			{ content: "fix tests", status: "completed" },
+		]);
+		assert.deepEqual(state.todos, [{ id: "t1", content: "fix tests", status: "completed" }]);
+		assert.equal(todo.readTodoState("sess-paraphrase").stats.tracked, 1);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("matched items keep their priority when the rewrite omits it", () => {
+	try {
+		todo.writeTodos("sess-prio", [{ content: "audit", status: "pending", priority: "high" }]);
+		const state = todo.writeTodos("sess-prio", [
+			{ id: "t1", content: "audit", status: "in_progress" },
+		]);
+		assert.deepEqual(state.todos, [
+			{ id: "t1", content: "audit", status: "in_progress", priority: "high" },
+		]);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("empty write clears the list but keeps the monotone counters", () => {
+	try {
+		todo.writeTodos("sess-clear", [
+			{ content: "a", status: "completed" },
+			{ content: "b", status: "completed" },
+			{ content: "c", status: "pending" },
+		]);
+		const state = todo.writeTodos("sess-clear", []);
+		assert.deepEqual(state.todos, []);
+		const after = todo.readTodoState("sess-clear");
+		assert.equal(after.stats.tracked, 3);
+		assert.equal(after.stats.donePeak, 2);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("legacy items without ids are adopted on the next write", () => {
+	try {
+		plantLegacy("sess-adopt");
+		const state = todo.writeTodos("sess-adopt", [{ content: "legacy item", status: "completed" }]);
+		assert.deepEqual(state.todos, [{ id: "t1", content: "legacy item", status: "completed" }]);
+		assert.equal(state.stats.tracked, 1);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("context block shows completed items with their ids", () => {
+	try {
+		todo.writeTodos("sess-block", [
+			{ content: "shipped feature", status: "completed" },
+			{ content: "polish docs", status: "in_progress" },
+		]);
+		const block = todo.todoContextBlock("sess-block");
+		assert.ok(block.includes("◐ t2 (medium) polish docs"));
+		assert.ok(block.includes("● t1 (medium) shipped feature"));
+		assert.ok(block.includes("completed items omitted from a write are"));
+		assert.ok(block.indexOf("polish docs") < block.indexOf("shipped feature"));
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}
