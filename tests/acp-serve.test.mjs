@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 // fake RPC-mode engine, so the interception, the agent role, and the engine
 // child spawn contract are all exercised end to end. The fake engine selects
 // a scenario via TORUS_FAKE_ENGINE_MODE: happy (deltas + tool events +
-// settle), die (exits non-zero mid-prompt), hang (one delta, never settles).
+// settle), die (exits non-zero mid-prompt), hang (one delta, never settles),
+// compact (compaction events + settle).
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoPkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 const LAUNCHER = path.join(root, "runtime", "bin", "torus.mjs");
@@ -56,6 +57,32 @@ writeFileSync(
 		"\t}",
 		"\tif (mode === 'hang') {",
 		"\t\tsend({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'stuck ' } });",
+		"\t\treturn;",
+		"\t}",
+		"\tif (mode === 'compact') {",
+		"\t\tsend({ type: 'response', id: command.id, command: 'prompt', success: true });",
+		"\t\tsend({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'working ' } });",
+		"\t\tsend({",
+		"\t\t\ttype: 'session_compact',",
+		"\t\t\tcompactionEntry: {",
+		"\t\t\t\ttype: 'compaction',",
+		"\t\t\t\tsummary: 'summary of the dropped prefix',",
+		"\t\t\t\tfirstKeptEntryId: 'entry-7',",
+		"\t\t\t\ttokensBefore: 1234,",
+		"\t\t\t},",
+		"\t\t\tfromExtension: false,",
+		"\t\t\treason: 'threshold',",
+		"\t\t\twillRetry: false,",
+		"\t\t});",
+		"\t\tsend({",
+		"\t\t\ttype: 'session_compact_failed',",
+		"\t\t\treason: 'overflow',",
+		"\t\t\terrorMessage: 'summary model refused',",
+		"\t\t\taborted: false,",
+		"\t\t\twillRetry: true,",
+		"\t\t\tfromExtension: false,",
+		"\t\t});",
+		"\t\tsend({ type: 'agent_settled' });",
 		"\t\treturn;",
 		"\t}",
 		"\t// The real engine acks the prompt command at preflight, before the run;",
@@ -442,6 +469,35 @@ test("session/cancel: prompt settles cancelled and the engine child is killed", 
 	assert.deepEqual(settled.result, { stopReason: "cancelled" });
 
 	await waitFor(() => !pidAlive(childPid), "engine child to die after cancel");
+	const exit = await agent.end();
+	assert.equal(exit.code, 0);
+});
+
+test("compaction events surface as agent_message_chunk notices carrying the reason", async () => {
+	const agent = new AcpAgent("compact");
+	await agent.request("initialize", { protocolVersion: 1, clientCapabilities: {} });
+	const session = await agent.request("session/new", { cwd: SCRATCH });
+	const sessionId = session.result.sessionId;
+
+	const pendingPrompt = agent.request("session/prompt", {
+		sessionId,
+		prompt: [{ type: "text", text: "overflow me" }],
+	});
+
+	const delta = await agent.update("agent_message_chunk", sessionId);
+	assert.equal(delta.content.text, "working ");
+	const compacted = await agent.update("agent_message_chunk", sessionId);
+	assert.equal(compacted.content.type, "text");
+	assert.equal(compacted.content.text, "[torus] context compacted (threshold)");
+	const failed = await agent.update("agent_message_chunk", sessionId);
+	assert.equal(failed.content.text, "[torus] compaction failed (overflow)");
+	assert.equal(
+		new Set([delta.messageId, compacted.messageId, failed.messageId]).size,
+		1,
+		"compaction notices share the prompt turn's messageId",
+	);
+
+	assert.deepEqual((await pendingPrompt).result, { stopReason: "end_turn" });
 	const exit = await agent.end();
 	assert.equal(exit.code, 0);
 });

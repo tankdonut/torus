@@ -533,9 +533,12 @@ function notifySessionUpdate(state: AcpSessionState, update: Record<string, unkn
  * Assistant text deltas become agent_message_chunk (one messageId per prompt
  * turn); tool_execution_start announces a pending tool_call followed by an
  * in_progress update; tool_execution_end closes it completed (failed on
- * engine error). Every other engine event — session, message_start/end,
- * auto-retry, compaction — is omitted: the client sees the stream, not the
- * transcript.
+ * engine error). session_compact and session_compact_failed surface as
+ * agent_message_chunk notices carrying the trigger reason: the pinned
+ * spec's dedicated compaction/notice updates are client-capability-gated,
+ * which torus never negotiates, while a text chunk renders everywhere.
+ * Every other engine event — session, message_start/end, auto-retry — is
+ * omitted: the client sees the stream, not the transcript.
  */
 function emitAcpUpdates(state: AcpSessionState, event: Record<string, unknown>): void {
 	if (event["type"] === "message_update") {
@@ -584,6 +587,24 @@ function emitAcpUpdates(state: AcpSessionState, event: Record<string, unknown>):
 			sessionUpdate: "tool_call_update",
 			toolCallId,
 			status: event["isError"] === true ? "failed" : "completed",
+		});
+		return;
+	}
+	if (event["type"] === "session_compact") {
+		const reason = typeof event["reason"] === "string" ? event["reason"] : "unknown";
+		notifySessionUpdate(state, {
+			sessionUpdate: "agent_message_chunk",
+			messageId: state.currentMessageId,
+			content: { type: "text", text: `[torus] context compacted (${reason})` },
+		});
+		return;
+	}
+	if (event["type"] === "session_compact_failed") {
+		const reason = typeof event["reason"] === "string" ? event["reason"] : "unknown";
+		notifySessionUpdate(state, {
+			sessionUpdate: "agent_message_chunk",
+			messageId: state.currentMessageId,
+			content: { type: "text", text: `[torus] compaction failed (${reason})` },
 		});
 	}
 }
