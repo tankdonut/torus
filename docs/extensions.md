@@ -533,6 +533,15 @@ State at `$TORUS_STATE_DIR/work/<slug>.json` (plan↔session binding, status, el
 
 Companion skill: `torus-execute` (writes checkboxes in the plan, journals via `work_note`, ends via `work_complete`). Plan coordinates (waves, tasks, slugs) stay in the plan and ledger; landed commits and code comments never carry them.
 
+### `compact`
+
+Folds the torus session context into the engine's compaction summary, so the goal, work, todo, and memory context blocks survive compaction instead of vanishing with the summarized turns.
+
+- **Hooks:** `session_start`: record session id; `session_before_compact`: generate a summary that carries the four context blocks (goal, work, todos, memory) as summarization focus
+- **Interactions:** registered last in `pi.extensions` because hook composition across extensions is last-wins: this extension generates the whole summary itself and returns it as the compaction result, since the engine has no way for an extension to mutate the built-in summary's custom instructions
+
+The hook fires for every compaction reason (`/compact`, context threshold, overflow recovery). When all four blocks are empty (no active goal, work, todos, or memories) the handler is a no-op and the engine's default compaction runs unchanged; the same fallback covers a failed summary call, and the handler never cancels a compaction.
+
 ### `worktrees`
 
 Git-worktree lifecycle under one canonical root outside the repo (`~/.torus/worktrees/--<repo>--/<branch>`; the legacy bare-basename layout still resolves for existing worktrees).

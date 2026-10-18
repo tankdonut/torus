@@ -44,7 +44,8 @@
       "./node_modules/pi-web-access/dist",
       "./node_modules/pi-lsp-client/src/index.ts",
       "./extensions/sandbox",
-      "./extensions/approval"
+      "./extensions/approval",
+      "./extensions/compact"
     ],
     "skills": [
       "./skills"
