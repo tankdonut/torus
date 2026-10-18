@@ -115,14 +115,19 @@ function containment(a: string[], b: string[]): number {
  * Merge a full-list write against the stored list. Matching is by id first,
  * then exact normalized content, then containment similarity, so a paraphrase
  * updates the original item instead of forking a duplicate. Omitted completed
- * items are retained (the model cannot lose finished work by dropping it from
- * a rewrite); omitted pending items are removed as intentional; status
- * "dropped" removes explicitly; an empty write clears everything.
+ * items are retained while the list has open items (the model cannot lose
+ * finished work by dropping it from a rewrite); once every stored item is
+ * completed the list is closed and omitted items are no longer re-attached,
+ * so the next write starts a fresh list. Omitted pending items are removed as
+ * intentional; status "dropped" removes explicitly; an empty write clears
+ * everything.
  */
 export function writeTodos(sessionId: string, incoming: TodoInput[]): TodoState {
 	const state = readTodoState(sessionId);
 	let nextId = state.stats.nextId;
 	const clearing = incoming.length === 0;
+	/** Stored list with every item completed: closed, so omitted items are not re-attached. */
+	const listWasDone = state.todos.length > 0 && state.pending === 0;
 
 	const prev = state.todos.map((t) => (t.id ? t : { ...t, id: `t${nextId++}` }));
 	const pool = prev.map((item) => ({
@@ -187,7 +192,7 @@ export function writeTodos(sessionId: string, incoming: TodoInput[]): TodoState 
 
 	for (const p of pool) {
 		if (p.used) continue;
-		if (!clearing && p.item.status === "completed") merged.push(p.item);
+		if (!clearing && !listWasDone && p.item.status === "completed") merged.push(p.item);
 	}
 
 	const done = merged.filter((t) => t.status === "completed").length;
@@ -209,10 +214,13 @@ export function pruneTodoOrphans(
 
 export function todoContextBlock(sessionId: string | null): string {
 	if (!sessionId) return "";
-	const { todos } = readTodoState(sessionId);
+	const { todos, stats } = readTodoState(sessionId);
 	if (todos.length === 0) return "";
 	const active = todos.filter((t) => t.status !== "completed");
 	const doneItems = todos.filter((t) => t.status === "completed");
+	if (active.length === 0) {
+		return `[torus todos — every item complete (●${doneItems.length} of ${stats.tracked} done): the list is closed and the next torus_todowrite starts a fresh list]`;
+	}
 	const lines = [...active, ...doneItems].map((t) => {
 		const icon = t.status === "completed" ? "●" : t.status === "in_progress" ? "◐" : "○";
 		return `- ${icon} ${t.id ?? "?"} (${t.priority ?? "medium"}) ${t.content}`;
@@ -221,8 +229,9 @@ export function todoContextBlock(sessionId: string | null): string {
 		"[torus todos — the live task list; work it top-down, keep exactly one in_progress,",
 		"update via torus_todowrite after each change. Re-include every item in each write,",
 		"completed ones too (same id, status completed): completed items omitted from a write are",
-		'kept, pending ones omitted are removed; mark an item status "dropped" to remove it;',
-		"write an empty list when everything is done]",
+		"kept while open items remain, pending ones omitted are removed; mark an item status",
+		'"dropped" to remove it explicitly; once every item is completed the list closes and',
+		"the next write starts a fresh list]",
 	].join("\n");
 	return `${header}\n${lines.join("\n")}`;
 }
@@ -246,7 +255,7 @@ const todoWriteTool = defineTool({
 	name: "torus_todowrite",
 	label: "Torus TodoWrite",
 	description:
-		'Update the session todo list (full list every call). Items match prior ones by id, then by content, so paraphrases update instead of duplicating. Completed items omitted from the write are kept; pending items omitted are removed; status "dropped" removes an item explicitly. Always re-include completed items (same id, status "completed"). An empty list clears everything when all work is done.',
+		'Update the session todo list (full list every call). Items match prior ones by id, then by content, so paraphrases update instead of duplicating. Completed items omitted from the write are kept while the list has open items; pending items omitted are removed; status "dropped" removes an item explicitly. Always re-include completed items (same id, status "completed") while work continues; once every item is completed the list closes and the next write starts fresh (re-including a completed item by id still carries it across). An empty list clears everything immediately.',
 	parameters: Type.Object({
 		todos: Type.Array(
 			Type.Object({

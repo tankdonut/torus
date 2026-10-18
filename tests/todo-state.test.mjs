@@ -266,6 +266,53 @@ test("legacy items without ids are adopted on the next write", () => {
 	}
 });
 
+test("a fully-completed list closes: the next write starts a fresh list", () => {
+	try {
+		todo.writeTodos("sess-close", [
+			{ content: "old one", status: "completed" },
+			{ content: "old two", status: "completed" },
+		]);
+		const state = todo.writeTodos("sess-close", [{ content: "new work", status: "in_progress" }]);
+		assert.deepEqual(state.todos, [{ id: "t3", content: "new work", status: "in_progress" }]);
+		const after = todo.readTodoState("sess-close");
+		assert.equal(after.stats.tracked, 3);
+		assert.equal(after.stats.donePeak, 2);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("re-including completed items by id carries them across the close boundary", () => {
+	try {
+		todo.writeTodos("sess-carry", [
+			{ content: "kept done", status: "completed" },
+			{ content: "dropped done", status: "completed" },
+		]);
+		const state = todo.writeTodos("sess-carry", [
+			{ id: "t1", content: "kept done", status: "completed" },
+			{ content: "fresh task", status: "pending" },
+		]);
+		assert.deepEqual(state.todos, [
+			{ id: "t1", content: "kept done", status: "completed" },
+			{ id: "t3", content: "fresh task", status: "pending" },
+		]);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("a closed list reopens when a stored item is written back to a live status", () => {
+	try {
+		todo.writeTodos("sess-reopen", [{ content: "reopen me", status: "completed" }]);
+		const state = todo.writeTodos("sess-reopen", [
+			{ id: "t1", content: "reopen me", status: "in_progress" },
+		]);
+		assert.deepEqual(state.todos, [{ id: "t1", content: "reopen me", status: "in_progress" }]);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
 test("context block shows completed items with their ids", () => {
 	try {
 		todo.writeTodos("sess-block", [
@@ -277,6 +324,23 @@ test("context block shows completed items with their ids", () => {
 		assert.ok(block.includes("● t1 (medium) shipped feature"));
 		assert.ok(block.includes("completed items omitted from a write are"));
 		assert.ok(block.indexOf("polish docs") < block.indexOf("shipped feature"));
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("context block collapses to one closed line when every item is completed", () => {
+	try {
+		todo.writeTodos("sess-block-closed", [
+			{ content: "first done", status: "completed" },
+			{ content: "second done", status: "completed" },
+		]);
+		const block = todo.todoContextBlock("sess-block-closed");
+		assert.ok(block.startsWith("[torus todos"));
+		assert.ok(block.includes("●2 of 2 done"));
+		assert.ok(block.includes("closed"));
+		assert.ok(!block.includes("first done"));
+		assert.ok(!block.includes("second done"));
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}
