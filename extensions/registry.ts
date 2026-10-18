@@ -50,6 +50,8 @@ export interface DelegationRecord {
 	/** Project key (state-dir identity) of the cwd the delegation runs in — informational; the log itself lives in the dispatching session's state dir. */
 	project: string;
 	paneId: string | null;
+	/** Set when the operator stops the run from the fleet view; the run settles failed but its outcome reports interrupted. */
+	stopRequested?: boolean;
 }
 
 export function normalizeHandle(raw: string | null | undefined): string | null {
@@ -254,9 +256,15 @@ export function attachControl(id: string, control: DelegationControl): void {
 export function stopDelegation(id: string): boolean {
 	const record = registry.get(id);
 	if (record?.status !== "running") return false;
+	record.stopRequested = true;
 	appendFileSync(record.logFile, `\n<torus:stop-requested ts="${new Date().toISOString()}" />\n`);
 	controls.get(id)?.stop();
 	return true;
+}
+
+/** True once the operator stopped this run from the fleet view; the settling outcome reports interrupted instead of failed. */
+export function delegationStopRequested(id: string): boolean {
+	return registry.get(id)?.stopRequested === true;
 }
 
 /** Steer log entry for a delegation action log; credential shapes redacted before flattening. */
@@ -963,6 +971,7 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 			parentSession,
 			project: projectKey(process.cwd()),
 			paneId: null,
+			...(raw.includes("<torus:stop-requested ") ? { stopRequested: true } : {}),
 		});
 		count += 1;
 	}

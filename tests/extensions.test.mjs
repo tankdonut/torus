@@ -85,6 +85,22 @@ test("stop/steer on unknown or finished delegations return false", () => {
 	assert.equal(steerDelegation("no-such-id", "hi"), false);
 });
 
+test("stopDelegation flags the record so the settling outcome reports interrupted", async () => {
+	const { startDelegation, delegationStopRequested, listDelegations, resetRegistryForTesting } =
+		await import("../extensions/registry.ts");
+	const id = `stop-flag-${Date.now().toString(36)}`;
+	startDelegation(id, "explore", "zai/glm-5.3-flash", null);
+	try {
+		assert.equal(delegationStopRequested(id), false);
+		assert.equal(stopDelegation(id), true);
+		assert.equal(delegationStopRequested(id), true);
+		const logFile = listDelegations().find((r) => r.id === id)?.logFile;
+		assert.match(readFileSync(logFile, "utf8"), /<torus:stop-requested /);
+	} finally {
+		resetRegistryForTesting();
+	}
+});
+
 test("RpcChild resolves sends on response, rejects pending when child dies early", async () => {
 	const { RpcChild } = await import("../extensions/rpc.ts");
 	// A: fake engine answers torus-1, then idles — send must resolve

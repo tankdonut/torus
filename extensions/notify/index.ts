@@ -95,6 +95,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		const agent = typeof details["agent"] === "string" ? details["agent"] : "?";
 		const ok = details["ok"] !== false;
+		const stopped = details["stopped"] === true;
 		const durationMs = typeof details["durationMs"] === "number" ? details["durationMs"] : null;
 		const took = durationMs !== null ? `${formatDuration(durationMs)} · ` : "";
 		const runs = typeof details["runs"] === "number" ? details["runs"] : 1;
@@ -104,9 +105,9 @@ export function registerNotify(pi: ExtensionAPI): void {
 			[
 				new Text(
 					delegationLine(
-						ok ? "✓" : "✗",
-						ok ? "success" : "error",
-						`${runLabel(details, agent)} ${ok ? "finished" : "failed"}`,
+						stopped ? "■" : ok ? "✓" : "✗",
+						stopped ? "warning" : ok ? "success" : "error",
+						`${runLabel(details, agent)} ${stopped ? "stopped" : ok ? "finished" : "failed"}`,
 						hint,
 						theme,
 					),

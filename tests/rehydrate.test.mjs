@@ -212,6 +212,35 @@ test("rehydrates from both the project state logs dir and the legacy flat dir", 
 	registry.resetRegistryForTesting();
 });
 
+test("stopped run rehydrates with its stop flag from the log marker", () => {
+	registry.resetRegistryForTesting();
+	const name = `rehy-${STAMP}-s`;
+	const file = path.join(
+		LOGS,
+		`${name}.log`,
+	);
+	writeFileSync(
+		file,
+		[
+			'<torus:start agent="build" model="zai/glm-5.3" ts="2026-09-30T00:00:00.000Z" parent="parent-5" />',
+			'<torus:stop-requested ts="2026-09-30T00:00:05.000Z" />',
+			'<torus:failed ts="2026-09-30T00:00:06.000Z" />',
+			"",
+		].join("\n"),
+		"utf8",
+	);
+	try {
+		registry.rehydrateFromLogs("parent-5");
+		const rec = registry.listDelegations().find((r) => r.id === name);
+		assert.ok(rec, "stopped run missing after rehydrate");
+		assert.equal(rec.status, "failed");
+		assert.equal(rec.stopRequested, true, "stop marker not parsed into the record");
+	} finally {
+		rmSync(file, { force: true });
+		registry.resetRegistryForTesting();
+	}
+});
+
 test("cleanup: fixtures removed and registry reset for other suites", () => {
 	for (const suffix of ["a", "b", "c", "d"]) {
 		rmSync(path.join(LOGS, `rehy-${STAMP}-${suffix}.log`), { force: true });

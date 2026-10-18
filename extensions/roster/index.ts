@@ -43,6 +43,7 @@ import {
 	appendAction,
 	attachControl,
 	attachSessionId,
+	delegationStopRequested,
 	emitTorusCustom,
 	finishDelegation,
 	listDelegations,
@@ -458,6 +459,28 @@ async function runEngineJson(
 	onSession?: (sessionId: string) => void,
 ): Promise<SpawnResult> {
 	const engineBin = resolveEngineBin();
+	// A stop that aborted the signal before this fallback spawned (an operator
+	// stop during the RPC handshake) must not run the task in JSON mode after
+	// the cancellation — an already-aborted signal never fires its listener.
+	if (signal?.aborted) {
+		return {
+			exitCode: 143,
+			finalText: "",
+			stderr: "stopped before the fallback engine spawned",
+			sessionId: null,
+			usage: {
+				input: 0,
+				output: 0,
+				turns: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: 0,
+				noProgressTail: 0,
+			},
+			seenToolCalls: new Set(),
+			seenToolResults: new Set(),
+		};
+	}
 	const result: SpawnResult = {
 		exitCode: 0,
 		finalText: "",
@@ -465,13 +488,13 @@ async function runEngineJson(
 		sessionId: null,
 		usage: {
 			input: 0,
-			output: 0,
-			turns: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			cost: 0,
-			noProgressTail: 0,
-		},
+				output: 0,
+				turns: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: 0,
+				noProgressTail: 0,
+			},
 		seenToolCalls: new Set(),
 		seenToolResults: new Set(),
 	};
@@ -969,6 +992,10 @@ export async function runDelegation(
 		// JSON-mode fallback child via its abort listener (rpc children are
 		// stopped directly through their control).
 		const stopController = new AbortController();
+		// An operator stop can land between startDelegation and the first child's
+		// control attach; this placeholder keeps the abort reachable so an early
+		// stop is never lost to that race (the real control replaces it).
+		attachControl(delegationId, { stop: () => stopController.abort(), steer: () => false });
 		for (const candidate of attemptModels) {
 			usedModel = candidate;
 			if (candidate !== firstModel) {
@@ -1008,6 +1035,9 @@ export async function runDelegation(
 				}
 			})();
 			result = attempt;
+			// An operator stop from the fleet view ends the walk: retrying a
+			// cancelled run down-chain would respawn it on the next model.
+			if (delegationStopRequested(delegationId)) break;
 			// Turns alone no longer vouch for an attempt: engine-signaled model
 			// errors (the engine already auto-retried and gave up) and a trailing
 			// run of no-progress turns are both dead work, so the turns > 0
@@ -1046,16 +1076,20 @@ export async function runDelegation(
 		};
 		const noProgressTail = finalResult.usage.noProgressTail;
 		const lastError = finalResult.usage.lastError;
+		const stopped = delegationStopRequested(delegationId);
 		// Engine-signaled model errors are the primary failure signal: an error
 		// event, a stopReason:"error" turn, or an exhausted auto-retry. The
 		// no-progress tail is the defensive net for dead connections the engine
 		// never signals. Either one fails the run even on a clean exit — the
 		// partial text below is still delivered, it may hold useful work — but
 		// the run must render red, never green.
-		const ok = finalResult.exitCode === 0 && !lastError && noProgressTail === 0;
-		const text =
-			finalResult.finalText ||
-			`(no text output; exit=${finalResult.exitCode})\n${finalResult.stderr.slice(0, 2000)}`;
+		const ok = !stopped && finalResult.exitCode === 0 && !lastError && noProgressTail === 0;
+		const text = stopped
+			? finalResult.finalText
+				? `${finalResult.finalText}\n\n(interrupted — stopped from the fleet view; partial output above)`
+				: "(interrupted — stopped from the fleet view before any model output)"
+			: finalResult.finalText ||
+				`(no text output; exit=${finalResult.exitCode})\n${finalResult.stderr.slice(0, 2000)}`;
 		finishDelegation(delegationId, ok, text, finalResult.sessionId);
 		if (emitResult) {
 			emitTorusCustom(
@@ -1064,7 +1098,7 @@ export async function runDelegation(
 					content: [
 						{
 							type: "text",
-							text: `${agent.name} ${ok ? "finished" : "failed"}`,
+							text: `${agent.name} ${stopped ? "stopped" : ok ? "finished" : "failed"}`,
 						},
 					],
 					display: true,
@@ -1076,6 +1110,7 @@ export async function runDelegation(
 						handle,
 						durationMs: Date.now() - startedAt,
 						turns: finalResult.usage.turns,
+						...(stopped ? { stopped: true } : {}),
 						...(lastError ? { error: lastError } : {}),
 						...(noProgressTail > 0 ? { noProgressTail } : {}),
 					},
@@ -1096,6 +1131,7 @@ export async function runDelegation(
 				turns: finalResult.usage.turns,
 				usage: finalResult.usage,
 				noProgressTail,
+				...(stopped ? { stopped: true } : {}),
 				...(lastError ? { error: lastError } : {}),
 				...(noProgressTail > 0
 					? {

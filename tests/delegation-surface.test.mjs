@@ -163,6 +163,23 @@ writeFileSync(
 );
 chmodSync(MIXED_ENGINE, 0o755);
 
+// RPC attempts exit immediately (no protocol handshake); the JSON fallback
+// emits one turn, then hangs — a run with progress that stays "running"
+// until the operator stop kills it: the fleet-view x path under test.
+const HANG_ENGINE = path.join(ENGINE_DIR, "hang-engine.sh");
+writeFileSync(
+	HANG_ENGINE,
+	[
+		"#!/bin/sh",
+		'case "$*" in *"--mode rpc"*) exit 0 ;; esac',
+		"echo '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"steady\"}],\"usage\":{\"input\":10,\"output\":20}}}'",
+		"exec sleep 10",
+		"",
+	].join("\n"),
+	"utf8",
+);
+chmodSync(HANG_ENGINE, 0o755);
+
 const registry = await import("../extensions/registry.ts");
 const roster = await import("../extensions/roster/index.ts");
 const team = await import("../extensions/team/index.ts");
@@ -276,6 +293,53 @@ test("successful delegation surfaces its delegationId and finished marker", asyn
 		"engine usage without a cost field renders an explicit $0",
 	);
 	assert.doesNotMatch(bareLog, /NaN/, "no NaN for unpriced runs");
+	registry.setCustomSender(() => {});
+});
+
+test("delegation stopped from the fleet view reports interrupted, never retries down-chain", async () => {
+	registry.resetRegistryForTesting();
+	const customs = [];
+	captureCustoms(customs);
+
+	await withEngine(HANG_ENGINE, async () => {
+		const run = roster.runDelegation(
+			"builder",
+			"hang probe",
+			undefined,
+			undefined,
+			"sess-stop",
+			"stoppable",
+			null,
+			false,
+		);
+		let record;
+		for (let i = 0; i < 500 && record === undefined; i++) {
+			record = registry
+				.listDelegations()
+				.find((r) => r.status === "running" && r.turns >= 1);
+			if (record === undefined) await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		assert.ok(record, "delegation never reached a running first turn");
+		assert.equal(registry.stopDelegation(record.id), true);
+
+		const outcome = await run;
+		assert.equal(outcome.ok, false);
+		assert.equal(outcome.details.stopped, true, "outcome must carry the stop, not a bare failure");
+		assert.match(outcome.text, /interrupted — stopped from the fleet view/);
+		const log = readFileSync(record.logFile, "utf8");
+		assert.match(log, /<torus:stop-requested /);
+		assert.ok(!log.includes("retrying down-chain"), "cancelled run respawned down-chain");
+	});
+
+	const results = customs.filter((m) => m.customType === "torus.delegation-result");
+	assert.equal(results.length, 1);
+	assert.deepEqual(results[0].content, [{ type: "text", text: "builder stopped" }]);
+	assert.equal(results[0].details.stopped, true);
+	assert.equal(results[0].details.ok, false);
+	assert.equal(
+			registry.listDelegations().find((r) => r.handle === "stoppable")?.status,
+			"failed",
+	);
 	registry.setCustomSender(() => {});
 });
 
