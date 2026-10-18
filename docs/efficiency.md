@@ -100,6 +100,11 @@ npm run bench:overhead -- --model zai/glm-5.3-flash,zai/glm-5.3
 Exit status is 0 when every run (warmups included) completed, 1 otherwise;
 failures are reported and the bench keeps going.
 
+A release gate wraps the same data: `npm run bench:gate` compares the
+sidecar's two newest comparable runs per model and exits nonzero when a
+gated delta (cache read, cost) regresses beyond tolerance. Release PRs run
+it in CI; see [docs/release-workflow.md](release-workflow.md).
+
 Artifacts in this repo: [`docs/efficiency.html`](efficiency.html) (generated
 report with distribution charts and a run-history table) and
 [`docs/bench-records.json`](bench-records.json) (raw per-run records; the

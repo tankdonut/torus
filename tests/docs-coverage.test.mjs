@@ -109,11 +109,18 @@ test("release workflow pins the mcp-audit engine-pin bump step", () => {
 	}
 });
 
+test("release workflow documents the bench gate on Release PRs", () => {
+	const releaseDoc = readFileSync(path.join(root, "docs/release-workflow.md"), "utf8");
+	for (const token of ["bench-gate", "bench:gate", "ZAI_API_KEY", "scripts/bench/gate.mjs"]) {
+		assert.ok(releaseDoc.includes(token), `docs/release-workflow.md missing token: ${token}`);
+	}
+});
+
 test("docs/efficiency.md documents the overhead bench method", () => {
 	const benchDocPath = path.join(root, "docs/efficiency.md");
 	assert.ok(existsSync(benchDocPath), "docs/efficiency.md does not exist");
 	const benchDoc = readFileSync(benchDocPath, "utf8");
-	for (const token of ["bench:overhead", "cache", "## Summary"]) {
+	for (const token of ["bench:overhead", "cache", "## Summary", "bench:gate"]) {
 		assert.ok(benchDoc.includes(token), `docs/efficiency.md missing token: ${token}`);
 	}
 });

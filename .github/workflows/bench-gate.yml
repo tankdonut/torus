@@ -1,0 +1,85 @@
+name: bench-gate
+# Overhead-bench gate for Release PRs: runs the documented bench on the PR
+# head (package.json already carries the release version, so the run
+# self-labels), appends it to a workspace copy of the sidecar (not
+# committed), gates cache-read and cost deltas against the prior comparable
+# recorded run, posts the tables as a PR comment, then enforces the verdict.
+# Recording runs in the sidecar stays manual (docs: publish X.Y.Z overhead
+# bench numbers); the gate compares against whatever run is recorded last.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: bench-gate-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    # Release PRs, not feature PRs: overhead regressions accumulate across many
+    # commits, and the Release PR is the checkpoint where you cut. release-please
+    # PRs in this repo match the title prefix and carry the `autorelease: pending`
+    # label; either selector catches them (branch is
+    # release-please--branches--main--components--torus, too brittle to key on).
+    if: "github.event_name == 'workflow_dispatch' || startsWith(github.event.pull_request.title, 'chore(main): release') || contains(github.event.pull_request.labels.*.name, 'autorelease: pending')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .tool-versions
+      - run: npm ci
+      - name: Run overhead bench (spends model calls; appends to the workspace sidecar copy)
+        run: >
+          npm run bench:overhead --
+          --model zai/glm-5.3-flash,zai/glm-5.3
+          --json docs/bench-records.json
+        env:
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      - name: Gate the sidecar
+        id: gate
+        run: |
+          set +e
+          node scripts/bench-gate.mjs docs/bench-records.json | tee bench-gate.md
+          code=${PIPESTATUS[0]}
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Post the gate report on the PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const body = `<!-- bench-gate -->\n${fs.readFileSync('bench-gate.md', 'utf8')}`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find((c) => c.body.includes('<!-- bench-gate -->'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+      - name: Enforce the verdict
+        if: steps.gate.outputs.code != '0'
+        run: |
+          echo "bench gate exit code: ${{ steps.gate.outputs.code }} (1 = regression, 2 = no comparable data)"
+          exit 1

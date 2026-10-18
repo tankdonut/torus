@@ -58,6 +58,7 @@
     "lint:fix": "biome check --write . && markdownlint-cli2 --fix",
     "test": "node --experimental-strip-types --import ./tests/resolve-ts-hook.mjs --test tests/",
     "bench:overhead": "node scripts/bench.mjs",
+    "bench:gate": "node scripts/bench-gate.mjs",
     "bench": "node scripts/bench.mjs",
     "prepare": "husky"
   },
