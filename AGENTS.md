@@ -49,14 +49,16 @@
 
 ## Commit convention
 
-Commit subjects are release-mechanical: release-please maps them to version bumps and changelog entries (see `docs/release-workflow.md`).
+Commit subjects are release-mechanical: release-please maps them to version bumps and changelog entries (see `docs/release-workflow.md`). Subjects may carry a Conventional Commits scope after the type, e.g. `feat(extensions/hashline):` or `fix(agents):`.
 
 | Subject | Effect |
 | --------- | -------- |
-| `feat:` | minor bump, Features in changelog |
-| `fix:` | patch bump, Bug Fixes in changelog |
+| `feat(scope):` or `feat:` | minor bump, Features in changelog |
+| `fix(scope):` or `fix:` | patch bump, Bug Fixes in changelog |
 | `!` or `BREAKING CHANGE:` footer | minor while 0.x (`bump-minor-pre-major`), major after 1.0 |
-| `chore:`, `ci:`, `docs:`, `test:` | no bump, no changelog entry |
+| `chore(scope):`, `ci:`, `docs:`, `test:` | no bump, no changelog entry |
+
+- Scopes never change the bump: `feat(extensions/hashline):` bumps exactly like `feat:`. Use `area/name` when the change stays inside one item of an area (`fix(extensions/hashline):`, `feat(agents/leader):`), the bare area when it spans the area (`fix(agents):`, `chore(tests):`), and no scope for cross-cutting changes. Scope names copy the repo's directory segments (`extensions`, `agents`, `skills`, `tests`, `runtime`, `scripts`, `docs`) so each area keeps one spelling; `deps` is reserved for dependency bumps (engine pins land as `feat(deps):`, below).
 
 - Docs follow `docs/style.md`; `tests/docs-style.test.mjs` enforces its mechanical rules (banned filler, prose em dashes, retired keywords, link resolution, README quickstart ordering) and markdownlint enforces the structural ones via `npm run lint`. Dispatches for prose work pass the `technical-writing` skill. Exemptions: `CHANGELOG.md` (release-please output) and non-markdown regenerated artifacts (`docs/efficiency.html`, `docs/bench-records.json`). `docs/efficiency.md` is hand-maintained and fully in purview; only its pasted bench numbers are exempt from the no-hand-written-numbers rule.
 - Engine-pin bumps (`@earendil-works/pi-*` in `package.json`) land as `feat(deps):` (every shipped binary carries the pin, so they are user-visible). Renovate applies this automatically (`renovate.json` `packageRules`); hand-bumped pins keep the same subject. Engine-pin bumps also require the release-workflow env-audit step before merge: re-run `tests/env-hygiene.test.mjs` and re-verify the engine's `.env` autoload behavior (`docs/release-workflow.md`).

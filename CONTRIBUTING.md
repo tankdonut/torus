@@ -22,10 +22,12 @@ Squash-merge is the rule, and **your PR title becomes the release commit verbati
 
 | Subject | Effect |
 | --- | --- |
-| `feat:` | minor bump, Features in changelog |
-| `fix:` | patch bump, Bug Fixes in changelog |
-| `chore:` `docs:` `test:` `ci:` | no bump, no changelog entry |
+| `feat(scope):` / `feat:` | minor bump, Features in changelog |
+| `fix(scope):` / `fix:` | patch bump, Bug Fixes in changelog |
+| `chore(scope):` `docs:` `test:` `ci:` | no bump, no changelog entry |
 | `!` or `BREAKING CHANGE:` footer | minor while 0.x, major after 1.0 |
+
+The scope is optional and never changes the bump: `fix(extensions/hashline):` names one item, `fix(agents):` the whole area, no scope for cross-cutting changes. Copy scope names from the repo's directory segments. Since your PR title becomes the commit verbatim, the scope belongs in the title.
 
 Details and rationale: [docs/release-workflow.md](docs/release-workflow.md).
 
