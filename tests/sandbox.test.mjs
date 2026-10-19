@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -15,6 +15,7 @@ const {
 	parseNetEntries,
 	CURATED_NET_ALLOWLIST,
 	INSTALL_CACHE_ROOTS,
+	classifyDenial,
 } = await import("../extensions/sandbox/index.ts");
 
 function fakeManager() {
@@ -1172,7 +1173,10 @@ test("sign relay: starts on the session scratch, seeds git config, stops on shut
 			toolCallId: "sign-2",
 			input: { command: "node script.js" },
 		});
-		assert.ok(!manager.wrappedCommands[1].includes("GIT_CONFIG"), "non-git commands are not seeded");
+		assert.ok(
+			!manager.wrappedCommands[1].includes("GIT_CONFIG"),
+			"non-git commands are not seeded",
+		);
 		pi.handlers.tool_result({ type: "tool_result", toolCallId: "sign-1", content: [] });
 		pi.handlers.tool_result({ type: "tool_result", toolCallId: "sign-2", content: [] });
 		await pi.handlers.session_shutdown(undefined, shutdownCtx());
@@ -1245,4 +1249,136 @@ test("sign relay: off unless the knob or policy asks for it", async () => {
 	} finally {
 		restoreEnv(saved);
 	}
+});
+
+test("classifyDenial: each class fires on its signature, ordinary failures stay null", () => {
+	const saved = { CLAUDE_CODE_TMPDIR: process.env.CLAUDE_CODE_TMPDIR };
+	const scratch = mkdtempSync(path.join(tmpdir(), "sbx-classify-"));
+	try {
+		process.env.CLAUDE_CODE_TMPDIR = scratch;
+		const table = [
+			{
+				name: "EROFS write denial",
+				text: "cp: cannot create regular file '/etc/resolv.conf': Read-only file system",
+				expect: /write denied outside allowed roots.*TORUS_SANDBOX_WRITABLE/,
+			},
+			{
+				name: "ENOENT under the session scratch (hidden parent)",
+				text: `cp: cannot stat '${scratch}/out/data.json': No such file or directory`,
+				expect: /path hidden from the sandbox namespace.*writable roots/,
+			},
+			{
+				name: "ENOENT via mktemp template shape",
+				text: "mktemp: failed to create file via template '/var/folders/t/tmp.XXXXXXXXXX': No such file or directory",
+				expect: /path hidden from the sandbox namespace/,
+			},
+			{
+				name: "EPERM connecting to an agent socket",
+				text: "Error connecting to agent: Operation not permitted",
+				expect: /unix sockets are blocked in the sandbox.*interactive_bash/,
+			},
+			{
+				name: "EPERM on the docker socket",
+				text: "dial unix /var/run/docker.sock: connect: operation not permitted",
+				expect: /unix sockets are blocked in the sandbox/,
+			},
+			{
+				name: "srt proxy violation line",
+				text: "deny network-outbound example.com:443 (denied by sandbox policy)",
+				expect: /host not allowed.*TORUS_SANDBOX_NET_ADD/,
+			},
+			{
+				name: "client-visible 403 line carrying a URL",
+				text: "npm ERR! 403 Forbidden - GET https://example.com/pkg",
+				expect: /host not allowed/,
+			},
+			{
+				name: "ordinary grep read failure",
+				text: "grep: unable to read missing.txt",
+				expect: null,
+			},
+			{
+				name: "ordinary ENOENT outside the scratch",
+				text: "cat: missing.txt: No such file or directory",
+				expect: null,
+			},
+			{
+				name: "ordinary chmod EPERM without socket context",
+				text: "chmod: changing permissions of '/root/secret': Operation not permitted",
+				expect: null,
+			},
+			{
+				name: "403 without a host on the line",
+				text: "curl: (22) The requested URL returned error: 403",
+				expect: null,
+			},
+			{ name: "empty text", text: "", expect: null },
+		];
+		for (const { name, text, expect } of table) {
+			const line = classifyDenial(text);
+			if (expect === null) assert.equal(line, null, `${name}: expected no classification`);
+			else assert.ok(expect.test(line ?? ""), `${name}: expected ${expect} in "${line}"`);
+		}
+		assert.match(
+			classifyDenial("touch: cannot touch '/x': Read-only file system"),
+			/^\[torus: sandbox\] .+ — .+$/,
+			"ready-to-append class — remedy shape",
+		);
+		assert.match(
+			classifyDenial(
+				"deny network-outbound example.com:443 (denied by sandbox policy)\ncp: '/x': Read-only file system",
+			),
+			/write denied outside allowed roots/,
+			"table order wins: EROFS outranks a proxy denial later in the text",
+		);
+		delete process.env.CLAUDE_CODE_TMPDIR;
+		assert.match(
+			classifyDenial("ls: cannot access '/tmp/claude/tmp.XXXXXXXXXX': No such file or directory"),
+			/path hidden from the sandbox namespace/,
+			"default scratch fallback when CLAUDE_CODE_TMPDIR is unset",
+		);
+	} finally {
+		restoreEnv(saved);
+	}
+});
+
+test("tool_result: EROFS stderr plus srt violations gains a single appended class line", async () => {
+	const manager = sandboxManagerFake();
+	// The stock fake annotates only the word "denied"; srt's real annotate wraps
+	// recorded violations in a <sandbox_violations> block, so drive the
+	// classifier path with that shape.
+	manager.annotateStderrWithSandboxFailures = (_command, stderr) =>
+		`${stderr}\n<sandbox_violations>\ndeny network-outbound example.com:443 (denied by sandbox policy)\n</sandbox_violations>`;
+	const pi = await activateHandlers(manager);
+	const command = "curl https://example.com && cp a /etc";
+	await pi.handlers.tool_call({
+		type: "tool_call",
+		toolName: "bash",
+		toolCallId: "cls-1",
+		input: { command },
+	});
+	const res = await pi.handlers.tool_result({
+		type: "tool_result",
+		toolName: "bash",
+		toolCallId: "cls-1",
+		input: { command },
+		content: [
+			{ type: "text", text: "cp: cannot create regular file '/etc/a': Read-only file system" },
+		],
+	});
+	const text = res.content[0].text;
+	assert.match(text, /<sandbox_violations>/, "annotation survived");
+	assert.match(text, /\[torus: sandbox\] write denied outside allowed roots — /);
+	assert.equal(
+		text.split("[torus: sandbox] write denied outside allowed roots").length - 1,
+		1,
+		"single class append even though a proxy signature is also present",
+	);
+	assert.ok(
+		text.endsWith(
+			"[torus: sandbox] write denied outside allowed roots — add the path's parent to TORUS_SANDBOX_WRITABLE or the sandbox policy's writable list",
+		),
+		"class line is the final append on the same text block",
+	);
+	await pi.handlers.session_shutdown(undefined, shutdownCtx());
 });

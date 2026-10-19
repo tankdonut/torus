@@ -54,7 +54,7 @@ import {
 	type ResolvedSandboxPolicy,
 	type SandboxWritableRoot,
 } from "./policy.js";
-import { startSignRelay, type SignRelay, type SignRelayOptions } from "./sign-relay.js";
+import { type SignRelay, type SignRelayOptions, startSignRelay } from "./sign-relay.js";
 
 export type SandboxMode = "off" | "full";
 
@@ -649,6 +649,78 @@ function randomCommandId(): string {
 	return randomBytes(16).toString("base64url");
 }
 
+interface DenialClass {
+	matches: (line: string) => boolean;
+	notice: string;
+}
+
+/**
+ * srt's default scratch when no CLAUDE_CODE_TMPDIR was claimed for the session.
+ */
+const SCRATCH_FALLBACK = "/tmp/claude";
+
+function scratchRoot(): string {
+	return (process.env["CLAUDE_CODE_TMPDIR"] ?? SCRATCH_FALLBACK).replace(/\/+$/, "");
+}
+
+/**
+ * Denial classes for sandbox-failure stderr: srt annotates violations but the
+ * errno text itself stays opaque, so the model cannot tell a fixable
+ * confinement (widen a root, pre-create a directory, use an exempt path,
+ * answer a trust dialog) from a genuine failure. Every rule demands
+ * sandbox-shaped context before firing — a false class misleads harder than
+ * none: ENOENT classifies only under the session scratch (the namespace hides
+ * the parent host-side; an ordinary missing file is not a denial), and EPERM
+ * only with socket context (srt blocks AF_UNIX wholesale, tracked upstream as
+ * srt #510; chmod-style EPERM is ordinary).
+ */
+const DENIAL_CLASSES: readonly DenialClass[] = [
+	{
+		matches: (line) => line.includes("read-only file system"),
+		notice:
+			"[torus: sandbox] write denied outside allowed roots — add the path's parent to TORUS_SANDBOX_WRITABLE or the sandbox policy's writable list",
+	},
+	{
+		matches: (line) =>
+			line.includes("no such file or directory") &&
+			(line.includes("mktemp: failed to create file via template") ||
+				line.includes(`${scratchRoot().toLowerCase()}/`)),
+		notice:
+			"[torus: sandbox] path hidden from the sandbox namespace (missing parent) — create the directory host-side or add it to the writable roots",
+	},
+	{
+		matches: (line) =>
+			line.includes("operation not permitted") &&
+			(line.includes("error connecting to agent") ||
+				line.includes("/var/run/docker.sock") ||
+				line.includes("unix socket") ||
+				(line.includes("connect to") && line.includes("socket"))),
+		notice:
+			"[torus: sandbox] unix sockets are blocked in the sandbox — run the command via interactive_bash (never wrapped) or an exempt prefix from the user policy; path-scoped sockets are tracked upstream (srt #510)",
+	},
+	{
+		matches: (line) =>
+			line.startsWith("deny network-outbound ") || (line.includes("403") && line.includes("://")),
+		notice:
+			"[torus: sandbox] host not allowed — answer the trust dialog, or add the host via TORUS_SANDBOX_NET_ADD / the sandbox policy's hosts list",
+	},
+];
+
+/**
+ * Classifies sandbox-failure stderr into a single ready-to-append
+ * `[torus: sandbox] <class> — <remedy>` line, or null when the text carries no
+ * recognizable sandbox denial. First matching class wins (table order), one
+ * line per result even when several signatures are present.
+ */
+export function classifyDenial(text: string): string | null {
+	if (text.length === 0) return null;
+	const lines = text.toLowerCase().split("\n");
+	for (const denial of DENIAL_CLASSES) {
+		if (lines.some(denial.matches)) return denial.notice;
+	}
+	return null;
+}
+
 function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 	subscribeChip(pi);
 
@@ -699,9 +771,14 @@ function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 		const content = event.content.map((block) => {
 			if (block.type !== "text") return block;
 			const annotated = manager.annotateStderrWithSandboxFailures(tracked.command, block.text);
-			if (annotated === block.text) return block;
+			const denial = classifyDenial(annotated);
+			if (denial === null) {
+				if (annotated === block.text) return block;
+				changed = true;
+				return { ...block, text: annotated };
+			}
 			changed = true;
-			return { ...block, text: annotated };
+			return { ...block, text: annotated.length > 0 ? `${annotated}\n${denial}` : denial };
 		});
 		manager.cleanupAfterCommand();
 		return changed ? { content } : undefined;
