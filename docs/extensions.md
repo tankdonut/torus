@@ -299,7 +299,7 @@ Opt-in per-command isolation for agent bash calls, built on srt (`@anthropic-ai/
 No tools or commands.
 
 - **Hooks:** `session_start`: statusline chip `sbx:on`/`sbx:off`/`sbx:down`; `tool_call`: rewrite the bash command (fail-closed blocks); `tool_result`: annotate sandbox violations onto stderr; `session_shutdown`: chip clear + manager reset (kills socat bridges + proxies)
-- **Env:** `TORUS_SANDBOX=off|full` (default off; opt in with `TORUS_SANDBOX=full`); `TORUS_SANDBOX_WRITABLE` extra writable roots, colon-separated; `TORUS_SANDBOX_NET_ADD` appends allowed hosts; `TORUS_SANDBOX_NET_ONLY` replaces the allowlist
+- **Env:** `TORUS_SANDBOX=off|full` (default off; opt in with `TORUS_SANDBOX=full`); `TORUS_SANDBOX_DEFAULT=full` opts the environment into default-on for unset `TORUS_SANDBOX` (the shipped default stays off); `TORUS_SANDBOX_WRITABLE` extra writable roots, colon-separated; `TORUS_SANDBOX_NET_ADD` appends allowed hosts; `TORUS_SANDBOX_NET_ONLY` replaces the allowlist
 - **Interactions:** `/doctor` reports mode/deps/state; delegated children confine to their own worktree cwd
 
 #### Boundaries and failure modes
@@ -311,7 +311,7 @@ With `TORUS_SANDBOX` in the on family, every bash tool call is rewritten through
 | Writes | Confined to the workspace + `/tmp` + `TORUS_SANDBOX_WRITABLE` extras + git plumbing (the repo's git common dir and the torus worktrees root; linked worktrees share refs/objects with the main repo) |
 | Network | Restricted to a curated exact-host allowlist (npm/PyPI/crates/GitHub/Golang proxy hosts; keeps installs and git-over-https working) |
 
-`interactive_bash` and user `!` commands are never wrapped. Fail-closed: a wrap failure blocks the call with an actionable reason. Missing bwrap/socat or init failure degrades to unsandboxed with a one-time stderr notice (`TORUS_SANDBOX=off` silences). `fs`-only mode is not expressible with srt (network restriction is schema-coupled), and unknown `TORUS_SANDBOX` values default to off with a one-time notice.
+`interactive_bash` and user `!` commands are never wrapped. Fail-closed: a wrap failure blocks the call with an actionable reason. Missing bwrap/socat or init failure degrades to unsandboxed with a one-time stderr notice (`TORUS_SANDBOX=off` silences). `fs`-only mode is not expressible with srt (network restriction is schema-coupled), and unknown `TORUS_SANDBOX` values fall back to the effective default (`TORUS_SANDBOX_DEFAULT`, else off) with a one-time notice.
 
 Known srt gaps: unreliable signal/exit-code propagation (upstream #602/#603/#635/#610), no SIGWINCH on Linux (#642), macOS raw-mode TUIs need `allowPty` (#480).
 
@@ -751,7 +751,7 @@ Engine-owned configuration torus users can ride directly; torus's own code touch
 | `TORUS_COMMENT_CHECKER=0` / `TORUS_COMMENT_CHECKER_PROMPT` | comment-checker | Disable / override the challenge text |
 | `TORUS_WORKTREES_ROOT` | worktrees | Worktree root override (default `~/.torus/worktrees`) |
 | `TORUS_APPROVAL=0` | approval | Disable the trust-on-denial dialog (unmatched hosts deny) |
-| `TORUS_SANDBOX` / `TORUS_SANDBOX_WRITABLE` / `TORUS_SANDBOX_NET_ADD` / `TORUS_SANDBOX_NET_ONLY` | sandbox | Per-command sandbox (`off` \| `full`, default **off**: `full`/`on`/`1` sandboxes agent bash; unset runs unsandboxed; unknown values default to off with a notice; confines writes to workspace+tmp+extras, network restricted to a curated exact-host allowlist of 30 dev-workflow hosts, registries, GitHub incl. release assets, core toolchains) / extra writable roots, colon-separated / comma-separated extra allowed hosts (exact-host; over-broad entries dropped) / comma-separated hosts replacing the curated allowlist |
+| `TORUS_SANDBOX` / `TORUS_SANDBOX_WRITABLE` / `TORUS_SANDBOX_NET_ADD` / `TORUS_SANDBOX_NET_ONLY` / `TORUS_SANDBOX_DEFAULT` | sandbox | Per-command sandbox (`off` \| `full`, default **off**: `full`/`on`/`1` sandboxes agent bash; unset runs unsandboxed unless `TORUS_SANDBOX_DEFAULT=full` opts the environment into default-on; unknown values fall back to the effective default with a notice; confines writes to workspace+tmp+extras, network restricted to a curated exact-host allowlist of dev-workflow hosts, registries, GitHub incl. release assets, core toolchains, and `*.amazonaws.com`) / extra writable roots, colon-separated / comma-separated extra allowed hosts (exact-host; over-broad entries dropped) / comma-separated hosts replacing the curated allowlist / environment default for unset `TORUS_SANDBOX` (`full`/`on`/`1` enables; any other value is inert) |
 | `TORUS_REFLECTION=0` | memory | Disable idle reflection |
 | `TORUS_REFLECT_TURNS=<n>` | memory | Reflect after N settles since the last reflect (0 = idle-only; default 12) |
 | `TORUS_DREAMING=0` | memory | Disable dream consolidation |

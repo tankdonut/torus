@@ -32,7 +32,7 @@ Keyless runs (CI, `--list-models`) stay clean; real agent use needs provider aut
 
 ## Sandboxing
 
-Not supported inside the container. `TORUS_SANDBOX` defaults to off and should stay off there. The container itself is the isolation boundary, and bwrap's nested user namespaces conflict with container-runtime policy on most hosts (verified: rootless podman, GitHub runners, and Ubuntu 24.04+ hosts with `apparmor_restrict_unprivileged_userns=1`). `torus /doctor` reports the live sandbox state. The image still ships bwrap + socat as part of the full-toolkit inventory below; they are not exercised in-container.
+Not supported inside the container. `TORUS_SANDBOX` (and `TORUS_SANDBOX_DEFAULT`) default to off and should stay off there. The container itself is the isolation boundary, and bwrap's nested user namespaces conflict with container-runtime policy on most hosts (verified: rootless podman, GitHub runners, and Ubuntu 24.04+ hosts with `apparmor_restrict_unprivileged_userns=1`). `torus /doctor` reports the live sandbox state. The image still ships bwrap + socat as part of the full-toolkit inventory below; they are not exercised in-container.
 
 ## Local build & test
 

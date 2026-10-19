@@ -802,6 +802,32 @@ test("parseSandboxEnv: user policy mode applies when env is unset; explicit env 
 	assert.equal(parseSandboxEnv({}, emptyPolicy()).mode, "off");
 });
 
+test("parseSandboxEnv: TORUS_SANDBOX_DEFAULT trials default-on without shipping it", () => {
+	assert.equal(parseSandboxEnv({}).mode, "off", "unset stays off");
+	assert.equal(parseSandboxEnv({ TORUS_SANDBOX_DEFAULT: "full" }).mode, "full");
+	assert.equal(parseSandboxEnv({ TORUS_SANDBOX_DEFAULT: "FULL" }).mode, "full");
+	assert.equal(
+		parseSandboxEnv({ TORUS_SANDBOX: "off", TORUS_SANDBOX_DEFAULT: "full" }).mode,
+		"off",
+		"explicit off beats the trial default",
+	);
+	assert.equal(
+		parseSandboxEnv({ TORUS_SANDBOX: "full", TORUS_SANDBOX_DEFAULT: "off" }).mode,
+		"full",
+		"explicit full beats the trial default",
+	);
+	assert.equal(
+		parseSandboxEnv({ TORUS_SANDBOX: "wibble", TORUS_SANDBOX_DEFAULT: "full" }).mode,
+		"full",
+		"unknown falls back to the effective default",
+	);
+	assert.equal(
+		parseSandboxEnv({ TORUS_SANDBOX_DEFAULT: "off" }, emptyPolicy({ mode: "full" })).mode,
+		"full",
+		"a non-on knob value leaves the policy mode in charge",
+	);
+});
+
 test("buildSandboxConfig: policy writable/hosts/credentials and seeded trust shape the config", () => {
 	const env = {
 		mode: "full",

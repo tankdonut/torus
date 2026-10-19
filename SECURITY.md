@@ -18,7 +18,7 @@ torus is a coding-agent harness: it runs a language model with tool access (file
   - Oversized tool output is truncated.
 
   These are context-integrity guards, not a security boundary.
-- **Sandbox**: [extensions/sandbox/index.ts](extensions/sandbox/index.ts). Opt-in (`TORUS_SANDBOX=full`), off by default. Per-command isolation of agent bash calls built on `@anthropic-ai/sandbox-runtime`: writes confined to the workspace (plus tmp and worktree/git plumbing), network restricted to a curated exact-host allowlist plus user additions. Degrades to unsandboxed (with a one-time notice) when the runtime is missing or init fails; bash is never bricked.
+- **Sandbox**: [extensions/sandbox/index.ts](extensions/sandbox/index.ts). Opt-in (`TORUS_SANDBOX=full`, or `TORUS_SANDBOX_DEFAULT=full` to run an environment default-on), off by default. Per-command isolation of agent bash calls built on `@anthropic-ai/sandbox-runtime`: writes confined to the workspace (plus tmp and worktree/git plumbing), network restricted to a curated exact-host allowlist plus user additions. Degrades to unsandboxed (with a one-time notice) when the runtime is missing or init fails; bash is never bricked.
 - **Approval**: [extensions/approval/index.ts](extensions/approval/index.ts). Trust-on-denial dialogs for the sandbox network allowlist: when sandboxed bash hits a non-allowlisted host, the user chooses Allow once / Always allow (this project) / Deny / Custom host. "Always" decisions persist under `~/.torus/state/--<project>--/sandbox-hosts.json`, outside the sandbox's writable roots, so an agent cannot self-escalate by editing them. Headless sessions auto-deny.
 
 ## Trust handoffs
@@ -45,7 +45,7 @@ Agent-writable files that trusted processes consume:
 
 torus does **not** provide:
 
-- **OS-level sandboxing or containment.** The opt-in sandbox confines agent *bash* calls only, and only when `TORUS_SANDBOX=full`. Read, write, edit, and the engine's own filesystem access run unsandboxed; with the sandbox off (the default), bash does too.
+- **OS-level sandboxing or containment.** The opt-in sandbox confines agent *bash* calls only, and only when `TORUS_SANDBOX=full`. Read, write, edit, and the engine's own filesystem access run unsandboxed; with the sandbox off (the default unless `TORUS_SANDBOX_DEFAULT=full` opts the environment in), bash does too.
 - **Secret storage.** API keys live in environment variables and engine config files readable by any process the agent spawns. Nothing vaults or redacts them at rest.
 - **Network egress control beyond the opt-in sandbox.** Provider traffic, engine fetches, and MCP connections are not filtered by torus; the allowlist applies to sandboxed bash commands only.
 

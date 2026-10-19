@@ -1,7 +1,8 @@
 /**
  * torus — sandbox extension.
  *
- * Opt-in (TORUS_SANDBOX=full) per-command isolation for agent bash calls, built on
+ * Opt-in (TORUS_SANDBOX=full; TORUS_SANDBOX_DEFAULT=full trials a default-on
+ * environment without changing the shipped default) per-command isolation for agent bash calls, built on
  * @anthropic-ai/sandbox-runtime (srt): writes confined to the workspace
  * (+ tmp + extras + git/worktree plumbing), network restricted to a
  * curated allowlist plus user additions. Degrades to unsandboxed — with a one-time notice —
@@ -145,12 +146,21 @@ export function parseSandboxEnv(
 	policy?: ResolvedSandboxPolicy,
 ): SandboxEnv {
 	const requested = (env["TORUS_SANDBOX"] ?? "").trim().toLowerCase();
-	// Precedence: an explicit env value wins over the user-layer policy mode;
-	// unset falls back to the policy, then to off. The policy's mode comes
-	// from the user layer only (projects cannot set it).
+	// Precedence: explicit TORUS_SANDBOX > TORUS_SANDBOX_DEFAULT (trial knob:
+	// run an environment default-on ahead of the shipped default flipping) >
+	// user-layer policy mode > off. The policy's mode comes from the user
+	// layer only (projects cannot set it); a non-on knob value is inert.
+	const defaultKnob = (env["TORUS_SANDBOX_DEFAULT"] ?? "").trim().toLowerCase();
+	const trialDefault = FULL_VALUES.has(defaultKnob);
 	const explicitFull = FULL_VALUES.has(requested);
 	const explicitOff = OFF_VALUES.has(requested);
-	const mode: SandboxMode = explicitFull ? "full" : explicitOff ? "off" : (policy?.mode ?? "off");
+	const mode: SandboxMode = explicitFull
+		? "full"
+		: explicitOff
+			? "off"
+			: trialDefault
+				? "full"
+				: (policy?.mode ?? "off");
 	const writableExtras = (env["TORUS_SANDBOX_WRITABLE"] ?? "")
 		.split(":")
 		.map((entry) => entry.trim())
