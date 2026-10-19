@@ -21,11 +21,18 @@
  * CLAUDE_CODE_TMPDIR: srt injects it as TMPDIR at wrap time but never creates
  * the dir, and its default (/tmp/claude) is shared by every sandbox of the
  * user.
+ *
+ * Wrap-time shaping (see subscribeSandboxHandlers): policy-exempt command
+ * prefixes skip the sandbox outright; every other wrapped command carries an
+ * unguessable per-command network id (allow-once ask grants widen only the
+ * command that asked), telemetry opt-out and policy env vars as a leading
+ * `env` prefix, and install-shaped package-manager commands get the manager's
+ * cache roots added to allowWrite via srt's whole-section customConfig.
  */
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import {
 	SandboxManager,
@@ -40,9 +47,13 @@ import {
 	type ToolCallEvent,
 	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
-import { torusHome } from "../fsutil.js";
 import { readPersistedHosts } from "../approval/index.js";
-import { loadSandboxPolicy, type ResolvedSandboxPolicy, type SandboxWritableRoot } from "./policy.js";
+import { torusHome } from "../fsutil.js";
+import {
+	loadSandboxPolicy,
+	type ResolvedSandboxPolicy,
+	type SandboxWritableRoot,
+} from "./policy.js";
 
 export type SandboxMode = "off" | "full";
 
@@ -128,7 +139,10 @@ export function parseNetEntries(raw: string): {
 	return { entries, dropped };
 }
 
-export function parseSandboxEnv(env: NodeJS.ProcessEnv, policy?: ResolvedSandboxPolicy): SandboxEnv {
+export function parseSandboxEnv(
+	env: NodeJS.ProcessEnv,
+	policy?: ResolvedSandboxPolicy,
+): SandboxEnv {
 	const requested = (env["TORUS_SANDBOX"] ?? "").trim().toLowerCase();
 	// Precedence: an explicit env value wins over the user-layer policy mode;
 	// unset falls back to the policy, then to off. The policy's mode comes
@@ -260,7 +274,9 @@ export function buildSandboxConfig(
 /** srt credentials config from the policy's user-layer lists (deny mode). */
 function buildCredentialsConfig(
 	sandboxEnv: SandboxEnv,
-): { files: Array<{ path: string; mode: "deny" }>; envVars: Array<{ name: string; mode: "deny" }> } | undefined {
+):
+	| { files: Array<{ path: string; mode: "deny" }>; envVars: Array<{ name: string; mode: "deny" }> }
+	| undefined {
 	const files = sandboxEnv.credentialsFiles ?? [];
 	const envVars = sandboxEnv.credentialsEnvVars ?? [];
 	if (files.length === 0 && envVars.length === 0) return undefined;
@@ -285,6 +301,9 @@ export interface SandboxManagerLike {
 	): Promise<string>;
 	annotateStderrWithSandboxFailures(command: string, stderr: string): string;
 	cleanupAfterCommand(): void;
+	/** Per-command network allowlist keyed by an unguessable wrap commandId. */
+	registerCommandNetworkLists(commandId: string, lists: { allowedDomains?: string[] }): void;
+	unregisterCommandNetworkLists(commandId: string): void;
 	reset(): Promise<void>;
 }
 
@@ -367,8 +386,15 @@ function sharedSandboxState(): { state: SandboxState } {
 const shared = sharedSandboxState();
 let activationPromise: Promise<SandboxState> | null = null;
 let activeManager: SandboxManagerLike | null = null;
-/** toolCallId → original command, for violation annotation on the result. */
-const activeCommands = new Map<string, string>();
+/** toolCallId → original command + wrap commandId, for annotation and cleanup. */
+const activeCommands = new Map<string, { command: string; commandId: string }>();
+/**
+ * commandId of the most recently wrapped in-flight command. Ask callbacks
+ * fire while the wrapped child runs (after tool_call returns), so the id is
+ * held from wrap success until the matching tool_result; with concurrent
+ * commands the latest wrap wins, matching srt's attribution limit.
+ */
+let currentCommandId: string | null = null;
 
 export function getSandboxState(): SandboxState {
 	return shared.state;
@@ -433,8 +459,145 @@ function maybeReloadTrustedPolicy(): void {
 	activeManager.updateConfig(lastConfig);
 }
 
+/** Policy exemptions (user layer): raw command prefixes that skip the sandbox. */
+function isExemptCommand(command: string, exempt: readonly string[]): boolean {
+	const trimmed = command.trimStart();
+	return exempt.some((prefix) => prefix.length > 0 && trimmed.startsWith(prefix));
+}
+
+/** Telemetry opt-outs prepended to every sandboxed command (see prefixEnvVars). */
+const BUILTIN_ENV_PREFIXES: ReadonlyArray<readonly [string, string]> = [
+	["CHECKPOINT_DISABLE", "1"],
+	["GH_NO_UPDATE_NOTIFIER", "1"],
+	["DO_NOT_TRACK", "1"],
+];
+
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+function shellQuoteValue(value: string): string {
+	if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+	return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * Prepends `env K=V ...` to the command: the built-in telemetry opt-outs plus
+ * policy env entries (policy wins on a name clash). A var the command already
+ * sets — via leading `VAR=...` assignments or an `env(1)` prefix — keeps the
+ * command's value; only the rest are prepended, so the rewrite is idempotent
+ * and never changes the command's own semantics: the original text survives
+ * verbatim after the prefix. WrapWithSandboxOptions has no env channel, so
+ * command text is the only way in.
+ */
+function prefixEnvVars(command: string, extra: Record<string, string> = {}): string {
+	const wanted = new Map<string, string>(BUILTIN_ENV_PREFIXES);
+	for (const [name, value] of Object.entries(extra)) wanted.set(name, value);
+	const tokens = command.trimStart().split(/\s+/);
+	let index = 0;
+	while (index < tokens.length) {
+		const token = tokens[index];
+		if (token === undefined || !ENV_ASSIGNMENT.test(token)) break;
+		wanted.delete(token.slice(0, token.indexOf("=")));
+		index += 1;
+	}
+	if (tokens[index] === "env") {
+		index += 1;
+		while (index < tokens.length) {
+			const token = tokens[index];
+			if (token === undefined || !ENV_ASSIGNMENT.test(token)) break;
+			wanted.delete(token.slice(0, token.indexOf("=")));
+			index += 1;
+		}
+	}
+	if (wanted.size === 0) return command;
+	const assignments = [...wanted.entries()].map(
+		([name, value]) => `${name}=${shellQuoteValue(value)}`,
+	);
+	return `env ${assignments.join(" ")} ${command}`;
+}
+
+/** Package managers whose install verbs write to well-known cache roots. */
+const INSTALL_MANAGERS = new Set([
+	"npm",
+	"pnpm",
+	"yarn",
+	"pip",
+	"pip3",
+	"uv",
+	"cargo",
+	"go",
+	"gradle",
+	"mvn",
+]);
+const INSTALL_VERBS = new Set(["install", "update", "add", "upgrade", "ci", "build"]);
+
+/**
+ * $HOME-relative cache roots each package manager writes to during installs;
+ * "go" instead resolves its module cache at lookup time ($GOPATH/pkg/mod,
+ * default ~/go/pkg/mod). Exported for tests.
+ */
+export const INSTALL_CACHE_ROOTS: Readonly<Record<string, readonly string[]>> = {
+	npm: [".npm", ".cache/pnpm", ".cache/yarn"],
+	pnpm: [".npm", ".cache/pnpm", ".cache/yarn"],
+	yarn: [".npm", ".cache/pnpm", ".cache/yarn"],
+	pip: [".cache/pip", ".cache/uv"],
+	pip3: [".cache/pip", ".cache/uv"],
+	uv: [".cache/pip", ".cache/uv"],
+	cargo: [".cargo/registry", ".cargo/git"],
+	go: [],
+	gradle: [".gradle/caches"],
+	mvn: [".m2/repository"],
+};
+
+/** The install-shaped manager of this command, or null for anything else. */
+function installManager(command: string): string | null {
+	const [manager = "", verb = ""] = command.trim().split(/\s+/);
+	if (!INSTALL_MANAGERS.has(manager) || !INSTALL_VERBS.has(verb)) return null;
+	return manager;
+}
+
+function installCacheRoots(tool: string, env: NodeJS.ProcessEnv = process.env): string[] {
+	const roots = (INSTALL_CACHE_ROOTS[tool] ?? []).map((relative) =>
+		path.resolve(homedir(), relative),
+	);
+	if (tool === "go") {
+		const gopath = (env["GOPATH"] ?? "")
+			.split(path.delimiter)
+			.map((part) => part.trim())
+			.find((part) => part.length > 0);
+		roots.push(path.resolve(gopath ?? path.join(homedir(), "go"), "pkg", "mod"));
+	}
+	return roots;
+}
+
+/**
+ * customConfig for install-shaped commands: the session allowWrite plus the
+ * manager's cache roots as literal entries. srt's customConfig replaces
+ * whole sections (filesystem.allowWrite is not merged), so the FULL merged
+ * list is passed. Every other command gets undefined — widening a plain
+ * command would defeat the workspace confinement.
+ */
+function installWriteWidening(command: string): Partial<SandboxRuntimeConfig> | undefined {
+	const tool = installManager(command);
+	if (tool === null || lastConfig === null) return undefined;
+	const roots = installCacheRoots(tool);
+	ensureWritableRoots(roots, (message) => process.stderr.write(`${message}\n`));
+	const session = lastConfig.filesystem.allowWrite;
+	const present = new Set(session.map((entry) => (typeof entry === "string" ? entry : entry.path)));
+	const additions = roots
+		.filter((root) => !present.has(root))
+		.map((root): SandboxWritableRoot => ({ path: root, literal: true }));
+	if (additions.length === 0) return undefined;
+	return { filesystem: { ...lastConfig.filesystem, allowWrite: [...session, ...additions] } };
+}
+
+/** srt requires per-command network ids to be unguessable: ≥22 base64url chars. */
+function randomCommandId(): string {
+	return randomBytes(16).toString("base64url");
+}
+
 function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 	subscribeChip(pi);
+
 	pi.on("tool_call", async (event: ToolCallEvent) => {
 		if (event.type !== "tool_call") return undefined;
 		if (activationPromise !== null) await activationPromise;
@@ -445,12 +608,21 @@ function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 		const input = event.input as { command?: unknown };
 		const command = typeof input.command === "string" ? input.command : "";
 		if (!command) return undefined;
+		if (isExemptCommand(command, activePolicy?.exempt ?? [])) return undefined;
+		const commandId = randomCommandId();
 		try {
-			const wrapped = await manager.wrapWithSandbox(command, undefined, undefined, undefined, {
-				commandId: event.toolCallId,
-			});
+			const wrapped = await manager.wrapWithSandbox(
+				prefixEnvVars(command, activePolicy?.env ?? {}),
+				undefined,
+				installWriteWidening(command),
+				undefined,
+				// commandText keeps violations attributed to the raw command even
+				// though the wrapped text carries the env prefix.
+				{ commandId, commandText: command },
+			);
 			input.command = wrapped;
-			activeCommands.set(event.toolCallId, command);
+			activeCommands.set(event.toolCallId, { command, commandId });
+			currentCommandId = commandId;
 			return undefined;
 		} catch (error) {
 			return {
@@ -464,13 +636,15 @@ function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 		if (event.type !== "tool_result") return undefined;
 		const manager = activeManager;
 		if (!manager || !isBashToolResult(event)) return undefined;
-		const command = activeCommands.get(event.toolCallId);
-		if (command === undefined) return undefined;
+		const tracked = activeCommands.get(event.toolCallId);
+		if (tracked === undefined) return undefined;
 		activeCommands.delete(event.toolCallId);
+		manager.unregisterCommandNetworkLists(tracked.commandId);
+		if (currentCommandId === tracked.commandId) currentCommandId = null;
 		let changed = false;
 		const content = event.content.map((block) => {
 			if (block.type !== "text") return block;
-			const annotated = manager.annotateStderrWithSandboxFailures(command, block.text);
+			const annotated = manager.annotateStderrWithSandboxFailures(tracked.command, block.text);
 			if (annotated === block.text) return block;
 			changed = true;
 			return { ...block, text: annotated };
@@ -486,6 +660,7 @@ function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 		activeManager = null;
 		activationPromise = null;
 		activeCommands.clear();
+		currentCommandId = null;
 		void manager.reset();
 		return undefined;
 	});
@@ -528,6 +703,19 @@ function buildAskCallback(manager: SandboxManagerLike): SandboxAskFn {
 					: decision.kind === "custom" && decision.host
 						? decision.host
 						: null;
+			// Allow-once (and custom) grants also land on the in-flight command's
+			// network list, so later connections of the same command skip re-asking.
+			const perCommandHost =
+				decision.kind === "allow" ? host : decision.kind === "custom" ? grantedHost : null;
+			if (perCommandHost !== null && currentCommandId !== null) {
+				try {
+					manager.registerCommandNetworkLists(currentCommandId, {
+						allowedDomains: [perCommandHost],
+					});
+				} catch {
+					// Best-effort widening; the decision itself still stands.
+				}
+			}
 			if (lastConfig && grantedHost !== null) {
 				lastConfig = {
 					...lastConfig,
@@ -551,7 +739,9 @@ export async function registerSandbox(
 ): Promise<void> {
 	// Extension load runs before any session context exists, so the project
 	// layer is read as untrusted; the first trusted session_start re-reads it.
-	const policyResult = loadSandboxPolicy(process.cwd(), { isProjectTrusted: () => policyLoadedTrusted });
+	const policyResult = loadSandboxPolicy(process.cwd(), {
+		isProjectTrusted: () => policyLoadedTrusted,
+	});
 	for (const notice of policyResult.notices) {
 		process.stderr.write(`${notice}\n`);
 	}

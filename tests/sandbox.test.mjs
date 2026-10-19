@@ -14,6 +14,7 @@ const {
 	resolveAdditionalWritableRoots,
 	parseNetEntries,
 	CURATED_NET_ALLOWLIST,
+	INSTALL_CACHE_ROOTS,
 } = await import("../extensions/sandbox/index.ts");
 
 function fakeManager() {
@@ -279,11 +280,24 @@ function handlerPi() {
 }
 
 function sandboxManagerFake({ wrapImpl } = {}) {
-	const calls = { initialize: 0, wrap: 0, annotate: 0, cleanup: 0, reset: 0 };
+	const calls = {
+		initialize: 0,
+		wrap: 0,
+		annotate: 0,
+		cleanup: 0,
+		reset: 0,
+		registerNetwork: 0,
+		unregisterNetwork: 0,
+	};
 	return {
 		calls,
 		capturedAsk: null,
 		updatedConfigs: [],
+		wrappedCommands: [],
+		wrapOptions: [],
+		customConfigs: [],
+		registeredNetworkLists: [],
+		unregisteredCommandIds: [],
 		async initialize(_config, ask) {
 			calls.initialize += 1;
 			this.capturedAsk = ask ?? null;
@@ -291,8 +305,19 @@ function sandboxManagerFake({ wrapImpl } = {}) {
 		updateConfig(config) {
 			this.updatedConfigs.push(config);
 		},
-		async wrapWithSandbox(command, _binShell, _customConfig, _abortSignal, _options) {
+		registerCommandNetworkLists(commandId, lists) {
+			calls.registerNetwork += 1;
+			this.registeredNetworkLists.push({ commandId, lists });
+		},
+		unregisterCommandNetworkLists(commandId) {
+			calls.unregisterNetwork += 1;
+			this.unregisteredCommandIds.push(commandId);
+		},
+		async wrapWithSandbox(command, _binShell, customConfig, _abortSignal, options) {
 			calls.wrap += 1;
+			this.wrappedCommands.push(command);
+			this.customConfigs.push(customConfig);
+			this.wrapOptions.push(options);
 			if (wrapImpl) return wrapImpl(command);
 			return `bwrap --ro-bind / / -- ${command}`;
 		},
@@ -338,7 +363,10 @@ test("tool_call: active sandbox rewrites bash commands, tracks them, annotates r
 		input,
 	});
 	assert.equal(result, undefined);
-	assert.equal(input.command, "bwrap --ro-bind / / -- npm test");
+	assert.equal(
+		input.command,
+		"bwrap --ro-bind / / -- env CHECKPOINT_DISABLE=1 GH_NO_UPDATE_NOTIFIER=1 DO_NOT_TRACK=1 npm test",
+	);
 	assert.equal(manager.calls.wrap, 1);
 	const res = await pi.handlers.tool_result({
 		type: "tool_result",
@@ -563,7 +591,10 @@ test("tool_call during async init waits for activation (no unwrapped slip-throug
 	await registered;
 	await handled;
 	assert.equal(calls.wrap, 1);
-	assert.equal(input.command, "bwrap -- echo early");
+	assert.equal(
+		input.command,
+		"bwrap -- env CHECKPOINT_DISABLE=1 GH_NO_UPDATE_NOTIFIER=1 DO_NOT_TRACK=1 echo early",
+	);
 	await pi.handlers.session_shutdown(undefined, {
 		ui: { setStatus() {}, theme: { fg: (_c, t) => t } },
 	});
@@ -687,7 +718,7 @@ test("ask callback wiring: absent slot denies; always grants and updateConfig ap
 	});
 });
 
-test("ask callback wiring: allow-once grants without updateConfig; custom host grants + appends", async () => {
+test("ask callback wiring: allow-once registers on the in-flight commandId; custom also appends", async () => {
 	const manager = sandboxManagerFake();
 	const pi = await activateHandlers(manager);
 	const ask = manager.capturedAsk;
@@ -703,11 +734,35 @@ test("ask callback wiring: allow-once grants without updateConfig; custom host g
 		},
 	};
 	try {
+		const input = { command: "curl https://once.example" };
+		await pi.handlers.tool_call({
+			type: "tool_call",
+			toolName: "bash",
+			toolCallId: "once1",
+			input,
+		});
+		const commandId = manager.wrapOptions[0].commandId;
+		assert.equal(manager.calls.registerNetwork, 0);
 		assert.equal(await ask({ host: "once.dev", port: 443 }), true);
 		assert.equal(manager.updatedConfigs.length, 0, "allow-once does not touch config");
+		assert.equal(manager.calls.registerNetwork, 1, "allow-once registers on the current command");
+		assert.equal(manager.registeredNetworkLists[0].commandId, commandId);
+		assert.deepEqual(manager.registeredNetworkLists[0].lists, { allowedDomains: ["once.dev"] });
 		assert.equal(await ask({ host: "anything.internal.corp", port: 443 }), true);
 		assert.equal(manager.updatedConfigs.length, 1);
 		assert.ok(manager.updatedConfigs[0].network.allowedDomains.includes("*.internal.corp"));
+		assert.equal(manager.calls.registerNetwork, 2, "custom host also widens the current command");
+		assert.deepEqual(manager.registeredNetworkLists[1].lists, {
+			allowedDomains: ["*.internal.corp"],
+		});
+		await pi.handlers.tool_result({
+			type: "tool_result",
+			toolName: "bash",
+			toolCallId: "once1",
+			input,
+			content: [{ type: "text", text: "ok" }],
+		});
+		assert.deepEqual(manager.unregisteredCommandIds, [commandId]);
 	} finally {
 		if (previousSlot === undefined) delete globalThis[SLOT];
 		else globalThis[SLOT] = previousSlot;
@@ -735,8 +790,14 @@ function emptyPolicy(overrides = {}) {
 
 test("parseSandboxEnv: user policy mode applies when env is unset; explicit env beats policy", () => {
 	assert.equal(parseSandboxEnv({}, emptyPolicy({ mode: "full" })).mode, "full");
-	assert.equal(parseSandboxEnv({ TORUS_SANDBOX: "off" }, emptyPolicy({ mode: "full" })).mode, "off");
-	assert.equal(parseSandboxEnv({ TORUS_SANDBOX: "wibble" }, emptyPolicy({ mode: "full" })).mode, "full");
+	assert.equal(
+		parseSandboxEnv({ TORUS_SANDBOX: "off" }, emptyPolicy({ mode: "full" })).mode,
+		"off",
+	);
+	assert.equal(
+		parseSandboxEnv({ TORUS_SANDBOX: "wibble" }, emptyPolicy({ mode: "full" })).mode,
+		"full",
+	);
 	assert.equal(parseSandboxEnv({}, emptyPolicy()).mode, "off");
 });
 
@@ -759,7 +820,10 @@ test("buildSandboxConfig: policy writable/hosts/credentials and seeded trust sha
 	assert.deepEqual(config.filesystem.allowWrite.at(-1), { path: "/opt/extra", literal: true });
 	assert.ok(config.network.allowedDomains.includes("example.org"));
 	assert.ok(config.network.allowedDomains.includes("granted.example"));
-	assert.ok(config.network.allowedDomains.includes("*.amazonaws.com"), "AWS API endpoints are curated");
+	assert.ok(
+		config.network.allowedDomains.includes("*.amazonaws.com"),
+		"AWS API endpoints are curated",
+	);
 	assert.ok(!config.network.allowedDomains.includes("*.com"), "bare TLD wildcards stay rejected");
 	assert.deepEqual(config.network.deniedDomains, ["evil.example"]);
 	assert.deepEqual(config.credentials, {
@@ -785,10 +849,19 @@ test("buildSandboxConfig: user-layer hosts.only replaces the curated allowlist b
 	};
 	const config = buildSandboxConfig("/repo", env, [], ["granted.example"]);
 	assert.ok(config.network.allowedDomains.includes("only.example"));
-	assert.ok(config.network.allowedDomains.includes("env.example"), "env additions survive a policy replacement");
+	assert.ok(
+		config.network.allowedDomains.includes("env.example"),
+		"env additions survive a policy replacement",
+	);
 	assert.ok(config.network.allowedDomains.includes("policy.example"));
-	assert.ok(config.network.allowedDomains.includes("granted.example"), "persisted trust survives a policy replacement");
-	assert.ok(!config.network.allowedDomains.includes("registry.npmjs.org"), "curated list is replaced");
+	assert.ok(
+		config.network.allowedDomains.includes("granted.example"),
+		"persisted trust survives a policy replacement",
+	);
+	assert.ok(
+		!config.network.allowedDomains.includes("registry.npmjs.org"),
+		"curated list is replaced",
+	);
 });
 
 test("registerSandbox: seeded trusted hosts flow into the initial allowlist", async () => {
@@ -810,4 +883,219 @@ test("registerSandbox: seeded trusted hosts flow into the initial allowlist", as
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 	}
+});
+
+async function activateHandlersWithPolicy(manager, sandboxPolicy = null) {
+	const agentDir = mkdtempSync(path.join(tmpdir(), "sbx-policy-agent-"));
+	if (sandboxPolicy !== null) {
+		writeFileSync(
+			path.join(agentDir, "settings.json"),
+			JSON.stringify({ torus: { sandbox: sandboxPolicy } }),
+		);
+	}
+	const pi = handlerPi();
+	const previous = process.env.TORUS_SANDBOX;
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.TORUS_SANDBOX = "full";
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		await registerSandbox(pi, {
+			manager,
+			async probe() {
+				return { errors: [] };
+			},
+		});
+	} finally {
+		if (previous === undefined) delete process.env.TORUS_SANDBOX;
+		else process.env.TORUS_SANDBOX = previous;
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	}
+	return { pi, agentDir };
+}
+
+function shutdownCtx() {
+	return { ui: { setStatus() {}, theme: { fg: (_c, t) => t } } };
+}
+
+test("tool_call: install commands pass the merged allowWrite; plain commands pass none", async () => {
+	const manager = sandboxManagerFake();
+	const previousHome = process.env.HOME;
+	const home = mkdtempSync(path.join(tmpdir(), "sbx-home-"));
+	process.env.HOME = home;
+	try {
+		const { pi } = await activateHandlersWithPolicy(manager);
+		const input = { command: "npm install left-pad" };
+		await pi.handlers.tool_call({ type: "tool_call", toolName: "bash", toolCallId: "ins1", input });
+		const custom = manager.customConfigs[0];
+		assert.ok(custom, "install wrap passes customConfig");
+		const allow = custom.filesystem.allowWrite;
+		assert.ok(
+			allow.some((entry) => entry.path === path.join(home, ".npm") && entry.literal === true),
+			"npm cache root is a literal writable entry",
+		);
+		assert.ok(allow.includes(process.cwd()), "session entries survive the whole-section override");
+		assert.ok(allow.includes(tmpdir()), "tmpdir stays writable");
+		assert.ok(
+			existsSync(path.join(home, ".cache", "pnpm")),
+			"missing cache roots are pre-created (srt drops non-existent paths)",
+		);
+
+		const plain = { command: "node script.js" };
+		await pi.handlers.tool_call({
+			type: "tool_call",
+			toolName: "bash",
+			toolCallId: "ins2",
+			input: plain,
+		});
+		assert.equal(manager.customConfigs[1], undefined, "non-install commands get no customConfig");
+		await pi.handlers.session_shutdown(undefined, shutdownCtx());
+	} finally {
+		if (previousHome === undefined) delete process.env.HOME;
+		else process.env.HOME = previousHome;
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("tool_call: go install widening follows $GOPATH", async () => {
+	const manager = sandboxManagerFake();
+	const previousHome = process.env.HOME;
+	const previousGopath = process.env.GOPATH;
+	const home = mkdtempSync(path.join(tmpdir(), "sbx-go-home-"));
+	process.env.HOME = home;
+	process.env.GOPATH = path.join(home, "custom-go");
+	try {
+		const { pi } = await activateHandlersWithPolicy(manager);
+		const input = { command: "go build ./..." };
+		await pi.handlers.tool_call({ type: "tool_call", toolName: "bash", toolCallId: "go1", input });
+		const allow = manager.customConfigs[0].filesystem.allowWrite;
+		assert.ok(
+			allow.some(
+				(entry) =>
+					entry.path === path.join(home, "custom-go", "pkg", "mod") && entry.literal === true,
+			),
+			"the go module cache is resolved under $GOPATH",
+		);
+		await pi.handlers.session_shutdown(undefined, shutdownCtx());
+	} finally {
+		if (previousHome === undefined) delete process.env.HOME;
+		else process.env.HOME = previousHome;
+		if (previousGopath === undefined) delete process.env.GOPATH;
+		else process.env.GOPATH = previousGopath;
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("INSTALL_CACHE_ROOTS: managers map to $HOME-relative cache roots", () => {
+	assert.deepEqual(INSTALL_CACHE_ROOTS.npm, [".npm", ".cache/pnpm", ".cache/yarn"]);
+	assert.deepEqual(INSTALL_CACHE_ROOTS.pip, [".cache/pip", ".cache/uv"]);
+	assert.deepEqual(INSTALL_CACHE_ROOTS.cargo, [".cargo/registry", ".cargo/git"]);
+	assert.deepEqual(INSTALL_CACHE_ROOTS.gradle, [".gradle/caches"]);
+	assert.deepEqual(INSTALL_CACHE_ROOTS.mvn, [".m2/repository"]);
+	assert.deepEqual(INSTALL_CACHE_ROOTS.go, []);
+});
+
+test("tool_call: commandIds are random base64url and unregistered on tool_result", async () => {
+	const manager = sandboxManagerFake();
+	const pi = await activateHandlers(manager);
+	const first = { command: "echo one" };
+	const second = { command: "echo two" };
+	await pi.handlers.tool_call({
+		type: "tool_call",
+		toolName: "bash",
+		toolCallId: "cmd-a",
+		input: first,
+	});
+	await pi.handlers.tool_call({
+		type: "tool_call",
+		toolName: "bash",
+		toolCallId: "cmd-b",
+		input: second,
+	});
+	const ids = manager.wrapOptions.map((options) => options.commandId);
+	for (const id of ids) {
+		assert.match(id, /^[A-Za-z0-9_-]{22,}$/);
+	}
+	assert.notEqual(ids[0], ids[1], "each wrap gets a fresh id");
+	await pi.handlers.tool_result({
+		type: "tool_result",
+		toolName: "bash",
+		toolCallId: "cmd-a",
+		input: first,
+		content: [{ type: "text", text: "ok" }],
+	});
+	assert.deepEqual(manager.unregisteredCommandIds, [ids[0]]);
+	await pi.handlers.tool_result({
+		type: "tool_result",
+		toolName: "bash",
+		toolCallId: "cmd-b",
+		input: second,
+		content: [{ type: "text", text: "ok" }],
+	});
+	assert.deepEqual(manager.unregisteredCommandIds, ids);
+	await pi.handlers.session_shutdown(undefined, shutdownCtx());
+});
+
+test("tool_call: exempt policy prefixes skip wrapping entirely", async () => {
+	const manager = sandboxManagerFake();
+	const { pi, agentDir } = await activateHandlersWithPolicy(manager, {
+		exempt: ["docker ", "terraform apply"],
+	});
+	try {
+		const input = { command: "docker version" };
+		const result = await pi.handlers.tool_call({
+			type: "tool_call",
+			toolName: "bash",
+			toolCallId: "ex1",
+			input,
+		});
+		assert.equal(result, undefined);
+		assert.equal(manager.calls.wrap, 0, "exempt command is never wrapped");
+		assert.equal(input.command, "docker version", "the raw command is left untouched");
+		const other = { command: "terraform version" };
+		await pi.handlers.tool_call({
+			type: "tool_call",
+			toolName: "bash",
+			toolCallId: "ex2",
+			input: other,
+		});
+		assert.equal(manager.calls.wrap, 1, "a non-matching command still wraps");
+		await pi.handlers.session_shutdown(undefined, shutdownCtx());
+	} finally {
+		rmSync(agentDir, { recursive: true, force: true });
+	}
+});
+
+test("tool_call: telemetry opt-outs and policy env are prepended unless already set", async () => {
+	const manager = sandboxManagerFake();
+	const { pi } = await activateHandlersWithPolicy(manager, {
+		env: { TORUS_SANDBOX_TEST_FLAG: "on" },
+	});
+	const input = { command: "terraform version" };
+	await pi.handlers.tool_call({ type: "tool_call", toolName: "bash", toolCallId: "env1", input });
+	const wrapped = manager.wrappedCommands[0];
+	const prefix = wrapped.slice(0, wrapped.indexOf(" terraform"));
+	assert.deepEqual(
+		prefix.split(" ").slice(1).sort(),
+		[
+			"CHECKPOINT_DISABLE=1",
+			"DO_NOT_TRACK=1",
+			"GH_NO_UPDATE_NOTIFIER=1",
+			"TORUS_SANDBOX_TEST_FLAG=on",
+		].sort(),
+	);
+	assert.ok(wrapped.endsWith(" terraform version"), "the original command survives verbatim");
+
+	const preset = { command: "CHECKPOINT_DISABLE=0 terraform version" };
+	await pi.handlers.tool_call({
+		type: "tool_call",
+		toolName: "bash",
+		toolCallId: "env2",
+		input: preset,
+	});
+	const wrapped2 = manager.wrappedCommands[1];
+	assert.ok(!wrapped2.includes("CHECKPOINT_DISABLE=1"), "an already-set var is not duplicated");
+	assert.ok(wrapped2.includes("GH_NO_UPDATE_NOTIFIER=1"), "the remaining vars are still prepended");
+	assert.ok(wrapped2.endsWith(" CHECKPOINT_DISABLE=0 terraform version"));
+	await pi.handlers.session_shutdown(undefined, shutdownCtx());
 });
