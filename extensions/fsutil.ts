@@ -6,6 +6,7 @@
  * created on demand.
  */
 
+import { spawnSync } from "node:child_process";
 import {
 	existsSync,
 	mkdirSync,
@@ -39,6 +40,37 @@ export function projectKey(cwd: string): string {
 	return `--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`;
 }
 
+const canonicalProjectCache = new Map<string, string>();
+
+function canonicalProjectDir(cwd: string): string {
+	let dir = canonicalProjectCache.get(cwd);
+	if (dir === undefined) {
+		dir = linkedWorktreeMain(cwd) ?? cwd;
+		canonicalProjectCache.set(cwd, dir);
+	}
+	return dir;
+}
+
+// --git-dir and --git-common-dir resolve to the same directory only in the
+// main checkout; in a linked worktree the common dir is <main>/.git, whose
+// parent is the main checkout root.
+function linkedWorktreeMain(cwd: string): string | null {
+	const result = spawnSync("git", ["-C", cwd, "rev-parse", "--git-dir", "--git-common-dir"], {
+		encoding: "utf8",
+	});
+	if (result.status !== 0) return null;
+	const lines = result.stdout.trim().split("\n");
+	const raw = (i: number): string | undefined => lines[i]?.trim();
+	const gitDirRaw = raw(0);
+	const commonDirRaw = raw(1);
+	if (gitDirRaw === undefined || commonDirRaw === undefined) return null;
+	const resolve = (dir: string) => (path.isAbsolute(dir) ? dir : path.resolve(cwd, dir));
+	const gitDir = resolve(gitDirRaw);
+	const commonDir = resolve(commonDirRaw);
+	if (gitDir === commonDir || !existsSync(commonDir)) return null;
+	return path.dirname(commonDir);
+}
+
 /**
  * Per-project state root: ${TORUS_HOME:-~/.torus}/state/--<project>--/.
  *
@@ -59,7 +91,11 @@ export function projectStateDir(cwd?: string): string {
 		const pinned = process.env[TORUS_STATE_DIR_ENV];
 		if (pinned !== undefined && pinned.length > 0) return pinned;
 	}
-	const dir = path.join(torusHome(), "state", projectKey(cwd ?? process.cwd()));
+	const dir = path.join(
+		torusHome(),
+		"state",
+		projectKey(canonicalProjectDir(cwd ?? process.cwd())),
+	);
 	if (cwd === undefined) process.env[TORUS_STATE_DIR_ENV] = dir;
 	return dir;
 }

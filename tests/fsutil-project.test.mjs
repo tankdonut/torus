@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 
 const home = mkdtempSync(path.join(tmpdir(), "torus-fsutil-project-"));
 process.env["TORUS_HOME"] = home;
+delete process.env["TORUS_ENGINE_CHILD"];
+delete process.env["TORUS_STATE_DIR"];
 
 const fsutil = await import("../extensions/fsutil.ts");
 
@@ -28,10 +31,83 @@ test("projectKey mirrors pi's session directory scheme", () => {
 
 test("projectStateDir honors TORUS_HOME and defaults to process cwd", () => {
 	assert.equal(fsutil.projectStateDir("/a/b"), path.join(home, "state", "--a-b--"));
-	assert.equal(
-		fsutil.projectStateDir(),
-		path.join(home, "state", fsutil.projectKey(process.cwd())),
+	assert.equal(fsutil.projectStateDir(), fsutil.projectStateDir(process.cwd()));
+});
+
+function git(cwd, ...args) {
+	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+	assert.equal(result.status, 0, `git ${args.join(" ")} in ${cwd}: ${result.stderr}`);
+}
+
+function tempRepo(prefix) {
+	const root = mkdtempSync(path.join(tmpdir(), prefix));
+	const main = path.join(root, "main");
+	git(root, "init", "-q", main);
+	git(
+		main,
+		"-c",
+		"user.email=t@torus.test",
+		"-c",
+		"user.name=torus",
+		"-c",
+		"commit.gpgsign=false",
+		"commit",
+		"-q",
+		"--allow-empty",
+		"-m",
+		"x",
 	);
+	return { root, main };
+}
+
+test("projectStateDir keys a linked worktree on the main checkout", () => {
+	const { root, main } = tempRepo("torus-wt-key-");
+	try {
+		const wt = path.join(root, "wt");
+		git(main, "worktree", "add", wt, "-b", "topic");
+		const plain = path.join(root, "plain");
+		mkdirSync(plain);
+
+		const mainDir = fsutil.projectStateDir(main);
+		assert.equal(fsutil.projectStateDir(wt), mainDir);
+		assert.equal(mainDir, path.join(home, "state", fsutil.projectKey(main)));
+
+		const plainDir = fsutil.projectStateDir(plain);
+		assert.notEqual(plainDir, mainDir);
+		assert.equal(
+			plainDir,
+			path.join(home, "state", `--${plain.replace(/^\/+/, "").replaceAll("/", "-")}--`),
+		);
+		assert.equal(fsutil.projectStateDir(plain), plainDir);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("projectStateDir keeps the raw key for cwds in the main checkout", () => {
+	const { root, main } = tempRepo("torus-wt-sub-");
+	try {
+		const sub = path.join(main, "sub");
+		mkdirSync(sub);
+		assert.equal(fsutil.projectStateDir(sub), path.join(home, "state", fsutil.projectKey(sub)));
+		assert.equal(fsutil.projectStateDir(main), path.join(home, "state", fsutil.projectKey(main)));
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("worktree canonical lookup runs once per cwd (later calls stay canonical)", () => {
+	const { root, main } = tempRepo("torus-wt-cache-");
+	try {
+		const wt = path.join(root, "wt");
+		git(main, "worktree", "add", wt, "-b", "topic");
+		const first = fsutil.projectStateDir(wt);
+		rmSync(path.join(wt, ".git"), { force: true });
+		assert.equal(fsutil.projectStateDir(wt), first, "second call must not re-run git");
+		assert.equal(first, fsutil.projectStateDir(main));
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 test("readJsonFallback: legacy used only when new file is absent, null wins", () => {
