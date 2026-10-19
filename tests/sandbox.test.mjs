@@ -1099,3 +1099,150 @@ test("tool_call: telemetry opt-outs and policy env are prepended unless already 
 	assert.ok(wrapped2.endsWith(" CHECKPOINT_DISABLE=0 terraform version"));
 	await pi.handlers.session_shutdown(undefined, shutdownCtx());
 });
+
+function fakeSignRelay() {
+	return {
+		started: 0,
+		stopped: 0,
+		options: null,
+		wrapperScriptPath: "/tmp/torus-fake-sign-wrapper.mjs",
+		async start() {
+			this.started += 1;
+		},
+		async stop() {
+			this.stopped += 1;
+		},
+	};
+}
+
+function relayTestEnv(agentDir) {
+	process.env.TORUS_SANDBOX = "full";
+	process.env.TORUS_SANDBOX_SIGN = "relay";
+	process.env.SSH_AUTH_SOCK = "/run/user/1000/agent.sock";
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+}
+
+function restoreEnv(saved) {
+	for (const [key, value] of Object.entries(saved)) {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
+}
+
+test("sign relay: starts on the session scratch, seeds git config, stops on shutdown", async () => {
+	const saved = {
+		TORUS_SANDBOX: process.env.TORUS_SANDBOX,
+		TORUS_SANDBOX_SIGN: process.env.TORUS_SANDBOX_SIGN,
+		SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		CLAUDE_CODE_TMPDIR: process.env.CLAUDE_CODE_TMPDIR,
+	};
+	try {
+		relayTestEnv(mkdtempSync(path.join(tmpdir(), "sbx-relay-agent-")));
+		const manager = sandboxManagerFake();
+		const relay = fakeSignRelay();
+		const deps = {
+			...fakeDeps(manager),
+			startSignRelay: async (options) => {
+				relay.options = options;
+				return relay;
+			},
+		};
+		const pi = handlerPi();
+		await registerSandbox(pi, deps);
+		assert.equal(relay.started, 1);
+		assert.equal(
+			relay.options.scratchDir,
+			process.env.CLAUDE_CODE_TMPDIR,
+			"relay lives on the session scratch dir",
+		);
+		await pi.handlers.tool_call({
+			type: "tool_call",
+			toolName: "bash",
+			toolCallId: "sign-1",
+			input: { command: "git commit --allow-empty -m probe" },
+		});
+		const wrapped = manager.wrappedCommands[0];
+		assert.ok(wrapped.includes("GIT_CONFIG_KEY_0=gpg.ssh.program"));
+		assert.ok(wrapped.includes(relay.wrapperScriptPath));
+		assert.ok(wrapped.includes("GIT_CONFIG_VALUE_1=ssh"));
+		await pi.handlers.tool_call({
+			type: "tool_call",
+			toolName: "bash",
+			toolCallId: "sign-2",
+			input: { command: "node script.js" },
+		});
+		assert.ok(!manager.wrappedCommands[1].includes("GIT_CONFIG"), "non-git commands are not seeded");
+		pi.handlers.tool_result({ type: "tool_result", toolCallId: "sign-1", content: [] });
+		pi.handlers.tool_result({ type: "tool_result", toolCallId: "sign-2", content: [] });
+		await pi.handlers.session_shutdown(undefined, shutdownCtx());
+		assert.equal(relay.stopped, 1);
+	} finally {
+		restoreEnv(saved);
+	}
+});
+
+test("sign relay: enabled without a host agent it stays off", async () => {
+	const saved = {
+		TORUS_SANDBOX: process.env.TORUS_SANDBOX,
+		TORUS_SANDBOX_SIGN: process.env.TORUS_SANDBOX_SIGN,
+		SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		CLAUDE_CODE_TMPDIR: process.env.CLAUDE_CODE_TMPDIR,
+	};
+	try {
+		relayTestEnv(mkdtempSync(path.join(tmpdir(), "sbx-relay-agent-")));
+		delete process.env.SSH_AUTH_SOCK;
+		const manager = sandboxManagerFake();
+		const relay = fakeSignRelay();
+		const deps = {
+			...fakeDeps(manager),
+			startSignRelay: async (options) => {
+				relay.options = options;
+				return relay;
+			},
+		};
+		await registerSandbox(handlerPi(), deps);
+		assert.equal(relay.started, 0, "no agent on the host means no relay");
+	} finally {
+		restoreEnv(saved);
+	}
+});
+
+test("sign relay: off unless the knob or policy asks for it", async () => {
+	const saved = {
+		TORUS_SANDBOX: process.env.TORUS_SANDBOX,
+		TORUS_SANDBOX_SIGN: process.env.TORUS_SANDBOX_SIGN,
+		SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		CLAUDE_CODE_TMPDIR: process.env.CLAUDE_CODE_TMPDIR,
+	};
+	try {
+		process.env.TORUS_SANDBOX = "full";
+		delete process.env.TORUS_SANDBOX_SIGN;
+		process.env.SSH_AUTH_SOCK = "/run/user/1000/agent.sock";
+		process.env.PI_CODING_AGENT_DIR = mkdtempSync(path.join(tmpdir(), "sbx-relay-agent-"));
+		const manager = sandboxManagerFake();
+		const relay = fakeSignRelay();
+		const deps = {
+			...fakeDeps(manager),
+			startSignRelay: async (options) => {
+				relay.options = options;
+				return relay;
+			},
+		};
+		const pi = handlerPi();
+		await registerSandbox(pi, deps);
+		assert.equal(relay.started, 0);
+		await pi.handlers.tool_call({
+			type: "tool_call",
+			toolName: "bash",
+			toolCallId: "nosign-1",
+			input: { command: "git commit --allow-empty -m probe" },
+		});
+		assert.ok(!manager.wrappedCommands[0].includes("GIT_CONFIG"), "no relay means no git seeding");
+		await pi.handlers.session_shutdown(undefined, shutdownCtx());
+	} finally {
+		restoreEnv(saved);
+	}
+});

@@ -326,6 +326,16 @@ These notes describe the pinned `@anthropic-ai/sandbox-runtime`; `package.json` 
 - **git over SSH:** Pushes and fetches over SSH need the ssh-agent socket, a Unix socket the sandbox blocks; on Linux such sockets cannot be allowlisted by path. Use https remotes with the gh CLI.
 - **Upstream watch items:** srt #738 (Node's built-in fetch ignores the sandbox proxy); srt #714 (masked credentials can round-trip via request bodies); srt #654 (`/tmp/claude` is shared across concurrent sandboxes).
 
+#### SSH commit signing relay
+
+Sandboxed `git` cannot reach `ssh-agent` (Unix sockets are blocked; see the srt behavior notes), so ssh-format commit signing fails inside the sandbox unless the opt-in relay is on.
+
+- **Enable:** user-level policy `{"torus":{"sandbox":{"sign":{"relay":true}}}}` in the settings file resolved from `$PI_CODING_AGENT_DIR` (default `~/.pi/agent/settings.json`), or `TORUS_SANDBOX_SIGN=relay`. A trusted project layer may enable it too; `TORUS_SANDBOX_SIGN=off` forces it off.
+- **Requires:** an agent on the host (`SSH_AUTH_SOCK`). With the private key in the agent, `user.signingKey` can reference the public key.
+- **Mechanics:** wrapped `git` commands carry `GIT_CONFIG_*` env naming a generated wrapper as `gpg.ssh.program` and setting `gpg.format` to `ssh`; whether commits sign at all stays with the user's own `commit.gpgsign`. The wrapper relays the buffer to a host-side watcher that signs with the real agent via `ssh-keygen -Y sign` and returns the detached signature, so key material never enters the sandbox. Relay state lives on the session's private scratch dir and is torn down when the session ends.
+- **Tradeoff:** the relay is a signing oracle for sandboxed code, equivalent in exposure to a forwarded agent socket. That is why it is opt-in.
+- Push and fetch over SSH remain blocked; https remotes plus the `gh` CLI are the supported path.
+
 ### `approval`
 
 Trust-on-denial UX for the sandbox network allowlist.

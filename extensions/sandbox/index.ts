@@ -54,6 +54,7 @@ import {
 	type ResolvedSandboxPolicy,
 	type SandboxWritableRoot,
 } from "./policy.js";
+import { startSignRelay, type SignRelay, type SignRelayOptions } from "./sign-relay.js";
 
 export type SandboxMode = "off" | "full";
 
@@ -312,6 +313,8 @@ export interface SandboxDeps {
 	probe(): Promise<{ errors: string[] }>;
 	/** Hosts the user already trusted for this project (persisted approval). */
 	seededHosts?(): string[];
+	/** Sign-relay factory (tests inject a fake). */
+	startSignRelay?(options: SignRelayOptions): Promise<SignRelay>;
 }
 
 export interface SandboxState {
@@ -457,6 +460,57 @@ function maybeReloadTrustedPolicy(): void {
 		activeSeededHosts?.() ?? [],
 	);
 	activeManager.updateConfig(lastConfig);
+}
+
+/** TORUS_SANDBOX_SIGN beats the policy knob so operators can force either way. */
+function signRelayEnabled(): boolean {
+	const knob = (process.env["TORUS_SANDBOX_SIGN"] ?? "").trim().toLowerCase();
+	if (knob === "relay") return true;
+	if (knob === "0" || knob === "off") return false;
+	return activePolicy?.signRelay ?? false;
+}
+
+async function maybeStartSignRelay(deps: SandboxDeps): Promise<void> {
+	if (activeSignRelay !== null) return;
+	if (!signRelayEnabled()) return;
+	const scratch = process.env["CLAUDE_CODE_TMPDIR"];
+	if (!scratch) return;
+	if (!process.env["SSH_AUTH_SOCK"]) {
+		process.stderr.write(
+			"[torus: sandbox] sign relay disabled (no ssh-agent on the host) — TORUS_SANDBOX_SIGN=off silences this\n",
+		);
+		return;
+	}
+	try {
+		const relay = await (deps.startSignRelay ?? startSignRelay)({ scratchDir: scratch });
+		await relay.start();
+		activeSignRelay = relay;
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		process.stderr.write(`[torus: sandbox] sign relay failed to start: ${reason}\n`);
+	}
+}
+
+function firstMeaningfulToken(command: string): string {
+	for (const token of command.trim().split(/\s+/)) {
+		if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) return token;
+	}
+	return "";
+}
+
+function wrapEnvExtras(command: string): Record<string, string> {
+	const extra = { ...(activePolicy?.env ?? {}) };
+	if (activeSignRelay && firstMeaningfulToken(command) === "git") {
+		// Env-carried git config overrides repo/user config without touching
+		// files; it names the signing program and format only — signing itself
+		// stays governed by the user's own commit.gpgsign setting.
+		extra["GIT_CONFIG_COUNT"] = "2";
+		extra["GIT_CONFIG_KEY_0"] = "gpg.ssh.program";
+		extra["GIT_CONFIG_VALUE_0"] = activeSignRelay.wrapperScriptPath;
+		extra["GIT_CONFIG_KEY_1"] = "gpg.format";
+		extra["GIT_CONFIG_VALUE_1"] = "ssh";
+	}
+	return extra;
 }
 
 /** Policy exemptions (user layer): raw command prefixes that skip the sandbox. */
@@ -612,7 +666,7 @@ function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 		const commandId = randomCommandId();
 		try {
 			const wrapped = await manager.wrapWithSandbox(
-				prefixEnvVars(command, activePolicy?.env ?? {}),
+				prefixEnvVars(command, wrapEnvExtras(command)),
 				undefined,
 				installWriteWidening(command),
 				undefined,
@@ -655,6 +709,9 @@ function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		setSandboxStatus(ctx, undefined);
+		const relay = activeSignRelay;
+		activeSignRelay = null;
+		if (relay) void relay.stop();
 		const manager = activeManager;
 		if (!manager) return undefined;
 		activeManager = null;
@@ -670,6 +727,7 @@ const defaultDeps: SandboxDeps = {
 	manager: SandboxManager,
 	probe: () => SandboxManager.checkDependenciesAsync(),
 	seededHosts: () => readPersistedHosts(process.cwd()),
+	startSignRelay: (options) => startSignRelay(options),
 };
 
 let lastConfig: SandboxRuntimeConfig | null = null;
@@ -678,6 +736,7 @@ let lastConfig: SandboxRuntimeConfig | null = null;
 let activePolicy: ResolvedSandboxPolicy | null = null;
 let policyLoadedTrusted = false;
 let activeSeededHosts: (() => string[]) | undefined;
+let activeSignRelay: SignRelay | null = null;
 
 type ApprovalDecision =
 	| { kind: "allow" }
@@ -772,6 +831,7 @@ export async function registerSandbox(
 	shared.state = await activationPromise;
 	if (lastCtx) setSandboxStatus(lastCtx, chipText(shared.state));
 	if (shared.state.active) activeManager = deps.manager;
+	await maybeStartSignRelay(deps);
 }
 
 export default function sandboxExtension(pi: ExtensionAPI): void {
