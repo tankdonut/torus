@@ -201,39 +201,65 @@ function toolOutput(result: WorktreeResult) {
 	};
 }
 
+export interface SetupOutcome {
+	label: string;
+	ok: boolean;
+}
+
+/** Run one setup step, turning a failure into a label that says so (exit
+ * codes and stderr tail included) — a silent "npm ci" on a broken install
+ * has sent agents into worktrees with no node_modules. */
+async function runSetupStep(
+	cmd: string,
+	args: string[],
+	cwd: string,
+	signal: AbortSignal | undefined,
+	label: string,
+): Promise<SetupOutcome> {
+	const res = await runProcess(cmd, args, { cwd, signal });
+	if (res.ok) return { label, ok: true };
+	const tail = res.stderr
+		.split("\n")
+		.map((l) => l.trim())
+		.filter((l) => l.length > 0)
+		.slice(-3)
+		.join(" | ");
+	return { label: `${label} failed (${tail.length > 0 ? tail : "no stderr output"})`, ok: false };
+}
+
 /** Dependency setup in a freshly created worktree: explicit override wins, else detect. */
 async function setupDependencies(
 	wtPath: string,
 	setupCommand?: string,
 	signal?: AbortSignal,
-): Promise<string> {
+): Promise<SetupOutcome> {
 	if (setupCommand !== undefined && setupCommand.length > 0) {
-		await runProcess("bash", ["-c", setupCommand], { cwd: wtPath, signal });
-		return "ran setup command";
+		return runSetupStep("bash", ["-c", setupCommand], wtPath, signal, "setup command");
 	}
 	const exists = (f: string) => existsSync(path.join(wtPath, f));
 	if (exists("go.mod")) {
-		await runProcess("go", ["mod", "download"], { cwd: wtPath, signal });
-		return "go mod download";
+		return runSetupStep("go", ["mod", "download"], wtPath, signal, "go mod download");
 	}
 	if (exists("package.json")) {
 		const args = exists("package-lock.json") ? ["ci"] : ["install"];
-		await runProcess("npm", args, { cwd: wtPath, signal });
-		return `npm ${args[0]}`;
+		return runSetupStep("npm", args, wtPath, signal, `npm ${args[0]}`);
 	}
 	if (exists("Cargo.toml")) {
-		await runProcess("cargo", ["fetch"], { cwd: wtPath, signal });
-		return "cargo fetch";
+		return runSetupStep("cargo", ["fetch"], wtPath, signal, "cargo fetch");
 	}
 	if (exists("uv.lock") || exists("pyproject.toml")) {
-		await runProcess("uv", ["sync"], { cwd: wtPath, signal });
-		return "uv sync";
+		return runSetupStep("uv", ["sync"], wtPath, signal, "uv sync");
 	}
 	if (exists("requirements.txt")) {
-		await runProcess("pip", ["install", "-r", "requirements.txt"], { cwd: wtPath, signal });
-		return "pip install -r requirements.txt";
+		return runSetupStep(
+			"pip",
+			["install", "-r", "requirements.txt"],
+			wtPath,
+			signal,
+			"pip install -r requirements.txt",
+		);
 	}
-	return "no recognized dependency manifest — skipped setup";
+	return { label: "no recognized dependency manifest — skipped setup", ok: true };
 }
 
 export async function performCreate(
@@ -251,9 +277,15 @@ export async function performCreate(
 	const add = await runGit(repoRoot, ["worktree", "add", wtPath, "-b", branch, base]);
 	if (!add.ok) return { ok: false, error: `git worktree add failed: ${add.stderr}` };
 	const setup = await setupDependencies(wtPath, opts?.setupCommand, opts?.signal);
+	if (!setup.ok) {
+		return {
+			ok: true,
+			message: `worktree created at ${wtPath} (branch ${branch}, base ${base}) but DEPENDENCY SETUP FAILED: ${setup.label}. Fix setup and re-run it before the baseline test suite — tests cannot run without dependencies.`,
+		};
+	}
 	return {
 		ok: true,
-		message: `worktree ready: ${wtPath} (branch ${branch}, base ${base}; setup: ${setup}). Run the baseline test suite before starting work — a dirty baseline makes every later failure ambiguous.`,
+		message: `worktree ready: ${wtPath} (branch ${branch}, base ${base}; setup: ${setup.label}). Run the baseline test suite before starting work — a dirty baseline makes every later failure ambiguous.`,
 	};
 }
 

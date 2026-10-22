@@ -76,6 +76,25 @@ test("worktrees live outside the repo under TORUS_WORKTREES_ROOT/--<project-key>
 	await performRemove(repo, "feat/location");
 });
 
+test("performCreate reports a failed setup command instead of implying success", async () => {
+	const res = await performCreate(repo, "feat/setup-fail", {
+		setupCommand: "echo boom >&2; exit 3",
+	});
+	assert.equal(res.ok, true, JSON.stringify(res));
+	assert.match(res.message, /DEPENDENCY SETUP FAILED/);
+	assert.match(res.message, /setup command failed \(boom\)/);
+	assert.ok(!/worktree ready/.test(res.message));
+	await performRemove(repo, "feat/setup-fail", { force: true });
+});
+
+test("performCreate reports a successful setup command as ready", async () => {
+	const res = await performCreate(repo, "feat/setup-ok", { setupCommand: "true" });
+	assert.equal(res.ok, true, JSON.stringify(res));
+	assert.match(res.message, /worktree ready/);
+	assert.match(res.message, /setup: setup command/);
+	await performRemove(repo, "feat/setup-ok", { force: true });
+});
+
 test("worktreeRoot keys by the canonical project identity, not the bare basename", () => {
 	assert.equal(worktreeRoot(repo), canonicalRoot);
 	assert.notEqual(worktreeRoot(repo), legacyRoot);
