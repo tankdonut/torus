@@ -1,8 +1,16 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
   ],
+  "minimumReleaseAge": "7 days",
+  "vulnerabilityAlerts": {
+    "labels": ["security"]
+  },
+  "lockFileMaintenance": {
+    "enabled": true
+  },
   "reviewers": [
     "tankdonut"
   ],
@@ -10,9 +18,15 @@
   "automergeStrategy": "squash",
   "packageRules": [
     {
-      "matchManagers": ["asdf"],
-      "matchDatasources": ["node-version", "bun-version"],
-      "minimumReleaseAge": "3 days"
+      "description": "Collapse non-major dev-dependency updates into one PR; engine pins stay separate.",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "excludePackageNames": [
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-coding-agent",
+        "@earendil-works/pi-tui"
+      ],
+      "groupName": "devDependencies (non-major)"
     },
     {
       "matchDatasources": ["node-version"],

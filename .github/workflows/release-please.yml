@@ -10,7 +10,12 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v5
+      - name: Refuse to run outside tankdonut/torus
+        if: github.repository != 'tankdonut/torus'
+        run: |
+          echo "::error::release workflow copied to ${GITHUB_REPOSITORY}"
+          exit 1
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         id: release
       - name: Dispatch ci at the release tag
         if: steps.release.outputs.release_created == 'true'
