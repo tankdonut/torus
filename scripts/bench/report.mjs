@@ -404,7 +404,7 @@ function historySection(rollup, meta, history) {
  * @param {Array<{meta: Record<string, unknown>, records: Array<Record<string, unknown>>}>} history
  * @param {string} model
  */
-function prevModelTotals(history, model) {
+export function prevModelTotals(history, model) {
 	for (const run of [...history].reverse()) {
 		const rm = run.meta ?? {};
 		const models = Array.isArray(rm.models) ? rm.models : [];
@@ -464,7 +464,7 @@ const SUMMARY_HEAD = ["model", "field", "stock", "torus", "Δ overhead", "Δ cha
  * @param {Array<{meta: Record<string, unknown>, records: Array<Record<string, unknown>>}>} history
  * @returns {string[]}
  */
-function summaryMarkdown(rollup, meta, history) {
+export function summaryMarkdown(rollup, meta, history) {
 	const rows = summaryRows(rollup, history);
 	if (rows.length === 0) return [];
 	const table = [SUMMARY_HEAD.slice()];

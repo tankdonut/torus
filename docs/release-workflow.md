@@ -63,6 +63,14 @@ Configuration essentials:
 
 **Changelog:** release-please maintains a generated `CHANGELOG.md` in-repo as part of each Release PR and mirrors it into the Release body. Generated, never hand-edited; hand-maintained changelogs rot.
 
+**[DECISION] Overhead bench gate on Release PRs (`bench-gate`).** The bench gates Release PRs, not feature PRs: overhead regressions accumulate across many commits, and the Release PR is the checkpoint where you cut. A `bench-gate` workflow (`.github/workflows/bench-gate.yml`) triggers on PRs titled `chore(main): release` (or labeled `autorelease: pending`), the signature of this repo's Release PRs. It runs the documented overhead bench (`docs/efficiency.md`) on the PR head, whose `package.json` already carries the release version, so the recorded run self-labels. The run needs `ZAI_API_KEY` in repo secrets and spends the same model calls a local bench run does. It appends the run to a workspace copy of the sidecar; nothing commits.
+
+The gate itself is `npm run bench:gate` (`scripts/bench/gate.mjs`): it compares the new run with each model's prior comparable recorded run and fails when a gated delta regresses beyond tolerance. Summary and verdict tables land as a PR comment; the workflow's check carries the exit code. Override is a human call: merge with the failed check and say why in the PR.
+
+Gated fields are cache read and cost, the engine-normalized structural signals (each run pairs torus with stock on the same engine pin, so engine-pin bumps between runs do not fake a regression). Tolerances are a relative share of the prior delta plus an absolute floor; current values live in `GATE_TOLERANCE` in `scripts/bench/gate.mjs`, the single source of truth. Tokens in, turns, and wall-clock stay ungated: they move with task behavior and network jitter.
+
+Recording runs stays manual: re-run the bench at each release and commit the sidecar, HTML report, and pasted numbers as `docs: publish X.Y.Z overhead bench numbers`. The gate compares against whatever run is recorded last, so a stale recording widens the comparison window without breaking the gate.
+
 ## 5. Release job: what CI does on `v*` tag push
 
 One trigger-chain fact drives this design: release-please creates the tag with the default `GITHUB_TOKEN`, and events created by `GITHUB_TOKEN` do not start workflow runs, so the tag push does **not** fire `ci.yml`'s bare `on: push` by itself. Without a bridge, the release below silently no-ops: no binaries attached, and the versioned `X.Y.Z`/`X.Y` GHCR tags never push (the container pipeline would keep firing on main pushes only).
