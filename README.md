@@ -35,7 +35,7 @@ chmod +x torus-<os>-<arch> && ./torus-<os>-<arch>
 docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus
 ```
 
-**From source** (contributor path). You need Node >= 22.12; tmux is optional, since delegation panes only appear inside tmux:
+**From source** (contributor path). You need Node >= 22.12. Platform support is declared per extension, so on other platforms unsupported extensions skip loading with a notice instead of failing later; see [docs/extensions.md](docs/extensions.md). tmux is optional, since delegation panes only appear inside tmux:
 
 ```sh
 git clone https://github.com/tankdonut/torus.git && cd torus

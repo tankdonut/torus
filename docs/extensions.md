@@ -622,6 +622,20 @@ Two more chips: a warning `delegate ×N` chip while `torus_delegate` executions 
 
 On `session_start` (interactive only) the same extension swaps pi's built-in startup header for a torus banner: the torus mark (a brand-teal ring with an amber glint, six half-block cells over two lines in the geometry of pi's own logo; terminals that misalign half blocks, Apple Terminal among them, get the `torus` text wordmark instead) with the payload and engine versions in the same shape `torus --version` prints, the engine's compact keybinding hints rebuilt through `keyHint`/`keyText` from the live keybinding config, and an onboarding line pointing at both torus and pi. `ctrl+o` keeps working because the component implements `setExpanded`: the expanded view adds the fleet row (`/roster`, `/doctor`, `alt+t`) and the launcher row (`torus serve`, `torus acp-agent`, `torus --help`) above the engine's full keybinding sheet. `quietStartup: true` leaves the header silenced, `quietStartup: "header"` drops the loaded-resources suffix, and `TORUS_BANNER=0` restores pi's own header. The hint rows mirror the engine's built-in header lists and follow the pinned engine, so pin bumps should re-check them.
 
+## Platform support
+
+Every torus extension declares its platforms and external binaries in an exported `PLATFORM_SUPPORT` descriptor. The default export gates on it before registering anything: on an unsupported platform the extension registers nothing, records the decision, and prints one stderr notice like `[torus: platform] interactive skipped on darwin`.
+
+The descriptors are the single source of truth for platform support. `/doctor` renders the live view: loaded count, skips, and required binaries missing from `PATH`. A contract test fails the build when an extension ships without a declaration. This page keeps no per-extension platform matrix, so it cannot drift from the descriptors.
+
+- Vocabulary: `linux`, `darwin`, `win32`.
+- `deps` entries are diagnostic metadata. `/doctor` probes required ones; nothing gates loading on them.
+- `TORUS_PLATFORM` overrides detection for tests and simulation. Invalid values warn and fall back to the host platform.
+- Skips are announced once per extension per process. There is no silencer.
+- External packages under `node_modules` are never gated. torus cannot annotate their internals.
+- `torus serve` and `torus acp-agent` run outside the manifest. `serve` applies the same gate at startup and exits when unsupported.
+- Shared modules stay cross-platform. Their platform-sensitive behavior surfaces as optional deps on the owning extension, `tmux` under `roster` for example.
+
 ## Shared modules
 
 | Module | Provides | Consumers |
@@ -637,6 +651,7 @@ On `session_start` (interactive only) the same extension swaps pi's built-in sta
 | `extensions/transcript.ts` | Session transcript location/parsing, live tail | browser |
 | `extensions/fleet/theme-kit.ts` | Shared fleet rendering (colors, spinner, tokens, icons) | browser, fleet, notify, roster |
 | `extensions/hashline/core.ts` | Anchor hashing/parsing/edit semantics | hashline |
+| `extensions/platform.ts` | Platform vocabulary, `PLATFORM_SUPPORT` and `GateDecision` types, `currentPlatform()` honoring `TORUS_PLATFORM`, `gateExtension()` load gate recording decisions on a shared slot with one-time skip notices, `platformDecisions()` for `/doctor`; never throws | every extension module, doctor |
 
 ## Child set
 
