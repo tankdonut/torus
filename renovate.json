@@ -18,17 +18,6 @@
   "automergeStrategy": "squash",
   "packageRules": [
     {
-      "description": "Collapse non-major dev-dependency updates into one PR; engine pins stay separate.",
-      "matchDepTypes": ["devDependencies"],
-      "matchUpdateTypes": ["patch", "minor"],
-      "excludePackageNames": [
-        "@earendil-works/pi-ai",
-        "@earendil-works/pi-coding-agent",
-        "@earendil-works/pi-tui"
-      ],
-      "groupName": "devDependencies (non-major)"
-    },
-    {
       "matchDatasources": ["node-version"],
       "commitMessagePrefix": "chore(deps): "
     },
