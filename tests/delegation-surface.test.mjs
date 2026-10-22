@@ -172,7 +172,7 @@ writeFileSync(
 	[
 		"#!/bin/sh",
 		'case "$*" in *"--mode rpc"*) exit 0 ;; esac',
-		"echo '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"steady\"}],\"usage\":{\"input\":10,\"output\":20}}}'",
+		'echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"steady"}],"usage":{"input":10,"output":20}}}\'',
 		"exec sleep 10",
 		"",
 	].join("\n"),
@@ -314,9 +314,7 @@ test("delegation stopped from the fleet view reports interrupted, never retries 
 		);
 		let record;
 		for (let i = 0; i < 500 && record === undefined; i++) {
-			record = registry
-				.listDelegations()
-				.find((r) => r.status === "running" && r.turns >= 1);
+			record = registry.listDelegations().find((r) => r.status === "running" && r.turns >= 1);
 			if (record === undefined) await new Promise((resolve) => setTimeout(resolve, 10));
 		}
 		assert.ok(record, "delegation never reached a running first turn");
@@ -336,10 +334,7 @@ test("delegation stopped from the fleet view reports interrupted, never retries 
 	assert.deepEqual(results[0].content, [{ type: "text", text: "builder stopped" }]);
 	assert.equal(results[0].details.stopped, true);
 	assert.equal(results[0].details.ok, false);
-	assert.equal(
-			registry.listDelegations().find((r) => r.handle === "stoppable")?.status,
-			"failed",
-	);
+	assert.equal(registry.listDelegations().find((r) => r.handle === "stoppable")?.status, "failed");
 	registry.setCustomSender(() => {});
 });
 

@@ -215,10 +215,7 @@ test("rehydrates from both the project state logs dir and the legacy flat dir", 
 test("stopped run rehydrates with its stop flag from the log marker", () => {
 	registry.resetRegistryForTesting();
 	const name = `rehy-${STAMP}-s`;
-	const file = path.join(
-		LOGS,
-		`${name}.log`,
-	);
+	const file = path.join(LOGS, `${name}.log`);
 	writeFileSync(
 		file,
 		[
