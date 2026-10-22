@@ -740,6 +740,7 @@ Engine-owned configuration torus users can ride directly; torus's own code touch
 | `TORUS_STATE_DIR` | fsutil | Exported in every torus process (main session, delegated children, team members): this project's state root, so skills, prompts, and bash commands use `$TORUS_STATE_DIR/…` instead of hand-derived dashed keys. Main sessions compute it from cwd (kept fresh); engine children treat the inherited value as authoritative (the dispatching session pins them to its root, so `$TORUS_STATE_DIR` paths and ledger appends land in the dispatching project even from a worktree cwd). Explicit-cwd resolution (sandbox hosts) always computes fresh, and delegation logs land in the dispatching session's root: a child running in another cwd never grows its own state dir. Tool output abbreviates state paths to `$TORUS_STATE_DIR/…` (`$TORUS_HOME/…` for other projects') via `displayPath` |
 | `TORUS_TMUX=0` | registry | Disable delegation tmux panes |
 | `TORUS_NOTIFY=0` | osnotify | Disable desktop notifications |
+| `TORUS_PLATFORM` | platform | Force platform detection (`linux`/`darwin`/`win32`) for the extension load gate; invalid values warn and fall back to the host platform |
 | `TORUS_GUARDS=0` / `TORUS_MAX_TOOL_OUTPUT` | guards | Disable guards / output truncation cap (default 16000) |
 | `TORUS_HASHLINE=0` / `TORUS_FMT_CMD` | hashline | Disable anchoring / post-edit formatter command |
 | `TORUS_INTERACTIVE=0` | interactive | Disable `interactive_bash` overlay |
