@@ -353,7 +353,7 @@ Headless sessions and delegated children auto-deny; dialog timeout 120 s ⇒ den
 
 One-command health check.
 
-- **Commands:** `/doctor`: engine pin drift vs the `package.json` pin, provider auth (`auth.json`), default provider, MCP wiring, LSP binary, `sg` (ast-grep), tmux, git identity, `~/.torus` writability, and a read-only `state-layout` scan for legacy flat-state residue; each check reports ok/warn/fail
+- **Commands:** `/doctor`: engine pin drift vs the `package.json` pin, provider auth (`auth.json`), default provider, MCP wiring, LSP binary, `sg` (ast-grep), tmux, git identity, `~/.torus` writability, platform support decisions, and a read-only `state-layout` scan for legacy flat-state residue; each check reports ok/warn/fail
 
 No tools or hooks.
 

@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { torusHome } from "../fsutil.js";
-import { gateExtension, type PlatformSupport } from "../platform.js";
+import { gateExtension, type PlatformSupport, platformDecisions } from "../platform.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin", "win32"],
@@ -71,6 +71,47 @@ export function sandboxCheck(): CheckResult {
 		status: "warn",
 		detail: `requested full but running unsandboxed (${deps})`,
 	};
+}
+
+/**
+ * Report on the recorded platform gate decisions: how many extensions loaded,
+ * which skipped on this platform, and whether any loaded extension is missing
+ * a required dep binary. Read-only; never throws — a doctor crash is worse
+ * than a missing check.
+ */
+export function platformCheck(): CheckResult {
+	try {
+		const decisions = platformDecisions();
+		if (decisions.length === 0) {
+			return { name: "platform", status: "ok", detail: "no gate decisions recorded" };
+		}
+		const skipped = decisions.filter((decision) => decision.loaded === false);
+		const loaded = decisions.length - skipped.length;
+		const platform = decisions[0]?.platform ?? "unknown";
+		const missing: string[] = [];
+		for (const decision of decisions) {
+			if (!decision.loaded) continue;
+			for (const dep of decision.support?.deps ?? []) {
+				if (dep?.required !== true || typeof dep.name !== "string") continue;
+				if (!which(dep.name)) missing.push(`${dep.name} (${decision.name})`);
+			}
+		}
+		let detail = `${loaded} loaded`;
+		if (skipped.length > 0) {
+			const names = skipped.map((decision) => decision.name).join(", ");
+			detail += `, ${skipped.length} skipped on ${platform}: ${names}`;
+		} else if (missing.length === 0) {
+			detail += `, 0 skipped (${platform})`;
+		}
+		if (missing.length > 0) {
+			const noun = missing.length === 1 ? "dep" : "deps";
+			detail += `; ${missing.length} required ${noun} missing: ${missing.join(", ")}`;
+		}
+		const status: CheckResult["status"] = skipped.length > 0 || missing.length > 0 ? "warn" : "ok";
+		return { name: "platform", status, detail };
+	} catch (err) {
+		return { name: "platform", status: "warn", detail: `scan failed: ${String(err)}` };
+	}
 }
 
 export function torusVersionCheck(pinnedVersion: string): CheckResult {
@@ -251,6 +292,8 @@ export function runDoctorChecks(
 	}
 
 	checks.push(sandboxCheck());
+
+	checks.push(platformCheck());
 
 	checks.push(stateLayoutCheck());
 
