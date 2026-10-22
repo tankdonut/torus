@@ -44,6 +44,12 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { projectKey, torusHome } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin", "win32"],
+	deps: [{ name: "git", required: true }],
+};
 
 const STATUS_KEY = "torus:worktree";
 let activeBranch: string | null = null;
@@ -461,6 +467,7 @@ export async function performMerge(
 }
 
 export default function worktreesExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("worktrees", PLATFORM_SUPPORT)) return;
 	if (process.env["TORUS_ENGINE_CHILD"] === "1") return;
 
 	pi.registerTool(

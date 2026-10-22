@@ -15,6 +15,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { parseFrontmatter } from "../frontmatter.js";
 import { readJson, splitList, torusHome, writeJson } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	gcReflectState,
 	readReflectState,
@@ -29,6 +30,11 @@ import {
 	recentLogFiles,
 } from "../registry.js";
 import { gitEnv } from "../worktrees/index.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin", "win32"],
+	deps: [{ name: "git", required: true }],
+};
 
 const MEMORY_ROOT = path.join(torusHome(), "memory");
 const ENTRIES_DIR = path.join(MEMORY_ROOT, "entries");
@@ -1208,5 +1214,6 @@ export function registerMemory(pi: ExtensionAPI): void {
 }
 
 export default function memoryExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("memory", PLATFORM_SUPPORT)) return;
 	registerMemory(pi);
 }

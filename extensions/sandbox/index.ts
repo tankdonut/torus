@@ -50,12 +50,26 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { readPersistedHosts } from "../approval/index.js";
 import { torusHome } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	loadSandboxPolicy,
 	type ResolvedSandboxPolicy,
 	type SandboxWritableRoot,
 } from "./policy.js";
 import { type SignRelay, type SignRelayOptions, startSignRelay } from "./sign-relay.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux"],
+	deps: [
+		{
+			name: "bwrap",
+			required: false,
+			note: "full sandbox mode only; degrades to unsandboxed with notice",
+		},
+		{ name: "socat", required: false, note: "full sandbox mode only" },
+	],
+	note: "darwin Seatbelt via srt unverified; win32 unsupported; sign-relay may invoke ssh-keygen for ssh signing",
+};
 
 export type SandboxMode = "off" | "full";
 
@@ -922,5 +936,6 @@ export async function registerSandbox(
 }
 
 export default function sandboxExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("sandbox", PLATFORM_SUPPORT)) return;
 	void registerSandbox(pi);
 }
