@@ -12,12 +12,8 @@ import { after, test } from "node:test";
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-rehydrate-test-"));
 process.env.TORUS_HOME = HOME;
 const LOGS = path.join(HOME, "logs");
-const PROJECT_LOGS = path.join(
-	HOME,
-	"state",
-	`--${process.cwd().replace(/^\/+/, "").replaceAll("/", "-")}--`,
-	"logs",
-);
+const { projectKeyFor } = await import("../extensions/fsutil.ts");
+const PROJECT_LOGS = path.join(HOME, "state", projectKeyFor(process.cwd()), "logs");
 const STAMP = Date.now().toString(36);
 
 const registry = await import("../extensions/registry.ts");

@@ -9,10 +9,10 @@ process.env["TORUS_HOME"] = home;
 
 const todo = await import("../extensions/todo/index.ts");
 const { sessionFileExists } = await import("../extensions/sessions/index.ts");
+const { projectKeyFor } = await import("../extensions/fsutil.ts");
 
 function todoDir() {
-	const dashed = process.cwd().replace(/^\/+/, "").replaceAll("/", "-");
-	return path.join(home, "state", `--${dashed}--`, "todo");
+	return path.join(home, "state", projectKeyFor(process.cwd()), "todo");
 }
 
 function newFile(sessionId) {

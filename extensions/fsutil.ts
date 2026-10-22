@@ -40,6 +40,18 @@ export function projectKey(cwd: string): string {
 	return `--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`;
 }
 
+/**
+ * Canonical project key for any checkout: a linked-worktree cwd keys on its
+ * MAIN checkout root, so paths derived from this key are identical from the
+ * main checkout and from every worktree of the same repo. Tests and callers
+ * computing expected state paths MUST use this (or projectStateDir), never a
+ * key re-derived from raw cwd — the raw key diverges inside worktrees and
+ * has repeatedly produced phantom look-alike state dirs.
+ */
+export function projectKeyFor(cwd: string): string {
+	return projectKey(canonicalProjectDir(cwd));
+}
+
 const canonicalProjectCache = new Map<string, string>();
 
 function canonicalProjectDir(cwd: string): string {
@@ -71,6 +83,12 @@ function linkedWorktreeMain(cwd: string): string | null {
 	return path.dirname(commonDir);
 }
 
+/** True when `dir` is the torus home itself or lives underneath it. */
+function isUnderHome(dir: string): boolean {
+	const home = torusHome();
+	return dir === home || dir.startsWith(`${home}${path.sep}`);
+}
+
 /**
  * Per-project state root: ${TORUS_HOME:-~/.torus}/state/--<project>--/.
  *
@@ -81,21 +99,22 @@ function linkedWorktreeMain(cwd: string): string | null {
  * Resolution: engine children (TORUS_ENGINE_CHILD=1, set by engineChildEnv)
  * treat the inherited value as authoritative — the dispatching session pinned
  * them to its root, so `$TORUS_STATE_DIR/…` paths and ledger appends land in
- * the dispatching project even from a worktree cwd. Main sessions recompute
- * from cwd on every call (a stale value never survives). Explicit-cwd calls
- * (child-log keying, sandbox hosts) always compute fresh and never touch the
- * env.
+ * the dispatching project even from a worktree cwd. The pin is honored only
+ * while it sits under the CURRENT torusHome(): a value pinned under a
+ * different home (a test sandbox overriding TORUS_HOME, a nested run) is
+ * stale for this process and must not leak real state paths into it. Main
+ * sessions recompute from cwd on every call (a stale value never survives).
+ * Explicit-cwd calls (child-log keying, sandbox hosts) always compute fresh
+ * and never touch the env.
  */
 export function projectStateDir(cwd?: string): string {
 	if (cwd === undefined && process.env["TORUS_ENGINE_CHILD"] === "1") {
 		const pinned = process.env[TORUS_STATE_DIR_ENV];
-		if (pinned !== undefined && pinned.length > 0) return pinned;
+		if (pinned !== undefined && pinned.length > 0 && isUnderHome(pinned)) {
+			return pinned;
+		}
 	}
-	const dir = path.join(
-		torusHome(),
-		"state",
-		projectKey(canonicalProjectDir(cwd ?? process.cwd())),
-	);
+	const dir = path.join(torusHome(), "state", projectKeyFor(cwd ?? process.cwd()));
 	if (cwd === undefined) process.env[TORUS_STATE_DIR_ENV] = dir;
 	return dir;
 }

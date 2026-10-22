@@ -25,8 +25,7 @@ const repo = mkdtempSync(path.join(tmpdir(), "torus-wt-repo-"));
 process.env["TORUS_WORKTREES_ROOT"] = WT_ROOT;
 process.env["TORUS_HOME"] = HOME_SANDBOX;
 
-// mirrors fsutil's projectKey: absolute cwd with "/"→"-", wrapped in "--"
-const projectKey = (cwd) => `--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`;
+const { projectKey } = await import("../extensions/fsutil.ts");
 const canonicalRoot = path.join(WT_ROOT, projectKey(repo));
 const legacyRoot = path.join(WT_ROOT, path.basename(repo));
 

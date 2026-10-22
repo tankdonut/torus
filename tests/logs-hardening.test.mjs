@@ -10,12 +10,11 @@ const HOME = mkdtempSync(path.join(tmpdir(), "torus-logs-perms-"));
 process.env["TORUS_HOME"] = HOME;
 
 const registry = await import("../extensions/registry.ts");
+const { projectKeyFor } = await import("../extensions/fsutil.ts");
 
 after(() => {
 	rmSync(HOME, { recursive: true, force: true });
 });
-
-const projectKeyFor = (cwd) => `--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`;
 
 test("delegation log surface: project dir 0700, log file 0600, steer text redacted", () => {
 	const id = `perm-${Date.now()}`;

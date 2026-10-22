@@ -14,6 +14,9 @@ process.env.TORUS_NOTIFY = "0";
 
 const registry = await import("../extensions/registry.ts");
 const monitor = await import("../extensions/monitor/index.ts");
+// canonical project key (linked worktrees key on the main checkout) — the
+// same derivation production uses, never a raw-cwd reimplementation
+const { projectKeyFor: projectKey } = await import("../extensions/fsutil.ts");
 
 after(() => {
 	registry.setCustomSender(() => {});
@@ -37,10 +40,6 @@ function fakeEntry(overrides) {
 		timer: null,
 		...overrides,
 	};
-}
-
-function projectKey(cwd) {
-	return `--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`;
 }
 
 test("stopOn change: first check records the hash, changed output fires torus.monitor-fired", () => {

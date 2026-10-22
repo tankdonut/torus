@@ -97,7 +97,8 @@ test("rapid persona switches keep last-call-wins order (timer FIFO)", async () =
 
 // Per-project persona state: writes land under TORUS_HOME/state/--<cwd>--/persona/,
 // legacy files still read until a write migrates them, and GC is orphan-only.
-const dashedCwd = `--${process.cwd().replace(/^\/+/, "").replaceAll("/", "-")}--`;
+const { projectKeyFor } = await import("../extensions/fsutil.ts");
+const dashedCwd = projectKeyFor(process.cwd());
 const personaStateDir = () => path.join(projectStateDir(), "persona");
 const personaFile = (id) => path.join(personaStateDir(), `${id}.json`);
 const legacyPersonaFile = (id) => path.join(home, "persona", `${id}.json`);

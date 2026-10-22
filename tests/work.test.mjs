@@ -32,14 +32,11 @@ const {
 	workContextBlock,
 } = await import("../extensions/work/index.ts");
 const { setCurrentSessionId } = await import("../extensions/registry.ts");
+const { projectKeyFor } = await import("../extensions/fsutil.ts");
 
 /** Per-project state dir for a cwd — derived at call time so chdir tests follow along. */
 function projectDir(cwd = process.cwd()) {
-	return path.join(
-		process.env["TORUS_HOME"],
-		"state",
-		`--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`,
-	);
+	return path.join(process.env["TORUS_HOME"], "state", projectKeyFor(cwd));
 }
 
 function plantPlanIn(dir, name, body) {

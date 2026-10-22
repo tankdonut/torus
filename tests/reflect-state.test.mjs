@@ -9,15 +9,11 @@ process.env["TORUS_HOME"] = home;
 
 const rs = await import("../extensions/reflect-state.ts");
 const { sessionFileExists } = await import("../extensions/sessions/index.ts");
+const { projectKeyFor } = await import("../extensions/fsutil.ts");
 
 const DAY = 24 * 60 * 60 * 1000;
 const THIRTY_DAYS = 30 * DAY;
-const newDir = path.join(
-	home,
-	"state",
-	`--${process.cwd().replace(/^\/+/, "").replaceAll("/", "-")}--`,
-	"reflect-state",
-);
+const newDir = path.join(home, "state", projectKeyFor(process.cwd()), "reflect-state");
 const legacyPath = (id) => path.join(home, "reflect-state", `${id}.json`);
 
 /** Drop state + legacy dirs so each test starts from a clean layout. */

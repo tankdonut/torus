@@ -19,13 +19,13 @@ const {
 	TORUS_STATE_DIR_ENV,
 	displayPath,
 	ensureStateDirEnv,
-	projectKey,
+	projectKeyFor,
 	projectStateDir,
 	torusHome,
 } = fsutil;
 
 function expectedStateDir() {
-	return path.join(HOME, "state", projectKey(process.cwd()));
+	return path.join(HOME, "state", projectKeyFor(process.cwd()));
 }
 
 after(() => {
@@ -46,7 +46,7 @@ test("ensureStateDirEnv mirrors projectStateDir() and stays fresh across calls",
 test("explicit-cwd projectStateDir calls never clobber the env mirror", () => {
 	process.env[TORUS_STATE_DIR_ENV] = "/sentinel/state";
 	const foreign = projectStateDir("/foreign/cwd");
-	assert.equal(foreign, path.join(HOME, "state", projectKey("/foreign/cwd")));
+	assert.equal(foreign, path.join(HOME, "state", projectKeyFor("/foreign/cwd")));
 	assert.equal(process.env[TORUS_STATE_DIR_ENV], "/sentinel/state");
 	assert.equal(projectStateDir(), expectedStateDir());
 	assert.equal(process.env[TORUS_STATE_DIR_ENV], expectedStateDir());
@@ -64,10 +64,10 @@ test("displayPath abbreviates own state root, home root, and leaves the rest alo
 	assert.ok(!displayPath(lookalike).startsWith("$TORUS_STATE_DIR"));
 	assert.equal(
 		displayPath(lookalike),
-		`$TORUS_HOME/state/${projectKey(process.cwd())}-extra/work/x`,
+		`$TORUS_HOME/state/${projectKeyFor(process.cwd())}-extra/work/x`,
 	);
 	// other projects' state stays home-relative
-	const sibling = path.join(HOME, "state", projectKey("/other/proj"), "work", "x");
+	const sibling = path.join(HOME, "state", projectKeyFor("/other/proj"), "work", "x");
 	assert.equal(displayPath(sibling), "$TORUS_HOME/state/--other-proj--/work/x");
 	assert.equal(displayPath(path.join(torusHome(), "teams.json")), "$TORUS_HOME/teams.json");
 	assert.equal(displayPath("/etc/hostname"), "/etc/hostname");
@@ -75,17 +75,37 @@ test("displayPath abbreviates own state root, home root, and leaves the rest alo
 
 test("engine children keep the inherited value pinned; main sessions recompute over stale values", () => {
 	process.env.TORUS_ENGINE_CHILD = "1";
-	process.env.TORUS_STATE_DIR = "/pinned/root";
+	const pinned = path.join(HOME, "state", "--pinned--");
+	process.env.TORUS_STATE_DIR = pinned;
 	try {
-		assert.equal(projectStateDir(), "/pinned/root");
-		assert.equal(ensureStateDirEnv(), "/pinned/root");
-		assert.equal(displayPath("/pinned/root/work/x.jsonl"), "$TORUS_STATE_DIR/work/x.jsonl");
+		assert.equal(projectStateDir(), pinned);
+		assert.equal(ensureStateDirEnv(), pinned);
+		assert.equal(
+			displayPath(path.join(pinned, "work", "x.jsonl")),
+			"$TORUS_STATE_DIR/work/x.jsonl",
+		);
 	} finally {
 		delete process.env.TORUS_ENGINE_CHILD;
 	}
 	process.env.TORUS_STATE_DIR = "/stale/root";
 	assert.equal(projectStateDir(), expectedStateDir());
 	assert.equal(process.env.TORUS_STATE_DIR, expectedStateDir());
+});
+
+test("engine children ignore a pin pinned under a different TORUS_HOME", () => {
+	process.env.TORUS_ENGINE_CHILD = "1";
+	process.env.TORUS_STATE_DIR = "/elsewhere/home/state/--phantom--";
+	try {
+		assert.equal(projectStateDir(), expectedStateDir(), "foreign-home pin must not win");
+		assert.equal(ensureStateDirEnv(), expectedStateDir());
+		assert.equal(
+			process.env.TORUS_STATE_DIR,
+			expectedStateDir(),
+			"mirror refreshed to the sandbox",
+		);
+	} finally {
+		delete process.env.TORUS_ENGINE_CHILD;
+	}
 });
 
 test("engine children inherit TORUS_STATE_DIR through engineChildEnv", () => {

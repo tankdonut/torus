@@ -17,6 +17,7 @@ process.env["TORUS_HOME"] = home;
 
 const memory = await import("../extensions/memory/index.ts");
 const registry = await import("../extensions/registry.ts");
+const { projectKeyFor } = await import("../extensions/fsutil.ts");
 
 test("applyDreamProposal reports per-kind counts and applies the store changes", () => {
 	try {
@@ -215,12 +216,7 @@ test("applyDreamProposal updates a high-overlap near-duplicate in place (score >
 });
 
 test("dream log feed: project logs plus legacy flat, other projects excluded", () => {
-	const projectLogs = path.join(
-		home,
-		"state",
-		`--${process.cwd().replace(/^\/+/, "").replaceAll("/", "-")}--`,
-		"logs",
-	);
+	const projectLogs = path.join(home, "state", projectKeyFor(process.cwd()), "logs");
 	const otherLogs = path.join(home, "state", "--elsewhere--", "logs");
 	const legacyLogs = path.join(home, "logs");
 	mkdirSync(projectLogs, { recursive: true });
