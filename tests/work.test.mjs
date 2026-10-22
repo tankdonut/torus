@@ -150,6 +150,21 @@ test("resolvePlan: absolute paths resolve when the file exists, error when missi
 	assert.ok("error" in failed);
 });
 
+test("resolvePlan refuses a plan filed under a foreign project state key", () => {
+	const misfiled = plantPlanIn(
+		path.join(process.env["TORUS_HOME"], "state", "--var-phantom-project--", "plans"),
+		"misfiled",
+		"- [ ] 1. A\n",
+	);
+	const res = resolvePlan(misfiled);
+	assert.ok("error" in res, "must refuse instead of binding");
+	assert.match(res.error, /different project state key/);
+	assert.match(res.error, /phantom/);
+	assert.match(res.error, /\$TORUS_STATE_DIR\/plans/, "names the canonical dir");
+	const canonical = plantPlan("misfiled", "- [ ] 1. A\n");
+	assert.ok(!("error" in resolvePlan(canonical)), "canonical path still binds");
+});
+
 test("resolvePlan sanitizes hostile slugs to the filesystem-safe charset", () => {
 	const file = plantPlan("2026-10-04 we!rd slug", "- [ ] 1. A\n");
 	const resolved = resolvePlan(file);

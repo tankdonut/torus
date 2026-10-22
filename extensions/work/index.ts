@@ -154,6 +154,8 @@ export function resolvePlan(ref: string): { planPath: string; slug: string } | {
 	if (trimmed.length === 0) return { error: "no plan reference given" };
 	if (path.isAbsolute(trimmed)) {
 		if (!fileExists(trimmed)) return { error: `plan file not found: ${trimmed}` };
+		const misfiled = misfiledPlanError(trimmed);
+		if (misfiled !== null) return { error: misfiled };
 		return { planPath: trimmed, slug: slugFor(trimmed) };
 	}
 	const project = plansDir();
@@ -177,6 +179,22 @@ export function resolvePlan(ref: string): { planPath: string; slug: string } | {
 	return {
 		error: `no plan matches "${trimmed}" — available: ${stems.slice(-8).join(", ") || "(none)"}`,
 	};
+}
+
+/**
+ * Guard against hand-derived project keys: a plan sitting under a DIFFERENT
+ * state key than this project's is almost certainly misfiled (the classic
+ * slip converts dots in the key — github.com → github-com — creating a
+ * phantom twin of the real state dir). Binding it would split state: the
+ * work json and ledger land under this project's key while the plan lives
+ * under the phantom. Refuse and name the canonical location instead.
+ */
+function misfiledPlanError(file: string): string | null {
+	const stateRoot = path.join(torusHome(), "state");
+	if (!file.startsWith(`${stateRoot}${path.sep}`)) return null;
+	const canonical = plansDir();
+	if (file.startsWith(`${canonical}${path.sep}`)) return null;
+	return `plan is filed under a different project state key: ${displayPath(file)} — this project's plans dir is ${displayPath(canonical)}. Hand-derived keys misfile plans; move the file (or pass its stem) instead. $TORUS_STATE_DIR expands to the correct root.`;
 }
 
 function planResult(
