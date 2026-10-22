@@ -154,9 +154,18 @@ after(async () => {
 	else process.env["CLAUDE_CODE_TMPDIR"] = savedClaudeTmpdir;
 });
 
+/** git status on the real repo; scrubbed of GIT_* hook vars (GIT_INDEX_FILE under husky) */
+function repoStatus() {
+	const env = { ...process.env };
+	for (const key of Object.keys(env)) {
+		if (key.startsWith("GIT_")) delete env[key];
+	}
+	return spawnSync("git", ["status", "--porcelain"], { encoding: "utf8", env });
+}
+
 /** Remove bwrap mount-point stubs leaked by killed wrapped runs (untracked only). */
 function sweepStubs() {
-	const status = spawnSync("git", ["status", "--porcelain"], { encoding: "utf8" });
+	const status = repoStatus();
 	if (status.status !== 0) return;
 	for (const line of status.stdout.split("\n")) {
 		if (!line.startsWith("??")) continue;

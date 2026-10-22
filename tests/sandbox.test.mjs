@@ -458,7 +458,11 @@ test("resolveAdditionalWritableRoots: git common dir + worktrees root, absent pi
 	const previousWt = process.env.TORUS_WORKTREES_ROOT;
 	process.env.TORUS_WORKTREES_ROOT = outside;
 	try {
-		spawnSync("git", ["-C", repo, "init", "-q"]);
+		const env = { ...process.env };
+		for (const key of Object.keys(env)) {
+			if (key.startsWith("GIT_")) delete env[key];
+		}
+		spawnSync("git", ["-C", repo, "init", "-q"], { env });
 		const inRepo = resolveAdditionalWritableRoots(repo);
 		assert.ok(inRepo.includes(path.resolve(repo, ".git")));
 		assert.ok(inRepo.includes(outside));

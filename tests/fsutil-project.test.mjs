@@ -34,8 +34,19 @@ test("projectStateDir honors TORUS_HOME and defaults to process cwd", () => {
 	assert.equal(fsutil.projectStateDir(), fsutil.projectStateDir(process.cwd()));
 });
 
+// GIT_* leaks from git hooks (husky sets GIT_INDEX_FILE for pre-commit) and
+// redirects index operations in the throwaway repos; scrub for identical
+// behavior in and out of hooks (same contract as gitEnv in extensions/worktrees).
+function cleanGitEnv() {
+	const env = { ...process.env };
+	for (const key of Object.keys(env)) {
+		if (key.startsWith("GIT_")) delete env[key];
+	}
+	return env;
+}
+
 function git(cwd, ...args) {
-	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", env: cleanGitEnv() });
 	assert.equal(result.status, 0, `git ${args.join(" ")} in ${cwd}: ${result.stderr}`);
 }
 
