@@ -10,6 +10,9 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 const DEFAULT_ROOT = path.join(homedir(), ".pi", "agent", "sessions");
 const SCAN_LIMIT = 300;
@@ -147,5 +150,6 @@ export function registerSessions(pi: ExtensionAPI): void {
 }
 
 export default function sessionsExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("sessions", PLATFORM_SUPPORT)) return;
 	registerSessions(pi);
 }

@@ -8,8 +8,12 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 export default function exitExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("exit", PLATFORM_SUPPORT)) return;
 	pi.registerCommand("exit", {
 		description: "Quit (alias for /quit)",
 		handler: async (_args, ctx) => {

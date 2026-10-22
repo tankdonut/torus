@@ -15,6 +15,9 @@ import { unlinkSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { projectStateDir, readJsonFallback, torusHome, writeJson } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 export type TrustDecision =
 	| { kind: "allow" }
@@ -171,5 +174,6 @@ export function registerApproval(pi: ExtensionAPI): void {
 }
 
 export default function approvalExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("approval", PLATFORM_SUPPORT)) return;
 	registerApproval(pi);
 }

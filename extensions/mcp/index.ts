@@ -1,4 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 /**
  * Connected-and-working count: a registered server counts only once its
@@ -28,5 +31,6 @@ export function registerMcp(pi: ExtensionAPI): void {
 }
 
 export default function mcpExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("mcp", PLATFORM_SUPPORT)) return;
 	registerMcp(pi);
 }

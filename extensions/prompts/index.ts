@@ -19,10 +19,13 @@ import {
 	writeJson,
 } from "../fsutil.js";
 import { applyPersonaTheme } from "../persona-theme.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { repoRoot, sessionPersona, setSessionPersona } from "../registry.js";
 import { AGENTS, personaModel } from "../roster/index.js";
 import { sessionFileExists } from "../sessions/index.js";
 import { refreshToruStatus } from "../ui/index.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 const AGENTS_DIR = path.join(repoRoot(), "agents");
 const PERSONA_ORPHAN_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -242,5 +245,6 @@ export function registerPrompts(pi: ExtensionAPI): void {
 }
 
 export default function promptsExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("prompts", PLATFORM_SUPPORT)) return;
 	registerPrompts(pi);
 }

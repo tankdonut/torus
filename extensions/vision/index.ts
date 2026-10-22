@@ -11,6 +11,9 @@ import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 const MAX_IMAGES = 3;
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -111,5 +114,6 @@ export function registerVision(pi: ExtensionAPI): void {
 }
 
 export default function visionExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("vision", PLATFORM_SUPPORT)) return;
 	registerVision(pi);
 }

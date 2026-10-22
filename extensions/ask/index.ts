@@ -13,7 +13,10 @@
 
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { AskDialog, type AskDialogResult, CHAT_LABEL, CUSTOM_LABEL } from "./dialog.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 interface AskOption {
 	label: string;
@@ -177,5 +180,6 @@ export function registerAsk(pi: ExtensionAPI): void {
 }
 
 export default function askExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("ask", PLATFORM_SUPPORT)) return;
 	registerAsk(pi);
 }

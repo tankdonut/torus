@@ -23,6 +23,9 @@ import type {
 	ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
 import { torusHome } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 export const MODEL_CHAINS = {
 	primary: ["zai/glm-5.3", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
@@ -280,5 +283,6 @@ export function registerProviders(pi: ExtensionAPI): void {
 }
 
 export default function providersExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("providers", PLATFORM_SUPPORT)) return;
 	registerProviders(pi);
 }

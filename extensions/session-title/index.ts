@@ -19,7 +19,10 @@ import type {
 	SessionEntry,
 	SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { modelChain } from "../providers/index.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 /** Hard cap mirroring OpenCode's title truncation (97 chars + ellipsis). */
 const TITLE_MAX = 100;
@@ -240,5 +243,6 @@ export function registerSessionTitle(pi: ExtensionAPI): void {
 }
 
 export default function sessionTitleExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("session-title", PLATFORM_SUPPORT)) return;
 	registerSessionTitle(pi);
 }

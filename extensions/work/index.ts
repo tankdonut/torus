@@ -29,7 +29,10 @@ import {
 	torusHome,
 	writeJson,
 } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { currentSessionId } from "../registry.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 /** Plans live under the per-project state dir; ~/.torus/plans is the legacy home. */
 function plansDir(): string {
@@ -769,5 +772,6 @@ export function registerWork(pi: ExtensionAPI): void {
 }
 
 export default function workExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("work", PLATFORM_SUPPORT)) return;
 	registerWork(pi);
 }

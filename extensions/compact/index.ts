@@ -29,9 +29,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { goalContextBlock } from "../goal/index.js";
 import { memoryContextBlock } from "../memory/index.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { currentSessionId, setCurrentSessionId } from "../registry.js";
 import { todoContextBlock } from "../todo/index.js";
 import { workContextBlock } from "../work/index.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 /** Header above the folded blocks; tests assert on it as the appendix marker. */
 const FOLD_HEADER = "Torus session context to carry through the summary:";
@@ -218,5 +221,6 @@ export function registerCompact(
 }
 
 export default function compactExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("compact", PLATFORM_SUPPORT)) return;
 	registerCompact(pi);
 }

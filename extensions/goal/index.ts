@@ -13,9 +13,12 @@ import {
 	torusHome,
 	writeJson,
 } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { currentSessionId, setCurrentSessionId } from "../registry.js";
 import { sessionFileExists } from "../sessions/index.js";
 import { type GoalChip, refreshToruStatus, setStatusGoal } from "../ui/index.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 /** Age floor for orphan GC — a goal file is never deleted for age alone. */
 const ORPHAN_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -239,5 +242,6 @@ export function registerGoal(pi: ExtensionAPI): void {
 }
 
 export default function goalExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("goal", PLATFORM_SUPPORT)) return;
 	registerGoal(pi);
 }

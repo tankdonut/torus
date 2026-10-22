@@ -29,6 +29,9 @@ import {
 // so reach the same module instance the engine's file tools use via a relative specifier.
 import { resolveToCwd } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/path-utils.js";
 import { torusHome } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 const DEFAULT_MAX_TOOL_OUTPUT = 16_000;
 const WRITE_SIMILARITY_BLOCK = 0.7;
@@ -292,5 +295,6 @@ export function registerGuards(pi: ExtensionAPI): void {
 }
 
 export default function guardsExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("guards", PLATFORM_SUPPORT)) return;
 	registerGuards(pi);
 }

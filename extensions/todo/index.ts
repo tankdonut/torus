@@ -13,7 +13,10 @@ import {
 	readJsonFallback,
 	torusHome,
 } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { sessionFileExists } from "../sessions/index.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 const STRIKE_ON = "\x1b[9m";
 const STRIKE_OFF = "\x1b[29m";
@@ -349,5 +352,6 @@ export function registerTodo(pi: ExtensionAPI): void {
 }
 
 export default function todoExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("todo", PLATFORM_SUPPORT)) return;
 	registerTodo(pi);
 }

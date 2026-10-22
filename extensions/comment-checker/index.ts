@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 const STASH_LIMIT = 50;
 
@@ -169,5 +172,6 @@ export function registerCommentChecker(pi: ExtensionAPI): void {
 }
 
 export default function commentCheckerExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("comment-checker", PLATFORM_SUPPORT)) return;
 	registerCommentChecker(pi);
 }

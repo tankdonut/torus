@@ -19,8 +19,11 @@ import {
 import { type EngineTally, reduceEngineEvent } from "../engine-child.js";
 import { formatCost } from "../fsutil.js";
 import { connectedServerCount, mcpStatusText } from "../mcp/index.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { providerAvailabilities } from "../providers/index.js";
 import { sessionPersona } from "../registry.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 export const STATUS_KEY = "torus";
 
@@ -475,5 +478,6 @@ export function registerUi(pi: ExtensionAPI): void {
 }
 
 export default function uiExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("ui", PLATFORM_SUPPORT)) return;
 	registerUi(pi);
 }
