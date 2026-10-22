@@ -260,7 +260,7 @@ PTY-backed interactive command execution via `script -qec`.
 - **Hooks:** `session_shutdown`: kill live children
 - **Env:** `TORUS_INTERACTIVE=0` disables
 
-In the TUI the child streams into a bordered overlay you can type into (takeover); `ctrl-]` detaches. Headless contexts run to completion synchronously. Line-oriented programs render correctly; full-screen apps (vim/htop) do not, so use plain bash for those.
+In the TUI the child streams into a bottom dialog that replaces the chat editor; typing is forwarded to the child (takeover) and `ctrl-]` detaches. Control sequences are stripped from the captured stream, the PTY carries the session's winsize, and children run with `NO_COLOR=1` so prompt frameworks (gh, bubbletea, survey) do not interrogate the terminal: such queries cannot be answered through the pipes and stall device flows like `gh auth login --web`. Headless contexts run to completion synchronously. Line-oriented programs render correctly; full-screen apps (vim/htop) do not, so use plain bash for those.
 
 ### `vision`
 
