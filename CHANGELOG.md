@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.15.0](https://github.com/tankdonut/torus/compare/v0.14.0...v0.15.0) (2026-10-22)
+
+
+### Features
+
+* accumulate overhead-bench runs in a versioned sidecar history ([75c71f0](https://github.com/tankdonut/torus/commit/75c71f040de69491fccb924e2c9420ec201986f0))
+* **acp:** forward engine compaction events as session-update notices ([aa068f6](https://github.com/tankdonut/torus/commit/aa068f6fe51af4ee00f75113636d10567893ae41))
+* add a host-side ssh signing relay for sandboxed git commits ([868ee49](https://github.com/tankdonut/torus/commit/868ee4967fcf2715c0e382ef03741ad5e335ce98))
+* add a TORUS_SANDBOX_DEFAULT trial knob for default-on sandboxing ([c83ddbb](https://github.com/tankdonut/torus/commit/c83ddbb358d98a48173cf29b3c2bb092ef876220))
+* add a two-layer sandbox policy module read from pi settings ([992b623](https://github.com/tankdonut/torus/commit/992b623441ce78aa0c608a9b440625fffaf6a129))
+* add live context-usage statusline chip to the compact extension ([5c80107](https://github.com/tankdonut/torus/commit/5c80107ea5a8c166501b9f3eb2950a8f629e4b2b))
+* always-on custom answers, discuss row, and preview panes in torus_ask ([6ba0d0f](https://github.com/tankdonut/torus/commit/6ba0d0fbc433acdecfa1024ae68d0b4855907513))
+* classify sandbox denial errors with remedies in annotations ([44e174e](https://github.com/tankdonut/torus/commit/44e174ef645800e5605abcb37c04c4b6712e4441))
+* **deps:** Update engine to v1.4.0 ([#73](https://github.com/tankdonut/torus/issues/73)) ([cc70a92](https://github.com/tankdonut/torus/commit/cc70a9256df62808b3a59ffe16ed383f1724c473))
+* **extensions/ask:** render the ask dialog inline in the editor slot ([5989087](https://github.com/tankdonut/torus/commit/59890873c5dfb25e034e7cf24b518775e5ffaa2b))
+* **extensions:** add platform support gate for extension loading ([5c16ecc](https://github.com/tankdonut/torus/commit/5c16ecc3cb2b11deaae21e378542e2a3332e065b))
+* **extensions:** declare cross-platform support for core extensions ([1ad5886](https://github.com/tankdonut/torus/commit/1ad5886fc7227c55206b1b9f9459d2356ba02379))
+* **extensions:** declare platform support for interactive, monitor, notify ([446ac9f](https://github.com/tankdonut/torus/commit/446ac9fd541ccde92d7d26e6e2e3e3d034d242de))
+* **extensions:** declare platform support for memory, worktrees, sandbox ([0c9af5e](https://github.com/tankdonut/torus/commit/0c9af5e00b37c39f9b7877e6b898d7608cc69ba4))
+* **extensions:** declare platform support for tool-surface extensions ([a741076](https://github.com/tankdonut/torus/commit/a741076cb16cd7397b4b408e908b9d54c3878e7c))
+* **extensions:** report platform support decisions in /doctor ([b5414ae](https://github.com/tankdonut/torus/commit/b5414ae7cde12ac3fdca75ae2ce2566f0d68903c))
+* fold goal/work/todo/memory context into compaction summaries ([a7a391d](https://github.com/tankdonut/torus/commit/a7a391dfc385543ac1eca9bfe676f5e9dc23efd9))
+* grant sandbox network and install writes per command, honor exemptions and env prefixes ([5794fec](https://github.com/tankdonut/torus/commit/5794fec69476486d1507d28e1abc0cdfe7838b1e))
+* key per-project state on the canonical checkout so worktrees share trust ([bd4be0c](https://github.com/tankdonut/torus/commit/bd4be0cfa1733f07495ca29fa56c73d7ffa79173))
+* lead bench reports with an overhead summary vs the prior release ([3788666](https://github.com/tankdonut/torus/commit/3788666aa16b244ed7cf3db2835d0a41797d7000))
+* merge todowrite against the stored list so completed todos survive rewrites ([ce1fcd4](https://github.com/tankdonut/torus/commit/ce1fcd48ff278bb9e20120e1d3a8768a1a38f4fd))
+* pre-create sandbox writable roots and give each session a private tmpdir ([9d1bd91](https://github.com/tankdonut/torus/commit/9d1bd910fdfb87e0a46f523d40bf0edcbf39d897))
+* wire the sandbox policy layer, trusted-host seeding, and AWS hosts into the config build ([f84120c](https://github.com/tankdonut/torus/commit/f84120cc92a2bd6f23faa2d35cc4aa7e3aa1673e))
+* wire the sign relay into sandboxed sessions and seed git signing config ([43c8330](https://github.com/tankdonut/torus/commit/43c83304a3b7215efa0ba7c0abb059900fd19bc5))
+
+
+### Bug Fixes
+
+* attribute background dreamer runs to their session so resumes restore the fleet ([e3d7900](https://github.com/tankdonut/torus/commit/e3d79006e04dc1623abd9a779523ce2e861f6139))
+* auto-close fully-completed todo lists so the next write starts fresh ([ac37825](https://github.com/tankdonut/torus/commit/ac3782519da1f22056d5f87d7a62d247529e0cca))
+* **deps:** update dependency @anthropic-ai/sandbox-runtime to v0.0.81 ([#69](https://github.com/tankdonut/torus/issues/69)) ([ac15476](https://github.com/tankdonut/torus/commit/ac15476a936741e152a708fb1bf15b7268fb7028))
+* **deps:** update dependency pi-web-access to ^0.43.0 ([#70](https://github.com/tankdonut/torus/issues/70)) ([418f457](https://github.com/tankdonut/torus/commit/418f4578fc6883a08776eb292bb083d0a0c27a27))
+* **extensions/interactive:** make the PTY dialog safe for prompt frameworks ([a2ae0f7](https://github.com/tankdonut/torus/commit/a2ae0f7c56a70bed4fe94ed1cb988d2b3a03cdc0))
+* **extensions/work:** refuse plans filed under a foreign project state key ([359b9b3](https://github.com/tankdonut/torus/commit/359b9b3ecf1921acbcc4bf929864ce4700ad5735))
+* **extensions/worktrees:** surface worktree setup failures instead of implying success ([469a1f7](https://github.com/tankdonut/torus/commit/469a1f7041035a206a448266c8a229589e6e2146))
+* key state-dir expectations on the canonical project and guard cross-home pins ([1d39518](https://github.com/tankdonut/torus/commit/1d395187ebf510dc5fc874917a1c9dca436fe178))
+* report fleet-view stops as interrupted instead of failures ([a89c79b](https://github.com/tankdonut/torus/commit/a89c79bba713ce57d4850dadbb496dafe2a5154a))
+* **tests:** scrub git hook env from spawned git commands ([abdb555](https://github.com/tankdonut/torus/commit/abdb5559523757c3307224a0d61f131297ccecc1))
+
 ## [0.14.0](https://github.com/tankdonut/torus/compare/v0.13.0...v0.14.0) (2026-10-17)
 
 
