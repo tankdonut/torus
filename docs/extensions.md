@@ -572,7 +572,7 @@ Git-worktree lifecycle under one canonical root outside the repo (`~/.torus/work
 | Tool | Purpose |
 | --- | --- |
 | `worktree_create` | Create a worktree (branch, base, setupCommand); sets up dependencies (explicit command or detected: go/npm/cargo/uv/pip) |
-| `worktree_merge` | Merge back (branch, subject, strategy squash\|ff, keep, mainBranch): rebase → squash (or opt-in ff) → tree-identity proof → only then branch delete, with clean conflict aborts |
+| `worktree_merge` | Merge back (branch, subject, strategy squash\|ff, keep, mainBranch, teardownCommand): rebase → squash (or opt-in ff) → tree-identity proof → best-effort teardown → only then branch delete, with clean conflict aborts |
 | `worktree_remove` | Remove (branch, force, teardownCommand); never deletes the branch |
 
 - **Env:** `TORUS_WORKTREES_ROOT` (root override)

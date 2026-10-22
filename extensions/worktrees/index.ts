@@ -342,6 +342,7 @@ export async function performMerge(
 		strategy?: "squash" | "ff";
 		keep?: boolean;
 		mainBranch?: string;
+		teardownCommand?: string;
 		signal?: AbortSignal;
 	},
 ): Promise<WorktreeResult> {
@@ -450,7 +451,10 @@ export async function performMerge(
 		};
 	}
 
-	const remove = await performRemove(repoRoot, branch, { signal });
+	const remove = await performRemove(repoRoot, branch, {
+		signal,
+		teardownCommand: opts?.teardownCommand,
+	});
 	if (!remove.ok) {
 		return {
 			ok: false,
@@ -523,6 +527,12 @@ export default function worktreesExtension(pi: ExtensionAPI): void {
 				),
 				mainBranch: Type.Optional(
 					Type.String({ description: "Integration branch (default: main)" }),
+				),
+				teardownCommand: Type.Optional(
+					Type.String({
+						description:
+							"Best-effort shell snippet run inside the worktree before its removal after a successful merge (skipped with keep=true)",
+					}),
 				),
 			}),
 			async execute(_toolCallId, params, signal, _onUpdate, ctx) {

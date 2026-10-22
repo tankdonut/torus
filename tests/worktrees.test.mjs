@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
@@ -428,4 +436,35 @@ test("merge keeps the event loop alive (blocking spawns would freeze the TUI)", 
 	// sleep 1.5s hook runs during the squash commit: with async spawns the
 	// interval fires ~60 times; with blocking spawns it fires 0 (loop frozen)
 	assert.ok(ticks >= 10, `event loop starved during merge (only ${ticks} ticks in 1.5s+)`);
+});
+
+test("merge teardownCommand runs inside the worktree before removal", async () => {
+	assert.equal((await performCreate(repo, "feat/merge-teardown")).ok, true);
+	const wt = worktreePath(repo, "feat/merge-teardown");
+	writeFileSync(path.join(wt, "td.txt"), "td\n");
+	commitAll(wt, "teardown marker");
+
+	const marker = path.join(tmpdir(), `torus-merge-teardown-${process.pid}`);
+	const merge = await performMerge(repo, "feat/merge-teardown", {
+		subject: "feat: merge teardown",
+		teardownCommand: `pwd > ${marker}`,
+	});
+	assert.equal(merge.ok, true, JSON.stringify(merge));
+	assert.ok(!existsSync(wt), "worktree removed");
+	assert.equal(readFileSync(marker, "utf8").trim(), wt, "teardown ran with the worktree as cwd");
+	rmSync(marker, { force: true });
+});
+
+test("a failing merge teardownCommand never blocks the merge", async () => {
+	assert.equal((await performCreate(repo, "feat/merge-teardown-fail")).ok, true);
+	const wt = worktreePath(repo, "feat/merge-teardown-fail");
+	writeFileSync(path.join(wt, "tdf.txt"), "tdf\n");
+	commitAll(wt, "teardown failure marker");
+
+	const merge = await performMerge(repo, "feat/merge-teardown-fail", {
+		subject: "feat: teardown best-effort",
+		teardownCommand: "exit 7",
+	});
+	assert.equal(merge.ok, true, JSON.stringify(merge));
+	assert.ok(!existsSync(wt), "worktree removed despite teardown failure");
 });
