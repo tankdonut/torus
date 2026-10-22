@@ -25,6 +25,13 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux"],
+	deps: [{ name: "script", required: true, note: "util-linux only" }],
+	note: "wraps commands with stty for PTY winsize",
+};
 
 export const DETACH_KEY = "\x1d";
 const RING_BYTE_CAP = 64_000;
@@ -265,5 +272,6 @@ export function registerInteractive(pi: ExtensionAPI): void {
 }
 
 export default function interactiveExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("interactive", PLATFORM_SUPPORT)) return;
 	registerInteractive(pi);
 }

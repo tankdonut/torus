@@ -2,7 +2,13 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, MouseRegion, Text } from "@earendil-works/pi-tui";
 import { flattenPreview } from "../fleet/theme-kit.js";
 import { formatDuration } from "../osnotify.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { FLEET_OPENER, sanitizeRender } from "../registry.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux"],
+	deps: [{ name: "notify-send", required: true }],
+};
 
 type FleetOpener = (delegationId?: string) => void;
 
@@ -174,5 +180,6 @@ export function registerNotify(pi: ExtensionAPI): void {
 }
 
 export default function notifyExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("notify", PLATFORM_SUPPORT)) return;
 	registerNotify(pi);
 }

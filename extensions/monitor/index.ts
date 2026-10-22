@@ -13,7 +13,13 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { projectStateDir, torusHome } from "../fsutil.js";
 import { notifyMonitor } from "../osnotify.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { emitTorusCustom } from "../registry.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin"],
+	deps: [{ name: "bash", required: true }],
+};
 
 function toolDetails(d: Record<string, unknown>): Record<string, unknown> {
 	return d;
@@ -240,5 +246,6 @@ export function registerMonitor(pi: ExtensionAPI): void {
 }
 
 export default function monitorExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("monitor", PLATFORM_SUPPORT)) return;
 	registerMonitor(pi);
 }
