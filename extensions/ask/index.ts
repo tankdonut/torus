@@ -78,7 +78,6 @@ const askTool = defineTool({
 							question: item.question,
 							options: item.options,
 						}),
-					{ overlay: true },
 				);
 				outcomes.push(outcomeFromDialog(item, result));
 				continue;
