@@ -21,10 +21,15 @@ jobs:
       (github.actor == 'renovate[bot]' || github.actor == 'renovate-config[bot]')
     runs-on: ubuntu-latest
     steps:
+      - name: Refuse to run outside tankdonut/torus
+        if: github.repository != 'tankdonut/torus'
+        run: |
+          echo "::error::approval workflow copied to ${GITHUB_REPOSITORY}"
+          exit 1
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Approve Renovate pull request
-        uses: tankdonut/github-actions/actions/renovate-auto-approve@v1
+        uses: tankdonut/github-actions/actions/renovate-auto-approve@246ecbe1d54fe84165f0b9f7d8aae44a0e5fa373 # v1
         with:
           github-token: ${{ secrets.AUTO_APPROVE_PAT }}
