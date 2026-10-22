@@ -6,6 +6,7 @@ on:
     tags:
       - "v*"
   pull_request:
+  workflow_dispatch:
 
 permissions:
   # Least privilege default; jobs that publish declare their own overrides.
