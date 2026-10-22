@@ -7,6 +7,7 @@ import {
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
 import { formatCost } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	type DelegationRecord,
 	type ExternalRun,
@@ -27,6 +28,11 @@ import {
 	statusIcon,
 	type Theme,
 } from "./theme-kit.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin", "win32"],
+	deps: [{ name: "tmux", required: false, note: "optional delegation panes and fleet views" }],
+};
 
 const WIDGET_KEY = "torus-fleet";
 const SPINNER_INTERVAL_MS = 80;
@@ -238,5 +244,6 @@ export function registerFleetWidget(pi: ExtensionAPI): void {
 }
 
 export default function fleetExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("fleet", PLATFORM_SUPPORT)) return;
 	registerFleetWidget(pi);
 }

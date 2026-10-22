@@ -13,6 +13,15 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { torusHome } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin", "win32"],
+	deps: [
+		{ name: "git", required: false, note: "identity check" },
+		{ name: "tmux", required: false, note: "pane check" },
+	],
+};
 
 export interface CheckResult {
 	name: string;
@@ -269,5 +278,6 @@ export function registerDoctor(pi: ExtensionAPI): void {
 }
 
 export default function doctorExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("doctor", PLATFORM_SUPPORT)) return;
 	registerDoctor(pi);
 }

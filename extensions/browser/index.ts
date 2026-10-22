@@ -35,6 +35,7 @@ import {
 	statusIcon,
 	type Theme,
 } from "../fleet/theme-kit.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	type DelegationRecord,
 	type ExternalRun,
@@ -52,6 +53,10 @@ import {
 	transcriptItems,
 	transcriptMtimeMs,
 } from "../transcript.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin", "win32"],
+};
 
 type ToolDefinitionLike = ConstructorParameters<typeof ToolExecutionComponent>[4];
 
@@ -1034,5 +1039,6 @@ export function registerBrowser(pi: ExtensionAPI): void {
 }
 
 export default function browserExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("browser", PLATFORM_SUPPORT)) return;
 	registerBrowser(pi);
 }

@@ -10,6 +10,12 @@ import { spawnSync } from "node:child_process";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateText } from "../guards/index.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin", "win32"],
+	deps: [{ name: "sg", required: false }],
+};
 
 function toolDetails(d: Record<string, unknown>): Record<string, unknown> {
 	return d;
@@ -81,5 +87,6 @@ export function registerAstgrep(pi: ExtensionAPI): void {
 }
 
 export default function astgrepExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("astgrep", PLATFORM_SUPPORT)) return;
 	registerAstgrep(pi);
 }

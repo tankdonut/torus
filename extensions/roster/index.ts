@@ -37,6 +37,7 @@ import { flattenPreview, shortModel } from "../fleet/theme-kit.js";
 import { parseFrontmatter, stripFrontmatter } from "../frontmatter.js";
 import { formatCost, sleep, splitList } from "../fsutil.js";
 import { clickable } from "../notify/index.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { type ChainTier, modelChain, providerAvailabilities } from "../providers/index.js";
 import {
 	AGENT_NAME_RE,
@@ -58,6 +59,11 @@ import {
 	updateDelegation,
 } from "../registry.js";
 import { RpcChild } from "../rpc.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin", "win32"],
+	deps: [{ name: "tmux", required: false, note: "optional delegation panes and fleet views" }],
+};
 
 interface AgentDef {
 	name: string;
@@ -1489,5 +1495,6 @@ export function registerRoster(pi: ExtensionAPI): void {
 }
 
 export default function rosterExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("roster", PLATFORM_SUPPORT)) return;
 	registerRoster(pi);
 }

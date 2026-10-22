@@ -49,8 +49,13 @@ import {
 } from "node:http";
 import path from "node:path";
 import { readJson, sleep, torusHome, writeJson } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { AGENT_NAME_RE, type DelegationRecord, listDelegations, repoRoot } from "../registry.js";
 import { AGENTS, type DelegationOutcome, runDelegation } from "../roster/index.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin", "win32"],
+};
 
 export interface ServeConfig {
 	port: number;
@@ -814,6 +819,9 @@ export function startTriggers(
  * clean error naming the port and the serve.json override.
  */
 export async function startServe(options: ServeOptions = {}): Promise<ServeHandle> {
+	if (!gateExtension("serve", PLATFORM_SUPPORT)) {
+		throw new Error("torus serve unsupported on this platform — check TORUS_PLATFORM");
+	}
 	if (process.env.TORUS_SERVE === "0") {
 		throw new Error("torus serve disabled: TORUS_SERVE=0 is set — unset it to allow the server");
 	}

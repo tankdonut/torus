@@ -16,6 +16,7 @@ import {
 	isReadToolResult,
 	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	anchorAll,
 	applyHashlineEdits,
@@ -23,6 +24,11 @@ import {
 	type HashlineEditOp,
 	normalizeEdits,
 } from "./core.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin", "win32"],
+	note: "optional post-edit formatter via TORUS_FMT_CMD",
+};
 
 const HASHLINE_EDIT_DESCRIPTION = `Edit files using LINE#ID anchors for precise, safe modifications. Read output shows each line as {line_number}#{hash}|content — copy anchors exactly.
 
@@ -296,5 +302,6 @@ export function registerHashline(pi: ExtensionAPI): void {
 }
 
 export default function hashlineExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("hashline", PLATFORM_SUPPORT)) return;
 	registerHashline(pi);
 }

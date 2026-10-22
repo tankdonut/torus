@@ -30,8 +30,14 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { childExtensionArgs, resolveEngineBin } from "../engine-child.js";
 import { torusHome } from "../fsutil.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { repoRoot } from "../registry.js";
 import { RpcChild } from "../rpc.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin", "win32"],
+	note: "spawns the user-configured client command from acp.json at tool-call time",
+};
 
 const STDERR_CAP = 64 * 1024;
 const LINE_CAP = 1024 * 1024;
@@ -867,6 +873,7 @@ export async function runAcpAgentRole(): Promise<void> {
 }
 
 export default function acpExtension(_pi: ExtensionAPI): void {
+	if (!gateExtension("acp", PLATFORM_SUPPORT)) return;
 	// No runtime registration: roster imports the config and transport helpers
 	// directly. Loading this module as an extension keeps the ACP consume
 	// surface versioned with the rest of the payload.

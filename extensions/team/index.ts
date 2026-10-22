@@ -4,6 +4,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { displayPath, formatCost, projectKey } from "../fsutil.js";
 import { osNotify } from "../osnotify.js";
+import { gateExtension, type PlatformSupport } from "../platform.js";
 import { DEFAULT_MEMBER_MODEL } from "../providers/index.js";
 import {
 	AGENT_NAME_RE,
@@ -47,6 +48,11 @@ import {
 	updateTasksFile,
 	writeTeamSpec,
 } from "../team-runtime.js";
+
+export const PLATFORM_SUPPORT: PlatformSupport = {
+	platforms: ["linux", "darwin", "win32"],
+	deps: [{ name: "tmux", required: false, note: "optional delegation panes and fleet views" }],
+};
 
 const DELEGATABLE = AGENTS.filter((a) => a.mode !== "session");
 const AGENT_NAMES = DELEGATABLE.map((a) => a.name).join(", ");
@@ -1630,5 +1636,6 @@ export function registerTeam(pi: ExtensionAPI): void {
 }
 
 export default function teamExtension(pi: ExtensionAPI): void {
+	if (!gateExtension("team", PLATFORM_SUPPORT)) return;
 	registerTeam(pi);
 }
