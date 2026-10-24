@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.0](https://github.com/tankdonut/torus/compare/v0.15.0...v0.16.0) (2026-10-24)
+
+
+### Features
+
+* **extensions/ask:** navigate between questions with arrows and clicks ([c62ef19](https://github.com/tankdonut/torus/commit/c62ef19017bec7e0884bc5b7973b72a2c9d9b2ab))
+* **extensions/worktrees:** add teardownCommand to worktree_merge ([73b156d](https://github.com/tankdonut/torus/commit/73b156db607208f298b189c780094bb13ae02388))
+
 ## [0.15.0](https://github.com/tankdonut/torus/compare/v0.14.0...v0.15.0) (2026-10-22)
 
 
