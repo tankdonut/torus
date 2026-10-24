@@ -53,6 +53,30 @@ All paths need provider auth on first run: `/login zai` signs in to the built-in
 3. Say `team` in a message (or `deepwork`, `blueprint`). Keyword gates switch the session's execution mode.
 4. `/goal` to pin a standing objective; `/reflect` to distill the session into memory.
 
+## Permission modes
+
+torus starts in default mode: guards, sandboxing, and approval prompts judge tool calls as they run. Automode is an opt-in permission layer for unattended work: a decision model classifies each bash command, approves the safe ones, and asks before anything risky. Turn it on with `torus --permission-mode auto` or `TORUS_PERMISSION_MODE=auto`; `1` and `on` also select it, while unset, `0`, `off`, and `default` keep the built-in gate. `/automode` reports the live status and switches the current session.
+
+Your rules run first, from `~/.torus/automode.json`:
+
+```json
+{
+  "deny": ["git push --force*", "npm publish*"],
+  "ask": ["git push*", "npx *"],
+  "allow": ["npm test*", "node --test*"]
+}
+```
+
+Entries are prefix patterns, evaluated in deny, ask, then allow order. Broad allow entries such as `*` match nothing and draw a warning at load. A fixed ask floor outranks every allow rule. It covers `sudo` and `su`, recursive forced `rm` on root or home paths, force pushes, recursive `chmod` or `chown` on root paths, and command substitution; floored commands ask no matter what the rules say.
+
+Read-only commands such as `ls`, `git status`, and version probes pass without a model call. An "Always this session" answer replays without asking again. Three consecutive decision-model denies switch the session to asking for everything.
+
+The judge is a classifier model. Pin one with `TORUS_PERMISSION_MODEL=provider/model-id`. Without a pin, automode takes the first available classifier, such as `typesafe/jev-latest` behind a `TYPESAFE_API_KEY` or a local decision model from a llama.cpp router; a local router works offline with no API key.
+
+With no classifier reachable, the session model judges the command in one shot. If every model path fails, the command still runs unjudged, and its tool result carries an `[automode]` notice.
+
+Every decision appends one JSON line to `~/.torus/automode.log` for review. Automode only adds gates: denials from guards, `cc-safety-net`, sandbox, and approval still win over anything automode decides. The full pipeline order is in [docs/extensions.md](docs/extensions.md).
+
 ## Where to go next
 
 | Want | Read |
