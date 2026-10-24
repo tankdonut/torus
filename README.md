@@ -55,9 +55,9 @@ All paths need provider auth on first run: `/login zai` signs in to the built-in
 
 ## Permission modes
 
-torus starts in default mode: guards, sandboxing, and approval prompts judge tool calls as they run. Automode is an opt-in permission layer for unattended work: a decision model classifies each bash command, approves the safe ones, and asks before anything risky. Turn it on with `torus --permission-mode auto` or `TORUS_PERMISSION_MODE=auto`; `1` and `on` also select it, while unset, `0`, `off`, and `default` keep the built-in gate. `/automode` reports the live status and switches the current session.
+torus starts in default mode: guards, sandboxing, and approval prompts judge tool calls as they run. Automode is an opt-in permission layer for unattended work: a decision model classifies each bash command, approves the safe ones, and asks before anything risky. Turn it on with `torus --permission-mode auto` or `TORUS_PERMISSION_MODE=auto`, or default it on with `"permissionMode": "auto"` in `~/.torus/config.json`; `1` and `on` also select auto mode, while unset, `0`, `off`, and `default` keep the built-in gate. The config key sets the default, the env var overrides it, and the flag sets the env var for one session. `/automode` reports the live status (naming where the mode came from) and switches the current session.
 
-Your rules run first, from `~/.torus/automode.json`:
+Your rules run first, from the `automode` section of `~/.torus/config.json` (a missing section falls back to the legacy `~/.torus/automode.json`; see [Configuration](#configuration)):
 
 ```json
 {
@@ -68,6 +68,8 @@ Your rules run first, from `~/.torus/automode.json`:
     "Source control: github.com/tankdonut and all repos under it",
     "Package registry: the default npm registry is fine"
   ],
+  "softDeny": ["leave the staging database untouched"],
+  "softDenyExceptions": ["pg_dump against staging for a nightly backup"],
   "hardDeny": ["never read or send ~/.ssh credentials anywhere"],
   "classifyAllShell": false
 }
@@ -75,7 +77,9 @@ Your rules run first, from `~/.torus/automode.json`:
 
 Entries are prefix patterns, evaluated in deny, ask, then allow order. Broad allow entries such as `*` match nothing and draw a warning at load. A fixed ask floor outranks every allow rule. It covers `sudo` and `su`, recursive forced `rm` on root or home paths, force pushes, recursive `chmod` or `chown` on root paths, and command substitution; floored commands ask no matter what the rules say.
 
-The `environment` and `hardDeny` entries are prose for the decision model: environment lines describe trusted infrastructure and posture (source control, registries, internal domains), hardDeny lines are absolute boundaries. Both ride into every classifier and chat verdict, so the judge knows what "external" means for you. `classifyAllShell` suspends allow rules while auto mode is on, sending every rule-allowed shell command to the decision model instead; deny and ask rules still apply, and the read-only fast path and session cache still run. `/automode` prints the effective configuration and `/automode denied` lists the last denials from the audit log.
+The `environment`, `softDeny`, `softDenyExceptions`, and `hardDeny` entries are prose for the decision model, riding into every classifier and chat verdict so the judge knows what "external" means for you. Environment lines describe trusted infrastructure and posture (source control, registries, internal domains); hardDeny lines are absolute boundaries. softDeny lines deny unless cleared: a matching `softDenyExceptions` entry clears one for that command, and so does a recent user intent line, but only one that directly and specifically describes the exact command. The intent window holds your own messages since the last approval dialog, deny, or `/automode` mode toggle; a general request such as "clean up the repo" clears nothing.
+
+`classifyAllShell` suspends allow rules while auto mode is on, sending every rule-allowed shell command to the decision model instead; deny and ask rules still apply, and the read-only fast path and session cache still run. `/automode` prints the effective configuration and `/automode denied` lists the last denials from the audit log. `/automode setup` drafts `environment` entries from the repo's git remotes and `ask` entries from repeated audit denials, then writes them into config.json's `automode` section.
 
 Read-only commands such as `ls`, `git status`, and version probes pass without a model call. An "Always this session" answer replays without asking again. Three consecutive decision-model denies switch the session to asking for everything.
 
@@ -84,6 +88,48 @@ The judge is a classifier model. Pin one with `TORUS_PERMISSION_MODEL=provider/m
 With no classifier reachable, the fast model chain judges the command in one shot (`glm-5.3-flash` first; `chains.json` overrides under the torus home are honored), falling back to the session model. If every model path fails, the command still runs unjudged, and its tool result carries an `[automode]` notice.
 
 Every decision appends one JSON line to `automode.log` under the session's project state directory, or `~/.torus/automode.log` when no project state exists. Automode only adds gates: denials from guards, `cc-safety-net`, sandbox, and approval still win over anything automode decides. The full pipeline order is in [docs/extensions.md](docs/extensions.md).
+
+## Configuration
+
+User-level configuration lives in one file, `~/.torus/config.json` (`config.json` under `TORUS_HOME` when set). The file is user-level by construction: a repository checkout cannot set it for a session. Each top-level section replaces a standalone legacy file:
+
+| Section | Legacy file | Configures |
+| --- | --- | --- |
+| `chains` | `chains.json` | Model chains per tier plus compatible-provider endpoints |
+| `automode` | `automode.json` | Auto permission-mode rules and circuit-breaker settings |
+| `serve` | `serve.json` | HTTP server bind, port, and scheduled triggers (`tokenPath` stays in serve.json; auth is runtime state) |
+| `keywords` | `keywords.json` | Keyword rows injected into the system prompt |
+| `permissionMode` | none | Default permission mode, a top-level `"auto"` or `"default"` key |
+
+A section present in config.json shadows its legacy file: torus serves the config section and warns, naming both files and pointing at `torus config migrate`. A section missing from config.json falls back to its legacy file, so you can move over one section at a time.
+
+Single-value settings live in their own knob sections, one key each:
+
+| Env var | Config key | Value |
+| --- | --- | --- |
+| `TORUS_BANNER` | `ui.banner` | boolean |
+| `TORUS_STATUSLINE_COST` | `ui.statuslineCost` | boolean |
+| `TORUS_TITLE_MODEL` | `sessionTitle.titleModel` | string |
+| `TORUS_GUARDS` | `guards.enabled` | boolean |
+| `TORUS_MAX_TOOL_OUTPUT` | `guards.maxToolOutput` | number |
+| `TORUS_HASHLINE` | `hashline.enabled` | boolean |
+| `TORUS_FMT_CMD` | `hashline.fmtCmd` | string |
+| `TORUS_INTERACTIVE` | `interactive.enabled` | boolean |
+| `TORUS_MONITOR` | `monitor.enabled` | boolean |
+| `TORUS_NOTIFY` | `notify.enabled` | boolean |
+| `TORUS_COMMENT_CHECKER` | `commentChecker.enabled` | boolean |
+| `TORUS_TEAM_NOTIFY` | `team.teamNotify` | boolean |
+| `TORUS_TASK_STALE_MIN` | `team.taskStaleMin` | number |
+| `TORUS_REFLECTION` | `reflection.enabled` | boolean |
+| `TORUS_REFLECT_TURNS` | `reflection.reflectTurns` | number |
+| `TORUS_DREAMING` | `reflection.dreaming` | boolean |
+
+Precedence is config, then env, then flag: a config value beats the built-in default, a set env var beats config, and a launcher flag (which sets the env var for one session) beats both. A config value of the wrong type is ignored and the default applies. Plumbing that decides where state and processes live before config is read stays env-only: `TORUS_ROOT`, `TORUS_PI_BIN`, the `TORUS_ENGINE*` family, `TORUS_HOME`, `TORUS_STATE_DIR`, `TORUS_WORKTREES_ROOT`, `TORUS_PLATFORM`, `TORUS_MEMORY_COMMIT`, `TORUS_THEME_DEBUG`, `TORUS_SANDBOX`, `TORUS_SERVE`, `TORUS_TMUX`, and `TORUS_APPROVAL`. The remaining vars (`TORUS_TITLE`, `TORUS_PERMISSION_MODEL`, `TORUS_COMMENT_CHECKER_PROMPT`) are env-only too; [docs/extensions.md](docs/extensions.md) carries the full table.
+
+Inspect and fold the file with the launcher subcommand:
+
+- `torus config status` prints each section's effective source: config.json, the legacy file, or default, plus any config.json keys outside the registry.
+- `torus config migrate` prints the fold plan and writes nothing; `torus config migrate --yes` folds every legacy file that has no config.json section yet into config.json in one atomic write. Existing sections and unknown keys survive verbatim, and the legacy files are left in place, so nothing is destroyed.
 
 ## Where to go next
 

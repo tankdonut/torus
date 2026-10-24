@@ -4,7 +4,7 @@
 
 ## Setup
 
-Config lives at `~/.torus/serve.json` (read-with-fallback to defaults):
+serve.json under the torus home holds the server config (read-with-fallback to defaults):
 
 ```json
 {
@@ -16,6 +16,8 @@ Config lives at `~/.torus/serve.json` (read-with-fallback to defaults):
 ```
 
 Defaults shown; every field is optional. `EADDRINUSE` fails startup with a clean error naming the port and the serve.json override.
+
+serve.json is no longer the only config surface: `port`, `bind`, and `triggers` also resolve from the `serve` section of the unified config (`~/.torus/config.json`), and a present section wins (with the usual shadow warning pointing at `torus config migrate`); a missing section falls back to serve.json. `tokenPath` deliberately stays in serve.json, so config.json can never redirect the credential file. `auth.json` and `triggers-state.json` are minted runtime state, not config.
 
 Run it:
 
@@ -40,7 +42,7 @@ Trust boundary: delegations inherit the serve process environment (provider cred
 
 ## Scheduled triggers
 
-`triggers` in serve.json schedules time-based delegations: no cron syntax, only an interval in minutes:
+`triggers` in the serve config (serve.json or the config.json `serve` section) schedules time-based delegations: no cron syntax, only an interval in minutes:
 
 ```json
 {
@@ -60,7 +62,7 @@ Fields: `name` (unique slug: lowercase letters, digits, hyphens), `everyMinutes`
 
 Caps and validation, enforced at startup:
 
-- at most 8 triggers per serve.json;
+- at most 8 triggers in the serve config;
 - an entry that is invalid in any way (bad name, non-integer or too-short interval, unknown agent, empty task, wrong-typed model, duplicate name) refuses startup with an error naming the trigger and the field. Fail loud, fix the file. A missing or empty `triggers` array is fine and schedules nothing.
 
 Behavior:
