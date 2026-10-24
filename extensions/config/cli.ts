@@ -16,16 +16,11 @@
  * torus-state consumer, which is also how tests sandbox them.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
+import { torusHome } from "../fsutil.js";
 import { CONFIG_SECTIONS, type SectionSpec } from "./sections.js";
 
 const CONFIG_FILE_NAME = "config.json";
-
-/** Root of torus user state: TORUS_HOME, else `.torus` under HOME, then homedir(). */
-function torusHomeDir(): string {
-	return process.env["TORUS_HOME"] || path.join(process.env["HOME"] || homedir(), ".torus");
-}
 
 function configPath(home: string): string {
 	return path.join(home, CONFIG_FILE_NAME);
@@ -195,7 +190,7 @@ function runMigrate(
 export async function runConfigCli(args: string[]): Promise<number> {
 	const out = (line: string) => process.stdout.write(`${line}\n`);
 	const err = (line: string) => process.stderr.write(`${line}\n`);
-	const home = torusHomeDir();
+	const home = torusHome();
 	const usage = () => err("usage: torus config status|migrate [--yes]");
 
 	if (args[0] === "status") {
