@@ -73,7 +73,7 @@ Read-only commands such as `ls`, `git status`, and version probes pass without a
 
 The judge is a classifier model. Pin one with `TORUS_PERMISSION_MODEL=provider/model-id`. Without a pin, automode takes the first available classifier, such as `typesafe/jev-latest` behind a `TYPESAFE_API_KEY` or a local decision model from a llama.cpp router; a local router works offline with no API key.
 
-With no classifier reachable, the session model judges the command in one shot. If every model path fails, the command still runs unjudged, and its tool result carries an `[automode]` notice.
+With no classifier reachable, the fast model chain judges the command in one shot (`glm-5.3-flash` first; `chains.json` overrides under the torus home are honored), falling back to the session model. If every model path fails, the command still runs unjudged, and its tool result carries an `[automode]` notice.
 
 Every decision appends one JSON line to `automode.log` under the session's project state directory, or `~/.torus/automode.log` when no project state exists. Automode only adds gates: denials from guards, `cc-safety-net`, sandbox, and approval still win over anything automode decides. The full pipeline order is in [docs/extensions.md](docs/extensions.md).
 

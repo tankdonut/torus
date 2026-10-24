@@ -20,7 +20,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { refreshToruStatus, setStatusPermission } from "../ui/index.js";
-import { DecisionCache, decide, pickModel } from "./classify.js";
+import { DecisionCache, decide, pickChatModel, pickModel } from "./classify.js";
 import {
 	type AuditRow,
 	appendAuditRow,
@@ -113,6 +113,16 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			const picked = await pickModel(ctx.modelRegistry, pin);
 			if (picked.model !== undefined) {
 				return `${picked.model.provider}/${picked.model.id}`;
+			}
+			const chat = pickChatModel(ctx.modelRegistry, ctx.model);
+			if (chat !== undefined) {
+				const isSession =
+					ctx.model !== undefined &&
+					chat.provider === ctx.model.provider &&
+					chat.id === ctx.model.id;
+				return isSession
+					? `session model (${chat.provider}/${chat.id})`
+					: `fast chain (${chat.provider}/${chat.id})`;
 			}
 		} catch {
 			// Per-call decide() does its own lookup and fail-open handling.

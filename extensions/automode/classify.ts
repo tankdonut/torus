@@ -27,13 +27,14 @@ import type {
 	TextContent,
 } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { modelChain } from "../providers/index.js";
 import { CLASSIFY_TIMEOUT_MS, LOW_CONFIDENCE_THRESHOLD } from "./config.js";
 import { type AutomodeVerdict, type Decision, normalizeCommand } from "./policy.js";
 
 /** The slice of the engine registry this module needs; stubs only implement these. */
 export type DecisionRegistry = Pick<
 	ModelRegistry,
-	"classify" | "complete" | "getAvailableOfType" | "getModelOfType"
+	"classify" | "complete" | "find" | "getAvailableOfType" | "hasConfiguredAuth" | "getModelOfType"
 >;
 
 /** One-line rubric per verdict; feeds both the classifier question and the chat prompt. */
@@ -54,6 +55,26 @@ function rubricReason(verdict: AutomodeVerdict): string {
 
 function modelLabel(model: { provider: string; id: string }): string {
 	return `${model.provider}/${model.id}`;
+}
+
+/**
+ * The chat fallback's default judge: the first fast-chain model the registry
+ * knows with working credentials (chains.json overrides ride along), falling
+ * back to the session model. Undefined only when both miss.
+ */
+export function pickChatModel(
+	registry: DecisionRegistry,
+	sessionModel: Model<Api> | undefined,
+): Model<Api> | undefined {
+	for (const id of modelChain("fast")) {
+		const slash = id.indexOf("/");
+		if (slash === -1) continue;
+		const model = registry.find(id.slice(0, slash), id.slice(slash + 1));
+		if (model !== undefined && registry.hasConfiguredAuth(model)) {
+			return model;
+		}
+	}
+	return sessionModel;
 }
 
 function errorMessage(error: unknown): string {
@@ -334,14 +355,15 @@ export async function decide(
 		}
 		errors.push(outcome.error);
 	}
-	if (sessionModel !== undefined) {
-		const outcome = await classifyWithChat(registry, sessionModel, command, cwd, combined);
+	const chatModel = pickChatModel(registry, sessionModel);
+	if (chatModel !== undefined) {
+		const outcome = await classifyWithChat(registry, chatModel, command, cwd, combined);
 		if (!("error" in outcome)) {
 			return outcome;
 		}
 		errors.push(outcome.error);
 	} else {
-		errors.push("no session model available for the chat fallback");
+		errors.push("no chat model available (fast chain and session model both missing)");
 	}
 	return { verdict: "failopen", source: "failopen", reason: errors.join("; ") };
 }

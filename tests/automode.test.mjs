@@ -51,6 +51,8 @@ function registryStub(replies) {
 		calls,
 		getAvailableOfType: async () => [],
 		getModelOfType: () => undefined,
+		find: () => undefined,
+		hasConfiguredAuth: () => false,
 		classify: async () => {
 			calls.classify += 1;
 			throw new Error("no classifier in stub");

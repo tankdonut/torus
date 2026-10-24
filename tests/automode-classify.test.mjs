@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
+
+// The fast chain resolves through modelChain("fast"), which reads
+// chains.json under TORUS_HOME on every call — point it at an empty sandbox
+// so the built-in chain is what tests see.
+process.env.TORUS_HOME = mkdtempSync(path.join(tmpdir(), "torus-automode-classify-"));
 
 const {
 	pickModel,
+	pickChatModel,
 	CHOICE_RUBRIC,
 	classifyWithClassifier,
 	classifyWithChat,
@@ -67,7 +76,13 @@ const assistantText = (text, over = {}) => ({
 	...over,
 });
 
-const registryStub = ({ available = [], classifyImpl, completeImpl } = {}) => ({
+const registryStub = ({
+	available = [],
+	classifyImpl,
+	completeImpl,
+	findImpl,
+	authImpl = () => true,
+} = {}) => ({
 	async getAvailableOfType(type) {
 		assert.equal(type, "classifier");
 		return available;
@@ -75,6 +90,12 @@ const registryStub = ({ available = [], classifyImpl, completeImpl } = {}) => ({
 	getModelOfType(type, provider, modelId) {
 		assert.equal(type, "classifier");
 		return available.find((m) => m.provider === provider && m.id === modelId);
+	},
+	find(provider, modelId) {
+		return findImpl?.(provider, modelId);
+	},
+	hasConfiguredAuth(model) {
+		return authImpl(model);
 	},
 	async classify(model, context, options) {
 		return classifyImpl(model, context, options);
@@ -388,7 +409,7 @@ test("decide: classifier failure plus chat junk fails open with both reasons joi
 test("decide: no classifier and no session model fails open naming the missing fallback", async () => {
 	const decision = await decide(registryStub(), undefined, undefined, "ls", "/repo");
 	assert.equal(decision.verdict, "failopen");
-	assert.match(decision.reason, /no session model/);
+	assert.match(decision.reason, /no chat model available/);
 });
 
 test("decide: a hanging classifier plus a tiny timeout fails open instead of hanging", async () => {
@@ -507,4 +528,43 @@ test("DecisionCache: default capacity is 500 and clear empties the map", () => {
 	cache.clear();
 	assert.equal(cache.size, 0);
 	assert.equal(cache.get("cmd-500"), undefined);
+});
+
+test("pickChatModel: the first known fast-chain model with credentials wins", () => {
+	const flash = chatModel("glm-5.3-flash", "zai");
+	const registry = registryStub({
+		findImpl: (provider, id) => (provider === "zai" && id === "glm-5.3-flash" ? flash : undefined),
+	});
+	assert.equal(pickChatModel(registry, chatModel()), flash);
+});
+
+test("pickChatModel: chain entries without credentials are skipped", () => {
+	const session = chatModel();
+	const registry = registryStub({
+		findImpl: () => chatModel("glm-5.3-flash", "zai"),
+		authImpl: () => false,
+	});
+	assert.equal(pickChatModel(registry, session), session);
+});
+
+test("pickChatModel: no resolvable chain entry falls back to the session model", () => {
+	const session = chatModel();
+	assert.equal(pickChatModel(registryStub(), session), session);
+	assert.equal(pickChatModel(registryStub(), undefined), undefined);
+});
+
+test("decide: the chat fallback judges with the fast-chain model when resolvable", async () => {
+	const flash = chatModel("glm-5.3-flash", "zai");
+	let seen;
+	const registry = registryStub({
+		completeImpl: (model) => {
+			seen = model;
+			return assistantText('{"verdict":"allow","confidence":0.95,"reason":"fine"}');
+		},
+		findImpl: (provider, id) => (provider === "zai" && id === "glm-5.3-flash" ? flash : undefined),
+	});
+	const decision = await decide(registry, chatModel(), undefined, "npm test", "/repo");
+	assert.equal(decision.verdict, "allow");
+	assert.equal(decision.model, "zai/glm-5.3-flash");
+	assert.equal(seen, flash);
 });
