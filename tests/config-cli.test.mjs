@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -172,6 +172,7 @@ test("empty home: status reports all defaults and migrate --yes creates no confi
 				"serve: default",
 				"keywords: default",
 				"permissionMode: default",
+				`project: none (${path.join(process.cwd(), ".torus", "config.json")})`,
 				"",
 			].join("\n"),
 		);
@@ -193,5 +194,26 @@ after(() => {
 		delete process.env.TORUS_HOME;
 	} else {
 		process.env.TORUS_HOME = ORIGINAL_HOME;
+	}
+});
+
+test("status: project file line names readable sections and refused keys", async () => {
+	sandboxHome();
+	const cwd = mkdtempSync(path.join(tmpdir(), "torus-proj-cli-"));
+	const prev = process.cwd();
+	try {
+		mkdirSync(path.join(cwd, ".torus"), { recursive: true });
+		writeFileSync(
+			path.join(cwd, ".torus", "config.json"),
+			JSON.stringify({ ui: { banner: false }, chains: {} }),
+		);
+		process.chdir(cwd);
+		const status = await captureRun(["status"]);
+		assert.equal(status.code, 0);
+		assert.match(status.stdout, /project: .*\.torus\/config\.json \(sections: ui\)/);
+		assert.match(status.stdout, /project refused: chains/);
+	} finally {
+		process.chdir(prev);
+		rmSync(cwd, { recursive: true, force: true });
 	}
 });

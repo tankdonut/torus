@@ -18,6 +18,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { torusHome } from "../fsutil.js";
+import { loadProjectConfig, projectConfigPath } from "./loader.js";
 import { CONFIG_SECTIONS, type SectionSpec } from "./sections.js";
 
 const CONFIG_FILE_NAME = "config.json";
@@ -73,6 +74,19 @@ function runStatus(home: string, out: (line: string) => void): number {
 		for (const key of Object.keys(config)) {
 			if (!CONFIG_SECTIONS.some((section) => section.name === key)) out(`${key}: config.json`);
 		}
+	}
+	const projectPath = projectConfigPath();
+	if (existsSync(projectPath)) {
+		const project = loadProjectConfig();
+		const readable = Object.keys(project.config);
+		out(
+			`project: ${projectPath} (${readable.length > 0 ? `sections: ${readable.join(", ")}` : "no readable sections"})`,
+		);
+		if (project.ignored.length > 0) {
+			out(`project refused: ${project.ignored.join(", ")}`);
+		}
+	} else {
+		out(`project: none (${projectPath})`);
 	}
 	return 0;
 }

@@ -13,8 +13,12 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { torusHome } from "../fsutil.js";
+import { PROJECT_READABLE_SECTIONS } from "./sections.js";
 
 export const CONFIG_FILE_NAME = "config.json";
+
+/** Directory name of the project-level config inside a working directory. */
+export const PROJECT_DIR_NAME = ".torus";
 
 /**
  * Path of the unified config file under the torus home. Home resolution is
@@ -25,6 +29,50 @@ export const CONFIG_FILE_NAME = "config.json";
  */
 export function configFilePath(): string {
 	return path.join(torusHome(), CONFIG_FILE_NAME);
+}
+
+/** Path of the project-level config at `<cwd>/.torus/config.json`. */
+export function projectConfigPath(cwd: string = process.cwd()): string {
+	return path.join(cwd, PROJECT_DIR_NAME, CONFIG_FILE_NAME);
+}
+
+export type ProjectConfigLoad = {
+	config: Record<string, unknown>;
+	/** Top-level keys the project file may NOT set (refused, not applied). */
+	ignored: string[];
+	warning?: string;
+};
+
+/**
+ * Read the project-level config with the user file's tolerance (missing →
+ * empty, malformed → empty plus a warning, never throws), then keep only the
+ * sections a project may set (PROJECT_READABLE_SECTIONS, plain objects
+ * only). Every other top-level key — and any readable section that is not a
+ * plain object — is refused into `ignored` with one warning naming the file:
+ * a checked-in repo must not be able to widen its own permissions, redirect
+ * model traffic, or inject prompt keywords. The automode section passes
+ * through here as a whole; its tightening-only key split is the consumer's
+ * contract (PROJECT_AUTOMODE_KEYS).
+ */
+export function loadProjectConfig(cwd: string = process.cwd()): ProjectConfigLoad {
+	const target = projectConfigPath(cwd);
+	const loaded = loadConfigFile(target);
+	const readable = new Set(PROJECT_READABLE_SECTIONS);
+	const config: Record<string, unknown> = {};
+	const ignored: string[] = [];
+	for (const [key, value] of Object.entries(loaded.config)) {
+		if (readable.has(key) && isPlainObject(value)) {
+			config[key] = value;
+		} else {
+			ignored.push(key);
+		}
+	}
+	let warning = loaded.warning;
+	if (ignored.length > 0) {
+		const refused = `project config ${target}: ignoring ${ignored.join(", ")} (a project may set only ${PROJECT_READABLE_SECTIONS.join(", ")})`;
+		warning = warning === undefined ? refused : `${warning}; ${refused}`;
+	}
+	return { config, ignored, warning };
 }
 
 export type ConfigLoad = { config: Record<string, unknown>; warning?: string };

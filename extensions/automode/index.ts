@@ -20,7 +20,8 @@ import {
 	isToolCallEventType,
 	type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { loadConfigFile, writeSection } from "../config/loader.js";
+import { loadConfigFile, loadProjectConfig, writeSection } from "../config/loader.js";
+import { PROJECT_AUTOMODE_KEYS } from "../config/sections.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { refreshToruStatus, setStatusPermission } from "../ui/index.js";
 import { DecisionCache, decide, pickChatModel, pickModel } from "./classify.js";
@@ -286,6 +287,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	let modeOverride: PermissionMode | undefined;
 	let rules: AutomodeRulesFile = {};
 	let rulesSource: AutomodeRulesSource = "automode.json";
+	let projectExtras: { deny: number; ask: number } | undefined;
 	let pin: { provider: string; modelId: string } | undefined;
 	const cache = new DecisionCache();
 	let consecutiveDenies = 0;
@@ -338,6 +340,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		for (const warning of warnings) {
 			ctx.ui.notify(`automode: ${warning}`, "info");
 		}
+		applyProjectRules(ctx);
 		const pinned = parseModelPin(process.env);
 		pin = pinned.pin;
 		if (pinned.warning !== undefined) {
@@ -349,6 +352,52 @@ export function registerAutomode(pi: ExtensionAPI): void {
 				`automode: broad allow entries match nothing under prefix-pattern rules and are ignored in auto mode: ${broad.join(", ")}`,
 				"warning",
 			);
+		}
+	}
+
+	/**
+	 * Union the project file's tightening-only automode keys into the
+	 * effective rules. A project may add deny and ask entries on top of the
+	 * user's rules — never widen: its allow, environment, hardDeny, softDeny,
+	 * softDenyExceptions, and classifyAllShell keys are refused with one
+	 * notice, as are any non-automode sections (chains, serve, keywords,
+	 * permissionMode) by the loader's allowlist.
+	 */
+	function applyProjectRules(ctx: ExtensionContext): void {
+		projectExtras = undefined;
+		const project = loadProjectConfig(ctx.cwd);
+		if (project.warning !== undefined) {
+			ctx.ui.notify(`automode: ${project.warning}`, "warning");
+		}
+		const rawSection = project.config["automode"];
+		if (typeof rawSection !== "object" || rawSection === null || Array.isArray(rawSection)) {
+			return;
+		}
+		const section = rawSection as Record<string, unknown>;
+		const ignoredKeys = Object.keys(section).filter((key) => !PROJECT_AUTOMODE_KEYS.includes(key));
+		if (ignoredKeys.length > 0) {
+			ctx.ui.notify(
+				`automode: project .torus/config.json may only tighten; ignoring its automode keys: ${ignoredKeys.join(", ")}`,
+				"warning",
+			);
+		}
+		let denyAdded = 0;
+		let askAdded = 0;
+		for (const key of ["deny", "ask"] as const) {
+			const entries = section[key];
+			if (!Array.isArray(entries)) continue;
+			const merged = rules[key] ?? [];
+			for (const entry of entries) {
+				if (typeof entry === "string" && !merged.includes(entry)) {
+					merged.push(entry);
+					if (key === "deny") denyAdded += 1;
+					else askAdded += 1;
+				}
+			}
+			rules[key] = merged;
+		}
+		if (denyAdded > 0 || askAdded > 0) {
+			projectExtras = { deny: denyAdded, ask: askAdded };
 		}
 	}
 
@@ -638,6 +687,11 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			lines.push(
 				`  classifyAllShell: ${rules.classifyAllShell === true ? "on (allow rules suspended)" : "off"}`,
 			);
+			if (projectExtras !== undefined) {
+				lines.push(
+					`  project .torus/config.json: +deny ${projectExtras.deny}, +ask ${projectExtras.ask}`,
+				);
+			}
 		} else {
 			lines.push(`rules: ${path} (not loaded; default mode)`);
 		}

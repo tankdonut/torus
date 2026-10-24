@@ -361,3 +361,63 @@ test("osnotify: config notify.enabled=false skips the spawn; env TORUS_NOTIFY=0 
 	});
 	clearConfig();
 });
+
+test("knobs: user config beats project; project fills when user lacks the key; env beats both", () => {
+	const user = { ui: { banner: true } };
+	const project = { ui: { banner: false } };
+	assert.equal(
+		knobBoolean("TORUS_KNOB_PROJ_TEST", "ui", "banner", true, undefined, user, project),
+		true,
+		"user wins over project",
+	);
+	assert.equal(
+		knobBoolean("TORUS_KNOB_PROJ_TEST", "ui", "banner", true, undefined, {}, project),
+		false,
+		"project fills when user lacks the key",
+	);
+	assert.equal(
+		knobBoolean("TORUS_KNOB_PROJ_TEST", "ui", "banner", true, undefined, {}, {}),
+		true,
+		"default when neither sets it",
+	);
+	try {
+		process.env.TORUS_KNOB_PROJ_TEST = "false";
+		assert.equal(
+			knobBoolean("TORUS_KNOB_PROJ_TEST", "ui", "banner", true, undefined, user, project),
+			false,
+			"env beats both tiers",
+		);
+	} finally {
+		delete process.env.TORUS_KNOB_PROJ_TEST;
+	}
+	assert.equal(
+		knobBoolean(
+			"TORUS_KNOB_PROJ_TEST",
+			"ui",
+			"banner",
+			true,
+			undefined,
+			{},
+			{ ui: { banner: "nope" } },
+		),
+		true,
+		"wrong-typed project value ignored",
+	);
+});
+
+test("knobs: the project tier reads <cwd>/.torus/config.json live", () => {
+	const dir = mkdtempSync(path.join(tmpdir(), "torus-knobs-proj-"));
+	const prev = process.cwd();
+	try {
+		mkdirSync(path.join(dir, ".torus"), { recursive: true });
+		writeFileSync(
+			path.join(dir, ".torus", "config.json"),
+			JSON.stringify({ guards: { maxToolOutput: 4321 } }),
+		);
+		process.chdir(dir);
+		assert.equal(knobNumber("TORUS_KNOB_PROJ_TEST_N", "guards", "maxToolOutput", 16000), 4321);
+	} finally {
+		process.chdir(prev);
+		rmSync(dir, { recursive: true, force: true });
+	}
+});

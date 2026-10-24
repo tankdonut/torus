@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -11,6 +11,8 @@ const {
 	CONFIG_FILE_NAME,
 	configFilePath,
 	loadConfigFile,
+	loadProjectConfig,
+	projectConfigPath,
 	readSection,
 	configOverEnv,
 	parseEnvBoolean,
@@ -244,4 +246,46 @@ test("writeSection: refuses an existing malformed file, keeps the bytes, leaves 
 			`root ${raw} leaves no temp file`,
 		);
 	}
+});
+
+test("project config: path honors cwd; a missing file is empty with no warning", () => {
+	const dir = mkdtempSync(path.join(tmpdir(), "torus-project-cfg-"));
+	assert.equal(projectConfigPath(dir), path.join(dir, ".torus", "config.json"));
+	const loaded = loadProjectConfig(dir);
+	assert.deepEqual(loaded.config, {});
+	assert.deepEqual(loaded.ignored, []);
+	assert.equal(loaded.warning, undefined);
+});
+
+test("project config: allowlist keeps knob sections and automode whole; the rest is refused", () => {
+	const dir = mkdtempSync(path.join(tmpdir(), "torus-project-cfg-"));
+	mkdirSync(path.join(dir, ".torus"), { recursive: true });
+	writeFileSync(
+		projectConfigPath(dir),
+		JSON.stringify({
+			ui: { banner: false },
+			automode: { deny: ["sudo *"], allow: ["curl *"] },
+			chains: { fast: ["zai/x"] },
+			keywords: { hi: "there" },
+			serve: { port: 1 },
+			permissionMode: "auto",
+			guards: 3,
+		}),
+	);
+	const loaded = loadProjectConfig(dir);
+	assert.deepEqual(Object.keys(loaded.config).sort(), ["automode", "ui"]);
+	assert.deepEqual(loaded.config.automode, { deny: ["sudo *"], allow: ["curl *"] });
+	for (const refused of ["chains", "keywords", "serve", "permissionMode", "guards"]) {
+		assert.ok(loaded.ignored.includes(refused), `refused: ${refused}`);
+	}
+	assert.match(loaded.warning ?? "", /ignoring chains/);
+});
+
+test("project config: malformed file degrades to empty with a warning, no throw", () => {
+	const dir = mkdtempSync(path.join(tmpdir(), "torus-project-cfg-"));
+	mkdirSync(path.join(dir, ".torus"), { recursive: true });
+	writeFileSync(projectConfigPath(dir), "{not json");
+	const loaded = loadProjectConfig(dir);
+	assert.deepEqual(loaded.config, {});
+	assert.match(loaded.warning ?? "", /not valid JSON/);
 });

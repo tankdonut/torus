@@ -131,7 +131,7 @@ function setup(options = {}) {
 		},
 		modelRegistry: reg,
 		model: sessionModel,
-		cwd: "/tmp/project",
+		cwd: options.cwd ?? "/tmp/project",
 		signal: undefined,
 	};
 	return { pi, ctx, notifications, reg, dialog };
@@ -934,4 +934,38 @@ test("/automode setup Write on a malformed config.json: error notify, bytes surv
 		[],
 		"no temp file left",
 	);
+});
+
+test("project config: deny/ask union tightens; allow and other keys are refused", async () => {
+	const cwd = mkdtempSync(path.join(tmpdir(), "torus-proj-rules-"));
+	mkdirSync(path.join(cwd, ".torus"), { recursive: true });
+	writeFileSync(
+		path.join(cwd, ".torus", "config.json"),
+		JSON.stringify({ automode: { deny: ["make *"], allow: ["cargo *"], environment: ["x"] } }),
+	);
+	resetAudit();
+	const { pi, ctx, notifications, reg } = setup({ cwd, replies: [jsonReply("ask")] });
+	const blocked = await call(pi, ctx, "make -j4", "pr-1");
+	assert.equal(blocked.block, true);
+	assert.match(blocked.reason, /denied by rule "make \*"/);
+
+	const judged = await call(pi, ctx, "cargo build", "pr-2");
+	assert.equal(reg.calls.complete, 1, "a project allow entry does not bypass the model");
+	assert.match(judged.reason ?? "", /no UI for approval/);
+
+	assert.ok(
+		notifications.some(
+			(n) =>
+				n.message.includes("may only tighten") &&
+				n.message.includes("allow") &&
+				n.message.includes("environment"),
+		),
+		"ignored-keys notice fired",
+	);
+	await pi.commands.automode.handler("", ctx);
+	assert.ok(
+		notifications.some((n) => n.message.includes("project .torus/config.json: +deny 1")),
+		"status shows the project extras line",
+	);
+	rmSync(cwd, { recursive: true, force: true });
 });

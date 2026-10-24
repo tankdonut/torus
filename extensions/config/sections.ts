@@ -22,6 +22,31 @@ export interface SectionSpec {
 	description: string;
 }
 
+/**
+ * Sections a project-level `.torus/config.json` (at the session's working
+ * directory) may set: quality-of-life knobs only. chains, serve, keywords,
+ * and permissionMode stay user-level — a checked-in repo must not be able to
+ * redirect model traffic, inject prompt keywords, or opt sessions into
+ * automode. The automode section is project-readable too, but only its
+ * tightening keys (PROJECT_AUTOMODE_KEYS); the consumer enforces that split.
+ */
+export const PROJECT_READABLE_SECTIONS: readonly string[] = [
+	"ui",
+	"sessionTitle",
+	"guards",
+	"hashline",
+	"interactive",
+	"monitor",
+	"notify",
+	"commentChecker",
+	"team",
+	"reflection",
+	"automode",
+];
+
+/** Keys of the automode section a project file may set: tightening only. */
+export const PROJECT_AUTOMODE_KEYS: readonly string[] = ["deny", "ask"];
+
 export const CONFIG_SECTIONS: readonly SectionSpec[] = [
 	{
 		name: "chains",
