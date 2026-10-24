@@ -1,26 +1,38 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
 const home = mkdtempSync(path.join(tmpdir(), "torus-automode-"));
 process.env.TORUS_HOME = home;
-// Live-env defaults below must resolve against the fake home even when the
-// suite itself runs inside a torus session (which exports TORUS_STATE_DIR).
-delete process.env.TORUS_STATE_DIR;
 
 const {
 	resolveMode,
 	loadRules,
+	loadAutomodeRules,
 	parseModelPin,
 	appendAuditRow,
-	torusHomeDir,
 	rulesPath,
 	auditPath,
 	RULES_FILE_NAME,
 	AUDIT_LOG_NAME,
 } = await import("../extensions/automode/config.ts");
+const { torusHome } = await import("../extensions/fsutil.ts");
+
+// Live-env defaults below must resolve against the fake home even when the
+// suite itself runs inside a torus session (which exports TORUS_STATE_DIR).
+// The config import pulls in fsutil (via the unified loader), whose module
+// load re-mirrors TORUS_STATE_DIR — clear it after the imports settle.
+delete process.env.TORUS_STATE_DIR;
+
+const configPath = path.join(home, "config.json");
+const legacyRulesPath = path.join(home, RULES_FILE_NAME);
+
+const setConfig = (value) => writeFileSync(configPath, JSON.stringify(value));
+const clearConfig = () => rmSync(configPath, { force: true });
+const setLegacyRules = (value) => writeFileSync(legacyRulesPath, JSON.stringify(value));
+const clearLegacyRules = () => rmSync(legacyRulesPath, { force: true });
 
 const rulesFile = (name, content) => {
 	const file = path.join(home, "rules", name);
@@ -178,21 +190,29 @@ test("appendAuditRow: an unwritable target is swallowed without throwing", () =>
 	assert.equal(existsSync(path.join(blocker, "audit.log")), false);
 });
 
-test("torusHomeDir and derived paths: TORUS_HOME root, else .torus under HOME or os.homedir()", () => {
-	assert.equal(torusHomeDir({ TORUS_HOME: "/t", HOME: "/h" }), "/t");
-	assert.equal(torusHomeDir({ HOME: "/h" }), path.join("/h", ".torus"));
-	assert.equal(torusHomeDir({}), path.join(homedir(), ".torus"));
-	assert.equal(torusHomeDir(), home);
-	assert.equal(rulesPath({ HOME: "/h" }), path.join("/h", ".torus", RULES_FILE_NAME));
-	assert.equal(auditPath({ HOME: "/h" }), path.join("/h", ".torus", AUDIT_LOG_NAME));
-	assert.equal(rulesPath({ TORUS_HOME: "/t" }), path.join("/t", RULES_FILE_NAME));
-	assert.equal(auditPath({ TORUS_HOME: "/t" }), path.join("/t", AUDIT_LOG_NAME));
-	assert.equal(
-		auditPath({ TORUS_STATE_DIR: "/s", TORUS_HOME: "/t", HOME: "/h" }),
-		path.join("/s", AUDIT_LOG_NAME),
-	);
-	assert.equal(RULES_FILE_NAME, "automode.json");
-	assert.equal(AUDIT_LOG_NAME, "automode.log");
+test('rulesPath/auditPath: derived from fsutil torusHome(), including the TORUS_HOME="" case', () => {
+	delete process.env.TORUS_STATE_DIR;
+	assert.equal(rulesPath(), path.join(torusHome(), RULES_FILE_NAME));
+	assert.equal(rulesPath(), path.join(home, RULES_FILE_NAME));
+	assert.equal(auditPath(), path.join(torusHome(), AUDIT_LOG_NAME));
+	const previous = process.env.TORUS_HOME;
+	try {
+		process.env.TORUS_HOME = "";
+		assert.equal(rulesPath(), path.join(torusHome(), RULES_FILE_NAME), 'under TORUS_HOME=""');
+		assert.equal(rulesPath(), RULES_FILE_NAME, "empty home collapses to the bare file name");
+		process.env.TORUS_HOME = "/elsewhere";
+		assert.equal(rulesPath(), path.join("/elsewhere", RULES_FILE_NAME));
+		assert.equal(auditPath(), path.join("/elsewhere", AUDIT_LOG_NAME));
+		process.env.TORUS_STATE_DIR = "/state/dir";
+		try {
+			assert.equal(auditPath(), path.join("/state/dir", AUDIT_LOG_NAME));
+		} finally {
+			delete process.env.TORUS_STATE_DIR;
+		}
+	} finally {
+		process.env.TORUS_HOME = previous;
+	}
+	assert.equal(rulesPath(), path.join(home, RULES_FILE_NAME));
 });
 
 test("loadRules: v2 keys — environment and hardDeny prose arrays, classifyAllShell boolean", () => {
@@ -225,4 +245,119 @@ test("loadRules: v1 files load unchanged (no v2 keys)", () => {
 	const { rules, warnings } = loadRules(file);
 	assert.deepEqual(rules, { allow: ["ls *"] });
 	assert.deepEqual(warnings, []);
+});
+
+test("loadAutomodeRules: the config.json automode section governs, validated like the file (v2 keys)", () => {
+	clearConfig();
+	clearLegacyRules();
+	setConfig({
+		automode: {
+			allow: ["cargo *"],
+			deny: ["sudo *"],
+			environment: ["Source control: github.example.com/acme"],
+			hardDeny: ["no secrets leave the machine"],
+			classifyAllShell: true,
+		},
+	});
+	try {
+		const got = loadAutomodeRules();
+		assert.deepEqual(got, {
+			rules: {
+				allow: ["cargo *"],
+				deny: ["sudo *"],
+				environment: ["Source control: github.example.com/acme"],
+				hardDeny: ["no secrets leave the machine"],
+				classifyAllShell: true,
+			},
+			warnings: [],
+			source: "config.json",
+		});
+	} finally {
+		clearConfig();
+	}
+});
+
+test("loadAutomodeRules: legacy fallback is byte-identical to loadRules", () => {
+	clearConfig();
+	setLegacyRules({ allow: ["bash *", 7], bogus: true });
+	try {
+		const got = loadAutomodeRules();
+		const fromFile = loadRules(legacyRulesPath);
+		assert.equal(got.source, "automode.json");
+		assert.deepEqual(got.rules, fromFile.rules);
+		assert.deepEqual(got.warnings, fromFile.warnings);
+	} finally {
+		clearLegacyRules();
+	}
+});
+
+test("loadAutomodeRules: an existing empty automode.json is legacy, not default", () => {
+	clearConfig();
+	setLegacyRules({});
+	try {
+		assert.deepEqual(loadAutomodeRules(), {
+			rules: {},
+			warnings: [],
+			source: "automode.json",
+		});
+	} finally {
+		clearLegacyRules();
+	}
+});
+
+test("loadAutomodeRules: overlap yields config rules plus exactly one shadow warning", () => {
+	setLegacyRules({ deny: ["rm *"] });
+	setConfig({ automode: { deny: ["sudo *"] } });
+	try {
+		const got = loadAutomodeRules();
+		assert.equal(got.source, "config.json");
+		assert.deepEqual(got.rules, { deny: ["sudo *"] });
+		assert.equal(got.warnings.length, 1, "exactly one warning");
+		assert.ok(got.warnings[0].includes("torus config migrate"), got.warnings[0]);
+	} finally {
+		clearConfig();
+		clearLegacyRules();
+	}
+});
+
+test("loadAutomodeRules: malformed config.json falls back to the legacy file with a warning", () => {
+	writeFileSync(configPath, "{not json");
+	setLegacyRules({ deny: ["sudo *"] });
+	try {
+		const got = loadAutomodeRules();
+		assert.equal(got.source, "automode.json");
+		assert.deepEqual(got.rules, { deny: ["sudo *"] });
+		assert.ok(
+			got.warnings.some((w) => w.includes("not valid JSON") && w.includes(configPath)),
+			got.warnings.join(" | "),
+		);
+	} finally {
+		clearConfig();
+		clearLegacyRules();
+	}
+});
+
+test("loadAutomodeRules: validation warnings from config carry the config.json prefix", () => {
+	clearLegacyRules();
+	setConfig({ automode: { allow: "*", classifyAllShell: "yes", timeoutMs: 5 } });
+	try {
+		const got = loadAutomodeRules();
+		assert.equal(got.source, "config.json");
+		assert.deepEqual(got.rules, {});
+		assert.equal(got.warnings.length, 3, got.warnings.join(" | "));
+		for (const warning of got.warnings) {
+			assert.ok(warning.startsWith("config.json: "), warning);
+		}
+		assert.ok(got.warnings.some((w) => w.includes('"allow" must be an array')));
+		assert.ok(got.warnings.some((w) => w.includes("classifyAllShell")));
+		assert.ok(got.warnings.some((w) => w.includes("timeoutMs")));
+	} finally {
+		clearConfig();
+	}
+});
+
+test("loadAutomodeRules: nothing configured means default source with no rules or warnings", () => {
+	clearConfig();
+	clearLegacyRules();
+	assert.deepEqual(loadAutomodeRules(), { rules: {}, warnings: [], source: "default" });
 });

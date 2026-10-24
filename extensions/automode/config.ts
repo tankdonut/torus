@@ -1,16 +1,21 @@
 /**
- * torus automode — configuration: permission mode, rules file, model pin, audit log.
+ * torus automode — configuration: permission mode, rules, model pin, audit log.
  *
- * Every function that touches disk or env takes its path/env as a parameter with
- * a real default, so callers (and tests) can point everything at a sandbox.
- * Parsing is best-effort by contract: config problems surface as warnings on the
- * returned object, never as throws — a broken config degrades to default mode
- * with an empty rules file, and the audit log never breaks execution.
+ * Rules resolve through the unified config loader: the "automode" section of
+ * config.json (same keys as the legacy file, validated the same way) wins over
+ * automode.json, and neither configured means no rules. Path helpers derive
+ * from fsutil's torusHome(), imported rather than mirrored, which reads the
+ * live process env — callers and tests sandbox it via TORUS_HOME. Mode and
+ * model-pin parsers take their env as a parameter with a real default.
+ * Parsing is best-effort by contract: config problems surface as warnings on
+ * the returned object, never as throws — a broken config degrades to default
+ * mode with an empty rules file, and the audit log never breaks execution.
  */
 
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { CONFIG_FILE_NAME, readSection } from "../config/loader.js";
+import { torusHome } from "../fsutil.js";
 
 export type PermissionMode = "default" | "auto";
 
@@ -27,19 +32,14 @@ export const RULES_FILE_NAME = "automode.json";
 export const AUDIT_LOG_NAME = "automode.log";
 
 /**
- * Root of torus user state: TORUS_HOME when set (the test suite points it at
- * an isolated root), else `.torus` under HOME, then os.homedir() — mirroring
- * fsutil's torusHome(). HOME wins over homedir() because bun's homedir() reads
- * the passwd entry and ignores $HOME (runtime/bin/torus.mjs resolves it the
- * same way).
+ * Rules-file path — the legacy automode.json, the canonical place rules lived
+ * before the unified config (and the fallback when config.json has no
+ * "automode" section). Derived from fsutil's torusHome() so every torus
+ * consumer resolves the same root by construction, including the
+ * TORUS_HOME=""-wins case under nullish coalescing.
  */
-export function torusHomeDir(env: NodeJS.ProcessEnv = process.env): string {
-	return env["TORUS_HOME"] || path.join(env["HOME"] || homedir(), ".torus");
-}
-
-/** Rules-file path under a torus home (defaults to the live process env). */
-export function rulesPath(env: NodeJS.ProcessEnv = process.env): string {
-	return path.join(torusHomeDir(env), RULES_FILE_NAME);
+export function rulesPath(): string {
+	return path.join(torusHome(), RULES_FILE_NAME);
 }
 
 /**
@@ -48,10 +48,10 @@ export function rulesPath(env: NodeJS.ProcessEnv = process.env): string {
  * hosts. Rules stay user-global under the torus home so no project can widen
  * its own permissions.
  */
-export function auditPath(env: NodeJS.ProcessEnv = process.env): string {
-	return env["TORUS_STATE_DIR"]
-		? path.join(env["TORUS_STATE_DIR"], AUDIT_LOG_NAME)
-		: path.join(torusHomeDir(env), AUDIT_LOG_NAME);
+export function auditPath(): string {
+	return process.env["TORUS_STATE_DIR"]
+		? path.join(process.env["TORUS_STATE_DIR"], AUDIT_LOG_NAME)
+		: path.join(torusHome(), AUDIT_LOG_NAME);
 }
 
 const AUTO_MODE_VALUES = new Set(["1", "on", "auto"]);
@@ -95,14 +95,63 @@ export type AutomodeRulesFile = {
 const RULE_KEYS = ["allow", "ask", "deny", "environment", "hardDeny"] as const;
 
 /**
- * Load the automode rules file. A missing file means "no rules" with no
+ * Validate one parsed rules object — the same shape the legacy file carries
+ * and the "automode" section of config.json holds. Unknown top-level keys and
+ * non-array rule fields are ignored with a warning; non-string entries inside
+ * a rule array are dropped with a warning while the string entries are kept.
+ * `environment` and `hardDeny` are prose string arrays for the decision model
+ * (trusted infrastructure context and absolute boundaries); `classifyAllShell`
+ * is a boolean that suspends allow rules while auto mode is active. Every
+ * warning is prefixed by `origin`, naming where the object came from: the
+ * legacy file's path, or config.json for the unified config's section.
+ */
+export function validateRulesObject(
+	source: Record<string, unknown>,
+	origin: string,
+): { rules: AutomodeRulesFile; warnings: string[] } {
+	const warnings: string[] = [];
+	const unknownKeys = Object.keys(source).filter(
+		(key) => !(RULE_KEYS as readonly string[]).includes(key) && key !== "classifyAllShell",
+	);
+	if (unknownKeys.length > 0) {
+		warnings.push(`${origin}: ignoring unknown keys: ${unknownKeys.join(", ")}`);
+	}
+
+	const rules: AutomodeRulesFile = {};
+	for (const key of RULE_KEYS) {
+		if (!(key in source)) {
+			continue;
+		}
+		const value = source[key];
+		if (!Array.isArray(value)) {
+			warnings.push(`${origin}: "${key}" must be an array of strings; ignoring it`);
+			continue;
+		}
+		const strings = value.filter((entry): entry is string => typeof entry === "string");
+		const dropped = value.length - strings.length;
+		if (dropped > 0) {
+			warnings.push(
+				`${origin}: "${key}" contains ${dropped} non-string ${dropped === 1 ? "entry" : "entries"}; dropped`,
+			);
+		}
+		rules[key] = strings;
+	}
+	if ("classifyAllShell" in source) {
+		const value = source["classifyAllShell"];
+		if (typeof value === "boolean") {
+			rules.classifyAllShell = value;
+		} else {
+			warnings.push(`${origin}: "classifyAllShell" must be a boolean; ignoring it`);
+		}
+	}
+	return { rules, warnings };
+}
+
+/**
+ * Load the legacy automode rules file. A missing file means "no rules" with no
  * warning; anything unreadable or unparseable also degrades to no rules, with
- * one warning per problem. Unknown top-level keys and non-array rule fields are
- * ignored with a warning; non-string entries inside a rule array are dropped
- * with a warning while the string entries are kept. `environment` and
- * `hardDeny` are prose string arrays for the decision model (trusted
- * infrastructure context and absolute boundaries); `classifyAllShell` is a
- * boolean that suspends allow rules while auto mode is active.
+ * one warning per problem. Key-level validation is shared with the unified
+ * config's section through validateRulesObject.
  */
 export function loadRules(filePath: string): { rules: AutomodeRulesFile; warnings: string[] } {
 	let text: string;
@@ -130,44 +179,53 @@ export function loadRules(filePath: string): { rules: AutomodeRulesFile; warning
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 		return { rules: {}, warnings: [`${filePath}: expected a JSON object; no rules loaded`] };
 	}
+	return validateRulesObject(parsed as Record<string, unknown>, filePath);
+}
 
-	const source = parsed as Record<string, unknown>;
-	const warnings: string[] = [];
-	const unknownKeys = Object.keys(source).filter(
-		(key) => !(RULE_KEYS as readonly string[]).includes(key) && key !== "classifyAllShell",
-	);
-	if (unknownKeys.length > 0) {
-		warnings.push(`${filePath}: ignoring unknown keys: ${unknownKeys.join(", ")}`);
-	}
+/** Where the effective automode rules came from. */
+export type AutomodeRulesSource = "config.json" | "automode.json" | "default";
 
-	const rules: AutomodeRulesFile = {};
-	for (const key of RULE_KEYS) {
-		if (!(key in source)) {
-			continue;
-		}
-		const value = source[key];
-		if (!Array.isArray(value)) {
-			warnings.push(`${filePath}: "${key}" must be an array of strings; ignoring it`);
-			continue;
-		}
-		const strings = value.filter((entry): entry is string => typeof entry === "string");
-		const dropped = value.length - strings.length;
-		if (dropped > 0) {
-			warnings.push(
-				`${filePath}: "${key}" contains ${dropped} non-string ${dropped === 1 ? "entry" : "entries"}; dropped`,
-			);
-		}
-		rules[key] = strings;
+export type LoadedAutomodeRules = {
+	rules: AutomodeRulesFile;
+	warnings: string[];
+	source: AutomodeRulesSource;
+};
+
+/**
+ * Load the effective automode rules by precedence through the unified config
+ * loader: the "automode" section of config.json (validated by the shared
+ * validateRulesObject, warnings prefixed with config.json), then the legacy
+ * automode.json exactly as loadRules serves it, then no rules. A section set
+ * in both places yields exactly one deprecation warning pointing at
+ * `torus config migrate`; a config.json that cannot be parsed falls back to
+ * the legacy file with that failure as its own warning. Never throws.
+ */
+export function loadAutomodeRules(): LoadedAutomodeRules {
+	const filePath = rulesPath();
+	const section = readSection<Record<string, unknown>>("automode", {
+		// The legacy loader answers "is there a legacy rules value?": a missing
+		// file is no value at all, keeping the default tier distinguishable from
+		// an existing (even empty) automode.json.
+		load: () => (existsSync(filePath) ? loadRules(filePath).rules : undefined),
+		sourceHint: RULES_FILE_NAME,
+	});
+	const warnings: string[] = section.warning === undefined ? [] : [section.warning];
+	if (section.source === "config") {
+		const validated = validateRulesObject(section.value ?? {}, CONFIG_FILE_NAME);
+		return {
+			rules: validated.rules,
+			warnings: [...warnings, ...validated.warnings],
+			source: CONFIG_FILE_NAME,
+		};
 	}
-	if ("classifyAllShell" in source) {
-		const value = source["classifyAllShell"];
-		if (typeof value === "boolean") {
-			rules.classifyAllShell = value;
-		} else {
-			warnings.push(`${filePath}: "classifyAllShell" must be a boolean; ignoring it`);
-		}
-	}
-	return { rules, warnings };
+	// Legacy or default tier: serve loadRules directly so rules and warnings
+	// are byte-identical to the pre-unified-config behavior.
+	const loaded = loadRules(filePath);
+	return {
+		rules: loaded.rules,
+		warnings: [...warnings, ...loaded.warnings],
+		source: section.source === "legacy" ? RULES_FILE_NAME : "default",
+	};
 }
 
 /**

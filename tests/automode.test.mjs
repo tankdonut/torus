@@ -20,6 +20,7 @@ const auditLogPath = process.env.TORUS_STATE_DIR
 	? path.join(process.env.TORUS_STATE_DIR, "automode.log")
 	: path.join(home, "automode.log");
 const rulesFilePath = path.join(home, "automode.json");
+const configFilePath = path.join(home, "config.json");
 
 function auditRows() {
 	if (!existsSync(auditLogPath)) return [];
@@ -36,6 +37,11 @@ function resetAudit() {
 function setRules(rules) {
 	if (rules === undefined) rmSync(rulesFilePath, { force: true });
 	else writeFileSync(rulesFilePath, JSON.stringify(rules));
+}
+
+function setConfig(config) {
+	if (config === undefined) rmSync(configFilePath, { force: true });
+	else writeFileSync(configFilePath, JSON.stringify(config));
 }
 
 function setMode(value) {
@@ -93,6 +99,7 @@ function setup(options = {}) {
 	const mode = "mode" in options ? options.mode : "1";
 	setMode(mode);
 	setRules(options.rules);
+	setConfig(options.config);
 	const pi = makePi();
 	automode.default(pi);
 	const reg = registryStub(options.replies ?? []);
@@ -423,6 +430,46 @@ test("/automode prints the effective config including v2 keys", async () => {
 	assert.match(status, /Source control: github\.example\.com\/acme/);
 	assert.match(status, /no secrets leave the machine/);
 	assert.match(status, /classifyAllShell: on/);
+});
+
+test("config.json automode section governs: rules load from config, surfaces and hints name it", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ config: { automode: { deny: ["sudo *"] } } });
+	const result = await call(pi, ctx, "sudo id");
+	assert.equal(result.block, true, "config deny rule blocks sudo");
+	assert.equal(
+		result.reason,
+		'automode: denied by rule "sudo *" — edit the automode section of ~/.torus/config.json to change',
+	);
+	const on = notifications.filter((n) => n.message.startsWith("automode: on"));
+	assert.equal(on.length, 1);
+	assert.ok(on[0].message.includes(rulesFilePath), "notice still names the rules path");
+	assert.ok(on[0].message.includes("(from config.json)"), "notice names the config source");
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
+	assert.ok(status, "status notify fired");
+	assert.ok(status.includes(rulesFilePath), "status still names the rules path");
+	assert.ok(status.includes("(from config.json)"), "status names the config source");
+	assert.match(status, /deny: sudo \*/);
+});
+
+test("config.json shadows the legacy rules file: config wins with exactly one migrate warning", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({
+		config: { automode: { deny: ["make *"] } },
+		rules: { deny: ["cargo build*"] },
+	});
+	const result = await call(pi, ctx, "make -j4");
+	assert.equal(result.block, true, "config rule governs");
+	assert.match(result.reason, /denied by rule "make \*"/);
+	assert.match(result.reason, /edit the automode section of ~\/\.torus\/config\.json/);
+	assert.equal(
+		await call(pi, ctx, "cargo build"),
+		undefined,
+		"legacy-only rule does not apply — cargo falls through to fail-open allow",
+	);
+	const shadow = notifications.filter((n) => n.message.includes("torus config migrate"));
+	assert.equal(shadow.length, 1, "exactly one shadow warning via notify");
 });
 
 test("/automode denied lists recent denials from the audit log", async () => {

@@ -25,10 +25,12 @@ import { DecisionCache, decide, pickChatModel, pickModel } from "./classify.js";
 import {
 	type AuditRow,
 	type AutomodeRulesFile,
+	type AutomodeRulesSource,
 	appendAuditRow,
 	auditPath,
 	CIRCUIT_BREAKER_DENIES,
-	loadRules,
+	type LoadedAutomodeRules,
+	loadAutomodeRules,
 	type PermissionMode,
 	parseModelPin,
 	resolveMode,
@@ -45,7 +47,19 @@ import {
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
-const RULES_HINT = "edit ~/.torus/automode.json to change";
+/** Where to edit the rules behind a deny, keyed by the effective rules source. */
+const RULES_HINTS: Record<AutomodeRulesSource, string> = {
+	"config.json": "edit the automode section of ~/.torus/config.json to change",
+	"automode.json": "edit ~/.torus/automode.json to change",
+	default: "edit ~/.torus/automode.json to change",
+};
+
+/** Suffix for a rules line, naming where the effective rules came from. */
+function rulesSourceSuffix(source: AutomodeRulesSource): string {
+	if (source === "config.json") return " (from config.json)";
+	if (source === "automode.json") return " (from automode.json)";
+	return " (none — defaults)";
+}
 
 function unjudgedMarker(reason: string): string {
 	return `\n[automode] ran unjudged (decision model unavailable: ${reason}) — treat with care`;
@@ -60,6 +74,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	let startupWarning: string | undefined;
 	let modeOverride: PermissionMode | undefined;
 	let rules: AutomodeRulesFile = {};
+	let rulesSource: AutomodeRulesSource = "automode.json";
 	let pin: { provider: string; modelId: string } | undefined;
 	const cache = new DecisionCache();
 	let consecutiveDenies = 0;
@@ -89,11 +104,23 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		appendAuditRow(row);
 	}
 
-	/** Load the rules file and model pin, surfacing every warning once. */
-	function loadAutoConfig(ctx: ExtensionContext): void {
-		const loaded = loadRules(rulesPath(process.env));
+	/** Apply a rules load, remembering its source; returns the warnings to surface. */
+	function applyRules(loaded: LoadedAutomodeRules): string[] {
 		rules = loaded.rules;
-		for (const warning of loaded.warnings) {
+		rulesSource = loaded.source;
+		return loaded.warnings;
+	}
+
+	/**
+	 * Load the rules (the automode section of config.json first, the legacy
+	 * automode.json second) and the model pin, surfacing every warning once.
+	 * Startup passes warnings it already holds: rules load before the "on"
+	 * notice so the notice can name their source, but their warnings still
+	 * follow it.
+	 */
+	function loadAutoConfig(ctx: ExtensionContext, preloadedWarnings?: string[]): void {
+		const warnings = preloadedWarnings ?? applyRules(loadAutomodeRules());
+		for (const warning of warnings) {
 			ctx.ui.notify(`automode: ${warning}`, "info");
 		}
 		const pinned = parseModelPin(process.env);
@@ -151,11 +178,12 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		startupWarning = resolved.warning;
 		paintPermission(ctx);
 		if (startupMode !== "auto") return;
+		const rulesWarnings = applyRules(loadAutomodeRules());
 		ctx.ui.notify(
-			`automode: on — bash calls auto-approved by ${await decisionModelLabel(ctx)}; rules: ${rulesPath(process.env)}`,
+			`automode: on — bash calls auto-approved by ${await decisionModelLabel(ctx)}; rules: ${rulesPath()}${rulesSourceSuffix(rulesSource)}`,
 			"info",
 		);
-		loadAutoConfig(ctx);
+		loadAutoConfig(ctx, rulesWarnings);
 	}
 
 	/**
@@ -215,7 +243,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			audit(command, "rule", "deny", `denied by rule "${ruleMatch.rule}"`);
 			return {
 				block: true,
-				reason: `automode: denied by rule "${ruleMatch.rule}" — ${RULES_HINT}`,
+				reason: `automode: denied by rule "${ruleMatch.rule}" — ${RULES_HINTS[rulesSource]}`,
 			};
 		}
 
@@ -343,9 +371,9 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		} catch {
 			lines.push(`decision model: ${fallback}`);
 		}
-		const path = rulesPath(process.env);
+		const path = rulesPath();
 		if (mode() === "auto") {
-			lines.push(`rules: ${path}`);
+			lines.push(`rules: ${path}${rulesSourceSuffix(rulesSource)}`);
 			const list = (label: string, entries: string[] | undefined) => {
 				lines.push(
 					entries !== undefined && entries.length > 0
