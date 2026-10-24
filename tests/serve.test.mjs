@@ -683,3 +683,136 @@ test("webhook endpoint: 401/404/405/413/400 rejections and a valid templated fir
 		clearServeConfig();
 	}
 });
+
+// ---- unified config ----
+
+function configPath() {
+	return path.join(HOME, "config.json");
+}
+
+function writeConfig(cfg) {
+	writeFileSync(configPath(), JSON.stringify(cfg, null, 2), "utf8");
+}
+
+function clearConfig() {
+	rmSync(configPath(), { force: true });
+}
+
+async function captureStderr(fn) {
+	// Tee, not mute — same contract as captureStdout, on the warning stream.
+	const chunks = [];
+	const orig = process.stderr.write;
+	process.stderr.write = (chunk) => {
+		chunks.push(typeof chunk === "string" ? chunk : chunk.toString());
+		return orig.call(process.stderr, chunk);
+	};
+	try {
+		return { result: await fn(), output: chunks.join("") };
+	} finally {
+		process.stderr.write = orig;
+	}
+}
+
+test("config.json serve section wins over serve.json with one startup shadow warning", async () => {
+	// The legacy bind is unbindable on purpose: if serve.json won, listen()
+	// would reject instead of silently serving the wrong tier.
+	writeServeConfig({ port: 9999, bind: "10.255.255.1" });
+	writeConfig({ serve: { port: 0, bind: "127.0.0.1" } });
+	try {
+		const { result, output } = await captureStderr(() => serve.startServe());
+		openHandles.push(result);
+		assert.equal(result.bind, "127.0.0.1", "bind comes from config.json");
+		assert.ok(
+			result.port !== 9999 && result.port !== 4747,
+			"port comes from config.json (ephemeral), not serve.json or the default",
+		);
+		const warnings = output.match(/shadowed from serve\.json; run torus config migrate/g) ?? [];
+		assert.equal(warnings.length, 1, "exactly one shadow warning, at startup");
+	} finally {
+		clearConfig();
+		clearServeConfig();
+	}
+});
+
+test("triggers schedule from config.json when both files define them", async () => {
+	writeServeConfig({
+		triggers: [{ name: "legacy-trig", everyMinutes: 5, agent: "builder", task: "legacy" }],
+	});
+	writeConfig({
+		serve: {
+			port: 0,
+			triggers: [{ name: "config-trig", everyMinutes: 720, agent: "builder", task: "config" }],
+		},
+	});
+	freshTriggersState();
+	try {
+		const boot = await captureStdout(() => serve.startServe());
+		openHandles.push(boot.result);
+		assert.match(boot.output, /1 trigger scheduled \(config-trig\)/, "config.json trigger wins");
+		assert.equal(boot.output.includes("legacy-trig"), false, "serve.json trigger is shadowed");
+	} finally {
+		clearConfig();
+		clearServeConfig();
+	}
+});
+
+test("malformed config.json falls back to serve.json with one warning", async () => {
+	writeServeConfig({ port: 9998, bind: "127.0.0.2" });
+	writeFileSync(configPath(), "{not json", "utf8");
+	try {
+		const { result, output } = await captureStderr(() => serve.loadServeConfig());
+		assert.equal(result.port, 9998, "legacy serve.json supplies the port");
+		assert.equal(result.bind, "127.0.0.2", "legacy serve.json supplies the bind");
+		assert.match(output, /not valid JSON/, "the malformed load warns once");
+	} finally {
+		clearConfig();
+		clearServeConfig();
+	}
+});
+
+test("non-object serve section in config.json warns and falls back to serve.json", async () => {
+	writeServeConfig({ port: 9997 });
+	writeConfig({ serve: 5 });
+	try {
+		const { result, output } = await captureStderr(() => serve.loadServeConfig());
+		assert.equal(result.port, 9997, "legacy serve.json wins");
+		assert.match(output, /"serve" in config\.json is not an object; using serve\.json/);
+	} finally {
+		clearConfig();
+		clearServeConfig();
+	}
+});
+
+test("tokenPath from config.json is ignored — the auth file stays under serve/", async () => {
+	const decoy = path.join(HOME, "decoy-auth.json");
+	writeConfig({ serve: { tokenPath: decoy } });
+	try {
+		assert.equal(
+			serve.loadServeConfig().tokenPath,
+			undefined,
+			"tokenPath is never read from config.json",
+		);
+		const { result } = await captureStdout(() => serve.startServe({ port: 0 }));
+		openHandles.push(result);
+		const realAuth = JSON.parse(readFileSync(path.join(HOME, "serve", "auth.json"), "utf8"));
+		assert.equal(result.token, realAuth.token, "the token still comes from serve/auth.json");
+		assert.equal(existsSync(decoy), false, "config.json cannot redirect the auth file");
+	} finally {
+		clearConfig();
+	}
+});
+
+test("tokenPath from serve.json keeps minting at the explicit path (legacy stays authoritative)", async () => {
+	const explicit = path.join(HOME, "explicit-auth.json");
+	writeServeConfig({ tokenPath: explicit });
+	try {
+		assert.equal(serve.loadServeConfig().tokenPath, explicit);
+		const explicitServer = await serve.startServe({ port: 0 });
+		openHandles.push(explicitServer);
+		assert.ok(existsSync(explicit), "serve.json tokenPath still mints there");
+		assert.equal(explicitServer.token, JSON.parse(readFileSync(explicit, "utf8")).token);
+	} finally {
+		clearServeConfig();
+		rmSync(explicit, { force: true });
+	}
+});

@@ -7,9 +7,9 @@
 
 import { readFileSync, unlinkSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readSection } from "../config/loader.js";
 import { stripFrontmatter } from "../frontmatter.js";
 import {
 	projectStateDir,
@@ -155,15 +155,40 @@ export function mergeKeywords(user: Record<string, string>): Record<string, stri
 	return { ...DEFAULT_KEYWORDS, ...user };
 }
 
-function loadKeywords(): Record<string, string> {
-	try {
-		const user = JSON.parse(
-			readFileSync(path.join(homedir(), ".torus", "keywords.json"), "utf8"),
-		) as Record<string, string>;
-		return mergeKeywords(user);
-	} catch {
-		return { ...DEFAULT_KEYWORDS };
+let warnedKeywordsConfig = false;
+
+/** Test hook: loadKeywords warns once per process; tests reset between cases. */
+export function resetKeywordsWarningForTesting(): void {
+	warnedKeywordsConfig = false;
+}
+
+/**
+ * Keyword rows by precedence: config.json's "keywords" section wins over the
+ * legacy keywords.json, and whichever source supplies the rows, user keywords
+ * still merge over DEFAULT_KEYWORDS. A missing or malformed source is simply
+ * the defaults, as before. The shadow/load warning prints once per process —
+ * loadKeywords runs on every user message, a warning storm would not.
+ */
+export function loadKeywords(): Record<string, string> {
+	const section = readSection<Record<string, string>>("keywords", {
+		load: loadLegacyKeywords,
+		sourceHint: "keywords.json",
+	});
+	if (section.warning !== undefined && !warnedKeywordsConfig) {
+		warnedKeywordsConfig = true;
+		process.stderr.write(`torus: ${section.warning}\n`);
 	}
+	return mergeKeywords(section.value ?? {});
+}
+
+/**
+ * Legacy keywords.json under the torus home, honoring TORUS_HOME (the old
+ * hardcoded ~/.torus read leaked past test sandboxes into the real home).
+ * Missing or malformed throws, which readSection reads as "no legacy value".
+ */
+function loadLegacyKeywords(): Record<string, string> {
+	const raw = readFileSync(path.join(torusHome(), "keywords.json"), "utf8");
+	return JSON.parse(raw) as Record<string, string>;
 }
 
 let pendingKeyword: { word: string; text: string } | null = null;

@@ -48,6 +48,7 @@ import {
 	type ServerResponse,
 } from "node:http";
 import path from "node:path";
+import { readSection } from "../config/loader.js";
 import { readJson, sleep, torusHome, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { AGENT_NAME_RE, type DelegationRecord, listDelegations, repoRoot } from "../registry.js";
@@ -88,14 +89,35 @@ const PAYLOAD_DEPTH_CAP = 8;
 
 const DEFAULT_CONFIG: ServeConfig = { port: 4747, bind: "127.0.0.1" };
 
-/** House read-with-fallback: missing or malformed serve.json yields defaults. */
+/**
+ * House read-with-fallback for the non-secret keys: config.json's "serve"
+ * section wins over the legacy serve.json with one shadow warning, and a
+ * missing, malformed, or non-object tier degrades to the next one. The
+ * warning goes to stderr here — loadServeConfig runs exactly once, at
+ * startup, never per request. Fields with the wrong type keep falling to
+ * their default, as before.
+ *
+ * `tokenPath` deliberately stays serve.json-only: it points at auth.json,
+ * runtime state holding the bearer token, and config.json must never be able
+ * to redirect where the server reads its credential from. auth.json and
+ * triggers-state.json (bearer token, webhook secrets, lastFired) are minted
+ * runtime state, never config — serve.json itself carries no secrets.
+ */
 export function loadServeConfig(): ServeConfig {
-	const file = readJson<Partial<ServeConfig>>(serveConfigPath(), {});
+	const legacy = readJson<Partial<ServeConfig> | undefined>(serveConfigPath(), undefined);
+	const section = readSection<Partial<ServeConfig>>("serve", {
+		load: () => legacy,
+		sourceHint: "serve.json",
+	});
+	if (section.warning !== undefined) {
+		process.stderr.write(`torus serve: ${section.warning}\n`);
+	}
+	const raw = section.value ?? {};
 	return {
-		port: typeof file.port === "number" && file.port >= 0 ? file.port : DEFAULT_CONFIG.port,
-		bind: typeof file.bind === "string" && file.bind.length > 0 ? file.bind : DEFAULT_CONFIG.bind,
-		tokenPath: typeof file.tokenPath === "string" ? file.tokenPath : undefined,
-		triggers: file.triggers,
+		port: typeof raw.port === "number" && raw.port >= 0 ? raw.port : DEFAULT_CONFIG.port,
+		bind: typeof raw.bind === "string" && raw.bind.length > 0 ? raw.bind : DEFAULT_CONFIG.bind,
+		tokenPath: typeof legacy?.tokenPath === "string" ? legacy.tokenPath : undefined,
+		triggers: raw.triggers,
 	};
 }
 
