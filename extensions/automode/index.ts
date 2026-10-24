@@ -19,6 +19,7 @@ import {
 	type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { gateExtension, type PlatformSupport } from "../platform.js";
+import { refreshToruStatus, setStatusPermission } from "../ui/index.js";
 import { DecisionCache, decide, pickModel } from "./classify.js";
 import {
 	type AuditRow,
@@ -64,6 +65,12 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	let startup: Promise<void> | undefined;
 
 	const mode = (): PermissionMode => modeOverride ?? startupMode;
+
+	/** Keep the statusline permission chip in sync with the live session mode. */
+	function paintPermission(ctx: ExtensionContext): void {
+		setStatusPermission(mode() === "auto" ? "auto" : "default", askEverything);
+		if (ctx.hasUI) refreshToruStatus(ctx);
+	}
 
 	function audit(
 		command: string,
@@ -129,6 +136,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		const resolved = resolveMode(process.env);
 		startupMode = resolved.mode;
 		startupWarning = resolved.warning;
+		paintPermission(ctx);
 		if (startupMode !== "auto") return;
 		ctx.ui.notify(
 			`automode: on — bash calls auto-approved by ${await decisionModelLabel(ctx)}; rules: ${rulesPath(process.env)}`,
@@ -257,6 +265,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 						`automode: ${CIRCUIT_BREAKER_DENIES} consecutive denies — asking for everything this session`,
 						"warning",
 					);
+					paintPermission(ctx);
 				}
 				return { block: true, reason: `automode: decision model denied — ${decision.reason}` };
 			}
@@ -350,6 +359,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 				loadAutoConfig(ctx);
 			}
 			ctx.ui.notify(`automode: session mode set to ${arg}`, "info");
+			paintPermission(ctx);
 		},
 	});
 }

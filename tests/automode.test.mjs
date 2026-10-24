@@ -6,15 +6,19 @@ import { test } from "node:test";
 
 const home = mkdtempSync(path.join(tmpdir(), "torus-automode-wiring-"));
 process.env.TORUS_HOME = home;
-// Audit rows resolve against the fake home even when the suite runs inside a
-// torus session (which exports TORUS_STATE_DIR, the audit path's first pick).
-delete process.env.TORUS_STATE_DIR;
 delete process.env.TORUS_PERMISSION_MODE;
 delete process.env.TORUS_PERMISSION_MODEL;
 
 const automode = await import("../extensions/automode/index.ts");
 
-const auditLogPath = path.join(home, "automode.log");
+// fsutil (pulled in by the ui import chain) recomputes TORUS_STATE_DIR from
+// the cwd on every call and mirrors it into the env — still under the fake
+// TORUS_HOME, but the exact dir is only knowable after the import settles, so
+// pinning a value up top cannot stick. Audit rows follow the live env value;
+// mirror auditPath's resolution instead.
+const auditLogPath = process.env.TORUS_STATE_DIR
+	? path.join(process.env.TORUS_STATE_DIR, "automode.log")
+	: path.join(home, "automode.log");
 const rulesFilePath = path.join(home, "automode.json");
 
 function auditRows() {
@@ -102,6 +106,7 @@ function setup(options = {}) {
 				dialog.calls.push({ title, options: choices });
 				return options.answer;
 			},
+			setStatus: () => {},
 		},
 		modelRegistry: reg,
 		model: sessionModel,
@@ -352,4 +357,26 @@ test("startup notice: auto mode announces on once, naming the session model and 
 		1,
 		"not repeated on later calls",
 	);
+});
+
+test("statusline chip tracks session mode and breaker degradation", async () => {
+	const ui = await import("../extensions/ui/index.ts");
+	const segment = () => ui.buildStatus().split(" · ");
+	resetAudit();
+	const { pi, ctx } = setup({
+		mode: "1",
+		hasUI: true,
+		replies: [jsonReply("deny"), jsonReply("deny"), jsonReply("deny")],
+	});
+	await call(pi, ctx, "ls /tmp", "chip-0");
+	assert.ok(segment().includes("auto"), "auto mode paints the chip");
+	const denied = ["cargo build", "make -j4", "npm install left-pad"];
+	for (const [index, command] of denied.entries()) {
+		await call(pi, ctx, command, `chip-deny-${index}`);
+	}
+	assert.ok(segment().includes("auto·ask"), "breaker degradation repaints the chip");
+	await pi.commands.automode.handler("default", ctx);
+	assert.ok(!segment().some((s) => s === "auto" || s === "auto·ask"), "default drops the chip");
+	await pi.commands.automode.handler("auto", ctx);
+	assert.ok(segment().includes("auto"), "auto repaints the chip");
 });

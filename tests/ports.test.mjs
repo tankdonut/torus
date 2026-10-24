@@ -18,6 +18,7 @@ const {
 	registerUi,
 	setStatusExtras,
 	setStatusModel,
+	setStatusPermission,
 } = await import("../extensions/ui/index.ts");
 const { goalChipFor } = await import("../extensions/goal/index.ts");
 const { AGENTS } = await import("../extensions/roster/index.ts");
@@ -567,4 +568,17 @@ test("alt+p paints the engine's live model even across duplicated ui module inst
 		if (prevHome === undefined) delete process.env["TORUS_HOME"];
 		else process.env["TORUS_HOME"] = prevHome;
 	}
+});
+
+test("statusline renders the permission chip only in auto mode", () => {
+	setStatusPermission("auto");
+	assert.ok(buildStatus().split(" · ").includes("auto"));
+	setStatusPermission("auto", true);
+	assert.ok(buildStatus().split(" · ").includes("auto·ask"));
+	setStatusPermission("default");
+	assert.ok(
+		!buildStatus()
+			.split(" · ")
+			.some((segment) => segment === "auto" || segment === "auto·ask"),
+	);
 });
