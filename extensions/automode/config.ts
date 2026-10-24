@@ -27,12 +27,14 @@ export const RULES_FILE_NAME = "automode.json";
 export const AUDIT_LOG_NAME = "automode.log";
 
 /**
- * Root of torus user state: TORUS_HOME, then HOME, then os.homedir(). HOME wins
- * over homedir() because bun's homedir() reads the passwd entry and ignores
- * $HOME (runtime/bin/torus.mjs resolves it the same way).
+ * Root of torus user state: TORUS_HOME when set (the test suite points it at
+ * an isolated root), else `.torus` under HOME, then os.homedir() — mirroring
+ * fsutil's torusHome(). HOME wins over homedir() because bun's homedir() reads
+ * the passwd entry and ignores $HOME (runtime/bin/torus.mjs resolves it the
+ * same way).
  */
 export function torusHomeDir(env: NodeJS.ProcessEnv = process.env): string {
-	return env["TORUS_HOME"] || env["HOME"] || homedir();
+	return env["TORUS_HOME"] || path.join(env["HOME"] || homedir(), ".torus");
 }
 
 /** Rules-file path under a torus home (defaults to the live process env). */
@@ -44,9 +46,6 @@ export function rulesPath(env: NodeJS.ProcessEnv = process.env): string {
 export function auditPath(env: NodeJS.ProcessEnv = process.env): string {
 	return path.join(torusHomeDir(env), AUDIT_LOG_NAME);
 }
-
-/** Default audit log path (`~/.torus/automode.log`), resolved once at module load. */
-export const AUDIT_LOG_PATH = path.join(torusHomeDir(), AUDIT_LOG_NAME);
 
 const AUTO_MODE_VALUES = new Set(["1", "on", "auto"]);
 const DEFAULT_MODE_VALUES = new Set(["", "0", "off", "default"]);

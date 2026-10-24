@@ -254,7 +254,10 @@ test("failopen: both model paths fail, command runs with a notify and a result a
 
 	const annotated = pi.handlers.tool_result(bashResult("call-77", "build ok"), ctx);
 	assert.ok(annotated, "result is rewritten");
-	assert.match(annotated.content[0].text, /\[automode\] ran unjudged/);
+	assert.match(
+		annotated.content[0].text,
+		/\[automode\] ran unjudged \(decision model unavailable: .+\) — treat with care/,
+	);
 	assert.ok(annotated.content[0].text.startsWith("build ok"));
 	assert.equal(pi.handlers.tool_result(bashResult("call-other"), ctx), undefined);
 });
@@ -329,4 +332,21 @@ test("/automode: status shows mode and rules path; toggles clear the cache and r
 
 	await active.pi.commands.automode.handler("banana", active.ctx);
 	assert.match(active.notifications[active.notifications.length - 1].message, /usage: \/automode/);
+});
+
+test("startup notice: auto mode announces on once, naming the session model and rules path", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({});
+	await pi.handlers.session_start({ type: "session_start" }, ctx);
+	const on = notifications.filter((n) => n.message.startsWith("automode: on"));
+	assert.equal(on.length, 1, "notice fires once at startup");
+	assert.match(on[0].message, /bash calls auto-approved by session model/);
+	assert.ok(on[0].message.includes(rulesFilePath), "notice names the rules path");
+	assert.equal(on[0].type, "info");
+	await call(pi, ctx, "ls -la");
+	assert.equal(
+		notifications.filter((n) => n.message.startsWith("automode: on")).length,
+		1,
+		"not repeated on later calls",
+	);
 });

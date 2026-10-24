@@ -42,14 +42,16 @@ import {
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 const RULES_HINT = "edit ~/.torus/automode.json to change";
-const UNJUDGED_MARKER = "\n[automode] ran unjudged (decision model unavailable) — treat with care";
+
+function unjudgedMarker(reason: string): string {
+	return `\n[automode] ran unjudged (decision model unavailable: ${reason}) — treat with care`;
+}
 
 function noUiReason(reason: string): string {
 	return `automode: ${reason} — no UI for approval; rerun with TORUS_PERMISSION_MODE=default or approve interactively`;
 }
 
 export function registerAutomode(pi: ExtensionAPI): void {
-	let started = false;
 	let startupMode: PermissionMode = "default";
 	let startupWarning: string | undefined;
 	let modeOverride: PermissionMode | undefined;
@@ -58,7 +60,8 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	const cache = new DecisionCache();
 	let consecutiveDenies = 0;
 	let askEverything = false;
-	const failopenCallIds = new Set<string>();
+	const failopenReasons = new Map<string, string>();
+	let startup: Promise<void> | undefined;
 
 	const mode = (): PermissionMode => modeOverride ?? startupMode;
 
@@ -97,15 +100,41 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		}
 	}
 
-	function ensureStartup(ctx: ExtensionContext): void {
-		if (started) return;
-		started = true;
+	/** Display name of the model that will judge commands, for the on-notice. */
+	async function decisionModelLabel(ctx: ExtensionContext): Promise<string> {
+		try {
+			const picked = await pickModel(ctx.modelRegistry, pin);
+			if (picked.model !== undefined) {
+				return `${picked.model.provider}/${picked.model.id}`;
+			}
+		} catch {
+			// Per-call decide() does its own lookup and fail-open handling.
+		}
+		return ctx.model !== undefined
+			? `session model (${ctx.model.provider}/${ctx.model.id})`
+			: "session model";
+	}
+
+	/**
+	 * Resolve the permission mode once (memoized, so concurrent first calls
+	 * share one init). Auto mode announces itself before any rules warnings:
+	 * the first thing the user sees is that bash calls are auto-approved.
+	 */
+	function ensureStartup(ctx: ExtensionContext): Promise<void> {
+		startup ??= startupOnce(ctx);
+		return startup;
+	}
+
+	async function startupOnce(ctx: ExtensionContext): Promise<void> {
 		const resolved = resolveMode(process.env);
 		startupMode = resolved.mode;
 		startupWarning = resolved.warning;
-		if (startupMode === "auto") {
-			loadAutoConfig(ctx);
-		}
+		if (startupMode !== "auto") return;
+		ctx.ui.notify(
+			`automode: on — bash calls auto-approved by ${await decisionModelLabel(ctx)}; rules: ${rulesPath(process.env)}`,
+			"info",
+		);
+		loadAutoConfig(ctx);
 	}
 
 	/**
@@ -147,8 +176,10 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		return { block: true, reason: "automode: denied by user" };
 	}
 
+	pi.on("session_start", (_event, ctx) => ensureStartup(ctx));
+
 	pi.on("tool_call", async (event, ctx) => {
-		ensureStartup(ctx);
+		await ensureStartup(ctx);
 		if (mode() !== "auto") return undefined;
 		if (!isToolCallEventType("bash", event)) return undefined;
 		const command = event.input.command;
@@ -231,7 +262,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			}
 			default: {
 				consecutiveDenies = 0;
-				failopenCallIds.add(event.toolCallId);
+				failopenReasons.set(event.toolCallId, decision.reason);
 				ctx.ui.notify(`automode: ran unjudged (${decision.reason})`, "warning");
 				return undefined;
 			}
@@ -239,13 +270,16 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_result", (event) => {
-		if (!failopenCallIds.delete(event.toolCallId)) return undefined;
+		const reason = failopenReasons.get(event.toolCallId);
+		if (reason === undefined) return undefined;
+		failopenReasons.delete(event.toolCallId);
 		const content = [...event.content];
 		const last = content[content.length - 1];
+		const marker = unjudgedMarker(reason);
 		if (last !== undefined && last.type === "text") {
-			content[content.length - 1] = { ...last, text: last.text + UNJUDGED_MARKER };
+			content[content.length - 1] = { ...last, text: last.text + marker };
 		} else {
-			content.push({ type: "text" as const, text: UNJUDGED_MARKER.trim() });
+			content.push({ type: "text" as const, text: marker.trim() });
 		}
 		return { content };
 	});
@@ -294,7 +328,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		description:
 			"Show the automode permission status; /automode auto|default switches the session mode",
 		handler: async (args: string, ctx: ExtensionContext) => {
-			ensureStartup(ctx);
+			await ensureStartup(ctx);
 			const arg = args.trim().toLowerCase();
 			if (arg === "") {
 				ctx.ui.notify(await statusText(ctx), "info");
@@ -311,7 +345,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			cache.clear();
 			consecutiveDenies = 0;
 			askEverything = false;
-			failopenCallIds.clear();
+			failopenReasons.clear();
 			if (arg === "auto") {
 				loadAutoConfig(ctx);
 			}

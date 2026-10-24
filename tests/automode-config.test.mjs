@@ -162,11 +162,13 @@ test("appendAuditRow: an unwritable target is swallowed without throwing", () =>
 	assert.equal(existsSync(path.join(blocker, "audit.log")), false);
 });
 
-test("torusHomeDir and derived paths: TORUS_HOME > HOME > os.homedir()", () => {
+test("torusHomeDir and derived paths: TORUS_HOME root, else .torus under HOME or os.homedir()", () => {
 	assert.equal(torusHomeDir({ TORUS_HOME: "/t", HOME: "/h" }), "/t");
-	assert.equal(torusHomeDir({ HOME: "/h" }), "/h");
-	assert.equal(torusHomeDir({}), homedir());
+	assert.equal(torusHomeDir({ HOME: "/h" }), path.join("/h", ".torus"));
+	assert.equal(torusHomeDir({}), path.join(homedir(), ".torus"));
 	assert.equal(torusHomeDir(), home);
+	assert.equal(rulesPath({ HOME: "/h" }), path.join("/h", ".torus", RULES_FILE_NAME));
+	assert.equal(auditPath({ HOME: "/h" }), path.join("/h", ".torus", AUDIT_LOG_NAME));
 	assert.equal(rulesPath({ TORUS_HOME: "/t" }), path.join("/t", RULES_FILE_NAME));
 	assert.equal(auditPath({ TORUS_HOME: "/t" }), path.join("/t", AUDIT_LOG_NAME));
 	assert.equal(RULES_FILE_NAME, "automode.json");
