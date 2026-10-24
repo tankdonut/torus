@@ -36,7 +36,8 @@ export const CONFIG_SECTIONS: readonly SectionSpec[] = [
 	{
 		name: "serve",
 		legacyFile: "serve.json",
-		description: "HTTP server bind, port, auth path, and scheduled triggers",
+		description:
+			"HTTP server bind, port, and scheduled triggers (tokenPath stays in serve.json; auth is runtime state)",
 	},
 	{
 		name: "keywords",
