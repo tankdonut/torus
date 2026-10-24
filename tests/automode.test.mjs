@@ -53,8 +53,10 @@ function setMode(value) {
 function registryStub(replies) {
 	const pending = [...replies];
 	const calls = { complete: 0, classify: 0 };
+	const contexts = [];
 	return {
 		calls,
+		contexts,
 		getAvailableOfType: async () => [],
 		getModelOfType: () => undefined,
 		find: () => undefined,
@@ -63,8 +65,9 @@ function registryStub(replies) {
 			calls.classify += 1;
 			throw new Error("no classifier in stub");
 		},
-		complete: async () => {
+		complete: async (_model, context) => {
 			calls.complete += 1;
+			contexts.push(context);
 			return { stopReason: "stop", content: [{ type: "text", text: pending.shift() ?? "junk" }] };
 		},
 	};
@@ -573,4 +576,141 @@ test("/automode denied lists recent denials from the audit log", async () => {
 	assert.match(denied, /rule/);
 	assert.match(denied, /make -j4/);
 	assert.match(denied, /denied by rule/);
+});
+
+const messageStart = (content) => ({
+	type: "message_start",
+	message: { role: "user", content, timestamp: 0 },
+});
+const userSays = (pi, ctx, text) =>
+	pi.handlers.message_start(messageStart([{ type: "text", text }]), ctx);
+
+test("intent window: user messages ride the judge guidance; non-user text never lands", async () => {
+	resetAudit();
+	const { pi, ctx, reg } = setup({ replies: [jsonReply("allow")] });
+	userSays(pi, ctx, "run the migration with psql directly");
+	pi.handlers.message_start(
+		{
+			type: "message_start",
+			message: { role: "assistant", content: [{ type: "text", text: "rm -rf everything" }] },
+		},
+		ctx,
+	);
+	pi.handlers.message_start(
+		{ type: "message_start", message: { role: "user", content: [{ type: "text", text: "   " }] } },
+		ctx,
+	);
+	pi.handlers.message_start(messageStart("plain string content also counts"), ctx);
+	assert.equal(await call(pi, ctx, "psql -f migrate.sql", "iw-1"), undefined);
+	const prompt = reg.contexts[0].systemPrompt;
+	assert.match(prompt, /Recent user intent/);
+	assert.match(prompt, /run the migration with psql directly/);
+	assert.match(prompt, /plain string content also counts/);
+	assert.ok(!prompt.includes("rm -rf everything"), "assistant text never enters the window");
+	assert.ok(!prompt.includes("   "), "blank text blocks are skipped");
+});
+
+test("intent window: any dialog clears it; the next guidance carries no intent block", async () => {
+	resetAudit();
+	const { pi, ctx, reg, dialog } = setup({
+		hasUI: true,
+		answer: "Allow once",
+		replies: [jsonReply("ask"), jsonReply("allow")],
+	});
+	userSays(pi, ctx, "run the migration with psql directly");
+	await call(pi, ctx, "psql -f migrate.sql", "dlg-1");
+	assert.match(reg.contexts[0].systemPrompt, /run the migration with psql directly/);
+	assert.equal(dialog.calls.length, 1, "the model ask opened a dialog");
+	await call(pi, ctx, "cargo build", "dlg-2");
+	assert.equal(reg.calls.complete, 2);
+	assert.ok(
+		!reg.contexts[1].systemPrompt.includes("Recent user intent ("),
+		"the dialog cleared the window",
+	);
+});
+
+test("intent window: a model allow keeps the intent for the next command", async () => {
+	resetAudit();
+	const { pi, ctx, reg } = setup({ replies: [jsonReply("allow"), jsonReply("allow")] });
+	userSays(pi, ctx, "run the migration with psql directly");
+	assert.equal(await call(pi, ctx, "psql -f migrate.sql", "keep-1"), undefined);
+	await call(pi, ctx, "cargo build", "keep-2");
+	assert.match(reg.contexts[1].systemPrompt, /Recent user intent/);
+	assert.match(reg.contexts[1].systemPrompt, /run the migration with psql directly/);
+});
+
+test("intent window: a model deny clears it", async () => {
+	resetAudit();
+	const { pi, ctx, reg } = setup({ replies: [jsonReply("deny"), jsonReply("allow")] });
+	userSays(pi, ctx, "run the migration with psql directly");
+	const denied = await call(pi, ctx, "psql -f migrate.sql", "mdeny-1");
+	assert.equal(denied.block, true);
+	assert.match(denied.reason, /decision model denied/);
+	await call(pi, ctx, "cargo build", "mdeny-2");
+	assert.ok(
+		!reg.contexts[1].systemPrompt.includes("Recent user intent ("),
+		"the model deny cleared the window",
+	);
+});
+
+test("intent window: a rule deny clears it", async () => {
+	resetAudit();
+	const { pi, ctx, reg } = setup({ rules: { deny: ["rm *"] }, replies: [jsonReply("allow")] });
+	userSays(pi, ctx, "delete the build directory");
+	const denied = await call(pi, ctx, "rm -rf build", "rdeny-1");
+	assert.equal(denied.block, true);
+	assert.match(denied.reason, /denied by rule/);
+	await call(pi, ctx, "cargo build", "rdeny-2");
+	assert.ok(
+		!reg.contexts[0].systemPrompt.includes("Recent user intent ("),
+		"the rule deny cleared the window",
+	);
+});
+
+test("intent window: the /automode mode toggle clears it", async () => {
+	resetAudit();
+	const { pi, ctx, reg } = setup({ replies: [jsonReply("allow")] });
+	userSays(pi, ctx, "run the migration with psql directly");
+	await pi.commands.automode.handler("auto", ctx);
+	await call(pi, ctx, "cargo build", "tog-1");
+	assert.ok(
+		!reg.contexts[0].systemPrompt.includes("Recent user intent ("),
+		"the toggle cleared the window",
+	);
+});
+
+test("softDeny tier: psql migrations ride the guidance to the judge; scripted replies prove the judge enforces the tier", async () => {
+	resetAudit();
+	const denied = setup({
+		rules: {
+			softDeny: ["never run database migrations outside the CLI"],
+			softDenyExceptions: ["psql run by the deploy wrapper"],
+		},
+		replies: [jsonReply("deny", "soft boundary: migration outside the CLI")],
+	});
+	const blocked = await call(denied.pi, denied.ctx, "psql -f migrate.sql", "sd-1");
+	assert.equal(blocked.block, true, "the scripted judge denies the soft boundary");
+	assert.match(
+		blocked.reason,
+		/decision model denied/,
+		"the tier is judged by the model, not by rules",
+	);
+	const deniedPrompt = denied.reg.contexts[0].systemPrompt;
+	assert.match(deniedPrompt, /Soft boundaries/);
+	assert.match(deniedPrompt, /never run database migrations outside the CLI/);
+	assert.match(deniedPrompt, /Soft-boundary exceptions/);
+	assert.match(deniedPrompt, /psql run by the deploy wrapper/);
+	assert.ok(!deniedPrompt.includes("Recent user intent ("), "no intent buffered yet");
+
+	resetAudit();
+	const allowed = setup({
+		rules: { softDeny: ["never run database migrations outside the CLI"] },
+		replies: [jsonReply("allow", "the intent names the exact migration command")],
+	});
+	userSays(allowed.pi, allowed.ctx, "run the migration with psql directly");
+	assert.equal(await call(allowed.pi, allowed.ctx, "psql -f migrate.sql", "sd-2"), undefined);
+	const allowedPrompt = allowed.reg.contexts[0].systemPrompt;
+	assert.match(allowedPrompt, /Soft boundaries/);
+	assert.match(allowedPrompt, /Recent user intent/);
+	assert.match(allowedPrompt, /run the migration with psql directly/);
 });

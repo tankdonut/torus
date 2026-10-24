@@ -361,3 +361,74 @@ test("loadAutomodeRules: nothing configured means default source with no rules o
 	clearLegacyRules();
 	assert.deepEqual(loadAutomodeRules(), { rules: {}, warnings: [], source: "default" });
 });
+
+test("loadRules: softDeny and softDenyExceptions are prose arrays; junk entries drop with origin-prefixed warnings", () => {
+	const file = rulesFile(
+		"soft.json",
+		JSON.stringify({
+			softDeny: ["never run database migrations outside the CLI", 42],
+			softDenyExceptions: ["psql run by the deploy wrapper"],
+		}),
+	);
+	const { rules, warnings } = loadRules(file);
+	assert.deepEqual(rules, {
+		softDeny: ["never run database migrations outside the CLI"],
+		softDenyExceptions: ["psql run by the deploy wrapper"],
+	});
+	assert.equal(warnings.length, 1);
+	assert.ok(warnings[0].startsWith(`${file}: `), warnings[0]);
+	assert.match(warnings[0], /"softDeny" contains 1 non-string entry/);
+});
+
+test("loadRules: non-array softDeny is ignored with an origin-prefixed warning", () => {
+	const file = rulesFile("soft-non-array.json", JSON.stringify({ softDeny: "nope" }));
+	const { rules, warnings } = loadRules(file);
+	assert.deepEqual(rules, {});
+	assert.equal(warnings.length, 1);
+	assert.ok(warnings[0].startsWith(`${file}: `));
+	assert.match(warnings[0], /"softDeny" must be an array of strings/);
+});
+
+test("loadAutomodeRules: valid softDeny and softDenyExceptions pass clean from config.json", () => {
+	clearLegacyRules();
+	setConfig({
+		automode: {
+			softDeny: ["never run database migrations outside the CLI"],
+			softDenyExceptions: ["psql run by the deploy wrapper"],
+		},
+	});
+	try {
+		assert.deepEqual(loadAutomodeRules(), {
+			rules: {
+				softDeny: ["never run database migrations outside the CLI"],
+				softDenyExceptions: ["psql run by the deploy wrapper"],
+			},
+			warnings: [],
+			source: "config.json",
+		});
+	} finally {
+		clearConfig();
+	}
+});
+
+test("loadAutomodeRules: softDeny junk from config.json warns with the config.json prefix", () => {
+	clearLegacyRules();
+	setConfig({
+		automode: { softDeny: "nope", softDenyExceptions: ["psql run by the deploy wrapper", null] },
+	});
+	try {
+		const got = loadAutomodeRules();
+		assert.equal(got.source, "config.json");
+		assert.deepEqual(got.rules, { softDenyExceptions: ["psql run by the deploy wrapper"] });
+		assert.equal(got.warnings.length, 2, got.warnings.join(" | "));
+		for (const warning of got.warnings) {
+			assert.ok(warning.startsWith("config.json: "), warning);
+		}
+		assert.ok(got.warnings.some((w) => w.includes('"softDeny" must be an array')));
+		assert.ok(
+			got.warnings.some((w) => w.includes('"softDenyExceptions" contains 1 non-string entry')),
+		);
+	} finally {
+		clearConfig();
+	}
+});

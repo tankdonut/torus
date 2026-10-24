@@ -129,19 +129,31 @@ export type AutomodeRulesFile = {
 	ask?: string[];
 	deny?: string[];
 	environment?: string[];
+	softDeny?: string[];
+	softDenyExceptions?: string[];
 	hardDeny?: string[];
 	classifyAllShell?: boolean;
 };
 
-const RULE_KEYS = ["allow", "ask", "deny", "environment", "hardDeny"] as const;
+const RULE_KEYS = [
+	"allow",
+	"ask",
+	"deny",
+	"environment",
+	"softDeny",
+	"softDenyExceptions",
+	"hardDeny",
+] as const;
 
 /**
  * Validate one parsed rules object — the same shape the legacy file carries
  * and the "automode" section of config.json holds. Unknown top-level keys and
  * non-array rule fields are ignored with a warning; non-string entries inside
  * a rule array are dropped with a warning while the string entries are kept.
- * `environment` and `hardDeny` are prose string arrays for the decision model
- * (trusted infrastructure context and absolute boundaries); `classifyAllShell`
+ * `environment`, `softDeny`, `softDenyExceptions`, and `hardDeny` are prose
+ * string arrays for the decision model (trusted infrastructure context, soft
+ * boundaries the judge may clear via an exception or specific recent intent,
+ * their exceptions, and absolute boundaries); `classifyAllShell`
  * is a boolean that suspends allow rules while auto mode is active. Every
  * warning is prefixed by `origin`, naming where the object came from: the
  * legacy file's path, or config.json for the unified config's section.

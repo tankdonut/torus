@@ -63,6 +63,9 @@ function rulesSourceSuffix(source: AutomodeRulesSource): string {
 	return " (none — defaults)";
 }
 
+/** Most intent lines buffered for the softDeny judge tier; oldest drop beyond it. */
+const INTENT_BUFFER_MAX_LINES = 20;
+
 function unjudgedMarker(reason: string): string {
 	return `\n[automode] ran unjudged (decision model unavailable: ${reason}) — treat with care`;
 }
@@ -84,6 +87,10 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	let askEverything = false;
 	const failopenReasons = new Map<string, string>();
 	let startup: Promise<void> | undefined;
+	// The user's own message lines since the last approval dialog or deny — the
+	// clearing window the softDeny judge tier reads. softDeny is prose for the
+	// judge only; nothing here maps it to a deterministic rule.
+	const intentLines: string[] = [];
 
 	const mode = (): PermissionMode => modeOverride ?? startupMode;
 
@@ -205,6 +212,9 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		command: string,
 		reason: string,
 	): Promise<ToolCallEventResult | undefined> {
+		// Every dialog invocation resets the intent window: the user just spoke
+		// for themselves, so older intent no longer speaks for them.
+		intentLines.length = 0;
 		if (!ctx.hasUI) {
 			audit(command, "dialog", "deny", `no UI to ask: ${reason}`);
 			return { block: true, reason: noUiReason(reason) };
@@ -233,6 +243,21 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		return { block: true, reason: "automode: denied by user" };
 	}
 
+	// Buffer the user's own message text (never assistant or tool text) as the
+	// softDeny tier's clearing window, bounded to the newest lines.
+	pi.on("message_start", (event) => {
+		const message = event.message;
+		if (message.role !== "user") return;
+		const parts = typeof message.content === "string" ? [message.content] : message.content;
+		for (const part of parts) {
+			const text = typeof part === "string" ? part : part.type === "text" ? part.text : "";
+			const line = text.trim();
+			if (line === "") continue;
+			intentLines.push(line);
+			if (intentLines.length > INTENT_BUFFER_MAX_LINES) intentLines.shift();
+		}
+	});
+
 	pi.on("session_start", (_event, ctx) => ensureStartup(ctx));
 
 	pi.on("tool_call", async (event, ctx) => {
@@ -248,6 +273,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		// still apply; only rule-based allows are suspended).
 		const ruleMatch = matchRules(command, rules);
 		if (ruleMatch?.verdict === "deny") {
+			intentLines.length = 0;
 			audit(command, "rule", "deny", `denied by rule "${ruleMatch.rule}"`);
 			return {
 				block: true,
@@ -291,12 +317,15 @@ export function registerAutomode(pi: ExtensionAPI): void {
 				return undefined;
 			}
 			if (cached.verdict === "deny") {
+				intentLines.length = 0;
 				return { block: true, reason: `automode: denied this session — ${cached.reason}` };
 			}
 			return askUser(ctx, command, cached.reason);
 		}
 
-		// (g) decision model, with timing and fail-open handling.
+		// (g) decision model, with timing and fail-open handling. The model
+		// verdict itself never clears the intent window — an allow keeps the
+		// intent for the next command; only dialogs and denies clear it.
 		const startedAt = Date.now();
 		const decision = await decide(
 			ctx.modelRegistry,
@@ -306,7 +335,13 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			ctx.cwd,
 			ctx.signal,
 			undefined,
-			{ environment: rules.environment, hardDeny: rules.hardDeny },
+			{
+				environment: rules.environment,
+				softDeny: rules.softDeny,
+				softDenyExceptions: rules.softDenyExceptions,
+				hardDeny: rules.hardDeny,
+				intent: [...intentLines],
+			},
 		);
 		const ms = Date.now() - startedAt;
 		audit(command, decision.source, decision.verdict, decision.reason, { ...decision, ms });
@@ -319,6 +354,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 				return askUser(ctx, command, decision.reason);
 			}
 			case "deny": {
+				intentLines.length = 0;
 				consecutiveDenies += 1;
 				if (consecutiveDenies >= CIRCUIT_BREAKER_DENIES && !askEverything) {
 					askEverything = true;
@@ -462,6 +498,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			consecutiveDenies = 0;
 			askEverything = false;
 			failopenReasons.clear();
+			intentLines.length = 0;
 			if (arg === "auto") {
 				loadAutoConfig(ctx);
 			}
