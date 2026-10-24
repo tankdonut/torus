@@ -6,6 +6,10 @@
  * `/login zai` and `/login opencode-go` (the gateway also reads
  * OPENCODE_API_KEY); credential resolution is the engine's job.
  *
+ * The chains config resolves through the unified config: config.json's
+ * `chains` section (tiers + providers) wins wholesale over chains.json — never
+ * merged — and without it chains.json applies unchanged.
+ *
  * chains.json carries a `providers` map of compatible-endpoint
  * registrations — local Ollama/LM Studio, OpenRouter, anything speaking an API
  * the engine already supports. Each entry becomes one pi.registerProvider call
@@ -22,6 +26,7 @@ import type {
 	ProviderConfig,
 	ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
+import { configFilePath, readSection, type SectionSource } from "../config/loader.js";
 import { torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
@@ -40,18 +45,42 @@ export function chainsFile(): string {
 }
 
 /**
- * Raw tiers from chains.json: null when the file is malformed (not JSON, or
- * not an object), otherwise the parsed entries keyed by tier. Absent tiers are
- * simply missing from the map.
+ * Resolve the chains section by precedence: config.json's `chains` section
+ * wins over chains.json, which wins over the built-in defaults. All-or-nothing
+ * by design — a present config section is the whole chains config, providers
+ * included, and legacy providers apply only when the section is absent, so
+ * `torus config migrate` stays a clean whole-file fold. `onLegacyError`
+ * follows parseChainsFile's convention: loud for per-request tier reads, silent
+ * where statusline repaints could spam stderr. Read every call — files are
+ * tiny and edits apply without a restart.
  */
-function readChainTiers(file: string): Record<string, unknown> | null {
-	return parseChainsFile(file, (message) => console.error(message));
+function chainsSection(onLegacyError?: (message: string) => void): {
+	value: Record<string, unknown> | undefined;
+	source: SectionSource;
+	warning?: string;
+} {
+	return readSection("chains", {
+		// Absent or malformed file → undefined (malformed already warned through
+		// onLegacyError), so the shadow warning fires only when the legacy file
+		// genuinely carries a chains config.
+		load: () => {
+			const file = chainsFile();
+			if (!existsSync(file)) return undefined;
+			return parseChainsFile(file, onLegacyError) ?? undefined;
+		},
+		sourceHint: "chains.json",
+	});
+}
+
+/** Origin label for warnings: where a resolved chains section came from. */
+function chainsOrigin(source: SectionSource): string {
+	return source === "config" ? configFilePath() : chainsFile();
 }
 
 /**
  * Parse chains.json: null when the file is malformed (not JSON, or not an
  * object), otherwise the parsed object. `onError` receives the warning text —
- * readChainTiers prints it per call, while the provider-availability path
+ * the per-request tier path prints it per call, while the availability path
  * stays silent so statusline repaints cannot spam stderr.
  */
 function parseChainsFile(
@@ -77,19 +106,20 @@ function parseChainsFile(
 }
 
 /**
- * Effective chain for a tier: a valid chains.json override wins, else the
- * built-in default. A tier counts only when it is a non-empty array of
- * non-empty model ids; absent, empty, or malformed tiers fall back to that
- * tier's default (mixed validity is fine). Tiers not in MODEL_CHAINS are
- * ignored. Read every call — the file is tiny and edits apply without a
- * restart.
+ * One tier lookup shared by both sources: a tier counts only when it is a
+ * non-empty array of non-empty model ids; absent, empty, or malformed tiers
+ * yield undefined and fall back to that tier's default (mixed validity is
+ * fine). Tiers not in MODEL_CHAINS are ignored. Malformed tiers warn naming
+ * `origin`, the file the map came from.
  */
-export function modelChain(tier: ChainTier): readonly string[] {
-	const file = chainsFile();
-	const tiers = readChainTiers(file);
-	if (tiers === null) return MODEL_CHAINS[tier];
+function tierChain(
+	tiers: Record<string, unknown> | undefined,
+	tier: ChainTier,
+	origin: string,
+): readonly string[] | undefined {
+	if (tiers === undefined) return undefined;
 	const candidate = tiers[tier];
-	if (candidate === undefined) return MODEL_CHAINS[tier];
+	if (candidate === undefined) return undefined;
 	if (
 		Array.isArray(candidate) &&
 		candidate.length > 0 &&
@@ -98,9 +128,21 @@ export function modelChain(tier: ChainTier): readonly string[] {
 		return candidate;
 	}
 	console.error(
-		`torus: ${file}: tier "${tier}" must be a non-empty array of model ids — using the built-in ${tier} chain`,
+		`torus: ${origin}: tier "${tier}" must be a non-empty array of model ids — using the built-in ${tier} chain`,
 	);
-	return MODEL_CHAINS[tier];
+	return undefined;
+}
+
+/**
+ * Effective chain for a tier: a valid config.json chains section wins, else a
+ * valid chains.json override, else the built-in default. One read plus at most
+ * one warning per call (shadow, malformed file, or malformed tier) — the same
+ * per-call cost model as the chains.json-only path it replaced.
+ */
+export function modelChain(tier: ChainTier): readonly string[] {
+	const { value, source, warning } = chainsSection((message) => console.error(message));
+	if (warning !== undefined) console.error(`torus: ${warning}`);
+	return tierChain(value, tier, chainsOrigin(source)) ?? MODEL_CHAINS[tier];
 }
 
 /** API ids the pinned engine's `KnownApi` union admits (pi-ai types.d.ts). */
@@ -160,23 +202,27 @@ function chainModelConfig(raw: unknown): ProviderModelConfig | null {
 }
 
 /**
- * Validated `providers` map from chains.json: every good entry maps to one
- * pi.registerProvider call, every bad one to a warning naming the provider.
- * Silent by design — callers decide whether warnings reach stderr — and a
- * broken entry never fails the file: the rest still registers and the
- * built-in chains hold.
+ * Validated `providers` map from the resolved chains section (config.json's
+ * `chains` or chains.json): every good entry maps to one pi.registerProvider
+ * call, every bad one to a warning naming the provider. Silent by design —
+ * callers decide whether warnings reach stderr — and a broken entry never
+ * fails the section: the rest still registers and the built-in chains hold.
  */
-function chainProviderRegistrations(file: string): {
+function chainProviderRegistrations(
+	section: Record<string, unknown> | undefined,
+	origin: string,
+): {
 	valid: ChainProviderRegistration[];
 	warnings: string[];
 } {
-	const raw = parseChainsFile(file)?.["providers"];
+	if (section === undefined) return { valid: [], warnings: [] };
+	const raw = section["providers"];
 	if (raw === undefined) return { valid: [], warnings: [] };
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 		return {
 			valid: [],
 			warnings: [
-				`torus: ${file}: "providers" must be an object mapping names to endpoint entries — ignored`,
+				`torus: ${origin}: "providers" must be an object mapping names to endpoint entries — ignored`,
 			],
 		};
 	}
@@ -184,7 +230,7 @@ function chainProviderRegistrations(file: string): {
 	const warnings: string[] = [];
 	for (const [name, entry] of Object.entries(raw)) {
 		const skip = (reason: string) =>
-			warnings.push(`torus: ${file}: provider "${name}" ${reason} — SKIPPED`);
+			warnings.push(`torus: ${origin}: provider "${name}" ${reason} — SKIPPED`);
 		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
 			skip("must be an object with baseUrl, api, and models");
 			continue;
@@ -250,24 +296,29 @@ export const DEFAULT_MEMBER_MODEL = MODEL_CHAINS.fast[0];
  * Providers whose models chains may resolve to: the engine's built-in `zai`
  * and `opencode-go` (declared = available; credential resolution is the
  * engine's job, so the roster filter never drops their chain entries for
- * lacking a torus-side credential gate), and every validly-declared
- * chains.json provider.
+ * lacking a torus-side credential gate), and every validly-declared provider
+ * from the resolved chains section.
  */
 export function providerAvailabilities(): Record<string, boolean> {
 	const available: Record<string, boolean> = {
 		zai: true,
 		"opencode-go": true,
 	};
-	for (const { name } of chainProviderRegistrations(chainsFile()).valid) {
+	const { value, source } = chainsSection();
+	for (const { name } of chainProviderRegistrations(value, chainsOrigin(source)).valid) {
 		available[name] = true;
 	}
 	return available;
 }
 
 export function registerProviders(pi: ExtensionAPI): void {
-	const file = chainsFile();
-	const { valid, warnings } = chainProviderRegistrations(file);
-	for (const warning of warnings) console.error(warning);
+	// Legacy parse stays silent here as before; only the section-level warning
+	// (shadow or malformed config.json) surfaces, once at startup.
+	const { value, source, warning } = chainsSection();
+	if (warning !== undefined) console.error(`torus: ${warning}`);
+	const origin = chainsOrigin(source);
+	const { valid, warnings } = chainProviderRegistrations(value, origin);
+	for (const entry of warnings) console.error(entry);
 	for (const { name, config } of valid) {
 		try {
 			// Registering can still throw (engine-side validation, colliding with a
@@ -276,7 +327,7 @@ export function registerProviders(pi: ExtensionAPI): void {
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
 			console.error(
-				`torus: ${file}: provider "${name}" rejected by the engine (${reason}) — SKIPPED`,
+				`torus: ${origin}: provider "${name}" rejected by the engine (${reason}) — SKIPPED`,
 			);
 		}
 	}

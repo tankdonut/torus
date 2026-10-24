@@ -24,6 +24,13 @@ import { after, test } from "node:test";
 // with its models mapped to full chat configs; an invalid entry warns on
 // stderr naming the provider and is SKIPPED, never failing the rest.
 //
+// The same chains config also resolves from the unified config.json's
+// `chains` section, which wins wholesale over chains.json (tiers and
+// providers together, never merged; a shadow warning points at
+// `torus config migrate` while both exist) and leaves chains.json fully in
+// charge when the section is absent. Tier validation is identical for both
+// sources.
+//
 // TORUS_HOME and TORUS_ROOT must land before the registry/roster imports (the
 // registry derives its logs dir and the roster loads agents/ at module load).
 // The fake engine writes one file per spawn with its argv so the happy path
@@ -67,6 +74,7 @@ writeFileSync(
 process.env.TORUS_ROOT = ROOT;
 
 const CHAINS_JSON = path.join(HOME, "chains.json");
+const CONFIG_JSON = path.join(HOME, "config.json");
 const DEFAULT_PRIMARY = ["zai/glm-5.3", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"];
 const DEFAULT_FAST = ["zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"];
 
@@ -100,6 +108,14 @@ function writeChains(data) {
 
 function removeChains() {
 	rmSync(CHAINS_JSON, { force: true });
+}
+
+function writeConfig(data) {
+	writeFileSync(CONFIG_JSON, JSON.stringify(data), "utf8");
+}
+
+function removeConfig() {
+	rmSync(CONFIG_JSON, { force: true });
 }
 
 /** Collect console.error lines emitted while `fn` runs (override warnings land there). */
@@ -201,6 +217,69 @@ test("unknown tiers in the file are ignored", () => {
 	writeChains({ turbo: ["zai/turbo"], fast: ["zai/custom-model"] });
 	assert.deepEqual(roster.resolveModels("fast"), ["zai/custom-model"]);
 	removeChains();
+});
+
+test("config.json chains section overrides the built-in and legacy chains.json", () => {
+	writeChains({ fast: ["zai/legacy-choice"] });
+	writeConfig({ chains: { fast: ["zai/config-choice"] } });
+	assert.deepEqual(roster.resolveModels("fast"), ["zai/config-choice"], "config wins");
+	assert.deepEqual(roster.resolveModels("primary"), DEFAULT_PRIMARY, "primary stays default");
+	removeChains();
+	removeConfig();
+});
+
+test("chains.json still applies when config.json lacks the chains section", () => {
+	writeConfig({ automode: { mode: "auto" } });
+	writeChains({ fast: ["zai/legacy-choice"] });
+	assert.deepEqual(roster.resolveModels("fast"), ["zai/legacy-choice"]);
+	removeChains();
+	removeConfig();
+});
+
+test("config + legacy both present → config wins with one shadow warning", () => {
+	writeChains({ fast: ["zai/legacy-choice"] });
+	writeConfig({ chains: { fast: ["zai/config-choice"] } });
+	let fast;
+	const lines = captureStderr(() => {
+		fast = roster.resolveModels("fast");
+	});
+	assert.deepEqual(fast, ["zai/config-choice"]);
+	const shadows = lines.filter((l) => l.includes("torus config migrate"));
+	assert.equal(shadows.length, 1, "exactly one shadow warning per read");
+	assert.ok(shadows[0].includes("chains.json"), "warning names the shadowed file");
+	removeChains();
+	removeConfig();
+});
+
+test("malformed config.json → legacy chains.json still effective, no throw", () => {
+	writeFileSync(CONFIG_JSON, "{not json at all", "utf8");
+	writeChains({ fast: ["zai/legacy-choice"] });
+	let fast;
+	const lines = captureStderr(() => {
+		fast = roster.resolveModels("fast");
+	});
+	assert.deepEqual(fast, ["zai/legacy-choice"], "legacy tier survives the bad config");
+	assert.ok(
+		lines.some((l) => l.includes(CONFIG_JSON) && l.includes("not valid JSON")),
+		"malformed config warning names the file",
+	);
+	removeChains();
+	removeConfig();
+});
+
+test("malformed tier in the config section falls back with a warning naming config.json", () => {
+	writeConfig({ chains: { primary: ["zai/p-config"], fast: "not-an-array" } });
+	let fast;
+	const lines = captureStderr(() => {
+		fast = roster.resolveModels("fast");
+	});
+	assert.deepEqual(roster.resolveModels("primary"), ["zai/p-config"], "valid tier overrides");
+	assert.deepEqual(fast, DEFAULT_FAST, "malformed tier falls back");
+	assert.ok(
+		lines.some((l) => l.includes(CONFIG_JSON) && l.includes("fast")),
+		"warning must name the config path and the tier",
+	);
+	removeConfig();
 });
 
 const OLLAMA = {
@@ -314,6 +393,56 @@ test("apiKey env-ref passes through to the registered provider config", () => {
 	assert.equal(calls[0].config.models[0].id, "z-ai/glm-4.7");
 	assert.equal(calls[0].config.models[0].contextWindow, 200000, "contextWindow passes through");
 	removeChains();
+});
+
+test("providers map from the config chains section registers", () => {
+	writeConfig({ chains: { providers: { ollama: OLLAMA } } });
+	const { calls, pi } = registrationCalls();
+	const lines = captureStderr(() => providers.registerProviders(pi));
+	assert.equal(calls.length, 1, "exactly one registerProvider call");
+	assert.equal(calls[0].name, "ollama");
+	assert.equal(calls[0].config.baseUrl, "http://127.0.0.1:11434/v1");
+	assert.deepEqual(lines, [], "a valid config entry warns about nothing");
+	assert.equal(providers.providerAvailabilities().ollama, true, "config providers are available");
+	removeConfig();
+});
+
+test("config section is all-or-nothing: legacy providers ignored while it is present", () => {
+	writeChains({
+		providers: {
+			lmstudio: {
+				baseUrl: "http://127.0.0.1:1234/v1",
+				api: "openai-completions",
+				models: [{ id: "qwen3:8b" }],
+			},
+		},
+	});
+	writeConfig({ chains: { providers: { ollama: OLLAMA } } });
+	const { calls, pi } = registrationCalls();
+	const lines = captureStderr(() => providers.registerProviders(pi));
+	assert.deepEqual(
+		calls.map((c) => c.name),
+		["ollama"],
+		"only the config providers register, never a legacy/config merge",
+	);
+	assert.ok(
+		lines.some((l) => l.includes("torus config migrate")),
+		"registering with both present surfaces the shadow warning",
+	);
+	removeChains();
+	removeConfig();
+});
+
+test("config fast tier + config providers: local model rides the availability filter", () => {
+	writeConfig({ chains: { fast: ["ollama/gemma3:12b"], providers: { ollama: OLLAMA } } });
+	assert.deepEqual(roster.resolveModels("fast"), ["ollama/gemma3:12b"]);
+	assert.ok(roster.availableModels().includes("ollama/gemma3:12b"));
+	removeConfig();
+	assert.deepEqual(
+		roster.resolveModels("fast"),
+		DEFAULT_FAST,
+		"default returns after the config is gone",
+	);
 });
 
 test("ambient session-title cascade follows a fast-tier override onto the local model", () => {
