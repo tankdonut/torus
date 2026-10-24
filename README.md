@@ -61,9 +61,9 @@ Your rules run first, from `~/.torus/automode.json`:
 
 ```json
 {
-  "deny": ["git push --force*", "npm publish*"],
-  "ask": ["git push*", "npx *"],
-  "allow": ["npm test*", "node --test*"]
+  "deny": ["git push --force *", "npm publish *"],
+  "ask": ["git push *", "npx *"],
+  "allow": ["npm test *", "node --test *"]
 }
 ```
 
