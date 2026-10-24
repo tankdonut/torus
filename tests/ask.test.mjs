@@ -68,8 +68,50 @@ function tuiCtx(drive) {
 function makeDialog(spec) {
 	const tui = { requestRender() {} };
 	const theme = { fg: (_t, s) => s, style: (s) => s, colors: {} };
-	return new AskDialog(tui, theme, () => {}, spec);
+	return new AskDialog(tui, theme, () => {}, { questions: spec.questions ?? [spec] });
 }
+
+function dialogWith(spec) {
+	let result;
+	const tui = { requestRender() {} };
+	const theme = { fg: (_t, s) => s, style: (s) => s, colors: {} };
+	const dialog = new AskDialog(
+		tui,
+		theme,
+		(r) => {
+			result = r;
+		},
+		{ questions: spec.questions ?? [spec] },
+	);
+	return { dialog, getResult: () => result };
+}
+
+function click(x, y) {
+	return {
+		type: "click",
+		button: "left",
+		x,
+		y,
+		screenX: x,
+		screenY: y,
+		width: 80,
+		height: 24,
+		shift: false,
+		alt: false,
+		ctrl: false,
+	};
+}
+
+const TWO_QUESTIONS = {
+	questions: [
+		{ question: "Which DB?", header: "db", options: [{ label: "postgres" }, { label: "sqlite" }] },
+		{
+			question: "When to migrate?",
+			header: "timing",
+			options: [{ label: "now" }, { label: "later" }],
+		},
+	],
+};
 
 const PARAMS = {
 	questions: [
@@ -243,4 +285,111 @@ test("AskDialog: descriptions render under options without previews", () => {
 	const lines = makeDialog(spec).render(80).join("\n");
 	assert.match(lines, /postgres/);
 	assert.match(lines, /heavy but standard/);
+});
+
+test("AskDialog: multi-question dialog renders a stepper; single hides it", () => {
+	const multi = makeDialog(TWO_QUESTIONS);
+	const lines = multi.render(80).join("\n");
+	assert.match(lines, /1 db/);
+	assert.match(lines, /2 timing/);
+	assert.match(lines, /←→\/hl questions/);
+
+	const single = makeDialog(TWO_QUESTIONS.questions[0]);
+	const singleLines = single.render(80);
+	assert.doesNotMatch(singleLines.join("\n"), /←→\/hl questions/);
+	assert.match(singleLines[1], /db — Which DB\?/);
+});
+
+test("AskDialog: arrow navigation revisits and revises earlier answers", () => {
+	const { dialog, getResult } = dialogWith(TWO_QUESTIONS);
+	dialog.render(80);
+	dialog.handleInput("\r"); // q1: postgres, advance to q2
+	assert.match(dialog.render(80).join("\n"), /timing — When to migrate\?/);
+	dialog.handleInput("\x1b[D"); // left: back to q1
+	const back = dialog.render(80).join("\n");
+	assert.match(back, /db — Which DB\?/);
+	assert.match(back, /postgres ✓/);
+	dialog.handleInput("2"); // q1 revised to sqlite, advance to q2
+	dialog.handleInput("\r"); // q2: now, submit
+	const result = getResult();
+	assert.equal(result.kind, "submit");
+	assert.deepEqual(
+		result.answers.map((a) => a?.text),
+		["sqlite", "now"],
+	);
+});
+
+test("AskDialog: clicking a stepper tab jumps to that question", () => {
+	const { dialog } = dialogWith(TWO_QUESTIONS);
+	const lines = dialog.render(80);
+	const col = lines[1].indexOf("2 timing");
+	dialog.handleMouse(click(col, 1));
+	assert.match(dialog.render(80).join("\n"), /timing — When to migrate\?/);
+});
+
+test("AskDialog: clicking an option row commits it", () => {
+	const { dialog, getResult } = dialogWith(TWO_QUESTIONS);
+	dialog.render(80);
+	dialog.handleMouse(click(0, 5)); // q1 row 0: postgres, advance
+	assert.match(dialog.render(80).join("\n"), /timing — When to migrate\?/);
+	dialog.render(80);
+	dialog.handleMouse(click(0, 6)); // q2 row 1: later, submit
+	const result = getResult();
+	assert.equal(result.kind, "submit");
+	assert.deepEqual(
+		result.answers.map((a) => a?.text),
+		["postgres", "later"],
+	);
+});
+
+test("torus_ask TUI: multiple questions answer in one dialog and submit together", async () => {
+	const { tool } = captureTool();
+	const ctx = tuiCtx((dialog) => {
+		dialog.handleInput("1"); // q1: postgres, advance
+		dialog.handleInput("2"); // q2: later, submit
+	});
+	const result = await run(tool, { questions: TWO_QUESTIONS.questions }, ctx);
+	assert.equal(result.details.mode, "interactive");
+	assert.equal(result.content[0].text, "db: postgres\ntiming: later");
+	assert.equal(ctx.calls.custom.length, 1);
+});
+
+test("torus_ask TUI: navigating past a question leaves it unanswered", async () => {
+	const { tool } = captureTool();
+	const ctx = tuiCtx((dialog) => {
+		dialog.handleInput("\x1b[C"); // right without answering q1
+		dialog.handleInput("1"); // q2: now, submit
+	});
+	const result = await run(tool, { questions: TWO_QUESTIONS.questions }, ctx);
+	assert.equal(result.details.mode, "fallback");
+	assert.match(result.content[0].text, /answered: timing: now/);
+	assert.match(result.content[0].text, /- db: Which DB\?/);
+});
+
+test("torus_ask TUI: chat mid-dialog keeps earlier answers", async () => {
+	const { tool } = captureTool();
+	const ctx = tuiCtx((dialog) => {
+		dialog.handleInput("1"); // q1: postgres, advance
+		dialog.handleInput("\x1b[B");
+		dialog.handleInput("\x1b[B");
+		dialog.handleInput("\x1b[B");
+		dialog.handleInput("\r"); // q2: chat row
+	});
+	const result = await run(tool, { questions: TWO_QUESTIONS.questions }, ctx);
+	assert.equal(result.details.mode, "chat");
+	assert.match(result.content[0].text, /already answered:/);
+	assert.match(result.content[0].text, /- db: postgres/);
+	assert.match(result.content[0].text, /- timing: When to migrate\?/);
+});
+
+test("torus_ask TUI: escape cancels the whole dialog", async () => {
+	const { tool } = captureTool();
+	const ctx = tuiCtx((dialog) => {
+		dialog.handleInput("1"); // q1: postgres, advance
+		dialog.handleInput("\x1b"); // cancel on q2
+	});
+	const result = await run(tool, { questions: TWO_QUESTIONS.questions }, ctx);
+	assert.equal(result.details.mode, "fallback");
+	assert.match(result.content[0].text, /- db: Which DB\?/);
+	assert.match(result.content[0].text, /- timing: When to migrate\?/);
 });

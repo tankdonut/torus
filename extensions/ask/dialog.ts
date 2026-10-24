@@ -1,13 +1,18 @@
 /**
  * torus — ask dialog component.
  *
- * Full-keyboard select dialog for torus_ask in TUI mode: arrows/j/k move,
- * digits jump-commit an option, `n` attaches a free-text note to the
- * highlighted row, `tab`/typing jumps into the always-present Custom…
- * free-text row, Enter commits, Esc steps back (input → selection) or
- * cancels. A "Chat more about this" row is always last. Options may carry
- * a `preview` (ASCII mockup, code snippet, diagram) rendered side-by-side
- * for the highlighted row.
+ * Full-keyboard select dialog for torus_ask in TUI mode. Every question of a
+ * call lives in one dialog: ←/→ (or h/l) moves between questions, the stepper
+ * tabs at the top are clickable, and clicking a row commits it like Enter.
+ * Within a question: arrows/j/k move, digits jump-commit an option, `n`
+ * attaches a free-text note to the highlighted row, `tab`/typing jumps into
+ * the always-present Custom… free-text row, Enter records the answer and
+ * advances to the next question (the last one submits the whole set), and
+ * Esc steps back (input → selection) or cancels the dialog. A "Chat more
+ * about this" row is always last. Options may carry a `preview` (ASCII
+ * mockup, code snippet, diagram) rendered side-by-side for the highlighted
+ * row. Answers survive navigation: revisiting a question shows and lets you
+ * change the recorded answer.
  */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -18,6 +23,8 @@ import {
 	matchesKey,
 	parseKey,
 	type TUI,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -32,37 +39,73 @@ export interface AskDialogOption {
 	preview?: string;
 }
 
-export interface AskDialogSpec {
+export interface AskDialogQuestion {
 	header: string;
 	question: string;
-	/** 1-based question counter shown in the header, e.g. "1/2". */
-	progress?: string;
 	options: AskDialogOption[];
 }
 
+export interface AskDialogSpec {
+	questions: AskDialogQuestion[];
+}
+
+export interface AskDialogAnswer {
+	header: string;
+	text: string;
+}
+
 export type AskDialogResult =
-	| { kind: "answer"; label: string; note?: string }
-	| { kind: "custom"; text: string }
-	| { kind: "chat" }
+	| { kind: "submit"; answers: Array<AskDialogAnswer | null> }
+	| {
+			kind: "chat";
+			/** Index of the question the chat row was chosen on. */
+			index: number;
+			header: string;
+			question: string;
+			/** Answers recorded before the chat choice, aligned with the question order. */
+			answers: Array<AskDialogAnswer | null>;
+	  }
 	| undefined; // cancelled
 
 type InputMode = { field: "note" | "custom"; text: string } | null;
 
+/** Mutable state of one question: highlight, draft inputs, and the recorded answer. */
+interface QuestionState {
+	question: AskDialogQuestion;
+	highlight: number;
+	notes: Map<number, string>; // row index -> note
+	customText: string;
+	answer: AskDialogAnswer | null;
+	/** Row index the recorded answer came from, or null while unanswered. */
+	answeredRow: number | null;
+}
+
 const PREVIEW_MIN_W = 24;
 const PREVIEW_FRACTION = 0.42;
+const STEPPER_SEP = "  ";
+
+/** Clickable horizontal extent of one stepper tab, in visible columns. */
+interface TabSpan {
+	start: number;
+	end: number;
+	index: number;
+}
 
 export class AskDialog implements Component {
 	private tui: TUI;
 	private theme: ExtensionContext["ui"]["theme"];
 	private done: (result: AskDialogResult) => void;
-	private spec: AskDialogOption[];
-	private title: string;
-	private hasPreview: boolean;
-	private highlight = 0;
+	private states: QuestionState[];
+	private qIndex = 0;
+	private state: QuestionState;
 	private input: InputMode = null;
-	private noteFor = new Map<number, string>(); // row index -> note
-	private customText = "";
 	private closed = false;
+	// Mouse hit regions, rebuilt on every render.
+	private tabSpans: TabSpan[] = [];
+	private stepperY = -1;
+	private rowsTop = 0;
+	private rowTargets: number[] = []; // rendered line (from rowsTop) -> row index
+	private clickWidth = 0;
 
 	constructor(
 		tui: TUI,
@@ -73,19 +116,29 @@ export class AskDialog implements Component {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
-		this.spec = spec.options;
-		this.title = spec.header;
-		this.hasPreview = spec.options.some((o) => o.preview !== undefined && o.preview !== "");
+		this.states = spec.questions.map((question) => ({
+			question,
+			highlight: 0,
+			notes: new Map(),
+			customText: "",
+			answer: null,
+			answeredRow: null,
+		}));
+		this.state = this.states[0] as QuestionState;
 	}
 
-	/** Rows: options, then Custom…, then Chat more about this. */
+	/** Rows for the current question: options, then Custom…, then Chat more about this. */
 	private rows(): {
 		kind: "option" | "custom" | "chat";
 		label: string;
 		option?: AskDialogOption;
 	}[] {
 		return [
-			...this.spec.map((o) => ({ kind: "option" as const, label: o.label, option: o })),
+			...this.state.question.options.map((o) => ({
+				kind: "option" as const,
+				label: o.label,
+				option: o,
+			})),
 			{ kind: "custom" as const, label: CUSTOM_LABEL },
 			{ kind: "chat" as const, label: CHAT_LABEL },
 		];
@@ -108,30 +161,65 @@ export class AskDialog implements Component {
 		this.tui.requestRender();
 	}
 
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (this.closed || this.input) return undefined;
+		if (event.type !== "click" || event.button !== "left") return undefined;
+		if (event.y === this.stepperY) {
+			for (const span of this.tabSpans) {
+				if (event.x >= span.start && event.x < span.end) {
+					this.gotoQuestion(span.index);
+					return { handled: true };
+				}
+			}
+			return undefined;
+		}
+		if (event.x < this.clickWidth) {
+			const row = this.rowTargets[event.y - this.rowsTop];
+			if (row !== undefined) {
+				this.state.highlight = row;
+				this.commit();
+				return { handled: true };
+			}
+		}
+		return undefined;
+	}
+
 	private handleSelectInput(data: string): void {
 		const rows = this.rows();
+		if (matchesKey(data, "left") || matchesKey(data, "h")) {
+			this.gotoQuestion(this.qIndex - 1);
+			return;
+		}
+		if (matchesKey(data, "right") || matchesKey(data, "l")) {
+			this.gotoQuestion(this.qIndex + 1);
+			return;
+		}
 		if (matchesKey(data, "up") || matchesKey(data, "k")) {
-			this.highlight = (this.highlight - 1 + rows.length) % rows.length;
+			this.state.highlight = (this.state.highlight - 1 + rows.length) % rows.length;
 			return;
 		}
 		if (matchesKey(data, "down") || matchesKey(data, "j")) {
-			this.highlight = (this.highlight + 1) % rows.length;
+			this.state.highlight = (this.state.highlight + 1) % rows.length;
 			return;
 		}
-		for (let i = 0; i < this.spec.length && i < 9; i++) {
+		const options = this.state.question.options;
+		for (let i = 0; i < options.length && i < 9; i++) {
 			if (matchesKey(data, String(i + 1) as KeyId)) {
-				this.highlight = i;
+				this.state.highlight = i;
 				this.commit();
 				return;
 			}
 		}
 		if (matchesKey(data, "n")) {
-			this.input = { field: "note", text: this.noteFor.get(this.highlight) ?? "" };
+			this.input = {
+				field: "note",
+				text: this.state.notes.get(this.state.highlight) ?? "",
+			};
 			return;
 		}
 		if (matchesKey(data, "tab")) {
-			this.highlight = this.spec.length; // Custom… row
-			this.input = { field: "custom", text: this.customText };
+			this.state.highlight = options.length; // Custom… row
+			this.input = { field: "custom", text: this.state.customText };
 			return;
 		}
 		if (matchesKey(data, "enter") || matchesKey(data, "return")) {
@@ -146,7 +234,7 @@ export class AskDialog implements Component {
 		// Any other printable character seeds the custom answer (fast path).
 		const key = parseKey(data);
 		if (key !== undefined && key.length === 1 && !key.includes("+")) {
-			this.highlight = this.spec.length;
+			this.state.highlight = options.length;
 			this.input = { field: "custom", text: key };
 		}
 	}
@@ -161,10 +249,10 @@ export class AskDialog implements Component {
 		}
 		if (matchesKey(data, "enter") || matchesKey(data, "return")) {
 			if (input.field === "note") {
-				if (input.text.trim()) this.noteFor.set(this.highlight, input.text.trim());
-				else this.noteFor.delete(this.highlight);
+				if (input.text.trim()) this.state.notes.set(this.state.highlight, input.text.trim());
+				else this.state.notes.delete(this.state.highlight);
 			} else {
-				this.customText = input.text;
+				this.state.customText = input.text;
 			}
 			this.input = null;
 			return;
@@ -185,48 +273,90 @@ export class AskDialog implements Component {
 
 	private stashInput(input: NonNullable<InputMode>): void {
 		if (input.field === "note") {
-			if (input.text.trim()) this.noteFor.set(this.highlight, input.text.trim());
+			if (input.text.trim()) this.state.notes.set(this.state.highlight, input.text.trim());
 		} else {
-			this.customText = input.text;
+			this.state.customText = input.text;
 		}
+	}
+
+	private gotoQuestion(index: number): void {
+		if (index < 0 || index >= this.states.length || index === this.qIndex) return;
+		if (this.input) {
+			this.stashInput(this.input);
+			this.input = null;
+		}
+		this.qIndex = index;
+		this.state = this.states[index] as QuestionState;
 	}
 
 	private commit(): void {
 		if (this.closed) return;
-		const rows = this.rows();
-		const row = rows[this.highlight];
+		const q = this.state.question;
+		const row = this.rows()[this.state.highlight];
 		if (!row) return;
-		this.closed = true;
 		if (row.kind === "chat") {
-			this.done({ kind: "chat" });
+			this.closed = true;
+			this.done({
+				kind: "chat",
+				index: this.qIndex,
+				header: q.header,
+				question: q.question,
+				answers: this.states.map((s) => s.answer),
+			});
 			return;
 		}
 		if (row.kind === "custom") {
-			const text = (this.input?.field === "custom" ? this.input.text : this.customText).trim();
+			const text = (
+				this.input?.field === "custom" ? this.input.text : this.state.customText
+			).trim();
 			if (!text) {
 				// Empty custom answer: open the input instead of committing nothing.
-				this.closed = false;
-				this.input = { field: "custom", text: this.customText };
+				this.input = { field: "custom", text: this.state.customText };
 				return;
 			}
-			this.done({ kind: "custom", text });
+			this.state.customText = text;
+			this.state.answer = { header: q.header, text: `${text} (custom)` };
+		} else {
+			const note = this.state.notes.get(this.state.highlight);
+			this.state.answer = {
+				header: q.header,
+				text: note ? `${row.label} (note: ${note})` : row.label,
+			};
+		}
+		this.state.answeredRow = this.state.highlight;
+		this.input = null;
+		if (this.qIndex < this.states.length - 1) {
+			this.gotoQuestion(this.qIndex + 1); // record, then continue with the next question
 			return;
 		}
-		this.done({ kind: "answer", label: row.label, note: this.noteFor.get(this.highlight) });
+		this.closed = true;
+		this.done({ kind: "submit", answers: this.states.map((s) => s.answer) });
 	}
 
 	render(width: number): string[] {
 		const t = this.theme;
+		const q = this.state.question;
 		const rows = this.rows();
 		const rule = t.fg("dim", "─".repeat(Math.max(0, width)));
+		const multi = this.states.length > 1;
 
-		const title = truncateToWidth(this.title, Math.max(1, width));
+		const lines: string[] = [rule];
+		if (multi) {
+			lines.push(...this.renderStepper(width));
+			this.stepperY = 1;
+			lines.push(rule);
+		} else {
+			this.stepperY = -1;
+		}
+		const title = truncateToWidth(`${q.header} — ${q.question}`, Math.max(1, width));
+		lines.push(title, rule);
+		this.rowsTop = lines.length;
+		this.clickWidth = width;
 
-		const lines: string[] = [rule, title, rule];
-
-		if (this.hasPreview) {
+		if (q.options.some((o) => o.preview !== undefined && o.preview !== "")) {
 			const paneW = Math.max(PREVIEW_MIN_W, Math.floor(width * PREVIEW_FRACTION));
 			const listW = Math.max(8, width - paneW - 1);
+			this.clickWidth = listW;
 			const left = this.renderRows(listW, false);
 			const right = this.renderPane(paneW);
 			const height = Math.max(left.length, right.length);
@@ -243,41 +373,74 @@ export class AskDialog implements Component {
 		lines.push(rule);
 		if (this.input) {
 			const field = this.input.field === "note" ? "note" : "custom answer";
-			const target = this.input.field === "note" ? (rows[this.highlight]?.label ?? "") : undefined;
+			const target =
+				this.input.field === "note" ? (rows[this.state.highlight]?.label ?? "") : undefined;
 			const prompt = target ? `note for “${target}”` : field;
 			const text = `${prompt}: ${this.input.text}▌`;
 			lines.push(truncateToWidth(t.style(text, { fg: "accent", bold: true }), Math.max(1, width)));
 		}
-		lines.push(t.fg("dim", footer(this.input !== null)));
+		lines.push(t.fg("dim", footer(this.input !== null, multi)));
 		lines.push("");
 		return lines;
+	}
+
+	/** Clickable question tabs: current in accent, answered ones carry a check. */
+	private renderStepper(width: number): string[] {
+		const t = this.theme;
+		const count = this.states.length;
+		const budget = Math.max(4, Math.floor((width - STEPPER_SEP.length * (count - 1)) / count) - 4);
+		let line = "";
+		let col = 0;
+		const spans: TabSpan[] = [];
+		this.states.forEach((s, i) => {
+			if (col > 0) {
+				line += t.fg("dim", STEPPER_SEP);
+				col += STEPPER_SEP.length;
+			}
+			if (col >= width) return;
+			const label = truncateToWidth(s.question.header, budget);
+			const mark = s.answeredRow !== null ? ` ${t.fg("success", "✓")}` : "";
+			const plain = `${i + 1} ${label}`;
+			const text =
+				i === this.qIndex ? t.style(plain, { fg: "accent", bold: true }) : t.fg("dim", plain);
+			spans.push({ start: col, end: col + visibleWidth(`${plain}${mark}`), index: i });
+			line += text + mark;
+			col += visibleWidth(`${plain}${mark}`);
+		});
+		this.tabSpans = spans;
+		return [truncateToWidth(line, Math.max(1, width))];
 	}
 
 	private renderRows(width: number, withDescriptions: boolean): string[] {
 		const t = this.theme;
 		const rows = this.rows();
 		const lines: string[] = [];
+		const targets: number[] = [];
 		rows.forEach((row, i) => {
-			const highlighted = i === this.highlight;
+			const highlighted = i === this.state.highlight;
 			const pointer = highlighted ? "❯ " : "  ";
 			const digit = row.kind === "option" ? `${i + 1} ` : "  ";
-			const note = this.noteFor.get(i);
+			const note = this.state.notes.get(i);
 			const noteTag = note ? ` ${t.fg("warning", "✎ note")}` : "";
-			let text = `${pointer}${digit}${row.label}${noteTag}`;
+			const answered = this.state.answeredRow === i ? ` ${t.fg("success", "✓")}` : "";
+			let text = `${pointer}${digit}${row.label}${answered}${noteTag}`;
 			if (highlighted) text = t.style(text, { fg: "accent", bold: true });
 			else if (row.kind !== "option") text = t.fg("dim", text);
 			lines.push(truncateToWidth(text, Math.max(1, width)));
+			targets.push(i);
 			if (withDescriptions && row.option?.description) {
 				const desc = `      ${row.option.description}`;
 				lines.push(truncateToWidth(t.fg("dim", desc), Math.max(1, width)));
+				targets.push(i);
 			}
 		});
+		this.rowTargets = targets;
 		return lines;
 	}
 
 	private renderPane(width: number): string[] {
 		const t = this.theme;
-		const row = this.rows()[this.highlight];
+		const row = this.rows()[this.state.highlight];
 		const option = row?.option;
 		const lines: string[] = [];
 		const title = option ? option.label : (row?.label ?? "");
@@ -292,15 +455,20 @@ export class AskDialog implements Component {
 			for (const line of option.preview.split("\n")) {
 				lines.push(truncateToWidth(line, Math.max(1, width)));
 			}
-		} else if (this.hasPreview) {
+		} else if (
+			this.state.question.options.some((o) => o.preview !== undefined && o.preview !== "")
+		) {
 			lines.push(t.fg("dim", "(no preview)"));
 		}
 		return lines;
 	}
 }
 
-function footer(inInput: boolean): string {
+function footer(inInput: boolean, multi: boolean): string {
 	if (inInput) return "enter submit · esc back to options";
+	if (multi) {
+		return "←→/hl questions · ↑↓/jk move · # pick · n note · tab custom · enter select · esc cancel";
+	}
 	return "↑↓/jk move · # pick · n note · tab custom · enter select · esc cancel";
 }
 

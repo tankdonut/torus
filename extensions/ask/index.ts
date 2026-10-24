@@ -1,14 +1,15 @@
 /**
  * torus — torus_ask.
  *
- * Structured questions for the model with a full-keyboard dialog: options
- * (digits, arrows/j/k), an always-present Custom… free-text row, an
- * always-present "Chat more about this" row, `n` notes attached to the
- * highlighted option, and optional per-option `preview` panes (ASCII
- * mockups, snippets, diagrams). Non-TUI contexts fall back to plain
- * select/input dialogs with the same appended rows; headless contexts get
- * a decide-yourself fallback. Never offer your own "Other"/"custom"/
- * "discuss" options — the dialog appends them.
+ * Structured questions for the model with a full-keyboard dialog: all
+ * questions of a call render in one dialog with ←/→/click navigation
+ * between them; options (digits, arrows/j/k), an always-present Custom…
+ * free-text row, an always-present "Chat more about this" row, `n` notes
+ * attached to the highlighted option, and optional per-option `preview`
+ * panes (ASCII mockups, snippets, diagrams). Non-TUI contexts fall back
+ * to plain select/input dialogs with the same appended rows; headless
+ * contexts get a decide-yourself fallback. Never offer your own "Other"/
+ * "custom"/"discuss" options — the dialog appends them.
  */
 
 import { Type } from "@earendil-works/pi-ai";
@@ -69,20 +70,16 @@ const askTool = defineTool({
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 		const outcomes: QuestionOutcome[] = [];
 
-		for (const item of params.questions) {
-			if (ctx.mode === "tui") {
-				const result = await ctx.ui.custom<AskDialogResult>(
-					(tui, theme, _keybindings, done) =>
-						new AskDialog(tui, theme, done, {
-							header: `${item.header} — ${item.question}`,
-							question: item.question,
-							options: item.options,
-						}),
-				);
-				outcomes.push(outcomeFromDialog(item, result));
-				continue;
-			}
+		if (ctx.mode === "tui") {
+			const result = await ctx.ui.custom<AskDialogResult>(
+				(tui, theme, _keybindings, done) =>
+					new AskDialog(tui, theme, done, { questions: params.questions }),
+			);
+			outcomes.push(...outcomesFromDialog(params.questions, result));
+			return finish(outcomes);
+		}
 
+		for (const item of params.questions) {
 			if (!ctx.hasUI) {
 				outcomes.push({
 					unanswered: unansweredText(
@@ -116,58 +113,72 @@ const askTool = defineTool({
 			}
 		}
 
-		const answers = outcomes.flatMap((o) => (o.answer ? [o.answer] : []));
-		const chats = outcomes.flatMap((o) => (o.chat ? [o.chat] : []));
-		const unanswered = outcomes.flatMap((o) => (o.unanswered ? [o.unanswered] : []));
-
-		if (chats.length > 0) {
-			const lines = [
-				"user chose to discuss before answering — do NOT treat this as approval or a decision:",
-				...chats.map((c) => `- ${c.header}: ${c.question}`),
-				"",
-				"Converse with the user in plain chat about the open questions, then re-call torus_ask once the direction is settled.",
-				...(answers.length > 0
-					? ["", "already answered:", ...answers.map((a) => `- ${a.header}: ${a.text}`)]
-					: []),
-			];
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "chat" } };
-		}
-
-		if (answers.length > 0 && unanswered.length === 0) {
-			return {
-				content: [{ type: "text", text: answers.map((a) => `${a.header}: ${a.text}`).join("\n") }],
-				details: { mode: "interactive" },
-			};
-		}
-
-		const lines = [
-			...(answers.length > 0
-				? [`answered: ${answers.map((a) => `${a.header}: ${a.text}`).join("; ")}`]
-				: []),
-			...(unanswered.length > 0
-				? [
-						"not answered (no interactive UI or cancelled) — decide yourself per your judgment rules and note the choice:",
-						...unanswered.map((u) => `- ${u}`),
-					]
-				: []),
-		];
-		return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "fallback" } };
+		return finish(outcomes);
 	},
 });
 
-function outcomeFromDialog(item: AskQuestion, result: AskDialogResult): QuestionOutcome {
-	if (result === undefined)
+function finish(outcomes: QuestionOutcome[]) {
+	const answers = outcomes.flatMap((o) => (o.answer ? [o.answer] : []));
+	const chats = outcomes.flatMap((o) => (o.chat ? [o.chat] : []));
+	const unanswered = outcomes.flatMap((o) => (o.unanswered ? [o.unanswered] : []));
+
+	if (chats.length > 0) {
+		const lines = [
+			"user chose to discuss before answering — do NOT treat this as approval or a decision:",
+			...chats.map((c) => `- ${c.header}: ${c.question}`),
+			"",
+			"Converse with the user in plain chat about the open questions, then re-call torus_ask once the direction is settled.",
+			...(answers.length > 0
+				? ["", "already answered:", ...answers.map((a) => `- ${a.header}: ${a.text}`)]
+				: []),
+		];
 		return {
-			unanswered: unansweredText(
-				item,
-				item.options.map((o) => o.label),
-			),
+			content: [{ type: "text" as const, text: lines.join("\n") }],
+			details: { mode: "chat" as const },
 		};
-	if (result.kind === "chat") return { chat: { header: item.header, question: item.question } };
-	if (result.kind === "custom")
-		return { answer: { header: item.header, text: `${result.text} (custom)` } };
-	const note = result.note ? ` (note: ${result.note})` : "";
-	return { answer: { header: item.header, text: `${result.label}${note}` } };
+	}
+
+	if (answers.length > 0 && unanswered.length === 0) {
+		return {
+			content: [
+				{ type: "text" as const, text: answers.map((a) => `${a.header}: ${a.text}`).join("\n") },
+			],
+			details: { mode: "interactive" as const },
+		};
+	}
+
+	const lines = [
+		...(answers.length > 0
+			? [`answered: ${answers.map((a) => `${a.header}: ${a.text}`).join("; ")}`]
+			: []),
+		...(unanswered.length > 0
+			? [
+					"not answered (no interactive UI or cancelled) — decide yourself per your judgment rules and note the choice:",
+					...unanswered.map((u) => `- ${u}`),
+				]
+			: []),
+	];
+	return {
+		content: [{ type: "text" as const, text: lines.join("\n") }],
+		details: { mode: "fallback" as const },
+	};
+}
+
+function outcomesFromDialog(items: AskQuestion[], result: AskDialogResult): QuestionOutcome[] {
+	const unanswered = (item: AskQuestion) =>
+		unansweredText(
+			item,
+			item.options.map((o) => o.label),
+		);
+	if (result === undefined) return items.map((item) => ({ unanswered: unanswered(item) }));
+	return items.map((item, i) => {
+		const answer = result.answers[i];
+		if (answer) return { answer: { header: item.header, text: answer.text } };
+		if (result.kind === "chat" && i === result.index) {
+			return { chat: { header: item.header, question: item.question } };
+		}
+		return { unanswered: unanswered(item) };
+	});
 }
 
 function unansweredText(item: AskQuestion, labels: string[]): string {
