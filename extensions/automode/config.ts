@@ -5,8 +5,11 @@
  * config.json (same keys as the legacy file, validated the same way) wins over
  * automode.json, and neither configured means no rules. Path helpers derive
  * from fsutil's torusHome(), imported rather than mirrored, which reads the
- * live process env — callers and tests sandbox it via TORUS_HOME. Mode and
- * model-pin parsers take their env as a parameter with a real default.
+ * live process env — callers and tests sandbox it via TORUS_HOME. Mode
+ * resolution layers the config.json top-level "permissionMode" key under
+ * TORUS_PERMISSION_MODE (a defined env value decides the tier outright), and
+ * the mode and model-pin parsers take their env as a parameter with a real
+ * default.
  * Parsing is best-effort by contract: config problems surface as warnings on
  * the returned object, never as throws — a broken config degrades to default
  * mode with an empty rules file, and the audit log never breaks execution.
@@ -57,30 +60,68 @@ export function auditPath(): string {
 const AUTO_MODE_VALUES = new Set(["1", "on", "auto"]);
 const DEFAULT_MODE_VALUES = new Set(["", "0", "off", "default"]);
 
+/** Which tier supplied the effective permission mode. */
+export type PermissionModeSource = "env" | "config" | "default";
+
+export type ModeResolution = {
+	mode: PermissionMode;
+	source: PermissionModeSource;
+	warning?: string;
+};
+
 /**
- * Permission mode from TORUS_PERMISSION_MODE: `1`/`on`/`auto` (case-insensitive)
- * select auto mode; unset, empty, `0`/`off`/`default` keep default mode. Any
- * other value falls back to default mode with a warning naming the bad value.
+ * Permission mode by full precedence: TORUS_PERMISSION_MODE (which the
+ * --permission-mode launcher flag also sets) beats the top-level
+ * "permissionMode" key of config.json beats "default". A defined env value
+ * decides its tier outright, so env junk keeps default mode with a warning
+ * and never falls through to a config value. A config value counts only when
+ * it is exactly "auto" or "default"; anything else — including non-strings —
+ * warns naming the value and is treated as unset. At most the deciding tier
+ * warns. permissionMode is user-level only by construction: config.json
+ * lives under the torus home (TORUS_HOME||~/.torus), so a repo checkout can
+ * never set it for a session.
  */
-export function resolveMode(env: { TORUS_PERMISSION_MODE?: string | undefined } = process.env): {
+export function resolveModeSource(
+	env: { TORUS_PERMISSION_MODE?: string | undefined } = process.env,
+	configMode?: unknown,
+): ModeResolution {
+	const raw = env["TORUS_PERMISSION_MODE"];
+	if (raw !== undefined) {
+		const value = raw.trim().toLowerCase();
+		if (AUTO_MODE_VALUES.has(value)) return { mode: "auto", source: "env" };
+		if (DEFAULT_MODE_VALUES.has(value)) return { mode: "default", source: "env" };
+		return {
+			mode: "default",
+			source: "env",
+			warning: `TORUS_PERMISSION_MODE=${raw} is not recognized; expected "1", "on", "auto" for auto mode or "0", "off", "default"/unset for default mode; using default mode`,
+		};
+	}
+	if (configMode !== undefined) {
+		if (configMode === "auto") return { mode: "auto", source: "config" };
+		if (configMode === "default") return { mode: "default", source: "config" };
+		return {
+			mode: "default",
+			source: "config",
+			warning: `permissionMode=${JSON.stringify(configMode)} is not recognized; expected "auto" or "default"; using default mode`,
+		};
+	}
+	return { mode: "default", source: "default" };
+}
+
+/**
+ * Permission mode with the same env-over-config precedence as
+ * resolveModeSource, in the two-field shape callers that do not care which
+ * tier decided have always consumed.
+ */
+export function resolveMode(
+	env: { TORUS_PERMISSION_MODE?: string | undefined } = process.env,
+	configMode?: unknown,
+): {
 	mode: PermissionMode;
 	warning?: string;
 } {
-	const raw = env["TORUS_PERMISSION_MODE"];
-	if (raw === undefined) {
-		return { mode: "default" };
-	}
-	const value = raw.trim().toLowerCase();
-	if (AUTO_MODE_VALUES.has(value)) {
-		return { mode: "auto" };
-	}
-	if (DEFAULT_MODE_VALUES.has(value)) {
-		return { mode: "default" };
-	}
-	return {
-		mode: "default",
-		warning: `TORUS_PERMISSION_MODE=${raw} is not recognized; expected "1", "on", "auto" for auto mode or "0", "off", "default"/unset for default mode; using default mode`,
-	};
+	const { mode, warning } = resolveModeSource(env, configMode);
+	return warning === undefined ? { mode } : { mode, warning };
 }
 
 export type AutomodeRulesFile = {

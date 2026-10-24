@@ -472,6 +472,97 @@ test("config.json shadows the legacy rules file: config wins with exactly one mi
 	assert.equal(shadow.length, 1, "exactly one shadow warning via notify");
 });
 
+test("mode precedence: env auto beats a config default value; status says from env", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ mode: "1", config: { permissionMode: "default" } });
+	await call(pi, ctx, "ls -la");
+	assert.ok(
+		notifications.some((n) => n.message.startsWith("automode: on")),
+		"env auto wins the tier",
+	);
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
+	assert.ok(status, "status notify fired");
+	assert.match(status, /mode: auto \(from env\)/);
+});
+
+test("mode precedence: env default beats a config auto value — default mode, no notice", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ mode: "default", config: { permissionMode: "auto" } });
+	await call(pi, ctx, "rm -rf /");
+	assert.equal(notifications.length, 0, "default mode never announces on");
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
+	assert.ok(status, "status notify fired");
+	assert.match(status, /mode: default \(from env\)/);
+});
+
+test("mode precedence: config auto with env unset starts auto; status says from config", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ mode: undefined, config: { permissionMode: "auto" } });
+	await call(pi, ctx, "ls -la");
+	const on = notifications.filter((n) => n.message.startsWith("automode: on"));
+	assert.equal(on.length, 1, "config-sourced auto announces on once");
+	assert.ok(on[0].message.includes("(from config)"), "notice names the config source");
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
+	assert.ok(status, "status notify fired");
+	assert.match(status, /mode: auto \(from config\)/);
+});
+
+test("mode precedence: both tiers unset stays default; status says from default", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ mode: undefined, config: undefined });
+	await call(pi, ctx, "rm -rf /");
+	assert.equal(notifications.length, 0, "default mode notifies nothing");
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
+	assert.ok(status, "status notify fired");
+	assert.match(status, /mode: default \(from default\)/);
+});
+
+test("mode precedence: env junk beats a config auto value — default mode with the env warning", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ mode: "yolo", config: { permissionMode: "auto" } });
+	await call(pi, ctx, "rm -rf /");
+	assert.ok(
+		!notifications.some((n) => n.message.startsWith("automode: on")),
+		"junk env never starts auto, not even via config",
+	);
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
+	assert.ok(status, "status notify fired");
+	assert.match(status, /mode: default/);
+	assert.match(status, /warning: TORUS_PERMISSION_MODE=yolo is not recognized/);
+});
+
+test("mode precedence: config junk with env unset is default with a warning naming the value", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({
+		mode: undefined,
+		config: { permissionMode: "sometimes" },
+	});
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
+	assert.ok(status, "status notify fired");
+	assert.match(status, /mode: default/);
+	assert.match(status, /warning: permissionMode="sometimes" is not recognized/);
+	assert.ok(
+		!notifications.some((n) => n.message.startsWith("automode: on")),
+		"junk config value never starts auto",
+	);
+});
+
+test("mode precedence: non-string config permissionMode is junk-warned default", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ mode: undefined, config: { permissionMode: 3 } });
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
+	assert.ok(status, "status notify fired");
+	assert.match(status, /mode: default/);
+	assert.match(status, /warning: permissionMode=3 is not recognized/);
+});
+
 test("/automode denied lists recent denials from the audit log", async () => {
 	resetAudit();
 	const { pi, ctx, notifications } = setup({ rules: { deny: ["make *"] } });

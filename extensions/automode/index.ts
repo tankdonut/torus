@@ -19,6 +19,7 @@ import {
 	isToolCallEventType,
 	type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
+import { loadConfigFile } from "../config/loader.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { refreshToruStatus, setStatusPermission } from "../ui/index.js";
 import { DecisionCache, decide, pickChatModel, pickModel } from "./classify.js";
@@ -32,8 +33,9 @@ import {
 	type LoadedAutomodeRules,
 	loadAutomodeRules,
 	type PermissionMode,
+	type PermissionModeSource,
 	parseModelPin,
-	resolveMode,
+	resolveModeSource,
 	rulesPath,
 } from "./config.js";
 import {
@@ -71,6 +73,7 @@ function noUiReason(reason: string): string {
 
 export function registerAutomode(pi: ExtensionAPI): void {
 	let startupMode: PermissionMode = "default";
+	let startupSource: PermissionModeSource = "default";
 	let startupWarning: string | undefined;
 	let modeOverride: PermissionMode | undefined;
 	let rules: AutomodeRulesFile = {};
@@ -173,14 +176,19 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	}
 
 	async function startupOnce(ctx: ExtensionContext): Promise<void> {
-		const resolved = resolveMode(process.env);
+		// permissionMode is user-level only by construction: config.json lives under
+		// the torus home (TORUS_HOME||~/.torus), so a repo checkout can never set it.
+		const configMode = loadConfigFile().config["permissionMode"];
+		const resolved = resolveModeSource(process.env, configMode);
 		startupMode = resolved.mode;
+		startupSource = resolved.source;
 		startupWarning = resolved.warning;
 		paintPermission(ctx);
 		if (startupMode !== "auto") return;
 		const rulesWarnings = applyRules(loadAutomodeRules());
+		const origin = startupSource === "config" ? " (from config)" : "";
 		ctx.ui.notify(
-			`automode: on — bash calls auto-approved by ${await decisionModelLabel(ctx)}; rules: ${rulesPath()}${rulesSourceSuffix(rulesSource)}`,
+			`automode: on${origin} — bash calls auto-approved by ${await decisionModelLabel(ctx)}; rules: ${rulesPath()}${rulesSourceSuffix(rulesSource)}`,
 			"info",
 		);
 		loadAutoConfig(ctx, rulesWarnings);
@@ -347,7 +355,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	});
 
 	async function statusText(ctx: ExtensionContext): Promise<string> {
-		const lines = [`mode: ${mode()}`];
+		const lines = [`mode: ${mode()} (from ${startupSource})`];
 		if (modeOverride !== undefined) {
 			lines.push(`session override of startup mode ${startupMode}`);
 		}
