@@ -382,3 +382,57 @@ test("statusline chip tracks session mode and breaker degradation", async () => 
 	await pi.commands.automode.handler("auto", ctx);
 	assert.ok(segment().includes("auto"), "auto repaints the chip");
 });
+
+test("classifyAllShell: allow rules suspend, the model judges instead", async () => {
+	resetAudit();
+	const suspended = setup({
+		rules: { allow: ["cargo *"], classifyAllShell: true },
+		replies: [jsonReply("ask")],
+	});
+	const asked = await call(suspended.pi, suspended.ctx, "cargo build", "cas-1");
+	assert.equal(suspended.reg.calls.complete, 1, "allow match reaches the model");
+	assert.equal(asked.block, true);
+	assert.match(asked.reason, /no UI for approval/);
+
+	resetAudit();
+	const normal = setup({ rules: { allow: ["cargo *"] }, replies: [jsonReply("ask")] });
+	const passed = await call(normal.pi, normal.ctx, "cargo build", "cas-2");
+	assert.equal(passed, undefined);
+	assert.equal(
+		normal.reg.calls.complete,
+		0,
+		"without the flag the allow rule passes with no model call",
+	);
+});
+
+test("/automode prints the effective config including v2 keys", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({
+		rules: {
+			allow: ["cargo *"],
+			environment: ["Source control: github.example.com/acme"],
+			hardDeny: ["no secrets leave the machine"],
+			classifyAllShell: true,
+		},
+	});
+	await call(pi, ctx, "ls /tmp", "status-1");
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
+	assert.ok(status, "status notify fired");
+	assert.match(status, /cargo \*/);
+	assert.match(status, /Source control: github\.example\.com\/acme/);
+	assert.match(status, /no secrets leave the machine/);
+	assert.match(status, /classifyAllShell: on/);
+});
+
+test("/automode denied lists recent denials from the audit log", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ rules: { deny: ["make *"] } });
+	await call(pi, ctx, "make -j4", "denied-1");
+	await pi.commands.automode.handler("denied", ctx);
+	const denied = notifications.map((n) => n.message).find((m) => m.includes("recent denials"));
+	assert.ok(denied, "denied notify fired");
+	assert.match(denied, /rule/);
+	assert.match(denied, /make -j4/);
+	assert.match(denied, /denied by rule/);
+});

@@ -194,3 +194,35 @@ test("torusHomeDir and derived paths: TORUS_HOME root, else .torus under HOME or
 	assert.equal(RULES_FILE_NAME, "automode.json");
 	assert.equal(AUDIT_LOG_NAME, "automode.log");
 });
+
+test("loadRules: v2 keys — environment and hardDeny prose arrays, classifyAllShell boolean", () => {
+	const file = rulesFile(
+		"v2.json",
+		JSON.stringify({
+			environment: ["Source control: github.example.com/acme", 42],
+			hardDeny: ["never send repo contents to third parties"],
+			classifyAllShell: true,
+		}),
+	);
+	const { rules, warnings } = loadRules(file);
+	assert.deepEqual(rules.environment, ["Source control: github.example.com/acme"]);
+	assert.deepEqual(rules.hardDeny, ["never send repo contents to third parties"]);
+	assert.equal(rules.classifyAllShell, true);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /non-string/);
+});
+
+test("loadRules: non-boolean classifyAllShell is ignored with a warning", () => {
+	const file = rulesFile("v2-bad-flag.json", JSON.stringify({ classifyAllShell: "yes" }));
+	const { rules, warnings } = loadRules(file);
+	assert.equal(rules.classifyAllShell, undefined);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /classifyAllShell.*boolean/);
+});
+
+test("loadRules: v1 files load unchanged (no v2 keys)", () => {
+	const file = rulesFile("v1.json", JSON.stringify({ allow: ["ls *"] }));
+	const { rules, warnings } = loadRules(file);
+	assert.deepEqual(rules, { allow: ["ls *"] });
+	assert.deepEqual(warnings, []);
+});

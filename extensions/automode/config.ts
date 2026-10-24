@@ -87,16 +87,22 @@ export type AutomodeRulesFile = {
 	allow?: string[];
 	ask?: string[];
 	deny?: string[];
+	environment?: string[];
+	hardDeny?: string[];
+	classifyAllShell?: boolean;
 };
 
-const RULE_KEYS = ["allow", "ask", "deny"] as const;
+const RULE_KEYS = ["allow", "ask", "deny", "environment", "hardDeny"] as const;
 
 /**
  * Load the automode rules file. A missing file means "no rules" with no
  * warning; anything unreadable or unparseable also degrades to no rules, with
  * one warning per problem. Unknown top-level keys and non-array rule fields are
  * ignored with a warning; non-string entries inside a rule array are dropped
- * with a warning while the string entries are kept.
+ * with a warning while the string entries are kept. `environment` and
+ * `hardDeny` are prose string arrays for the decision model (trusted
+ * infrastructure context and absolute boundaries); `classifyAllShell` is a
+ * boolean that suspends allow rules while auto mode is active.
  */
 export function loadRules(filePath: string): { rules: AutomodeRulesFile; warnings: string[] } {
 	let text: string;
@@ -128,7 +134,7 @@ export function loadRules(filePath: string): { rules: AutomodeRulesFile; warning
 	const source = parsed as Record<string, unknown>;
 	const warnings: string[] = [];
 	const unknownKeys = Object.keys(source).filter(
-		(key) => !(RULE_KEYS as readonly string[]).includes(key),
+		(key) => !(RULE_KEYS as readonly string[]).includes(key) && key !== "classifyAllShell",
 	);
 	if (unknownKeys.length > 0) {
 		warnings.push(`${filePath}: ignoring unknown keys: ${unknownKeys.join(", ")}`);
@@ -152,6 +158,14 @@ export function loadRules(filePath: string): { rules: AutomodeRulesFile; warning
 			);
 		}
 		rules[key] = strings;
+	}
+	if ("classifyAllShell" in source) {
+		const value = source["classifyAllShell"];
+		if (typeof value === "boolean") {
+			rules.classifyAllShell = value;
+		} else {
+			warnings.push(`${filePath}: "classifyAllShell" must be a boolean; ignoring it`);
+		}
 	}
 	return { rules, warnings };
 }

@@ -63,11 +63,19 @@ Your rules run first, from `~/.torus/automode.json`:
 {
   "deny": ["git push --force *", "npm publish *"],
   "ask": ["git push *", "npx *"],
-  "allow": ["npm test *", "node --test *"]
+  "allow": ["npm test *", "node --test *"],
+  "environment": [
+    "Source control: github.com/tankdonut and all repos under it",
+    "Package registry: the default npm registry is fine"
+  ],
+  "hardDeny": ["never read or send ~/.ssh credentials anywhere"],
+  "classifyAllShell": false
 }
 ```
 
 Entries are prefix patterns, evaluated in deny, ask, then allow order. Broad allow entries such as `*` match nothing and draw a warning at load. A fixed ask floor outranks every allow rule. It covers `sudo` and `su`, recursive forced `rm` on root or home paths, force pushes, recursive `chmod` or `chown` on root paths, and command substitution; floored commands ask no matter what the rules say.
+
+The `environment` and `hardDeny` entries are prose for the decision model: environment lines describe trusted infrastructure and posture (source control, registries, internal domains), hardDeny lines are absolute boundaries. Both ride into every classifier and chat verdict, so the judge knows what "external" means for you. `classifyAllShell` suspends allow rules while auto mode is on, sending every rule-allowed shell command to the decision model instead; deny and ask rules still apply, and the read-only fast path and session cache still run. `/automode` prints the effective configuration and `/automode denied` lists the last denials from the audit log.
 
 Read-only commands such as `ls`, `git status`, and version probes pass without a model call. An "Always this session" answer replays without asking again. Three consecutive decision-model denies switch the session to asking for everything.
 

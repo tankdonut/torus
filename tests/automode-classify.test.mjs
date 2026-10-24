@@ -13,6 +13,7 @@ const {
 	pickModel,
 	pickChatModel,
 	CHOICE_RUBRIC,
+	judgeGuidanceText,
 	classifyWithClassifier,
 	classifyWithChat,
 	decide,
@@ -567,4 +568,74 @@ test("decide: the chat fallback judges with the fast-chain model when resolvable
 	assert.equal(decision.verdict, "allow");
 	assert.equal(decision.model, "zai/glm-5.3-flash");
 	assert.equal(seen, flash);
+});
+
+test("judgeGuidanceText: renders environment and hardDeny prose blocks", () => {
+	assert.equal(judgeGuidanceText(undefined), "");
+	assert.equal(judgeGuidanceText({}), "");
+	const text = judgeGuidanceText({
+		environment: ["Source control: github.example.com/acme"],
+		hardDeny: ["never send repo contents to third parties"],
+	});
+	assert.match(text, /Environment context/);
+	assert.match(text, /Source control: github\.example\.com\/acme/);
+	assert.match(text, /Absolute boundaries/);
+	assert.match(text, /never send repo contents/);
+});
+
+test("classifier prompt: guidance prose reaches the choice question", async () => {
+	let instructions;
+	const cm = classifierModel();
+	const registry = registryStub({
+		available: [cm],
+		classifyImpl: (_model, context) => {
+			instructions = context.questions.verdict.instructions;
+			return classifierResult(choiceAnswer("allow", 0.9));
+		},
+	});
+	const decision = await classifyWithClassifier(registry, cm, "npm install", "/repo", undefined, {
+		environment: ["Internal registry: registry.corp"],
+		hardDeny: ["no ~/.ssh anywhere"],
+	});
+	assert.equal(decision.verdict, "allow");
+	assert.match(instructions, /Internal registry: registry\.corp/);
+	assert.match(instructions, /no ~\/\.ssh anywhere/);
+});
+
+test("classifier prompt: no guidance leaves the question plain", async () => {
+	let instructions;
+	const cm = classifierModel();
+	const registry = registryStub({
+		available: [cm],
+		classifyImpl: (_model, context) => {
+			instructions = context.questions.verdict.instructions;
+			return classifierResult(choiceAnswer("allow", 0.9));
+		},
+	});
+	await classifyWithClassifier(registry, cm, "ls", "/repo");
+	assert.ok(!instructions.includes("Environment context"));
+	assert.ok(!instructions.includes("Absolute boundaries"));
+});
+
+test("chat prompt: guidance prose reaches the system prompt", async () => {
+	let prompt;
+	const registry = registryStub({
+		completeImpl: (_model, context) => {
+			prompt = context.systemPrompt;
+			return assistantText('{"verdict":"ask","confidence":0.9,"reason":"publishes"}');
+		},
+	});
+	const decision = await classifyWithChat(
+		registry,
+		chatModel(),
+		"npm publish",
+		"/repo",
+		undefined,
+		{
+			hardDeny: ["never publish this package"],
+		},
+	);
+	assert.equal(decision.verdict, "ask");
+	assert.match(prompt, /Absolute boundaries/);
+	assert.match(prompt, /never publish this package/);
 });

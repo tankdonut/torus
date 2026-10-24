@@ -12,6 +12,7 @@
  * semantics: another extension's block always stays in effect.
  */
 
+import { readFileSync } from "node:fs";
 import {
 	type ExtensionAPI,
 	type ExtensionContext,
@@ -23,7 +24,9 @@ import { refreshToruStatus, setStatusPermission } from "../ui/index.js";
 import { DecisionCache, decide, pickChatModel, pickModel } from "./classify.js";
 import {
 	type AuditRow,
+	type AutomodeRulesFile,
 	appendAuditRow,
+	auditPath,
 	CIRCUIT_BREAKER_DENIES,
 	loadRules,
 	type PermissionMode,
@@ -56,7 +59,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	let startupMode: PermissionMode = "default";
 	let startupWarning: string | undefined;
 	let modeOverride: PermissionMode | undefined;
-	let rules: AutomodeRules = {};
+	let rules: AutomodeRulesFile = {};
 	let pin: { provider: string; modelId: string } | undefined;
 	const cache = new DecisionCache();
 	let consecutiveDenies = 0;
@@ -203,7 +206,10 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		const command = event.input.command;
 		if (command.trim() === "") return undefined;
 
-		// (a) deny rules block outright; ask and allow rules wait for the floor.
+		// (a) deny rules block outright; ask rules prompt; allow rules pass —
+		// unless classifyAllShell suspends them, in which case an allow match
+		// falls through to the decision model (the floor, fast path, and cache
+		// still apply; only rule-based allows are suspended).
 		const ruleMatch = matchRules(command, rules);
 		if (ruleMatch?.verdict === "deny") {
 			audit(command, "rule", "deny", `denied by rule "${ruleMatch.rule}"`);
@@ -222,7 +228,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		if (ruleMatch?.verdict === "ask") {
 			return askUser(ctx, command, `ask rule "${ruleMatch.rule}" matched`);
 		}
-		if (ruleMatch?.verdict === "allow") {
+		if (ruleMatch?.verdict === "allow" && rules.classifyAllShell !== true) {
 			consecutiveDenies = 0;
 			audit(command, "rule", "allow", `allowed by rule "${ruleMatch.rule}"`);
 			return undefined;
@@ -256,7 +262,16 @@ export function registerAutomode(pi: ExtensionAPI): void {
 
 		// (g) decision model, with timing and fail-open handling.
 		const startedAt = Date.now();
-		const decision = await decide(ctx.modelRegistry, ctx.model, pin, command, ctx.cwd, ctx.signal);
+		const decision = await decide(
+			ctx.modelRegistry,
+			ctx.model,
+			pin,
+			command,
+			ctx.cwd,
+			ctx.signal,
+			undefined,
+			{ environment: rules.environment, hardDeny: rules.hardDeny },
+		);
 		const ms = Date.now() - startedAt;
 		audit(command, decision.source, decision.verdict, decision.reason, { ...decision, ms });
 		switch (decision.verdict) {
@@ -330,8 +345,21 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		}
 		const path = rulesPath(process.env);
 		if (mode() === "auto") {
+			lines.push(`rules: ${path}`);
+			const list = (label: string, entries: string[] | undefined) => {
+				lines.push(
+					entries !== undefined && entries.length > 0
+						? `  ${label}: ${entries.join("; ")}`
+						: `  ${label}: none`,
+				);
+			};
+			list("allow", rules.allow);
+			list("ask", rules.ask);
+			list("deny", rules.deny);
+			list("environment", rules.environment);
+			list("hardDeny", rules.hardDeny);
 			lines.push(
-				`rules: ${path} (allow ${rules.allow?.length ?? 0}, ask ${rules.ask?.length ?? 0}, deny ${rules.deny?.length ?? 0})`,
+				`  classifyAllShell: ${rules.classifyAllShell === true ? "on (allow rules suspended)" : "off"}`,
 			);
 		} else {
 			lines.push(`rules: ${path} (not loaded; default mode)`);
@@ -343,14 +371,47 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		return `automode status:\n${lines.join("\n")}`;
 	}
 
+	/** Last audit-log denials, newest last, capped at ten; the log is advisory so read errors degrade to "none". */
+	function recentDenials(): string {
+		let text: string;
+		try {
+			text = readFileSync(auditPath(), "utf8");
+		} catch {
+			return "automode: no audit log yet — nothing has been denied";
+		}
+		const denials = text
+			.split("\n")
+			.filter((line) => line.trim() !== "")
+			.map((line) => {
+				try {
+					return JSON.parse(line) as AuditRow;
+				} catch {
+					return undefined;
+				}
+			})
+			.filter((row): row is AuditRow => row !== undefined && row.verdict === "deny");
+		if (denials.length === 0) {
+			return "automode: no denials recorded";
+		}
+		const shown = denials.slice(-10);
+		const rows = shown.map(
+			(row) => `[${new Date(row.ts).toISOString()}] ${row.source}: ${row.command} — ${row.reason}`,
+		);
+		return `automode recent denials (last ${shown.length} of ${denials.length}):\n${rows.join("\n")}`;
+	}
+
 	pi.registerCommand("automode", {
 		description:
-			"Show the automode permission status; /automode auto|default switches the session mode",
+			"Show the automode permission status; /automode auto|default switches the session mode; /automode denied lists recent denials",
 		handler: async (args: string, ctx: ExtensionContext) => {
 			await ensureStartup(ctx);
 			const arg = args.trim().toLowerCase();
 			if (arg === "") {
 				ctx.ui.notify(await statusText(ctx), "info");
+				return;
+			}
+			if (arg === "denied") {
+				ctx.ui.notify(recentDenials(), "info");
 				return;
 			}
 			if (arg !== "auto" && arg !== "default") {

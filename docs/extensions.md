@@ -353,11 +353,11 @@ Headless sessions and delegated children auto-deny; dialog timeout 120 s ⇒ den
 
 LLM-classified bash auto-approval for unattended runs, opt-in via `TORUS_PERMISSION_MODE`. In default mode the extension is inert: no model calls, no prompts, no audit rows.
 
-- **Commands:** `/automode` reports mode, decision model, rules path with per-array counts, cache size, and breaker state; `/automode auto` and `/automode default` switch the session mode, clear the cache, reset the breaker, and reload the rules
+- **Commands:** `/automode` prints the effective config (mode, decision model, every rule entry, `environment` and `hardDeny` prose, `classifyAllShell`, cache size, breaker state); `/automode auto` and `/automode default` switch the session mode, clear the cache, reset the breaker, and reload the rules; `/automode denied` lists the last ten denials from the audit log
 - **Hooks:** `tool_call`: judges each bash command in auto mode; `tool_result`: annotates runs that went unjudged
 - **Env:** `TORUS_PERMISSION_MODE` (`1`/`on`/`auto` select auto mode; unset, `0`, `off`, `default` keep the built-in gate; other values fall back to default mode and `/automode` surfaces the warning; the `torus --permission-mode <auto|default>` launcher flag sets it for the spawned engine session, overriding any pre-set value); `TORUS_PERMISSION_MODEL=provider/model-id` pins the permission classifier
 - **Statusline:** the statusline shows `auto` while the session is in auto mode, and `auto·ask` once the circuit breaker degrades it to asking
-- **Interactions:** rules live in `automode.json` under the torus home, decisions append one JSON line each to `automode.log` under the project state dir (torus home when no project state exists); `sandbox`, `guards`, and cc-safety-net denials still win (the engine blocks on the first block)
+- **Interactions:** rules live in `automode.json` under the torus home (`allow`/`ask`/`deny` prefix patterns plus `environment` and `hardDeny` prose arrays that ride into both judge prompts, and a `classifyAllShell` boolean that suspends allow rules); decisions append one JSON line each to `automode.log` under the project state dir (torus home when no project state exists); `sandbox`, `guards`, and cc-safety-net denials still win (the engine blocks on the first block)
 
 The decision pipeline runs in a fixed order:
 
