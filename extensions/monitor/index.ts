@@ -11,6 +11,7 @@ import { appendFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { projectStateDir, torusHome } from "../fsutil.js";
 import { notifyMonitor } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -167,7 +168,7 @@ const monitorTool = defineTool({
 		),
 	}),
 	async execute(_toolCallId, params) {
-		if (process.env["TORUS_MONITOR"] === "0") {
+		if (!knobBoolean("TORUS_MONITOR", "monitor", "enabled", true, parseZeroDisables)) {
 			return {
 				content: [{ type: "text", text: "monitors disabled (TORUS_MONITOR=0)" }],
 				details: toolDetails({ error: "disabled" }),

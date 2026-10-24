@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
@@ -117,7 +118,8 @@ interface StashEntry {
 }
 
 export function registerCommentChecker(pi: ExtensionAPI): void {
-	if (process.env["TORUS_COMMENT_CHECKER"] === "0") return;
+	if (!knobBoolean("TORUS_COMMENT_CHECKER", "commentChecker", "enabled", true, parseZeroDisables))
+		return;
 
 	const stash = new Map<string, StashEntry>();
 

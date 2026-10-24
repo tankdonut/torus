@@ -19,6 +19,7 @@ import type {
 	SessionEntry,
 	SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
+import { knobString } from "../config/knobs.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { modelChain } from "../providers/index.js";
 
@@ -168,7 +169,11 @@ interface TitleRequest {
 }
 
 async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Promise<string | null> {
-	const model = resolveTitleModel(process.env["TORUS_TITLE_MODEL"], ctx.modelRegistry, ctx.model);
+	const model = resolveTitleModel(
+		knobString("TORUS_TITLE_MODEL", "sessionTitle", "titleModel", ""),
+		ctx.modelRegistry,
+		ctx.model,
+	);
 	if (!model) {
 		ctx.ui.notify("session-title: no model available (set TORUS_TITLE_MODEL)", "error");
 		return null;

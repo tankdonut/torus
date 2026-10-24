@@ -16,6 +16,7 @@ import {
 	isReadToolResult,
 	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
+import { knobBoolean, knobString, parseZeroDisables } from "../config/knobs.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	anchorAll,
@@ -80,7 +81,7 @@ function anchoredRegion(lines: string[], from: number, to: number): string {
 }
 
 function runFormatter(target: string): string {
-	const fmtCmd = process.env["TORUS_FMT_CMD"];
+	const fmtCmd = knobString("TORUS_FMT_CMD", "hashline", "fmtCmd", "");
 	if (!fmtCmd || fmtCmd.trim().length === 0) return "";
 	try {
 		const run = spawnSync(fmtCmd, [target], { timeout: 15_000, encoding: "utf8" });
@@ -293,7 +294,7 @@ function staleAnchorNote(
 }
 
 export function registerHashline(pi: ExtensionAPI): void {
-	if (process.env["TORUS_HASHLINE"] === "0") return;
+	if (!knobBoolean("TORUS_HASHLINE", "hashline", "enabled", true, parseZeroDisables)) return;
 	pi.on(
 		"tool_result",
 		(event: ToolResultEvent) => enhanceReadResult(event) ?? staleAnchorNote(event),

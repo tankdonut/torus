@@ -2,6 +2,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { displayPath, formatCost, projectKey } from "../fsutil.js";
 import { osNotify } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -502,7 +503,7 @@ const pendingWakeTimers = sharedState(
 );
 
 function notifyMemberEpisode(teamId: string, memberId: string): void {
-	if (process.env["TORUS_TEAM_NOTIFY"] === "0") return;
+	if (!knobBoolean("TORUS_TEAM_NOTIFY", "team", "teamNotify", true, parseZeroDisables)) return;
 	const record = getTeam(teamId);
 	const member = record?.members.find((m) => m.id === memberId);
 	if (!record || !member || record.status !== "active") return;
@@ -1000,14 +1001,16 @@ const teamCreateTool = defineTool({
 
 /**
  * Minutes an in_progress task may sit under an idle member before team_status
- * flags it. TORUS_TASK_STALE_MIN, default 30; unreadable values silently fall
- * back to 30. Read at call time so callers (and tests) can vary it per call.
+ * flags it. TORUS_TASK_STALE_MIN (team.taskStaleMin in config.json), default
+ * 30; unreadable values silently fall back to 30. Read at call time so
+ * callers (and tests) can vary it per call.
  */
 function staleThresholdMinutes(): number {
-	const raw = process.env["TORUS_TASK_STALE_MIN"];
-	if (!raw) return 30;
-	const parsed = Number(raw);
-	return Number.isFinite(parsed) && parsed >= 0 ? parsed : 30;
+	// Historical read treated a set-but-empty var as unset, not Number("") = 0.
+	const value = knobNumber("TORUS_TASK_STALE_MIN", "team", "taskStaleMin", 30, (raw) =>
+		raw === "" ? undefined : Number(raw),
+	);
+	return Number.isFinite(value) && value >= 0 ? value : 30;
 }
 
 const teamStatusTool = defineTool({

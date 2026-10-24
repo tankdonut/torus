@@ -17,6 +17,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { knobBoolean, parseZeroDisables } from "./config/knobs.js";
+
 /** Runs shorter than this never announce their start; completion always toasts. */
 export const RUNNING_LATE_MS = 45_000;
 
@@ -245,7 +247,7 @@ function ensureDesktopEntry(): void {
  * supported, so a later toast can replace this one in place.
  */
 export function osNotify(toast: Toast, replaceId?: number): number | null {
-	if (process.env["TORUS_NOTIFY"] === "0") return null;
+	if (!knobBoolean("TORUS_NOTIFY", "notify", "enabled", true, parseZeroDisables)) return null;
 	ensureDesktopEntry();
 	const canChain = canChainIds();
 	try {

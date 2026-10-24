@@ -11,7 +11,8 @@
  *   - error-recovery guidance (structured retry advice appended to failed
  *     edit/bash results instead of raw model flailing)
  *
- * TORUS_GUARDS=0 disables everything; TORUS_MAX_TOOL_OUTPUT tunes the cap.
+ * TORUS_GUARDS=0, or guards.enabled=false in config.json, disables everything;
+ * TORUS_MAX_TOOL_OUTPUT (guards.maxToolOutput) tunes the cap.
  */
 
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -28,6 +29,7 @@ import {
 // The engine's exports map blocks deep package imports (ERR_PACKAGE_PATH_NOT_EXPORTED),
 // so reach the same module instance the engine's file tools use via a relative specifier.
 import { resolveToCwd } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/path-utils.js";
+import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
@@ -224,8 +226,13 @@ export function recoveryGuidance(kind: "edit" | "json"): string {
 }
 
 export function registerGuards(pi: ExtensionAPI): void {
-	if (process.env["TORUS_GUARDS"] === "0") return;
-	const maxOutput = Number(process.env["TORUS_MAX_TOOL_OUTPUT"] ?? DEFAULT_MAX_TOOL_OUTPUT);
+	if (!knobBoolean("TORUS_GUARDS", "guards", "enabled", true, parseZeroDisables)) return;
+	const maxOutput = knobNumber(
+		"TORUS_MAX_TOOL_OUTPUT",
+		"guards",
+		"maxToolOutput",
+		DEFAULT_MAX_TOOL_OUTPUT,
+	);
 
 	pi.on("tool_call", (event) => {
 		if (event.type !== "tool_call") return undefined;

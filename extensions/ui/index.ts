@@ -16,6 +16,7 @@ import {
 	rgbColor,
 	type TerminalColorMode,
 } from "@earendil-works/pi-tui";
+import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { type EngineTally, reduceEngineEvent } from "../engine-child.js";
 import { formatCost } from "../fsutil.js";
 import { connectedServerCount, mcpStatusText } from "../mcp/index.js";
@@ -56,9 +57,9 @@ function sessionCostId(ctx: ExtensionContext): string {
 	return ctx.sessionManager?.getSessionId() ?? "";
 }
 
-/** TORUS_STATUSLINE_COST=0 never touches the cost key — no set, no clear. */
+/** TORUS_STATUSLINE_COST=0, or ui.statuslineCost=false in config.json, never touches the cost key — no set, no clear. */
 function statuslineCostSuppressed(): boolean {
-	return process.env["TORUS_STATUSLINE_COST"] === "0";
+	return !knobBoolean("TORUS_STATUSLINE_COST", "ui", "statuslineCost", true, parseZeroDisables);
 }
 
 /**
@@ -221,9 +222,9 @@ export function refreshToruStatus(ctx: ExtensionContext): void {
 	ctx.ui.setStatus(STATUS_KEY, buildStatus(ctx.ui.theme));
 }
 
-/** TORUS_BANNER=0 keeps pi's built-in startup header instead of the torus banner. */
+/** TORUS_BANNER=0, or ui.banner=false in config.json, keeps pi's built-in startup header instead of the torus banner. */
 function bannerSuppressed(): boolean {
-	return process.env["TORUS_BANNER"] === "0";
+	return !knobBoolean("TORUS_BANNER", "ui", "banner", true, parseZeroDisables);
 }
 
 const RESET = "\x1b[0m";

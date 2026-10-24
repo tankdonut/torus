@@ -25,6 +25,7 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
+import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
@@ -261,7 +262,7 @@ const interactiveBashTool = defineTool({
 });
 
 export function registerInteractive(pi: ExtensionAPI): void {
-	if (process.env["TORUS_INTERACTIVE"] === "0") return;
+	if (!knobBoolean("TORUS_INTERACTIVE", "interactive", "enabled", true, parseZeroDisables)) return;
 	pi.registerTool(interactiveBashTool);
 	pi.on("session_shutdown", () => {
 		for (const child of liveChildren) {

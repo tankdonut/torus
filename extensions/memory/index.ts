@@ -13,6 +13,7 @@ import {
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { parseFrontmatter } from "../frontmatter.js";
 import { readJson, splitList, torusHome, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -842,7 +843,7 @@ let settleCount = 0;
 let reflectInFlight = false;
 
 function reflectTurnThreshold(): number {
-	const raw = Number(process.env["TORUS_REFLECT_TURNS"] ?? "12");
+	const raw = knobNumber("TORUS_REFLECT_TURNS", "reflection", "reflectTurns", 12);
 	return Number.isFinite(raw) && raw > 0 ? raw : 0;
 }
 
@@ -861,7 +862,7 @@ export function reflectDecision(input: {
 }
 
 function scheduleIdleReflection(pi: ExtensionAPI, sessionId: string | null): void {
-	if (process.env["TORUS_REFLECTION"] === "0") return;
+	if (!knobBoolean("TORUS_REFLECTION", "reflection", "enabled", true, parseZeroDisables)) return;
 	if (reflectTimer) clearTimeout(reflectTimer);
 	reflectTimer = setTimeout(() => {
 		reflectTimer = null;
@@ -1007,7 +1008,7 @@ export function undreamedActivity(): boolean {
 }
 
 async function dream(_pi: ExtensionAPI): Promise<void> {
-	if (process.env["TORUS_DREAMING"] === "0") return;
+	if (!knobBoolean("TORUS_DREAMING", "reflection", "dreaming", true, parseZeroDisables)) return;
 	if (Date.now() - lastDreamAt() < DREAM_INTERVAL_MS) return;
 	if (!undreamedActivity()) return;
 	markDreamed();
