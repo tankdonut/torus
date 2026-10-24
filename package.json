@@ -45,7 +45,8 @@
       "./node_modules/pi-lsp-client/src/index.ts",
       "./extensions/sandbox",
       "./extensions/approval",
-      "./extensions/compact"
+      "./extensions/compact",
+      "./extensions/automode"
     ],
     "skills": [
       "./skills"

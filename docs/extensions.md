@@ -349,6 +349,30 @@ When a sandboxed command contacts a non-allowlisted host, an interactive dialog 
 
 Headless sessions and delegated children auto-deny; dialog timeout 120 s ⇒ deny; in-flight dedup + per-session cache (denies sticky). Consumed by `sandbox` via the `globalThis` slot `torus.approval.v1` (resolved lazily).
 
+### `automode`
+
+LLM-classified bash auto-approval for unattended runs, opt-in via `TORUS_PERMISSION_MODE`. In default mode the extension is inert: no model calls, no prompts, no audit rows.
+
+- **Commands:** `/automode` reports mode, decision model, rules path with per-array counts, cache size, and breaker state; `/automode auto` and `/automode default` switch the session mode, clear the cache, reset the breaker, and reload the rules
+- **Hooks:** `tool_call`: judges each bash command in auto mode; `tool_result`: annotates runs that went unjudged
+- **Env:** `TORUS_PERMISSION_MODE` (`1`/`on`/`auto` select auto mode; unset, `0`, `off`, `default` keep the built-in gate; other values fall back to default mode and `/automode` surfaces the warning); `TORUS_PERMISSION_MODEL=provider/model-id` pins the permission classifier
+- **Interactions:** rules live in `automode.json` under the torus home, decisions append one JSON line each to `automode.log` there; `sandbox`, `guards`, and cc-safety-net denials still win (the engine blocks on the first block)
+
+The decision pipeline runs in a fixed order:
+
+| Step | Behavior |
+| --- | --- |
+| Deny rules | Prefix-pattern deny entries block outright, naming the matched rule |
+| Ask floor | `sudo`/`su`, recursive forced `rm` on root or home paths, force pushes, recursive `chmod`/`chown` on root paths, and command substitution ask; no allow rule bypasses the floor |
+| Ask rules | Ask-rule matches open the approval dialog |
+| Allow rules | Matching allow entries pass without a model call |
+| Circuit breaker | Three consecutive decision-model denies switch the session to asking for everything |
+| Fast path | Read-only commands (`ls`, `git status`, version probes, plain `find`) pass without a model call |
+| Cache | "Always this session" approvals replay without asking again |
+| Decision model | Classifier verdict with confidence; low confidence demotes to ask; both model paths failing fails open |
+
+Interactive sessions ask through a three-way dialog (Allow once / Always this session / Deny). Headless sessions block instead, with a reason naming the env to rerun with. A fail-open run passes the command, and its tool result carries an `[automode]` annotation saying it ran unjudged. Broad allow entries (`*` or empty prefixes) match nothing under the prefix-pattern rules; loading warns and ignores them.
+
 ### `doctor`
 
 One-command health check.
@@ -767,6 +791,8 @@ Engine-owned configuration torus users can ride directly; torus's own code touch
 | `TORUS_COMMENT_CHECKER=0` / `TORUS_COMMENT_CHECKER_PROMPT` | comment-checker | Disable / override the challenge text |
 | `TORUS_WORKTREES_ROOT` | worktrees | Worktree root override (default `~/.torus/worktrees`) |
 | `TORUS_APPROVAL=0` | approval | Disable the trust-on-denial dialog (unmatched hosts deny) |
+| `TORUS_PERMISSION_MODE` | automode | Opt into LLM-classified bash auto-approval (`1`/`on`/`auto`; unset or `0`/`off`/`default` keeps the built-in gate) |
+| `TORUS_PERMISSION_MODEL` | automode | Pin the permission classifier as `provider/model-id` (default: first available classifier, session chat model as fallback) |
 | `TORUS_SANDBOX` / `TORUS_SANDBOX_WRITABLE` / `TORUS_SANDBOX_NET_ADD` / `TORUS_SANDBOX_NET_ONLY` / `TORUS_SANDBOX_DEFAULT` | sandbox | Per-command sandbox (`off` \| `full`, default **off**: `full`/`on`/`1` sandboxes agent bash; unset runs unsandboxed unless `TORUS_SANDBOX_DEFAULT=full` opts the environment into default-on; unknown values fall back to the effective default with a notice; confines writes to workspace+tmp+extras, network restricted to a curated exact-host allowlist of dev-workflow hosts, registries, GitHub incl. release assets, core toolchains, and `*.amazonaws.com`) / extra writable roots, colon-separated / comma-separated extra allowed hosts (exact-host; over-broad entries dropped) / comma-separated hosts replacing the curated allowlist / environment default for unset `TORUS_SANDBOX` (`full`/`on`/`1` enables; any other value is inert) |
 | `TORUS_REFLECTION=0` | memory | Disable idle reflection |
 | `TORUS_REFLECT_TURNS=<n>` | memory | Reflect after N settles since the last reflect (0 = idle-only; default 12) |
