@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -208,6 +208,37 @@ test("registerApproval: TORUS_APPROVAL=0 leaves no slot", () => {
 		assert.equal(globalThis[SLOT], undefined);
 	} finally {
 		if (existing !== undefined) globalThis[SLOT] = existing;
+		if (previous === undefined) delete process.env.TORUS_APPROVAL;
+		else process.env.TORUS_APPROVAL = previous;
+	}
+});
+
+test("registerApproval: approval.enabled=false in config.json disables the slot; env=0 beats config true", () => {
+	const previous = process.env.TORUS_APPROVAL;
+	const existing = globalThis[SLOT];
+	const configFile = path.join(home, "config.json");
+	try {
+		delete process.env.TORUS_APPROVAL;
+		delete globalThis[SLOT];
+		writeFileSync(configFile, JSON.stringify({ approval: { enabled: false } }));
+		registerApproval(handlerPi());
+		assert.equal(globalThis[SLOT], undefined, "config disables the slot");
+
+		delete globalThis[SLOT];
+		writeFileSync(configFile, JSON.stringify({ approval: { enabled: true } }));
+		process.env.TORUS_APPROVAL = "0";
+		registerApproval(handlerPi());
+		assert.equal(globalThis[SLOT], undefined, "env=0 beats config true");
+
+		delete globalThis[SLOT];
+		writeFileSync(configFile, JSON.stringify({ approval: { enabled: false } }));
+		process.env.TORUS_APPROVAL = "1";
+		registerApproval(handlerPi());
+		assert.ok(globalThis[SLOT], "env=1 beats config false");
+	} finally {
+		rmSync(configFile, { force: true });
+		if (existing === undefined) delete globalThis[SLOT];
+		else globalThis[SLOT] = existing;
 		if (previous === undefined) delete process.env.TORUS_APPROVAL;
 		else process.env.TORUS_APPROVAL = previous;
 	}

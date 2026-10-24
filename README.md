@@ -107,6 +107,7 @@ Single-value settings live in their own knob sections, one key each:
 
 | Env var | Config key | Value |
 | --- | --- | --- |
+| `TORUS_APPROVAL` | `approval.enabled` | boolean |
 | `TORUS_BANNER` | `ui.banner` | boolean |
 | `TORUS_STATUSLINE_COST` | `ui.statuslineCost` | boolean |
 | `TORUS_TITLE_MODEL` | `sessionTitle.titleModel` | string |
@@ -124,7 +125,7 @@ Single-value settings live in their own knob sections, one key each:
 | `TORUS_REFLECT_TURNS` | `reflection.reflectTurns` | number |
 | `TORUS_DREAMING` | `reflection.dreaming` | boolean |
 
-Precedence is config, then env, then flag: a config value beats the built-in default, a set env var beats config, and a launcher flag (which sets the env var for one session) beats both. A config value of the wrong type is ignored and the default applies. Plumbing that decides where state and processes live before config is read stays env-only: `TORUS_ROOT`, `TORUS_PI_BIN`, the `TORUS_ENGINE*` family, `TORUS_HOME`, `TORUS_STATE_DIR`, `TORUS_WORKTREES_ROOT`, `TORUS_PLATFORM`, `TORUS_MEMORY_COMMIT`, `TORUS_THEME_DEBUG`, `TORUS_SANDBOX`, `TORUS_SERVE`, `TORUS_TMUX`, and `TORUS_APPROVAL`. The remaining vars (`TORUS_TITLE`, `TORUS_PERMISSION_MODEL`, `TORUS_COMMENT_CHECKER_PROMPT`) are env-only too; [docs/extensions.md](docs/extensions.md) carries the full table.
+Precedence is config, then env, then flag: a config value beats the built-in default, a set env var beats config, and a launcher flag (which sets the env var for one session) beats both. A config value of the wrong type is ignored and the default applies. Plumbing that decides where state and processes live before config is read stays env-only: `TORUS_ROOT`, `TORUS_PI_BIN`, the `TORUS_ENGINE*` family, `TORUS_HOME`, `TORUS_STATE_DIR`, `TORUS_WORKTREES_ROOT`, `TORUS_PLATFORM`, `TORUS_MEMORY_COMMIT`, `TORUS_THEME_DEBUG`, `TORUS_SANDBOX`, `TORUS_SERVE`, and `TORUS_TMUX`. The remaining vars (`TORUS_TITLE`, `TORUS_PERMISSION_MODEL`, `TORUS_COMMENT_CHECKER_PROMPT`) are env-only too; [docs/extensions.md](docs/extensions.md) carries the full table.
 
 Inspect and fold the file with the launcher subcommand:
 

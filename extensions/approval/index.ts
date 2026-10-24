@@ -8,12 +8,14 @@
  * — outside the sandbox's writable roots, so the agent cannot self-escalate.
  * Approvals from the pre-namespacing ~/.torus/sandbox/<slug>-hosts.json
  * layout are still read (never rewritten) so existing trusts keep working.
- * Headless sessions auto-deny. TORUS_APPROVAL=0 leaves the slot absent
- * (sandbox denies unmatched hosts, as before).
+ * Headless sessions auto-deny. TORUS_APPROVAL=0 (or `approval.enabled: false`
+ * in config.json) leaves the slot absent (sandbox denies unmatched hosts, as
+ * before).
  */
 import { unlinkSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { projectStateDir, readJsonFallback, torusHome, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
@@ -162,7 +164,7 @@ async function askNetworkTrust(host: string, port: number | undefined): Promise<
 }
 
 export function registerApproval(pi: ExtensionAPI): void {
-	if (process.env["TORUS_APPROVAL"] === "0") return;
+	if (!knobBoolean("TORUS_APPROVAL", "approval", "enabled", true, parseZeroDisables)) return;
 	const store = globalThis as Record<symbol, ApprovalSlot | undefined>;
 	if (!store[APPROVAL_SLOT]) {
 		store[APPROVAL_SLOT] = { askNetworkTrust };

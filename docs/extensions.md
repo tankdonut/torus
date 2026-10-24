@@ -344,7 +344,7 @@ Trust-on-denial UX for the sandbox network allowlist.
 No tools or commands.
 
 - **Hooks:** `session_start`: ctx capture
-- **Env:** `TORUS_APPROVAL=0` leaves the approval slot absent, so unmatched hosts deny exactly as before the extension existed
+- **Env:** `TORUS_APPROVAL=0` leaves the approval slot absent, so unmatched hosts deny exactly as before the extension existed (config: `approval.enabled`)
 
 When a sandboxed command contacts a non-allowlisted host, an interactive dialog offers Allow once / Always allow (this project) / Deny / Custom… (typed `host` or `*.domain` ⇒ allowed this session). "Always" persists to `$TORUS_STATE_DIR/sandbox-hosts.json`, outside the sandbox's writable roots, so the agent cannot self-escalate. It applies live (`updateConfig`) plus in fresh sessions (persisted hosts allow silently).
 
@@ -819,7 +819,7 @@ Rows carrying a config key also read that key from the [unified config](#unified
 | `TORUS_TASK_STALE_MIN=<minutes>` | team | Stale-task threshold for `team_status`: an in_progress task under an idle member with no tasklist update for more than N minutes renders a read-only stale line (default 30; invalid values fall back to 30) (config: `team.taskStaleMin`) |
 | `TORUS_COMMENT_CHECKER=0` / `TORUS_COMMENT_CHECKER_PROMPT` | comment-checker | Disable / override the challenge text (config: `commentChecker.enabled`; `TORUS_COMMENT_CHECKER_PROMPT` is env-only) |
 | `TORUS_WORKTREES_ROOT` | worktrees | Worktree root override (default `~/.torus/worktrees`) |
-| `TORUS_APPROVAL=0` | approval | Disable the trust-on-denial dialog (unmatched hosts deny) |
+| `TORUS_APPROVAL=0` | approval | Disable the trust-on-denial dialog (unmatched hosts deny; config: `approval.enabled`) |
 | `TORUS_PERMISSION_MODE` | automode | Opt into LLM-classified bash auto-approval (`1`/`on`/`auto`; unset or `0`/`off`/`default` keeps the built-in gate) (config: top-level `permissionMode`) |
 | `TORUS_PERMISSION_MODEL` | automode | Pin the permission classifier as `provider/model-id` (default: first available classifier, then the fast chain's first authed chat model, then the session model) |
 | `TORUS_SANDBOX` / `TORUS_SANDBOX_WRITABLE` / `TORUS_SANDBOX_NET_ADD` / `TORUS_SANDBOX_NET_ONLY` / `TORUS_SANDBOX_DEFAULT` | sandbox | Per-command sandbox (`off` \| `full`, default **off**: `full`/`on`/`1` sandboxes agent bash; unset runs unsandboxed unless `TORUS_SANDBOX_DEFAULT=full` opts the environment into default-on; unknown values fall back to the effective default with a notice; confines writes to workspace+tmp+extras, network restricted to a curated exact-host allowlist of dev-workflow hosts, registries, GitHub incl. release assets, core toolchains, and `*.amazonaws.com`) / extra writable roots, colon-separated / comma-separated extra allowed hosts (exact-host; over-broad entries dropped) / comma-separated hosts replacing the curated allowlist / environment default for unset `TORUS_SANDBOX` (`full`/`on`/`1` enables; any other value is inert) |
