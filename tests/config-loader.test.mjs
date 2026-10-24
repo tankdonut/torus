@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -15,6 +15,7 @@ const {
 	configOverEnv,
 	parseEnvBoolean,
 	effectiveConfigSnapshot,
+	writeSection,
 } = await import("../extensions/config/loader.ts");
 const { torusHome } = await import("../extensions/fsutil.ts");
 
@@ -198,4 +199,49 @@ test("effectiveConfigSnapshot: normalizes entries and preserves order", () => {
 
 test("effectiveConfigSnapshot: empty input yields empty output", () => {
 	assert.deepEqual(effectiveConfigSnapshot([]), []);
+});
+
+test("writeSection: creates the config file and home dir, pretty 2-space JSON with a trailing newline", () => {
+	const nested = path.join(home, "nested", "deeper");
+	process.env.TORUS_HOME = nested;
+	try {
+		const got = writeSection("automode", { ask: ["git push *"] });
+		assert.deepEqual(got, { ok: true, path: path.join(nested, CONFIG_FILE_NAME) });
+		const file = path.join(nested, CONFIG_FILE_NAME);
+		assert.equal(
+			readFileSync(file, "utf8"),
+			`${JSON.stringify({ automode: { ask: ["git push *"] } }, null, 2)}\n`,
+		);
+		assert.deepEqual(readdirSync(nested), [CONFIG_FILE_NAME], "no temp file left behind");
+	} finally {
+		process.env.TORUS_HOME = home;
+	}
+});
+
+test("writeSection: preserves other sections and replaces the target section wholesale", () => {
+	clearConfig();
+	setConfig({ chains: { default: "gpt" }, automode: { ask: ["a"], deny: ["d"] } });
+	const got = writeSection("automode", { ask: ["b"] });
+	assert.equal(got.ok, true);
+	assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")), {
+		chains: { default: "gpt" },
+		automode: { ask: ["b"] },
+	});
+	assert.ok(readFileSync(configPath, "utf8").endsWith("}\n"), "trailing newline kept on rewrite");
+});
+
+test("writeSection: refuses an existing malformed file, keeps the bytes, leaves no temp file", () => {
+	for (const raw of ["{not json", "[1, 2]", '"chains"', "null"]) {
+		setRawConfig(raw);
+		const got = writeSection("automode", { ask: ["b"] });
+		assert.equal(got.ok, false, `root ${raw}`);
+		assert.equal(got.error.includes(configPath), true, `root ${raw} names the path`);
+		assert.match(got.error, /not (valid JSON|a JSON object)/, `root ${raw} names the reason`);
+		assert.equal(readFileSync(configPath, "utf8"), raw, `root ${raw} bytes survive`);
+		assert.deepEqual(
+			readdirSync(home).filter((name) => name.startsWith(".")),
+			[],
+			`root ${raw} leaves no temp file`,
+		);
+	}
 });

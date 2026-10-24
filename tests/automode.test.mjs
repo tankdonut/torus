@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -713,4 +722,216 @@ test("softDeny tier: psql migrations ride the guidance to the judge; scripted re
 	assert.match(allowedPrompt, /Soft boundaries/);
 	assert.match(allowedPrompt, /Recent user intent/);
 	assert.match(allowedPrompt, /run the migration with psql directly/);
+});
+
+const projectDir = mkdtempSync(path.join(tmpdir(), "torus-automode-wizard-"));
+const gitConfigPath = path.join(projectDir, ".git", "config");
+const { appendAuditRow } = await import("../extensions/automode/config.ts");
+
+function seedGitConfig(...urls) {
+	mkdirSync(path.dirname(gitConfigPath), { recursive: true });
+	const lines = ["[core]", "\tbare = false"];
+	for (const [index, url] of urls.entries()) {
+		lines.push(`[remote "r${index}"]`, `\turl = ${url}`, "\tfetch = +refs/heads/*:refs/remotes/*");
+	}
+	writeFileSync(gitConfigPath, `${lines.join("\n")}\n`);
+}
+
+function clearGitConfig() {
+	rmSync(path.dirname(gitConfigPath), { recursive: true, force: true });
+}
+
+const denyRow = (command) => ({
+	ts: Date.now(),
+	mode: "auto",
+	source: "model",
+	verdict: "deny",
+	reason: "stub deny",
+	command,
+});
+
+/** Scripted wizard/dialog answers: each ui.select call pops the next one. */
+function scriptSelects(dialog, answers) {
+	return async (title, choices) => {
+		dialog.calls.push({ title, options: choices });
+		return answers[dialog.calls.length - 1];
+	};
+}
+
+test("/automode setup headless: prints the draft and never writes", async () => {
+	resetAudit();
+	seedGitConfig("git@github.com:tankdonut/torus.git", "https://github.com/tankdonut/torus");
+	appendAuditRow(denyRow("git push origin main"));
+	appendAuditRow(denyRow("git push --force origin"));
+	appendAuditRow(denyRow("cargo build"));
+	setConfig(undefined);
+	setRules(undefined);
+	const { pi, ctx, notifications } = setup({ mode: undefined });
+	ctx.cwd = projectDir;
+	await pi.commands.automode.handler("setup", ctx);
+	const draft = notifications
+		.map((n) => n.message)
+		.find((m) => m.startsWith("automode setup draft:"));
+	assert.ok(draft, "draft notify fired");
+	assert.ok(draft.includes("Source control: github.com/tankdonut"), "remote line exact");
+	assert.equal(
+		draft.split("Source control: github.com/tankdonut").length - 1,
+		1,
+		"both url forms dedupe to one line",
+	);
+	assert.ok(draft.includes("git push *"), "repeated same-prefix denies suggest an ask entry");
+	assert.ok(!draft.includes("cargo *"), "a single deny does not suggest");
+	assert.match(draft, /rerun in an interactive session to write/);
+	assert.equal(existsSync(configFilePath), false, "headless never writes");
+	assert.equal(existsSync(rulesFilePath), false, "the legacy file is never written either");
+});
+
+test("buildSetupDraft: url forms, unparseable urls, and kept entries", () => {
+	seedGitConfig(
+		"git@github.com:tankdonut/torus.git",
+		"https://github.com/tankdonut/torus",
+		"ssh://git@gitlab.example.com:2222/acme/monorepo.git",
+		"/srv/local/repo",
+		"C:\\repos\\x",
+		"https://only-host/",
+	);
+	const draft = automode.buildSetupDraft(projectDir, [], { rules: {}, source: "default" });
+	assert.deepEqual(draft.environment, [
+		"Source control: github.com/tankdonut",
+		"Source control: gitlab.example.com/acme",
+	]);
+
+	const kept = automode.buildSetupDraft(
+		projectDir,
+		[denyRow("git push a"), denyRow("git push b")],
+		{ rules: { deny: ["rm *"], ask: ["git push *"] }, source: "automode.json" },
+	);
+	assert.equal(kept.ask, undefined, "an already-present ask entry is not re-suggested");
+	assert.ok(kept.summary.some((line) => line.includes("keep (from automode.json)")));
+	assert.ok(kept.summary.some((line) => line.includes("deny: rm *")));
+
+	clearGitConfig();
+	const noGit = automode.buildSetupDraft(projectDir, [], { rules: {}, source: "default" });
+	assert.equal(noGit.environment, undefined, "no .git means no remote lines");
+	assert.ok(noGit.summary.some((line) => line.includes("nothing to add")));
+});
+
+test("/automode setup Write: unions into config.json, notifies the path, reloads the rules", async () => {
+	resetAudit();
+	seedGitConfig("https://github.com/tankdonut/torus.git");
+	appendAuditRow(denyRow("git push origin main"));
+	appendAuditRow(denyRow("git push --force"));
+	setRules(undefined);
+	const seeded = {
+		chains: { default: "gpt" },
+		automode: { environment: ["Source control: seeded"], deny: ["rm *"] },
+	};
+	const { pi, ctx, notifications, dialog, reg } = setup({
+		mode: "1",
+		hasUI: true,
+		replies: [],
+		config: seeded,
+	});
+	ctx.cwd = projectDir;
+	ctx.ui.select = scriptSelects(dialog, ["Write", "Deny"]);
+	// Pre-write the push family reaches the fail-open model path.
+	assert.equal(await call(pi, ctx, "git push origin main", "w-pre"), undefined);
+	assert.equal(reg.calls.complete, 1);
+	await pi.commands.automode.handler("setup", ctx);
+	assert.ok(dialog.calls[0].title.startsWith("automode setup draft:\n"));
+	assert.ok(dialog.calls[0].title.includes("keep (from config.json)"), "kept entries listed");
+	assert.deepEqual(dialog.calls[0].options, ["Write", "Show full draft", "Discard"]);
+	const wrote = notifications.map((n) => n.message).find((m) => m.includes("wrote "));
+	assert.ok(wrote.includes(configFilePath), "notify names the written path");
+	assert.match(wrote, /reloads at next \/automode toggle or session start/);
+	const onDisk = JSON.parse(readFileSync(configFilePath, "utf8"));
+	assert.deepEqual(onDisk.chains, { default: "gpt" }, "other sections preserved");
+	assert.deepEqual(
+		onDisk.automode.environment,
+		["Source control: seeded", "Source control: github.com/tankdonut"],
+		"existing entries kept, draft appended",
+	);
+	assert.deepEqual(onDisk.automode.ask, ["git push *"]);
+	assert.deepEqual(onDisk.automode.deny, ["rm *"], "keys absent from the draft untouched");
+	// The reloaded rules apply immediately: the new ask rule dialogues before
+	// any model call, and the kept deny still blocks, naming config.json.
+	const blocked = await call(pi, ctx, "git push origin main", "w-post");
+	assert.equal(reg.calls.complete, 1, "the ask rule fires before the model");
+	assert.equal(blocked.block, true);
+	assert.equal(blocked.reason, "automode: denied by user");
+	assert.match(dialog.calls[1].title, /ask rule "git push \*" matched/);
+	assert.ok(dialog.calls[1].title.includes("git push origin main"));
+	const denied = await call(pi, ctx, "rm -rf build", "w-deny");
+	assert.match(denied.reason, /denied by rule "rm \*"/);
+	assert.match(denied.reason, /config\.json/, "the reload sourced rules from config.json");
+});
+
+test("/automode setup Discard: nothing written, file untouched", async () => {
+	resetAudit();
+	seedGitConfig("git@github.com:tankdonut/torus.git");
+	appendAuditRow(denyRow("git push origin main"));
+	appendAuditRow(denyRow("git push --force"));
+	setRules(undefined);
+	const { pi, ctx, notifications, dialog } = setup({
+		mode: undefined,
+		hasUI: true,
+		answer: "Discard",
+		config: { automode: { environment: ["Source control: seeded"] } },
+	});
+	const before = statSync(configFilePath);
+	const beforeBytes = readFileSync(configFilePath, "utf8");
+	ctx.cwd = projectDir;
+	await pi.commands.automode.handler("setup", ctx);
+	assert.equal(dialog.calls.length, 1);
+	assert.deepEqual(dialog.calls[0].options, ["Write", "Show full draft", "Discard"]);
+	assert.equal(readFileSync(configFilePath, "utf8"), beforeBytes, "content unchanged");
+	assert.equal(statSync(configFilePath).mtimeMs, before.mtimeMs, "not even rewritten");
+	assert.ok(notifications.some((n) => /discarded/.test(n.message)));
+});
+
+test("/automode setup Show full draft: notifies the full JSON and loops back to the select", async () => {
+	resetAudit();
+	seedGitConfig("git@github.com:tankdonut/torus.git");
+	appendAuditRow(denyRow("cargo publish --dry-run"));
+	setRules(undefined);
+	setConfig(undefined);
+	const { pi, ctx, notifications, dialog } = setup({ mode: undefined, hasUI: true });
+	ctx.cwd = projectDir;
+	ctx.ui.select = scriptSelects(dialog, ["Show full draft", "Discard"]);
+	await pi.commands.automode.handler("setup", ctx);
+	assert.equal(dialog.calls.length, 2, "the select re-opens after showing the draft");
+	assert.ok(dialog.calls[1].title.startsWith("automode setup draft:\n"));
+	const full = notifications
+		.map((n) => n.message)
+		.find((m) => m.startsWith("automode setup draft (full):"));
+	assert.ok(full, "full-draft notify fired");
+	assert.deepEqual(JSON.parse(full.slice("automode setup draft (full):\n".length)), {
+		environment: ["Source control: github.com/tankdonut"],
+	});
+	assert.ok(
+		notifications.some((n) => /discarded/.test(n.message)),
+		"the loop still ends",
+	);
+});
+
+test("/automode setup Write on a malformed config.json: error notify, bytes survive, no temp file", async () => {
+	resetAudit();
+	seedGitConfig("git@github.com:tankdonut/torus.git");
+	appendAuditRow(denyRow("git push origin main"));
+	appendAuditRow(denyRow("git push --force"));
+	setRules(undefined);
+	const { pi, ctx, notifications } = setup({ mode: undefined, hasUI: true, answer: "Write" });
+	const bytes = "{not json";
+	writeFileSync(configFilePath, bytes);
+	ctx.cwd = projectDir;
+	await pi.commands.automode.handler("setup", ctx);
+	assert.equal(readFileSync(configFilePath, "utf8"), bytes, "bytes survive the refusal");
+	const error = notifications.map((n) => n.message).find((m) => m.includes("not valid JSON"));
+	assert.ok(error?.includes(configFilePath), "the error names the path");
+	assert.ok(!notifications.some((n) => n.message.includes("wrote ")), "nothing was written");
+	assert.deepEqual(
+		readdirSync(home).filter((name) => name.endsWith(".tmp")),
+		[],
+		"no temp file left",
+	);
 });

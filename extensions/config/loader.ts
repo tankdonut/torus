@@ -10,7 +10,7 @@
  * this on every startup unguarded.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { torusHome } from "../fsutil.js";
 
@@ -58,6 +58,75 @@ export function loadConfigFile(file?: string): ConfigLoad {
 		return { config: {}, warning: `${target}: root is not a JSON object; using empty config` };
 	}
 	return { config: parsed };
+}
+
+/** Read one existing config file strictly for a write: any problem is a refusal. */
+function parseExistingConfig(
+	target: string,
+): { ok: true; config: Record<string, unknown> } | { ok: false; error: string } {
+	let raw: string;
+	try {
+		raw = readFileSync(target, "utf8");
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		return { ok: false, error: `${target}: unreadable (${code ?? "read error"}); not writing` };
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return { ok: false, error: `${target}: not valid JSON; not writing` };
+	}
+	if (!isPlainObject(parsed)) {
+		return { ok: false, error: `${target}: root is not a JSON object; not writing` };
+	}
+	return { ok: true, config: parsed };
+}
+
+/**
+ * Read-modify-write one section of the unified config file. The value
+ * REPLACES the named section wholesale — the caller composes any merges —
+ * while every other section survives verbatim. The write lands atomically
+ * (temp file in the same directory, then rename) as 2-space-indented JSON
+ * with a trailing newline, creating the torus home directory on demand.
+ * No other file is ever touched.
+ *
+ * A missing file is safe to create, but a file that exists yet cannot be
+ * read, parsed, or does not root in a JSON object is REFUSED: loadConfigFile
+ * maps both missing and malformed to an empty config, so the distinction is
+ * drawn here against the raw file, fresh. Refusals name the path and the
+ * reason, write nothing, and leave no temp file behind — a merge onto a
+ * broken file would silently flatten the user's config to whatever survived
+ * the parse.
+ */
+export function writeSection(
+	name: string,
+	value: Record<string, unknown>,
+): { ok: true; path: string } | { ok: false; error: string } {
+	const target = configFilePath();
+	let existing: Record<string, unknown> = {};
+	if (existsSync(target)) {
+		const checked = parseExistingConfig(target);
+		if (!checked.ok) return { ok: false, error: checked.error };
+		existing = checked.config;
+	}
+	const body = `${JSON.stringify({ ...existing, [name]: value }, null, 2)}\n`;
+	const dir = path.dirname(target);
+	const temp = path.join(dir, `.${CONFIG_FILE_NAME}.${process.pid}.tmp`);
+	try {
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(temp, body, "utf8");
+		renameSync(temp, target);
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code ?? "write error";
+		try {
+			rmSync(temp, { force: true });
+		} catch {
+			// Best-effort cleanup; the temp name carries the pid, so it cannot collide.
+		}
+		return { ok: false, error: `${target}: write failed (${code})` };
+	}
+	return { ok: true, path: target };
 }
 
 export type SectionSource = "config" | "legacy" | "default";

@@ -12,14 +12,15 @@
  * semantics: another extension's block always stays in effect.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	isToolCallEventType,
 	type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { loadConfigFile } from "../config/loader.js";
+import { loadConfigFile, writeSection } from "../config/loader.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { refreshToruStatus, setStatusPermission } from "../ui/index.js";
 import { DecisionCache, decide, pickChatModel, pickModel } from "./classify.js";
@@ -72,6 +73,210 @@ function unjudgedMarker(reason: string): string {
 
 function noUiReason(reason: string): string {
 	return `automode: ${reason} — no UI for approval; rerun with TORUS_PERMISSION_MODE=default or approve interactively`;
+}
+
+/** Deny rows the setup wizard scans for repeated command prefixes. */
+const SETUP_DENIAL_SCAN = 100;
+
+/** The /automode setup draft: suggested entries plus the summary shown for review. */
+export type SetupDraft = {
+	/** Trusted-infrastructure lines suggested for the `environment` array. */
+	environment?: string[];
+	/** Prefix patterns suggested for the `ask` array. */
+	ask?: string[];
+	/** One line per suggestion plus the kept entries, for the review prompt. */
+	summary: string[];
+};
+
+/** Parse the audit log's deny rows, newest last, capped at `limit`; a missing or unreadable log contributes nothing. */
+function recentDenialRows(limit: number): AuditRow[] {
+	let text: string;
+	try {
+		text = readFileSync(auditPath(), "utf8");
+	} catch {
+		return [];
+	}
+	const denials = text
+		.split("\n")
+		.filter((line) => line.trim() !== "")
+		.map((line) => {
+			try {
+				return JSON.parse(line) as AuditRow;
+			} catch {
+				return undefined;
+			}
+		})
+		.filter((row): row is AuditRow => row !== undefined && row.verdict === "deny");
+	return denials.slice(-limit);
+}
+
+function stripConfigQuotes(value: string): string {
+	if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+		return value.slice(1, -1);
+	}
+	return value;
+}
+
+/** First non-empty path segment with a trailing ".git" dropped, or nothing. */
+function firstPathSegment(rest: string): string | undefined {
+	const segment = rest.split("/").find((part) => part !== "");
+	if (segment === undefined || segment === "") return undefined;
+	return segment.endsWith(".git") ? segment.slice(0, -4) : segment;
+}
+
+/**
+ * Reduce one remote URL to `Source control: <host>/<org-or-first-path-segment>`.
+ * Two shapes parse: scheme URLs (`https://github.com/org/repo`, any
+ * `scheme://[user@]host[:port]/...` — the port never reaches the line) and
+ * scp-like git URLs (`git@github.com:org/repo.git`). Windows drive-letter
+ * lookalikes (`C:\repo`) and anything else — relative paths, bare hosts —
+ * parse to nothing and are skipped.
+ */
+function sourceControlLine(url: string): string | undefined {
+	if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(url)) {
+		try {
+			const parsed = new URL(url);
+			const segment = firstPathSegment(parsed.pathname);
+			if (parsed.hostname !== "" && segment !== undefined) {
+				return `Source control: ${parsed.hostname}/${segment}`;
+			}
+		} catch {
+			// A URL-shaped string the parser rejects is unparseable.
+		}
+		return undefined;
+	}
+	if (/^[A-Za-z]:[\\/]/.test(url)) return undefined;
+	const scp = url.match(/^(?:[^@\s/]+@)?([^:@\s/]+):(.+)$/);
+	const [, host, rest] = scp ?? [];
+	if (host === undefined || rest === undefined) return undefined;
+	const segment = firstPathSegment(rest);
+	if (segment === undefined) return undefined;
+	return `Source control: ${host}/${segment}`;
+}
+
+/**
+ * `Source control: host/org` lines from a git config's remote URLs, deduped,
+ * in file order. The file is read as text directly — never through a shell —
+ * so a hostile repo's config is just data. A missing file means no lines.
+ */
+function remoteSourceLines(gitConfig: string): string[] {
+	let text: string;
+	try {
+		text = readFileSync(gitConfig, "utf8");
+	} catch {
+		return [];
+	}
+	const lines = new Set<string>();
+	let inRemote = false;
+	for (const raw of text.split(/\r?\n/)) {
+		const line = raw.trim();
+		if (line.startsWith("[")) {
+			inRemote = /^\[\s*remote\s+"/.test(line);
+			continue;
+		}
+		if (!inRemote) continue;
+		const match = line.match(/^url\s*=\s*(.*?)\s*$/);
+		const value = match?.[1];
+		if (value === undefined) continue;
+		const derived = sourceControlLine(stripConfigQuotes(value));
+		if (derived !== undefined) lines.add(derived);
+	}
+	return [...lines];
+}
+
+/**
+ * Ask-rule suggestions from deny rows. Heuristic: when commands sharing the
+ * same first two tokens were denied at least twice, the user keeps reaching
+ * for that command family and answering no — draft `"<tok0> <tok1> *"` so
+ * future calls open the approval dialog instead of silently burning a model
+ * call. The bar is deliberately conservative: a single deny, however
+ * repeated the identical command within it, is noise, not a pattern, and an
+ * entry already present in the effective ask list is never re-suggested.
+ */
+function askSuggestions(denials: readonly AuditRow[], rules: AutomodeRulesFile): string[] {
+	const counts = new Map<string, number>();
+	for (const row of denials) {
+		const tokens = row.command
+			.trim()
+			.split(/\s+/)
+			.filter((token) => token !== "");
+		const [first, second] = tokens;
+		if (first === undefined || second === undefined) continue;
+		const prefix = `${first} ${second}`;
+		counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
+	}
+	const present = new Set(rules.ask ?? []);
+	const suggestions: string[] = [];
+	for (const [prefix, count] of counts) {
+		if (count < 2) continue;
+		const entry = `${prefix} *`;
+		if (present.has(entry) || suggestions.includes(entry)) continue;
+		suggestions.push(entry);
+	}
+	return suggestions;
+}
+
+/** The draft's writable payload: only arrays with entries appear. */
+function draftPayload(draft: SetupDraft): Record<string, string[]> {
+	const payload: Record<string, string[]> = {};
+	if (draft.environment !== undefined && draft.environment.length > 0) {
+		payload.environment = draft.environment;
+	}
+	if (draft.ask !== undefined && draft.ask.length > 0) payload.ask = draft.ask;
+	return payload;
+}
+
+/**
+ * Union the draft's arrays into an existing automode section: existing
+ * entries keep their order, draft entries append, exact-duplicate strings
+ * drop, and every key the draft does not touch survives verbatim.
+ */
+function mergeDraftIntoSection(
+	existing: Record<string, unknown>,
+	draft: SetupDraft,
+): Record<string, unknown> {
+	const merged: Record<string, unknown> = { ...existing };
+	for (const key of ["environment", "ask"] as const) {
+		const additions = draft[key];
+		if (additions === undefined || additions.length === 0) continue;
+		const entries = Array.isArray(existing[key]) ? [...(existing[key] as unknown[])] : [];
+		for (const entry of additions) {
+			if (!entries.includes(entry)) entries.push(entry);
+		}
+		merged[key] = entries;
+	}
+	return merged;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Compose the /automode setup draft from three inputs: the repo's git
+ * remotes (environment lines), recent audit denials (ask suggestions), and
+ * the currently effective rules (listed as kept in the summary, never
+ * re-suggested). Pure apart from reading `<cwd>/.git/config` as text.
+ */
+export function buildSetupDraft(
+	cwd: string,
+	denials: readonly AuditRow[],
+	current: { rules: AutomodeRulesFile; source: AutomodeRulesSource },
+): SetupDraft {
+	const environment = remoteSourceLines(path.join(cwd, ".git", "config"));
+	const ask = askSuggestions(denials, current.rules);
+	const summary: string[] = [];
+	for (const line of environment) summary.push(`add environment: ${line}`);
+	for (const entry of ask) summary.push(`add ask: ${entry}`);
+	const kept = Object.entries(current.rules)
+		.filter(([, value]) => Array.isArray(value) && value.length > 0)
+		.map(([key, value]) => `${key}: ${(value as string[]).join(", ")}`);
+	if (kept.length > 0) summary.push(`keep (from ${current.source}): ${kept.join("; ")}`);
+	if (summary.length === 0) summary.push("nothing to add — no remotes or repeated denies found");
+	const draft: SetupDraft = { summary };
+	if (environment.length > 0) draft.environment = environment;
+	if (ask.length > 0) draft.ask = ask;
+	return draft;
 }
 
 export function registerAutomode(pi: ExtensionAPI): void {
@@ -445,23 +650,10 @@ export function registerAutomode(pi: ExtensionAPI): void {
 
 	/** Last audit-log denials, newest last, capped at ten; the log is advisory so read errors degrade to "none". */
 	function recentDenials(): string {
-		let text: string;
-		try {
-			text = readFileSync(auditPath(), "utf8");
-		} catch {
+		if (!existsSync(auditPath())) {
 			return "automode: no audit log yet — nothing has been denied";
 		}
-		const denials = text
-			.split("\n")
-			.filter((line) => line.trim() !== "")
-			.map((line) => {
-				try {
-					return JSON.parse(line) as AuditRow;
-				} catch {
-					return undefined;
-				}
-			})
-			.filter((row): row is AuditRow => row !== undefined && row.verdict === "deny");
+		const denials = recentDenialRows(Number.POSITIVE_INFINITY);
 		if (denials.length === 0) {
 			return "automode: no denials recorded";
 		}
@@ -472,9 +664,70 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		return `automode recent denials (last ${shown.length} of ${denials.length}):\n${rows.join("\n")}`;
 	}
 
+	/**
+	 * /automode setup: draft environment and ask entries from the repo's git
+	 * remotes and the audit log's repeated denies, then — interactively —
+	 * write them into config.json's automode section and reload the session's
+	 * rules. Headless sessions only see the draft; the legacy automode.json
+	 * is never written.
+	 */
+	async function runSetup(ctx: ExtensionContext): Promise<void> {
+		const current = loadAutomodeRules();
+		for (const warning of current.warnings) {
+			ctx.ui.notify(`automode: ${warning}`, "warning");
+		}
+		const draft = buildSetupDraft(ctx.cwd, recentDenialRows(SETUP_DENIAL_SCAN), {
+			rules: current.rules,
+			source: current.source,
+		});
+		const payload = JSON.stringify(draftPayload(draft), null, 2);
+		if (!ctx.hasUI) {
+			ctx.ui.notify(
+				`automode setup draft:\n${payload}\nrerun in an interactive session to write`,
+				"info",
+			);
+			return;
+		}
+		for (;;) {
+			const choice = await ctx.ui.select(`automode setup draft:\n${draft.summary.join("\n")}`, [
+				"Write",
+				"Show full draft",
+				"Discard",
+			]);
+			if (choice === "Show full draft") {
+				ctx.ui.notify(`automode setup draft (full):\n${payload}`, "info");
+				continue;
+			}
+			if (choice !== "Write") {
+				ctx.ui.notify("automode: setup draft discarded; nothing written", "info");
+				return;
+			}
+			// The merge base is the automode section exactly as config.json holds
+			// it now — never the legacy file. With no section on disk, the base is
+			// the effective rules only when config.json supplied them, else empty.
+			const loaded = loadConfigFile();
+			const existing = isPlainRecord(loaded.config["automode"])
+				? loaded.config["automode"]
+				: current.source === "config.json"
+					? (current.rules as Record<string, unknown>)
+					: {};
+			const written = writeSection("automode", mergeDraftIntoSection(existing, draft));
+			if (!written.ok) {
+				ctx.ui.notify(`automode: ${written.error}`, "warning");
+				return;
+			}
+			ctx.ui.notify(
+				`automode: wrote ${written.path} (reloads at next /automode toggle or session start)`,
+				"info",
+			);
+			loadAutoConfig(ctx);
+			return;
+		}
+	}
+
 	pi.registerCommand("automode", {
 		description:
-			"Show the automode permission status; /automode auto|default switches the session mode; /automode denied lists recent denials",
+			"Show the automode permission status; /automode auto|default switches the session mode; /automode denied lists recent denials; /automode setup drafts config entries from git remotes and the audit log",
 		handler: async (args: string, ctx: ExtensionContext) => {
 			await ensureStartup(ctx);
 			const arg = args.trim().toLowerCase();
@@ -484,6 +737,10 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			}
 			if (arg === "denied") {
 				ctx.ui.notify(recentDenials(), "info");
+				return;
+			}
+			if (arg === "setup") {
+				await runSetup(ctx);
 				return;
 			}
 			if (arg !== "auto" && arg !== "default") {
