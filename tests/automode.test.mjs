@@ -969,3 +969,126 @@ test("project config: deny/ask union tightens; allow and other keys are refused"
 	);
 	rmSync(cwd, { recursive: true, force: true });
 });
+
+test("/automode setup apply: lands a reviewed draft, unions into config.json, reloads rules", async () => {
+	resetAudit();
+	const { pi, ctx, notifications, dialog } = setup({ mode: "1", hasUI: true, answer: "Write" });
+	setConfig({ automode: { ask: ["git push *"] } });
+	const drafts = mkdtempSync(path.join(tmpdir(), "torus-drafts-"));
+	const file = path.join(drafts, "draft.json");
+	writeFileSync(
+		file,
+		JSON.stringify({
+			environment: ["Source control: github.com/acme/widgets"],
+			ask: ["cargo publish *"],
+		}),
+	);
+	await pi.commands.automode.handler(`setup apply ${file}`, ctx);
+	assert.ok(dialog.calls.length > 0, "a confirm dialog ran");
+	assert.match(dialog.calls[0].title, /add environment: Source control/);
+	assert.ok(
+		notifications.some((n) => n.message.includes("wrote ") && n.message.includes("config.json")),
+		"the write is announced",
+	);
+	const onDisk = JSON.parse(readFileSync(configFilePath, "utf8"));
+	assert.deepEqual(
+		onDisk.automode.ask,
+		["git push *", "cargo publish *"],
+		"ask unions, dupes drop",
+	);
+	assert.deepEqual(onDisk.automode.environment, ["Source control: github.com/acme/widgets"]);
+
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications[notifications.length - 1].message;
+	assert.match(status, /environment: Source control: github\.com\/acme\/widgets/, "rules reloaded");
+	rmSync(drafts, { recursive: true, force: true });
+});
+
+test("/automode setup apply: resolves a relative draft path against the session cwd", async () => {
+	resetAudit();
+	setConfig(undefined);
+	const cwd = mkdtempSync(path.join(tmpdir(), "torus-apply-cwd-"));
+	writeFileSync(path.join(cwd, "draft.json"), JSON.stringify({ ask: ["git push *"] }));
+	const { pi, ctx, notifications } = setup({ cwd, hasUI: true, answer: "Write" });
+	await pi.commands.automode.handler("setup apply draft.json", ctx);
+	assert.ok(
+		notifications.some((n) => n.message.includes("wrote ")),
+		"relative path applied",
+	);
+	const onDisk = JSON.parse(readFileSync(configFilePath, "utf8"));
+	assert.deepEqual(onDisk.automode.ask, ["git push *"]);
+	rmSync(cwd, { recursive: true, force: true });
+});
+
+test("/automode setup apply: widening keys, junk arrays, and empty drafts are refused untouched", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ hasUI: true, answer: "Write" });
+	setConfig({ automode: { ask: ["git push *"] } });
+	const bytes = readFileSync(configFilePath, "utf8");
+	const drafts = mkdtempSync(path.join(tmpdir(), "torus-drafts-"));
+	const cases = [
+		["widening.json", { allow: ["rm *"] }, /refused key\(s\) allow/],
+		["harddeny.json", { hardDeny: ["curl *"] }, /refused key\(s\) hardDeny/],
+		["junk.json", { ask: [42] }, /"ask" must be an array of non-empty strings/],
+		[
+			"empty-strings.json",
+			{ environment: [""] },
+			/"environment" must be an array of non-empty strings/,
+		],
+		["empty.json", {}, /no environment or ask entries to apply/],
+		["not-json.json", "]{ not json", /not valid JSON/],
+	];
+	for (const [name, body] of cases) {
+		writeFileSync(path.join(drafts, name), JSON.stringify(body));
+	}
+	writeFileSync(path.join(drafts, "not-json.json"), "]{ not json");
+	for (const [name, , pattern] of cases) {
+		notifications.length = 0;
+		await pi.commands.automode.handler(`setup apply ${path.join(drafts, name)}`, ctx);
+		assert.match(
+			notifications[notifications.length - 1].message,
+			pattern,
+			`${name} refuses with the reason`,
+		);
+	}
+	assert.equal(readFileSync(configFilePath, "utf8"), bytes, "config bytes survive every refusal");
+	rmSync(drafts, { recursive: true, force: true });
+});
+
+test("/automode setup apply: headless prints the draft and writes nothing; missing file and bare usage warn", async () => {
+	resetAudit();
+	setConfig(undefined);
+	const drafts = mkdtempSync(path.join(tmpdir(), "torus-drafts-"));
+	const file = path.join(drafts, "draft.json");
+	writeFileSync(file, JSON.stringify({ environment: ["Source control: github.com/acme/widgets"] }));
+
+	const headless = setup({ hasUI: false });
+	await headless.pi.commands.automode.handler(`setup apply ${file}`, headless.ctx);
+	const printed = headless.notifications[headless.notifications.length - 1].message;
+	assert.match(printed, /setup draft \(.*draft\.json\)/);
+	assert.match(printed, /rerun in an interactive session to write/);
+	assert.ok(!existsSync(configFilePath), "headless wrote nothing");
+
+	const missing = setup({});
+	await missing.pi.commands.automode.handler(
+		`setup apply ${path.join(drafts, "nope.json")}`,
+		missing.ctx,
+	);
+	assert.match(missing.notifications[missing.notifications.length - 1].message, /unreadable/);
+
+	const bare = setup({});
+	await bare.pi.commands.automode.handler("setup apply", bare.ctx);
+	assert.match(
+		bare.notifications[bare.notifications.length - 1].message,
+		/usage: \/automode setup apply/,
+	);
+
+	const discard = setup({ hasUI: true, answer: "Discard" });
+	await discard.pi.commands.automode.handler(`setup apply ${file}`, discard.ctx);
+	assert.ok(
+		discard.notifications.some((n) => n.message.includes("discarded; nothing written")),
+		"discard leaves config untouched",
+	);
+	assert.ok(!existsSync(configFilePath), "no config after discard");
+	rmSync(drafts, { recursive: true, force: true });
+});

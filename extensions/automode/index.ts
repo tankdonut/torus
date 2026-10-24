@@ -41,7 +41,6 @@ import {
 	rulesPath,
 } from "./config.js";
 import {
-	type AutomodeRules,
 	criticalAskFloor,
 	type Decision,
 	findBroadAllowEntries,
@@ -237,7 +236,7 @@ function mergeDraftIntoSection(
 	draft: SetupDraft,
 ): Record<string, unknown> {
 	const merged: Record<string, unknown> = { ...existing };
-	for (const key of ["environment", "ask"] as const) {
+	for (const key of DRAFT_KEYS) {
 		const additions = draft[key];
 		if (additions === undefined || additions.length === 0) continue;
 		const entries = Array.isArray(existing[key]) ? [...(existing[key] as unknown[])] : [];
@@ -251,6 +250,66 @@ function mergeDraftIntoSection(
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The only keys a setup draft may carry: trust prose and ask patterns, never widening keys. */
+const DRAFT_KEYS = ["environment", "ask"] as const;
+
+/** Parse outcome for a draft file: a ready SetupDraft or a refusal naming the file. */
+export type ParsedDraft = { ok: true; draft: SetupDraft } | { ok: false; error: string };
+
+/**
+ * Parse a draft file for /automode setup apply. The file is agent-writable
+ * input to a permission surface, so it is read strictly: a JSON object whose
+ * keys are limited to environment and ask, each an array of non-empty
+ * strings, with at least one of the two present. Anything else — widening
+ * keys such as allow or hardDeny, junk entries, a missing file — is a named
+ * refusal and nothing is applied.
+ */
+export function parseDraftFile(filePath: string): ParsedDraft {
+	let raw: string;
+	try {
+		raw = readFileSync(filePath, "utf8");
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code ?? "read error";
+		return { ok: false, error: `${filePath}: unreadable (${code})` };
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return { ok: false, error: `${filePath}: not valid JSON` };
+	}
+	if (!isPlainRecord(parsed)) {
+		return { ok: false, error: `${filePath}: root is not a JSON object` };
+	}
+	const refused = Object.keys(parsed).filter(
+		(key) => !(DRAFT_KEYS as readonly string[]).includes(key),
+	);
+	if (refused.length > 0) {
+		return {
+			ok: false,
+			error: `${filePath}: refused key(s) ${refused.join(", ")} — drafts carry environment and ask only`,
+		};
+	}
+	const draft: SetupDraft = { summary: [] };
+	for (const key of DRAFT_KEYS) {
+		const value = parsed[key];
+		if (value === undefined) continue;
+		if (
+			!Array.isArray(value) ||
+			value.some((entry) => typeof entry !== "string" || entry.trim() === "")
+		) {
+			return { ok: false, error: `${filePath}: "${key}" must be an array of non-empty strings` };
+		}
+		draft[key] = value as string[];
+	}
+	if (draft.environment === undefined && draft.ask === undefined) {
+		return { ok: false, error: `${filePath}: no environment or ask entries to apply` };
+	}
+	for (const line of draft.environment ?? []) draft.summary.push(`add environment: ${line}`);
+	for (const entry of draft.ask ?? []) draft.summary.push(`add ask: ${entry}`);
+	return { ok: true, draft };
 }
 
 /**
@@ -719,6 +778,41 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	}
 
 	/**
+	 * Land a draft through the validated path: resolve the merge base from
+	 * config.json exactly as it sits on disk, union the draft's arrays in,
+	 * write atomically, then reload the session's rules. Returns false when
+	 * the write is refused.
+	 */
+	function writeDraft(
+		ctx: ExtensionContext,
+		draft: SetupDraft,
+		current: { rules: AutomodeRulesFile; source: AutomodeRulesSource },
+	): boolean {
+		// The merge base is the automode section exactly as config.json holds
+		// it now — never the legacy file. With no section on disk, the base is
+		// the effective rules only when config.json supplied them, else empty.
+		const loaded = loadConfigFile();
+		const existing = isPlainRecord(loaded.config["automode"])
+			? loaded.config["automode"]
+			: current.source === "config.json"
+				? (current.rules as Record<string, unknown>)
+				: {};
+		const written = writeSection("automode", mergeDraftIntoSection(existing, draft));
+		if (!written.ok) {
+			ctx.ui.notify(`automode: ${written.error}`, "warning");
+			return false;
+		}
+		ctx.ui.notify(
+			`automode: wrote ${written.path} (reloads at next /automode toggle or session start)`,
+			"info",
+		);
+		loadAutoConfig(ctx);
+		return true;
+	}
+
+	/**
+	 * /automode setup: draft environment and ask entries from the repo's git
+	/**
 	 * /automode setup: draft environment and ask entries from the repo's git
 	 * remotes and the audit log's repeated denies, then — interactively —
 	 * write them into config.json's automode section and reload the session's
@@ -756,35 +850,63 @@ export function registerAutomode(pi: ExtensionAPI): void {
 				ctx.ui.notify("automode: setup draft discarded; nothing written", "info");
 				return;
 			}
-			// The merge base is the automode section exactly as config.json holds
-			// it now — never the legacy file. With no section on disk, the base is
-			// the effective rules only when config.json supplied them, else empty.
-			const loaded = loadConfigFile();
-			const existing = isPlainRecord(loaded.config["automode"])
-				? loaded.config["automode"]
-				: current.source === "config.json"
-					? (current.rules as Record<string, unknown>)
-					: {};
-			const written = writeSection("automode", mergeDraftIntoSection(existing, draft));
-			if (!written.ok) {
-				ctx.ui.notify(`automode: ${written.error}`, "warning");
-				return;
-			}
+			writeDraft(ctx, draft, current);
+			return;
+		}
+	}
+
+	/**
+	 * /automode setup apply <file>: land an already-reviewed draft file
+	 * through the same validated merge the wizard uses. parseDraftFile refuses
+	 * everything but environment and ask arrays, so trust prose and ask
+	 * patterns are the only things a draft file can add. Interactive sessions
+	 * confirm once more before the write; headless ones see the draft and a
+	 * rerun hint, never a write.
+	 */
+	async function runSetupApply(ctx: ExtensionContext, file: string): Promise<void> {
+		const target = path.resolve(ctx.cwd, file);
+		const parsed = parseDraftFile(target);
+		if (!parsed.ok) {
+			ctx.ui.notify(`automode: ${parsed.error}`, "warning");
+			return;
+		}
+		const current = loadAutomodeRules();
+		for (const warning of current.warnings) {
+			ctx.ui.notify(`automode: ${warning}`, "warning");
+		}
+		const payload = JSON.stringify(draftPayload(parsed.draft), null, 2);
+		if (!ctx.hasUI) {
 			ctx.ui.notify(
-				`automode: wrote ${written.path} (reloads at next /automode toggle or session start)`,
+				`automode setup draft (${target}):\n${payload}\nrerun in an interactive session to write`,
 				"info",
 			);
-			loadAutoConfig(ctx);
+			return;
+		}
+		for (;;) {
+			const choice = await ctx.ui.select(
+				`automode setup draft (${target}):\n${parsed.draft.summary.join("\n")}`,
+				["Write", "Show full draft", "Discard"],
+			);
+			if (choice === "Show full draft") {
+				ctx.ui.notify(`automode setup draft (full):\n${payload}`, "info");
+				continue;
+			}
+			if (choice !== "Write") {
+				ctx.ui.notify("automode: setup draft discarded; nothing written", "info");
+				return;
+			}
+			writeDraft(ctx, parsed.draft, { rules: current.rules, source: current.source });
 			return;
 		}
 	}
 
 	pi.registerCommand("automode", {
 		description:
-			"Show the automode permission status; /automode auto|default switches the session mode; /automode denied lists recent denials; /automode setup drafts config entries from git remotes and the audit log",
+			"Show the automode permission status; /automode auto|default switches the session mode; /automode denied lists recent denials; /automode setup drafts config entries from git remotes and the audit log; /automode setup apply <file> lands a reviewed draft file (environment and ask only) through the same merge",
 		handler: async (args: string, ctx: ExtensionContext) => {
 			await ensureStartup(ctx);
-			const arg = args.trim().toLowerCase();
+			const raw = args.trim();
+			const arg = raw.toLowerCase();
 			if (arg === "") {
 				ctx.ui.notify(await statusText(ctx), "info");
 				return;
@@ -795,6 +917,15 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			}
 			if (arg === "setup") {
 				await runSetup(ctx);
+				return;
+			}
+			if (arg.startsWith("setup apply")) {
+				const file = raw.slice("setup apply".length).trim();
+				if (file === "") {
+					ctx.ui.notify("automode: usage: /automode setup apply <draft.json>", "warning");
+					return;
+				}
+				await runSetupApply(ctx, file);
 				return;
 			}
 			if (arg !== "auto" && arg !== "default") {
