@@ -119,7 +119,7 @@ const pin =
 	pkg.devDependencies?.["@earendil-works/pi-coding-agent"];
 const argv = process.argv.slice(2);
 
-// torus serve / torus acp-agent — process-per-surface subcommands, never pi
+// torus serve / torus acp-agent / torus config — process-per-surface subcommands, never pi
 // manifest extensions. Intercepted before the pi passthrough: the process IS
 // the surface, not an extension inside an engine session. Their modules are
 // TypeScript with .js import specifiers, so this plain .mjs launcher uses a
@@ -200,6 +200,26 @@ function acpHelp() {
 	].join("\n");
 }
 
+function configHelp() {
+	return [
+		"torus config - inspect the unified config and fold legacy files into it",
+		"",
+		"Usage:",
+		"  torus config status",
+		"  torus config migrate [--yes]",
+		"",
+		"status prints each config section's source: config.json, the legacy",
+		"standalone file, or default. migrate folds every legacy file (chains.json,",
+		"automode.json, serve.json, keywords.json) that has no config.json section",
+		"yet into the torus home's config.json (TORUS_HOME overrides ~/.torus). It",
+		"prints the plan and writes nothing without --yes; with --yes the write is",
+		"atomic, existing sections and unknown top-level keys are preserved",
+		"verbatim, and legacy files are left in place — delete them when ready.",
+		"Both commands resolve the torus home from TORUS_HOME.",
+		"",
+	].join("\n");
+}
+
 function torusHelp(versionLine) {
 	return [
 		versionLine,
@@ -209,6 +229,7 @@ function torusHelp(versionLine) {
 		"  torus --permission-mode <auto|default>         start in a permission mode (sets TORUS_PERMISSION_MODE for the session)",
 		"  torus serve                                    authenticated HTTP server",
 		"  torus acp-agent                                ACP v1 agent over stdio",
+		"  torus config <status|migrate>                  inspect unified config / fold legacy files",
 		"  torus --version, -v                            print torus + engine versions",
 		"  torus --help, -h, help                         show this help",
 		"",
@@ -285,6 +306,32 @@ if (argv[0] === "acp-agent") {
 		process.exit(1);
 	}
 	process.exit(0);
+}
+
+if (argv[0] === "config" && (argv[1] === "--help" || argv[1] === "-h")) {
+	process.stdout.write(configHelp());
+	process.exit(0);
+}
+
+// torus config — inspect the unified config.json (status) or fold legacy
+// standalone files into it (migrate). Like serve/acp-agent this is the
+// process itself, never an engine session; unlike them it runs to completion
+// and exits with the CLI's status.
+if (argv[0] === "config") {
+	if (!process.features.typescript && !process.env["TORUS_CONFIG_BOOTSTRAPPED"]) {
+		reexecStripTypes("TORUS_CONFIG_BOOTSTRAPPED");
+	}
+	await enableTsResolveHook();
+	process.env["TORUS_ROOT"] = root;
+	if (!process.env["TORUS_ENGINE_BIN"]) process.env["TORUS_ENGINE_BIN"] = resolveBinary();
+	const configCli = await import(new URL("../../extensions/config/cli.ts", import.meta.url).href);
+	let status = 1;
+	try {
+		status = await configCli.runConfigCli(argv.slice(1));
+	} catch (err) {
+		process.stderr.write(`torus: config failed: ${err?.message ?? err}\n`);
+	}
+	process.exit(status);
 }
 
 if (argv[0] === "--version" || argv[0] === "-v") {
