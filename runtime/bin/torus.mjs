@@ -26,6 +26,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { extractPayload, readMarker } from "./payload-extract.mjs";
+import { extractPermissionMode } from "./permission-mode.mjs";
 
 function isTorusRoot(candidate) {
 	try {
@@ -205,6 +206,7 @@ function torusHelp(versionLine) {
 		"",
 		"Usage:",
 		"  torus [options] [--] [@files...] [messages]    engine session (default)",
+		"  torus --permission-mode <auto|default>         start in a permission mode (sets TORUS_PERMISSION_MODE for the session)",
 		"  torus serve                                    authenticated HTTP server",
 		"  torus acp-agent                                ACP v1 agent over stdio",
 		"  torus --version, -v                            print torus + engine versions",
@@ -302,6 +304,18 @@ if (argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
 	process.exit(help.status ?? 1);
 }
 
+// Engine passthrough from here. The launcher owns --permission-mode (both
+// spellings): reject invalid values before spawning, strip every occurrence,
+// and export the mode as TORUS_PERMISSION_MODE for the session (flag overrides
+// a pre-set env value). Subcommand dispatch above matched on argv[0] only, so
+// a flag before `serve`/`acp-agent` already fell through to this path.
+const { argv: engineArgv, mode, error } = extractPermissionMode(argv);
+if (error) {
+	process.stderr.write(`torus: --permission-mode: ${error}\n`);
+	process.exit(2);
+}
+if (mode !== undefined) process.env["TORUS_PERMISSION_MODE"] = mode;
+
 function resolveBinary() {
 	const envBin = process.env["TORUS_PI_BIN"];
 	if (envBin) return envBin;
@@ -346,7 +360,7 @@ if (pin) {
 	}
 }
 
-const child = spawn(bin, ["--extension", root, ...argv], {
+const child = spawn(bin, ["--extension", root, ...engineArgv], {
 	stdio: "inherit",
 	env: {
 		...process.env,
