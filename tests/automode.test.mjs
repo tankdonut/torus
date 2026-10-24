@@ -6,6 +6,9 @@ import { test } from "node:test";
 
 const home = mkdtempSync(path.join(tmpdir(), "torus-automode-wiring-"));
 process.env.TORUS_HOME = home;
+// Audit rows resolve against the fake home even when the suite runs inside a
+// torus session (which exports TORUS_STATE_DIR, the audit path's first pick).
+delete process.env.TORUS_STATE_DIR;
 delete process.env.TORUS_PERMISSION_MODE;
 delete process.env.TORUS_PERMISSION_MODEL;
 

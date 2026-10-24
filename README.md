@@ -75,7 +75,7 @@ The judge is a classifier model. Pin one with `TORUS_PERMISSION_MODEL=provider/m
 
 With no classifier reachable, the session model judges the command in one shot. If every model path fails, the command still runs unjudged, and its tool result carries an `[automode]` notice.
 
-Every decision appends one JSON line to `~/.torus/automode.log` for review. Automode only adds gates: denials from guards, `cc-safety-net`, sandbox, and approval still win over anything automode decides. The full pipeline order is in [docs/extensions.md](docs/extensions.md).
+Every decision appends one JSON line to `automode.log` under the session's project state directory, or `~/.torus/automode.log` when no project state exists. Automode only adds gates: denials from guards, `cc-safety-net`, sandbox, and approval still win over anything automode decides. The full pipeline order is in [docs/extensions.md](docs/extensions.md).
 
 ## Where to go next
 

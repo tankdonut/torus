@@ -6,6 +6,9 @@ import { test } from "node:test";
 
 const home = mkdtempSync(path.join(tmpdir(), "torus-automode-"));
 process.env.TORUS_HOME = home;
+// Live-env defaults below must resolve against the fake home even when the
+// suite itself runs inside a torus session (which exports TORUS_STATE_DIR).
+delete process.env.TORUS_STATE_DIR;
 
 const {
 	resolveMode,
@@ -155,6 +158,19 @@ test("appendAuditRow: default path honors TORUS_HOME", () => {
 	assert.equal(JSON.parse(readFileSync(log, "utf8", "r")).command, "git status");
 });
 
+test("appendAuditRow: default path prefers TORUS_STATE_DIR when set", () => {
+	const stateDir = path.join(home, "state");
+	process.env.TORUS_STATE_DIR = stateDir;
+	try {
+		appendAuditRow(sampleRow({ command: "git log --oneline" }));
+		const log = path.join(stateDir, AUDIT_LOG_NAME);
+		assert.ok(existsSync(log));
+		assert.equal(JSON.parse(readFileSync(log, "utf8", "r")).command, "git log --oneline");
+	} finally {
+		delete process.env.TORUS_STATE_DIR;
+	}
+});
+
 test("appendAuditRow: an unwritable target is swallowed without throwing", () => {
 	const blocker = path.join(home, "blocker");
 	writeFileSync(blocker, "i am a file");
@@ -171,6 +187,10 @@ test("torusHomeDir and derived paths: TORUS_HOME root, else .torus under HOME or
 	assert.equal(auditPath({ HOME: "/h" }), path.join("/h", ".torus", AUDIT_LOG_NAME));
 	assert.equal(rulesPath({ TORUS_HOME: "/t" }), path.join("/t", RULES_FILE_NAME));
 	assert.equal(auditPath({ TORUS_HOME: "/t" }), path.join("/t", AUDIT_LOG_NAME));
+	assert.equal(
+		auditPath({ TORUS_STATE_DIR: "/s", TORUS_HOME: "/t", HOME: "/h" }),
+		path.join("/s", AUDIT_LOG_NAME),
+	);
 	assert.equal(RULES_FILE_NAME, "automode.json");
 	assert.equal(AUDIT_LOG_NAME, "automode.log");
 });

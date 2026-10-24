@@ -42,9 +42,16 @@ export function rulesPath(env: NodeJS.ProcessEnv = process.env): string {
 	return path.join(torusHomeDir(env), RULES_FILE_NAME);
 }
 
-/** Audit-log path under a torus home (defaults to the live process env). */
+/**
+ * Audit-log path: the project state dir when the session provides one (every
+ * torus session exports TORUS_STATE_DIR), else the torus home for bare pi
+ * hosts. Rules stay user-global under the torus home so no project can widen
+ * its own permissions.
+ */
 export function auditPath(env: NodeJS.ProcessEnv = process.env): string {
-	return path.join(torusHomeDir(env), AUDIT_LOG_NAME);
+	return env["TORUS_STATE_DIR"]
+		? path.join(env["TORUS_STATE_DIR"], AUDIT_LOG_NAME)
+		: path.join(torusHomeDir(env), AUDIT_LOG_NAME);
 }
 
 const AUTO_MODE_VALUES = new Set(["1", "on", "auto"]);
