@@ -14,11 +14,23 @@ const othersShare = languages
 const bar = [...topLanguages.map((l) => ({ name: l.language, share: l.share }))];
 if (othersShare > 0) bar.push({ name: "Other", share: othersShare });
 
-const palette = ["#3178c6", "#f1e05a", "#519aba", "#a374be", "#e34c26", "#8b8b8b"];
-const colorFor = (name: string) => {
-	const index = bar.findIndex((entry) => entry.name === name);
-	return palette[index % palette.length];
+// GitHub linguist colors where they exist; anything else falls back to the
+// ordered palette so every language still gets a distinct hue.
+const LINGUIST: Record<string, string> = {
+	TypeScript: "#3178c6",
+	JavaScript: "#f1e05a",
+	Markdown: "#083fa1",
+	Astro: "#ff5a03",
+	CSS: "#663399",
+	YAML: "#cb171e",
+	Shell: "#89e051",
+	SVG: "#ffb13b",
+	JSON: "#292929",
+	Other: "#8b8b8b",
 };
+const fallbackPalette = ["#a374be", "#e34c26", "#519aba", "#f1502f", "#0db7ed", "#199f4b"];
+const colorFor = (name: string, index: number) =>
+	LINGUIST[name] ?? fallbackPalette[index % fallbackPalette.length];
 
 const humanContributors = git.contributors.filter((c) => !c.bot).length;
 const lastPush = git.lastCommit ?? "";
@@ -35,13 +47,13 @@ const lastPush = git.lastCommit ?? "";
 	</p>
 
 	<div class="langbar" role="img" aria-label={topLanguages.map((l) => `${l.language} ${Math.round(l.share * 100)}%`).join(", ")}>
-		{bar.map((entry) => <span style={`width:${entry.share * 100}%;background:${colorFor(entry.name)}`} title={entry.name}></span>)}
+		{bar.map((entry, index) => <span style={`width:${entry.share * 100}%;background:${colorFor(entry.name, index)}`} title={entry.name}></span>)}
 	</div>
 	<ul class="langs">
 		{
-			bar.map((entry) => (
+			bar.map((entry, index) => (
 				<li>
-					<span class="swatch" style={`background:${colorFor(entry.name)}`} aria-hidden="true" />
+					<span class="swatch" style={`background:${colorFor(entry.name, index)}`} aria-hidden="true" />
 					{entry.name} <span class="pct">{Math.round(entry.share * 100)}%</span>
 				</li>
 			))

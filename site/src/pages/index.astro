@@ -18,6 +18,7 @@ import CodeBlock from "../components/CodeBlock.astro";
 import CommitGraph from "../components/CommitGraph.astro";
 import FactsStrip from "../components/FactsStrip.astro";
 import Faq from "../components/Faq.astro";
+import GitHubMark from "../components/GitHubMark.astro";
 import RepoCard from "../components/RepoCard.astro";
 import Section from "../components/Section.astro";
 import TuiCapture from "../components/TuiCapture.astro";
@@ -81,6 +82,8 @@ const fontFaces = [
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}/favicon.svg`} />
+		<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#101014" media="(prefers-color-scheme: dark)" />
 		<style is:inline set:html={fontFaces} />
 		<title>torus</title>
 		<meta property="og:title" content="torus" />
@@ -91,13 +94,15 @@ const fontFaces = [
 		<header>
 			<a class="wordmark" href={`${base}/`}>torus</a>
 			<span class="version">v{version}</span>
-			<a href="https://github.com/tankdonut/torus">GitHub</a>
+			<a class="gh" href="https://github.com/tankdonut/torus" aria-label="torus on GitHub">
+				<GitHubMark />
+			</a>
 		</header>
 		<main>
 			<section class="hero">
 				<h1 data-reveal>A multi-agent coding harness on the <em>pinned</em> stock pi engine</h1>
 				<p class="lede" data-reveal>
-					{pitch} torus owns the harness layer: roster, delegation, ambient UI, memory. The
+					{pitch} torus owns the harness layer: the roster, delegation, the terminal UI around both, and memory. The
 					engine beneath it is a pinned, replaceable dependency.
 				</p>
 				<div data-reveal>
@@ -118,7 +123,7 @@ const fontFaces = [
 
 			<Section num="1" id="what">
 				<Fragment slot="title">The harness <em>layer</em>, not the engine</Fragment>
-				<div data-reveal>
+				<div>
 					<p>
 						torus owns everything around the model calls, and the engine stays a stock,
 						pinned dependency in <code>package.json</code>: replaceable without touching the
@@ -129,7 +134,7 @@ const fontFaces = [
 						<dd>Specialist agents with their own model chains and tools.</dd>
 						<dt>Delegation</dt>
 						<dd>Fan-outs, pipelines, and persistent teams with shared tasklists.</dd>
-						<dt>Ambient UI</dt>
+						<dt>Terminal UI</dt>
 						<dd>tmux panes, statusline, and the fleet browser.</dd>
 						<dt>Memory</dt>
 						<dd>Git-backed notes injected into future sessions.</dd>
@@ -139,7 +144,7 @@ const fontFaces = [
 
 			<Section num="2" id="delegation">
 				<Fragment slot="title">Delegation and <em>teams</em></Fragment>
-				<div data-reveal>
+				<div>
 					<p>
 						Hand work to any agent with a slash dispatch: <code>/builder</code>, <code>/explorer</code>,
 						<code>/librarian</code>, <code>/reviewer</code>, and the rest of the roster. Sessions
@@ -168,7 +173,7 @@ const fontFaces = [
 
 			<Section num="3" id="visibility">
 				<Fragment slot="title">Live <em>visibility</em></Fragment>
-				<div data-reveal>
+				<div>
 					<p>
 						Every running agent appears in the statusline fleet strip with live turns and
 						tokens. <kbd>alt+t</kbd> opens the fleet browser over everything running:
@@ -201,7 +206,7 @@ const fontFaces = [
 
 			<Section num="4" id="open">
 				<Fragment slot="title">Built in the <em>open</em></Fragment>
-				<div data-reveal>
+				<div>
 					<p>
 						torus is free software under the MIT licence and developed in public on GitHub.
 						The counts above and the graph below are derived from the repository at build
@@ -214,7 +219,7 @@ const fontFaces = [
 
 			<Section num="5" id="memory">
 				<Fragment slot="title">Memory that <em>persists</em></Fragment>
-				<div data-reveal>
+				<div>
 					<p>
 						Notes are git-backed and injected into future sessions. <code>/reflect</code> distills
 						a session into durable memory, and <code>/goal</code> pins a standing objective.
@@ -224,7 +229,7 @@ const fontFaces = [
 
 			<Section num="6" id="skills">
 				<Fragment slot="title">Skills in the <em>open</em></Fragment>
-				<div data-reveal>
+				<div>
 					<p>
 						Skills follow the <a href="https://agentskills.io">Agent Skills</a> open
 						standard, so the same skill runs in Claude Code and Codex unchanged. External
@@ -235,7 +240,7 @@ const fontFaces = [
 
 			<Section num="7" id="guards">
 				<Fragment slot="title">Guards by <em>default</em></Fragment>
-				<div data-reveal>
+				<div>
 					<p>
 						Context-integrity guards watch what reaches the model, credentials are
 						redacted in delegation logs, and memory writes pass through a read-only
@@ -246,7 +251,7 @@ const fontFaces = [
 
 			<Section num="8" id="questions">
 				<Fragment slot="title">The ones that <em>decide it</em></Fragment>
-				<div data-reveal>
+				<div>
 					<p>Anything else is best asked where the code is: open an issue.</p>
 					<Faq questions={faq} />
 				</div>
@@ -254,7 +259,7 @@ const fontFaces = [
 
 			<Section num="9" id="install">
 				<Fragment slot="title">Four ways to <em>install</em></Fragment>
-				<div data-reveal>
+				<div>
 					<h3>As a pi package</h3>
 					<p>
 						With <a href="https://github.com/earendil-works/pi">pi</a> installed, one
@@ -302,10 +307,6 @@ const fontFaces = [
 							Install it, open the terminal, meet the roster. If you do not like it,
 							<code>pi remove</code> is one command too.
 						</p>
-						<CodeBlock
-							title="install"
-							lines={[`$ pi install git:github.com/tankdonut/torus@v${version}`]}
-						/>
 						<p>
 							<a href={docsHref}>Docs index</a> · <a href={securityHref}>Security</a> ·
 							<a href={`${base}/changelog/`}>Changelog</a>
@@ -315,7 +316,10 @@ const fontFaces = [
 			</Section>
 		</main>
 		<footer>
-			<a href="https://github.com/tankdonut/torus">tankdonut/torus</a> · MIT
+			<a class="gh" href="https://github.com/tankdonut/torus">
+				<GitHubMark />tankdonut/torus
+			</a>
+			· MIT
 		</footer>
 		<script is:inline>
 			(() => {

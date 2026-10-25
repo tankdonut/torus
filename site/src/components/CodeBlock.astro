@@ -16,9 +16,8 @@ const payload = lines.join("\n");
 
 <figure class="codeblock">
 	<div class="frame">
-		<div class="chrome" aria-hidden="true">
-			<span class="dot"></span><span class="dot"></span><span class="dot"></span>
-			{title ? <span class="chrome-title">{title}</span> : null}
+		<div class="chrome">
+			{title ? <span class="chrome-title">{title}</span> : <span class="chrome-title">shell</span>}
 			<button class="copy" type="button" data-copy={payload}>copy</button>
 		</div>
 		<pre><code>{lines.map((line, index) => `${index > 0 ? "\n" : ""}${line}`)}</code></pre>
@@ -37,21 +36,13 @@ const payload = lines.join("\n");
 		display: flex;
 		align-items: center;
 		gap: calc(var(--spacing) * 1.5);
-		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.dot {
-		width: 9px;
-		height: 9px;
-		border-radius: 50%;
-		background: var(--color-border);
+		padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2) 0;
 	}
 
 	.chrome-title {
-		margin-left: calc(var(--spacing) * 2);
 		font-family: var(--font-mono);
-		font-size: var(--text-small);
+		font-size: 0.6875rem;
+		letter-spacing: 0.08em;
 		color: var(--color-muted);
 	}
 
