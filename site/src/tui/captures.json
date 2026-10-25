@@ -1,14 +1,14 @@
 {
-	"capturedAt": "2026-10-25T22:08:41.491Z",
+	"capturedAt": "2026-10-25T22:57:52.190Z",
 	"geometry": [
 		140,
 		32
 	],
 	"scenes": [
 		"statusline-fleet",
-		"delegation-pane",
 		"fleet-list",
 		"fleet-detail",
+		"team",
 		"roster"
 	]
 }

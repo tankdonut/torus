@@ -28,6 +28,11 @@ const WIDTH = 140;
 const HEIGHT = 32;
 const DISPATCH =
 	"list every exported symbol in extensions/fsutil.ts with a one-line summary of each";
+const TEAM_MESSAGE = [
+	"Create a persistent team with exactly two members: handle @scout on the builder agent and handle @index on the librarian agent.",
+	"Shared objective: catalog the site's docs pages.",
+	"Send each member one short instruction to begin, then reply with only: team ready",
+].join(" ");
 
 const tmux = (args, opts = {}) =>
 	spawnSync("tmux", args, { encoding: "utf8", timeout: 15_000, ...opts });
@@ -104,7 +109,7 @@ if (run("test -d node_modules/@earendil-works/pi-coding-agent").status !== 0) {
 	process.exit(1);
 }
 
-const stateDir = mkdtempSync(resolve(tmpdir(), "torus-site-capture-"));
+let stateDir = mkdtempSync(resolve(tmpdir(), "torus-site-capture-"));
 tmux([
 	"new-session",
 	"-d",
@@ -140,29 +145,6 @@ try {
 	waitFor(`${SESSION}.0`, "torus fleet", 30_000, "fleet strip after dispatch");
 	sleep(2000);
 	capture(`${SESSION}.0`, "statusline-fleet");
-
-	const sidePane = delegationPane();
-	if (sidePane) {
-		sleep(8000);
-		// Capture the side pane at the main pane's width so every scene renders
-		// at one width: tmux reflows the tailed log onto the wider grid, and the
-		// split is restored before the main-pane scenes run.
-		const paneWidth = (pane) =>
-			(tmux(["display-message", "-p", "-t", pane, "#{pane_width}"]).stdout ?? "").trim();
-		const mainWidth = paneWidth(`${SESSION}.0`);
-		const sideWidth = paneWidth(sidePane);
-		if (mainWidth !== "" && sideWidth !== "") {
-			tmux(["resize-pane", "-t", sidePane, "-x", mainWidth]);
-			sleep(2500);
-			capture(sidePane, "delegation-pane");
-			tmux(["resize-pane", "-t", sidePane, "-x", sideWidth]);
-			sleep(1000);
-		} else {
-			capture(sidePane, "delegation-pane");
-		}
-	} else {
-		console.warn("site: delegation pane already closed; skipping delegation-pane");
-	}
 
 	tmux(["send-keys", "-t", `${SESSION}.0`, "Escape"]);
 	sleep(600);
@@ -203,6 +185,51 @@ try {
 	// Let the dispatch settle before teardown so the child exits cleanly.
 	const deadline = Date.now() + 240_000;
 	while (delegationPane() && Date.now() < deadline) sleep(3000);
+	teardown(stateDir, true);
+
+	// Team mode runs in a fresh session: in the dispatch session the explorer's
+	// deferred result turn owns the lead, and the team message queues behind it.
+	stateDir = mkdtempSync(resolve(tmpdir(), "torus-site-capture-"));
+	tmux([
+		"new-session",
+		"-d",
+		"-s",
+		SESSION,
+		"-x",
+		String(WIDTH),
+		"-y",
+		String(HEIGHT),
+		"-c",
+		repoRoot,
+		`env TORUS_STATE_DIR=${stateDir} TORUS_DREAMING=0 ./runtime/bin/torus.mjs`,
+	]);
+	waitFor(`${SESSION}.0`, "torus · leader", 60_000, "TUI boot (team session)");
+	tmux(["send-keys", "-t", `${SESSION}.0`, TEAM_MESSAGE, "Enter"]);
+	// The ⧉ badge renders only on team-member rows in the strip; the prompt
+	// itself echoes the handles, so "@scout" would match the sent message.
+	try {
+		waitFor(`${SESSION}.0`, "⧉", 180_000, "team members to spawn");
+	} catch (error) {
+		console.error(`site: pane while waiting for the team:\n${paneText(`${SESSION}.0`)}`);
+		throw error;
+	}
+	// Open the browser while members still run: alt+t is a no-op once every
+	// member idles (no delegations, no running externals = no content).
+	sleep(1500);
+	tmux(["send-keys", "-t", `${SESSION}.0`, "M-t"]);
+	// Members render as regular fleet rows carrying the agent name in parens
+	// ("@scout (builder)"); the team section header only exists for non-
+	// delegation externals, so it never appears for a members-only fleet.
+	try {
+		waitFor(`${SESSION}.0`, "(builder)", 15_000, "fleet browser team rows");
+	} catch (error) {
+		console.error(`site: pane after alt+t:\n${paneText(`${SESSION}.0`)}`);
+		throw error;
+	}
+	sleep(4000);
+	capture(`${SESSION}.0`, "team");
+	tmux(["send-keys", "-t", `${SESSION}.0`, "Escape"]);
+	sleep(600);
 
 	writeFileSync(
 		resolve(outDir, "captures.json"),
@@ -210,7 +237,7 @@ try {
 			{
 				capturedAt: new Date().toISOString(),
 				geometry: [WIDTH, HEIGHT],
-				scenes: ["statusline-fleet", "delegation-pane", "fleet-list", "fleet-detail", "roster"],
+				scenes: ["statusline-fleet", "fleet-list", "fleet-detail", "team", "roster"],
 			},
 			null,
 			"\t",
