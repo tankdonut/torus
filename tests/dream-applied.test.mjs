@@ -260,3 +260,21 @@ test("applyDreamProposal writes a new file when no near-duplicate exists", () =>
 	const files = readdirSync(entriesDir).filter((f) => f.endsWith(".md"));
 	assert.equal(files.length, 2, "unrelated topic gets its own file");
 });
+
+test("applyDreamProposal scans the store once per proposal, not per entry", () => {
+	const before = memory._memoryStats().entryScans;
+	const counts = memory.applyDreamProposal({
+		entries: [
+			{ topic: "Dream scan lesson one", body: "a", tags: [], project: "global" },
+			{ topic: "Dream scan lesson two", body: "b", tags: [], project: "global" },
+		],
+		deletes: [],
+		profiles: [],
+	});
+	assert.equal(counts.entries, 2);
+	assert.equal(
+		memory._memoryStats().entryScans - before,
+		1,
+		"two proposed entries share one store scan",
+	);
+});

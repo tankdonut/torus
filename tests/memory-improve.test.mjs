@@ -390,3 +390,65 @@ test("torus_recall and torus_memories emit structuredContent matching their sche
 	assert.ok(!entry.file.includes("/"), "file is the basename torus_forget takes");
 	assert.deepEqual(entry.tags, ["probe"]);
 });
+
+test("entry parses are cached: each file parses once across repeated listings", async () => {
+	for (const f of entryFiles()) unlinkSync(path.join(entriesDir, f));
+	for (let i = 0; i < 5; i++) {
+		writeRawEntry(
+			`2026-01-01-cached-lesson-${i}.md`,
+			`topic: Cached lesson ${i}\nproject: global\ncreated: 2026-01-01T00:00:00.000Z`,
+			`body ${i}`,
+		);
+	}
+	const before = memory._memoryStats().parses;
+	await memory.listTool.execute("t", {});
+	const afterFirst = memory._memoryStats().parses;
+	await memory.listTool.execute("t", {});
+	const afterSecond = memory._memoryStats().parses;
+	assert.equal(afterFirst - before, 5, "first listing parses every entry exactly once");
+	assert.equal(
+		afterSecond - afterFirst,
+		0,
+		"second listing (entries plus corrupt scan) serves cached parses",
+	);
+
+	writeFileSync(
+		path.join(entriesDir, "2026-01-01-cached-lesson-0.md"),
+		"not frontmatter anymore\n",
+		"utf8",
+	);
+	const warned = await memory.listTool.execute("t", {});
+	assert.match(
+		toolText(warned),
+		/2026-01-01-cached-lesson-0\.md/,
+		"stat-mismatched re-read still catches in-place corruption",
+	);
+});
+
+test("ensureStore runs its setup once per process; later writes spend no setup spawns", async () => {
+	const before = memory._memoryStats();
+	await memory.rememberTool.execute("t", {
+		topic: "Once guard probe one",
+		content: "first write",
+	});
+	const afterFirst = memory._memoryStats();
+	await memory.rememberTool.execute("t", {
+		topic: "Once guard probe two",
+		content: "second write",
+	});
+	const afterSecond = memory._memoryStats();
+	assert.ok(
+		afterFirst.ensureStoreCalls - before.ensureStoreCalls >= 1,
+		"ensureStore runs on every write",
+	);
+	assert.equal(
+		afterSecond.storeSetups,
+		afterFirst.storeSetups,
+		"second ensureStore call re-runs no store setup",
+	);
+	assert.equal(
+		afterSecond.gitSpawns - afterFirst.gitSpawns,
+		2,
+		"second write spawns only the git round (add + commit), zero setup spawns",
+	);
+});

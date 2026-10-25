@@ -36,6 +36,19 @@ const CONTENT_CHAR_LIMIT = 8192;
 const RECENT_MS = 30 * 24 * 60 * 60 * 1000;
 const INJECT_QUERY_MIN = 8;
 
+/** Test-only budget counters (parses, scans, setup runs, git spawns); not a tool surface. */
+const memoryStats = {
+	parses: 0,
+	entryScans: 0,
+	ensureStoreCalls: 0,
+	storeSetups: 0,
+	gitSpawns: 0,
+};
+
+export function _memoryStats(): typeof memoryStats {
+	return { ...memoryStats };
+}
+
 function projectSlug(cwd: string): string {
 	return cwd
 		.replace(/^[a-z]+:\/\//i, "")
@@ -44,6 +57,7 @@ function projectSlug(cwd: string): string {
 }
 
 function git(args: string[]): ReturnType<typeof spawnSync> {
+	memoryStats.gitSpawns += 1;
 	return spawnSync("git", ["-C", MEMORY_ROOT, ...args], {
 		stdio: ["ignore", "pipe", "pipe"],
 		// gitEnv scrubs ambient GIT_* (e.g. GIT_INDEX_FILE under a git hook)
@@ -101,8 +115,16 @@ function gitAdd(file: string): void {
 	if (result.status !== 0) noteGitFailure(`git add ${path.basename(file)}`, result);
 }
 
+let storeEnsured = false;
+
 function ensureStore(): void {
+	memoryStats.ensureStoreCalls += 1;
+	// the entries dir can vanish mid-process (external tooling, tests); the
+	// setup below cannot regress in-process, so it runs once
 	mkdirSync(ENTRIES_DIR, { recursive: true });
+	if (storeEnsured) return;
+	storeEnsured = true;
+	memoryStats.storeSetups += 1;
 	const gitignore = path.join(MEMORY_ROOT, ".gitignore");
 	const wanted = ".dream-state\n.reflect-state\n.git-errors.log\n.githooks\n";
 	if (!existsSync(gitignore)) {
@@ -369,10 +391,12 @@ export function applyDreamProposal(
 	session?: string,
 ): DreamApplied {
 	const counts = emptyApplied();
+	// one store scan per proposal: every dedup lookup below shares this snapshot
+	const existing = listEntries();
 	for (const entry of proposal.entries.slice(0, cap)) {
 		// unscoped on purpose (unlike the remember tool): dreamer proposals may be
 		// global, and cross-project near-duplicates dilute the same injection slots
-		const duplicate = scoreEntries(entry.topic, listEntries()).find(
+		const duplicate = scoreEntries(entry.topic, existing).find(
 			(r) => r.entry.topic.toLowerCase() === entry.topic.toLowerCase() || r.score >= 8,
 		);
 		if (duplicate) {
@@ -405,17 +429,52 @@ export function applyDreamProposal(
 	return counts;
 }
 
+/*
+ * Entry files are immutable between writes (updates rewrite the file, forget
+ * unlinks it), so a stat check is the only invalidation needed: an mtime/size
+ * mismatch re-reads, deletions drop out through the readdir difference, and a
+ * corrupt file simply caches its null parse until an external repair rewrites
+ * it (which invalidates by stat).
+ */
+const entryCache = new Map<string, { mtimeMs: number; size: number; entry: MemoryEntry | null }>();
+
+function cachedEntry(file: string): MemoryEntry | null {
+	let stat: { mtimeMs: number; size: number };
+	try {
+		stat = statSync(file);
+	} catch {
+		return null;
+	}
+	const hit = entryCache.get(file);
+	if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.entry;
+	memoryStats.parses += 1;
+	let entry: MemoryEntry | null = null;
+	try {
+		entry = parseEntry(file, readFileSync(file, "utf8"));
+	} catch {
+		entry = null;
+	}
+	entryCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, entry });
+	return entry;
+}
+
 function listEntries(): MemoryEntry[] {
+	memoryStats.entryScans += 1;
 	try {
 		const files = readdirSync(ENTRIES_DIR)
 			.filter((f) => f.endsWith(".md"))
 			.sort()
 			.reverse();
-		return files
-			.map((f) =>
-				parseEntry(path.join(ENTRIES_DIR, f), readFileSync(path.join(ENTRIES_DIR, f), "utf8")),
-			)
-			.filter((e): e is MemoryEntry => e !== null);
+		const live = new Set(files.map((f) => path.join(ENTRIES_DIR, f)));
+		for (const file of entryCache.keys()) {
+			if (!live.has(file)) entryCache.delete(file);
+		}
+		const entries: MemoryEntry[] = [];
+		for (const f of files) {
+			const entry = cachedEntry(path.join(ENTRIES_DIR, f));
+			if (entry) entries.push(entry);
+		}
+		return entries;
 	} catch {
 		return [];
 	}
@@ -695,16 +754,16 @@ export const recallTool = defineTool({
 	},
 });
 
-/** Entry files whose frontmatter no longer parses; invisible to every read path until removed. */
+/**
+ * Entry files whose frontmatter no longer parses; invisible to every read path
+ * until removed. Serves the same cached parses as listEntries, so torus_memories
+ * reads the store once.
+ */
 function corruptEntryFiles(): string[] {
 	try {
 		return readdirSync(ENTRIES_DIR)
 			.filter((f) => f.endsWith(".md"))
-			.filter(
-				(f) =>
-					parseEntry(path.join(ENTRIES_DIR, f), readFileSync(path.join(ENTRIES_DIR, f), "utf8")) ===
-					null,
-			);
+			.filter((f) => cachedEntry(path.join(ENTRIES_DIR, f)) === null);
 	} catch {
 		return [];
 	}
@@ -1174,13 +1233,15 @@ export function registerMemory(pi: ExtensionAPI): void {
 	pi.on("context", (event) => {
 		const sessionId = currentSessionId();
 		if (sessionId && injectedSessions.has(sessionId)) return undefined;
+		// mark even when the block turns out empty: an empty store must not be
+		// re-scanned on every model request; compaction re-arms below
+		if (sessionId) injectedSessions.add(sessionId);
 		const block = memoryContextBlock(
 			process.cwd(),
 			latestUserQuery(event.messages as unknown as readonly LooseMessage[]),
 			sessionId ?? "",
 		);
 		if (!block) return undefined;
-		if (sessionId) injectedSessions.add(sessionId);
 		event.messages.push({
 			role: "user",
 			content: [{ type: "text", text: block.trim() }],
