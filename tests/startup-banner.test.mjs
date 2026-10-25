@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 const { VERSION, initTheme } = await import("@earendil-works/pi-coding-agent");
@@ -169,3 +172,34 @@ test("banner stays out of non-tui modes, quietStartup, and TORUS_BANNER=0", () =
 function linesOf(header) {
 	return header.render(120).join("\n");
 }
+
+test("banner repaint reuses the memoized version instead of re-reading package.json", (t) => {
+	const dir = mkdtempSync(path.join(tmpdir(), "torus-banner-memo-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	writeFileSync(path.join(dir, "package.json"), JSON.stringify({ version: "0.0.0-memo-probe" }));
+
+	const { handlers, ctx, setHeaderCalls } = harness();
+	handlers["session_start"]({ type: "session_start", reason: "startup" }, ctx);
+	const header = setHeaderCalls[0]({}, painter);
+	const first = header.render(120);
+
+	// a swapped TORUS_ROOT manifest would be picked up by any per-render re-read
+	const hadRoot = "TORUS_ROOT" in process.env;
+	const prevRoot = process.env["TORUS_ROOT"];
+	process.env["TORUS_ROOT"] = dir;
+	try {
+		const second = header.render(120);
+		assert.deepEqual(
+			second,
+			first,
+			"repaint must render identically instead of re-resolving the version",
+		);
+		assert.ok(
+			!second.join("\n").includes("0.0.0-memo-probe"),
+			"repaint must not observe the swapped manifest under TORUS_ROOT",
+		);
+	} finally {
+		if (hadRoot) process.env["TORUS_ROOT"] = prevRoot;
+		else delete process.env["TORUS_ROOT"];
+	}
+});

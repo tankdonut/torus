@@ -272,7 +272,12 @@ export function supportsTorusLogo(): boolean {
 }
 
 /** torus payload version from the package manifest; engine version is VERSION. */
+// The header render closure calls this on every repaint, so the manifest read
+// is memoized: resolved once per process, env override honored on that first call.
+let cachedVersion: string | null = null;
+
 function torusVersion(): string {
+	if (cachedVersion !== null) return cachedVersion;
 	const candidates = [
 		process.env["TORUS_ROOT"],
 		path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
@@ -280,12 +285,17 @@ function torusVersion(): string {
 	for (const root of candidates) {
 		if (!root) continue;
 		try {
-			return JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+			const version: string = JSON.parse(
+				readFileSync(path.join(root, "package.json"), "utf8"),
+			).version;
+			cachedVersion = version;
+			return version;
 		} catch {
 			// manifest missing or unreadable: fall through to the next candidate
 		}
 	}
-	return "unknown";
+	cachedVersion = "unknown";
+	return cachedVersion;
 }
 
 /** Compact keybinding hint line, mirroring the engine's collapsed header. */
