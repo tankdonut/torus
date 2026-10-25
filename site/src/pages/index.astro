@@ -1,9 +1,321 @@
 ---
+// This page owns its document instead of composing Base.astro: Base has no head
+// slot, and a canonical <link> is only spec-valid (and only honored by crawlers)
+// inside <head>. Everything else mirrors Base: chrome, inline font faces, reveal.
+import interLatinExt from "@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2";
+import interLatin from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2";
+import monoLatinExt from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-ext-wght-normal.woff2";
+import monoLatin from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2";
+import serifLatinItalicExt from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-ext-wght-italic.woff2";
+import serifLatinExt from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-ext-wght-normal.woff2";
+import serifLatinItalic from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-italic.woff2";
+import serifLatin from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2";
+import "../styles/global.css";
+// The version pins the install commands; three levels up is the repo root's
+// package.json, not site/package.json.
+import pkg from "../../../package.json";
 // biome-ignore lint/correctness/noUnusedImports: rendered in the template below
-import Base from "../layouts/Base.astro";
+import Section from "../components/Section.astro";
+// biome-ignore lint/correctness/noUnusedImports: rendered in the template below
+import Terminal from "../components/Terminal.astro";
+
+// biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
+const pitch =
+	"A multi-agent coding harness on the pinned stock pi engine: a lead session that delegates to a roster of specialist agents with live visibility into everything they do.";
+// biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
+const version = pkg.version;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+// biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
+const docsHref = `${base}/docs/`;
+// biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
+const securityHref = `${base}/security/`;
+
+// Same inline @font-face block Base.astro ships: the woff2 files resolve and
+// hash through vite, and the rules must sit in <head> for first paint.
+// biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
+const fontFaces = [
+	`@font-face{font-family:'Inter Variable';font-style:normal;font-display:swap;font-weight:100 900;src:url(${interLatin}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
+	`@font-face{font-family:'Inter Variable';font-style:normal;font-display:swap;font-weight:100 900;src:url(${interLatinExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
+	`@font-face{font-family:'JetBrains Mono Variable';font-style:normal;font-display:swap;font-weight:100 800;src:url(${monoLatin}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
+	`@font-face{font-family:'JetBrains Mono Variable';font-style:normal;font-display:swap;font-weight:100 800;src:url(${monoLatinExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
+	`@font-face{font-family:'Source Serif 4 Variable';font-style:normal;font-display:swap;font-weight:200 900;src:url(${serifLatin}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
+	`@font-face{font-family:'Source Serif 4 Variable';font-style:normal;font-display:swap;font-weight:200 900;src:url(${serifLatinExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
+	`@font-face{font-family:'Source Serif 4 Variable';font-style:italic;font-display:swap;font-weight:200 900;src:url(${serifLatinItalic}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
+	`@font-face{font-family:'Source Serif 4 Variable';font-style:italic;font-display:swap;font-weight:200 900;src:url(${serifLatinItalicExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
+].join("\n");
 ---
 
-<Base title="torus">
-	<h1>torus docs site skeleton</h1>
-	<p>Placeholder page for the torus documentation site.</p>
-</Base>
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}/favicon.svg`} />
+		<style is:inline set:html={fontFaces} />
+		<title>torus</title>
+		<meta property="og:title" content="torus" />
+		<meta property="og:description" content={pitch} />
+		<link rel="canonical" href="https://tankdonut.github.io/torus/" />
+	</head>
+	<body>
+		<header>
+			<a class="wordmark" href="/">torus</a>
+			<a href="https://github.com/tankdonut/torus">GitHub</a>
+		</header>
+		<main>
+			<section class="hero">
+				<h1 data-reveal>A multi-agent coding harness on the <em>pinned</em> stock pi engine</h1>
+				<p class="lede" data-reveal>
+					{pitch} torus owns the harness layer: roster, delegation, ambient UI, memory. The
+					engine beneath it is a pinned, replaceable dependency.
+				</p>
+				<figure data-reveal>
+					<Terminal
+						title="install"
+						lines={[
+							`$ pi install git:github.com/tankdonut/torus@v${version}`,
+							"loads the full extension pack, skills, and agent roster",
+						]}
+					/>
+				</figure>
+				<p data-reveal>
+					<a href="https://github.com/tankdonut/torus">Source and releases on GitHub</a> or the <a href={docsHref}>docs index</a>.
+				</p>
+			</section>
+
+			<Section num="1" id="what">
+				<Fragment slot="title">The harness <em>layer</em>, not the engine</Fragment>
+				<div data-reveal>
+					<p>
+						torus owns everything around the model calls, and the engine stays a stock,
+						pinned dependency in <code>package.json</code>: replaceable without touching the
+						harness, and overridable per session with <code>TORUS_PI_BIN</code>.
+					</p>
+					<dl>
+						<dt>Roster</dt>
+						<dd>Specialist agents with their own model chains and tools.</dd>
+						<dt>Delegation</dt>
+						<dd>Fan-outs, pipelines, and persistent teams with shared tasklists.</dd>
+						<dt>Ambient UI</dt>
+						<dd>tmux panes, statusline, and the fleet browser.</dd>
+						<dt>Memory</dt>
+						<dd>Git-backed notes injected into future sessions.</dd>
+					</dl>
+				</div>
+			</Section>
+
+			<Section num="2" id="delegation">
+				<Fragment slot="title">Delegation and <em>teams</em></Fragment>
+				<div data-reveal>
+					<p>
+						Hand work to any agent with a slash dispatch: <code>/builder</code>, <code>/explorer</code>,
+						<code>/librarian</code>, <code>/reviewer</code>, and the rest of the roster. Sessions
+						delegate into parallel fan-outs, sequential
+						pipelines, and persistent teams with shared tasklists that survive restarts.
+						Every agent also runs as a persona of the main session (<kbd>alt+p</kbd> cycles
+						them).
+					</p>
+					<figure>
+						<Terminal
+							title="session"
+							lines={[
+								"$ /builder tighten the roster types",
+								"delegated to builder, tailing in pane 2",
+								"$ /explorer where does the roster load from?",
+								"delegated to explorer, tailing in pane 3",
+								"$ team",
+								"persistent team assembled with a shared tasklist",
+							]}
+						/>
+					</figure>
+				</div>
+			</Section>
+
+			<Section num="3" id="visibility">
+				<Fragment slot="title">Live <em>visibility</em></Fragment>
+				<div data-reveal>
+					<p>
+						Every delegation opens a tmux pane tailing what the agent does, and the
+						statusline carries a live entry per running child. <kbd>alt+t</kbd> opens the
+						fleet browser with live transcripts: press <kbd>s</kbd> to steer a running agent
+						mid-run, <kbd>x</kbd> to stop it.
+					</p>
+					<figure>
+						<Terminal
+							title="explorer · tmux pane 3"
+							lines={[
+								'$ rg "loadRoster" extensions/ agents/',
+								"extensions/registry.ts",
+								"agents/builder.md",
+								"$ read extensions/registry.ts",
+								"roster agents load from agent-file frontmatter at startup",
+							]}
+						/>
+					</figure>
+					<figure>
+						<Terminal
+							title="fleet browser (alt+t)"
+							lines={[
+								"builder    running   pane 2   tighten the roster types",
+								"explorer   running   pane 3   where does the roster load from?",
+								"librarian  idle",
+							]}
+						/>
+					</figure>
+				</div>
+			</Section>
+
+			<Section num="4" id="memory">
+				<Fragment slot="title">Memory that <em>persists</em></Fragment>
+				<div data-reveal>
+					<p>
+						Notes are git-backed and injected into future sessions. <code>/reflect</code> distills
+						a session into durable memory, and <code>/goal</code> pins a standing objective.
+					</p>
+					<figure>
+						<Terminal
+							title="memory"
+							lines={[
+								"$ /goal",
+								"goal pinned: land the docs site",
+								"$ /reflect",
+								"session distilled into 3 durable notes, committed to the memory repo",
+							]}
+						/>
+					</figure>
+				</div>
+			</Section>
+
+			<Section num="5" id="skills">
+				<Fragment slot="title">Skills in the <em>open</em></Fragment>
+				<div data-reveal>
+					<p>
+						Skills follow the <a href="https://agentskills.io">Agent Skills</a> open
+						standard, so the same skill runs in Claude Code and Codex unchanged. External
+						skills drop into <code>~/.agents/skills/</code> and load with no configuration.
+					</p>
+				</div>
+			</Section>
+
+			<Section num="6" id="guards">
+				<Fragment slot="title">Guards by <em>default</em></Fragment>
+				<div data-reveal>
+					<p>
+						Context-integrity guards watch what reaches the model, credentials are
+						redacted in delegation logs, and memory writes pass through a read-only
+						dreamer. The full threat model lives on the <a href={securityHref}>security page</a>.
+					</p>
+				</div>
+			</Section>
+
+			<Section num="7" id="install">
+				<Fragment slot="title">Four ways to <em>install</em></Fragment>
+				<div data-reveal>
+					<h3>As a pi package</h3>
+					<p>
+						With <a href="https://github.com/earendil-works/pi">pi</a> installed, one
+						command loads the full extension pack, skills, and agent roster: no clone, no
+						build. Launcher-only surfaces such as <code>torus serve</code> are not part of
+						this mode.
+					</p>
+					<figure>
+						<Terminal
+							title="package"
+							lines={[`$ pi install git:github.com/tankdonut/torus@v${version}`]}
+						/>
+					</figure>
+
+					<h3>As a single binary</h3>
+					<p>
+						Download <code>torus-&lt;os&gt;-&lt;arch&gt;</code> from the <a href="https://github.com/tankdonut/torus/releases">releases
+						page</a>, make it executable, and run it; the first launch self-bootstraps the runtime.
+					</p>
+					<figure>
+						<Terminal
+							title="binary"
+							lines={["$ chmod +x torus-<os>-<arch> && ./torus-<os>-<arch>"]}
+						/>
+					</figure>
+
+					<h3>In a container</h3>
+					<p>The full toolchain, no host install:</p>
+					<figure>
+						<Terminal
+							title="docker"
+							lines={['$ docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus']}
+						/>
+					</figure>
+
+					<h3>From source</h3>
+					<p>
+						The contributor path. You need Node 22.12 or newer. tmux is optional, since
+						delegation panes appear only inside tmux.
+					</p>
+					<figure>
+						<Terminal
+							title="source"
+							lines={[
+								"$ git clone https://github.com/tankdonut/torus.git && cd torus",
+								"$ ./make.sh npmrc",
+								"one-time: writes .npmrc, which agents are blocked from writing by design",
+								"$ npm install",
+								"$ ./runtime/bin/torus.mjs",
+							]}
+						/>
+					</figure>
+
+					<p class="cta">
+						Ready to go deeper? The <a href={docsHref}>docs index</a> covers every tool,
+						command, and env var.
+					</p>
+				</div>
+			</Section>
+		</main>
+		<footer>
+			<a href="https://github.com/tankdonut/torus">tankdonut/torus</a> · MIT
+		</footer>
+		<script is:inline>
+			(() => {
+				const root = document.documentElement;
+				root.classList.add("js-reveal");
+				const targets = Array.from(root.querySelectorAll("[data-reveal]"));
+				if (targets.length === 0) return;
+				const io = new IntersectionObserver(
+					(entries) => {
+						for (const entry of entries) {
+							if (!entry.isIntersecting) continue;
+							entry.target.classList.add("is-visible");
+							io.unobserve(entry.target);
+						}
+						if (root.querySelectorAll("[data-reveal]:not(.is-visible)").length === 0) io.disconnect();
+					},
+					{ rootMargin: "0px 0px -10% 0px" },
+				);
+				for (const el of targets) io.observe(el);
+			})();
+		</script>
+	</body>
+</html>
+
+<style>
+	.hero {
+		padding-block: calc(var(--spacing) * 16) calc(var(--spacing) * 10);
+	}
+
+	.hero > * + * {
+		margin-block-start: calc(var(--spacing) * 8);
+	}
+
+	.lede {
+		font-size: 1.125rem;
+		max-width: 40rem;
+	}
+
+	.section h3 {
+		margin-block-start: calc(var(--spacing) * 10);
+	}
+
+	.section .cta {
+		margin-block-start: calc(var(--spacing) * 10);
+	}
+</style>
