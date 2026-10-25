@@ -75,7 +75,7 @@ commands:
   image     build the container image from Dockerfile (pins from .tool-versions)
   image-test run the container test suite (TORUS_IMAGE=<tag> to override)
   link      npm link the torus bin
-  check     typecheck + test + smoke
+  check     typecheck + lint + test + smoke
   help      show this help
 EOF
 		;;
