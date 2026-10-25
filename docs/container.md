@@ -51,8 +51,6 @@ Two pins are renovate blind spots and must be bumped by hand: the Dockerfile `AR
 
 One GHCR note: the first publish creates the package as private by default. The owner marks it public once in the package settings.
 
-Image tag semantics: `latest` tracks `main` (the dev channel); `X.Y.Z` and `X.Y` are immutable release tags ([docs/release-workflow.md](release-workflow.md) §6).
-
 ## What's inside
 
 Full-toolkit flavor:

@@ -114,7 +114,7 @@ The bootstrap reset (`0.3.0` → `0.1.0`) happened at the first release; the ver
 ## 10. Settled questions
 
 1. **release-please vs hand-rolled cut**: settled on release-please (§4); the design stays tool-agnostic if a `make.sh release` target is ever wanted.
-2. **`latest` image tag policy**: settled, `latest` tracks main through 0.x and flips at 1.0 (§6).
+2. **`latest` image tag policy**: settled (§6); tag semantics are documented in [docs/container.md](container.md).
 3. **Attestation now vs at 1.0**: settled, attestation has shipped since the first release (§5).
 4. **Add darwin/windows CI smoke runners?** Still open: deferred, cross-compile-only until an external user base justifies it (§8).
 5. **npm as non-goal**: settled, `"private": true` in `package.json` blocks accidental publishes (§6).

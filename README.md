@@ -77,19 +77,9 @@ Your rules run first, from the `automode` section of `~/.torus/config.json` (a m
 }
 ```
 
-Entries are prefix patterns, evaluated in deny, ask, then allow order. Broad allow entries such as `*` match nothing and draw a warning at load. A fixed critical-operation floor covers `sudo` and `su`, recursive forced `rm` on root or home paths, force pushes, and recursive `chmod` or `chown` on root paths. Floored commands never take an allow-rule shortcut: the decision model judges them with the class riding into the prompt as a boundary that only a matching `softDenyExceptions` entry or specific recent intent clears, and when the judge cannot run they ask instead of running unjudged. Command substitution is judged, not floored: the model reads the full command text, sub-shells included, exactly as it reads pipes and chains.
+Entries are prefix patterns evaluated in deny, ask, then allow order; broad allow entries such as `*` match nothing and draw a warning at load. A fixed critical-operation floor covers `sudo` and `su`, recursive forced `rm` on root or home paths, force pushes, and recursive `chmod` or `chown` on root paths, and floored commands never take an allow-rule shortcut; `classifyAllShell` suspends allow rules while auto mode is on. The `environment`, `softDeny`, `softDenyExceptions`, and `hardDeny` entries are prose for the judge: a softDeny entry denies unless a matching `softDenyExceptions` entry or a recent, specific user intent line clears it. Read-only commands pass without a model call, three consecutive decision-model denies switch the session to asking for everything, and when every model path fails the command still runs unjudged with an `[automode]` notice in its tool result. Automode only adds gates: denials from guards, `cc-safety-net`, sandbox, and approval still win, and every decision appends one JSON line to `automode.log`.
 
-The `environment`, `softDeny`, `softDenyExceptions`, and `hardDeny` entries are prose for the decision model, riding into every classifier and chat verdict so the judge knows what "external" means for you. Environment lines describe trusted infrastructure and posture (source control, registries, internal domains); hardDeny lines are absolute boundaries. softDeny lines deny unless cleared: a matching `softDenyExceptions` entry clears one for that command, and so does a recent user intent line, but only one that directly and specifically describes the exact command. The intent window holds your own messages since the last approval dialog, deny, or `/automode` mode toggle; a general request such as "clean up the repo" clears nothing.
-
-`classifyAllShell` suspends allow rules while auto mode is on, sending every rule-allowed shell command to the decision model instead; deny and ask rules still apply, and the read-only fast path and session cache still run. `/automode` prints the effective configuration and `/automode denied` lists the last denials from the audit log. `/automode setup` drafts `environment` entries from the repo's git remotes and `ask` entries from repeated audit denials, then writes them into config.json's `automode` section. `/automode setup apply <file>` lands a reviewed draft file (`environment` and `ask` entries only) through the same merge; the `automode-setup` skill drafts one from git remotes, the audit log, session transcripts, delegation logs, and memory.
-
-Read-only commands such as `ls`, `git status`, and version probes pass without a model call. An "Always this session" answer replays without asking again. Three consecutive decision-model denies switch the session to asking for everything.
-
-The judge is a classifier model. Pin one with `TORUS_PERMISSION_MODEL=provider/model-id`. Without a pin, automode takes the first available classifier, such as `typesafe/jev-latest` behind a `TYPESAFE_API_KEY` or a local decision model from a llama.cpp router; a local router works offline with no API key.
-
-With no classifier reachable, the fast model chain judges the command in one shot (`glm-5.3-flash` first; `chains.json` overrides under the torus home are honored), falling back to the session model. If every model path fails, the command still runs unjudged, and its tool result carries an `[automode]` notice.
-
-Every decision appends one JSON line to `automode.log` under the session's project state directory, or `~/.torus/automode.log` when no project state exists. Automode only adds gates: denials from guards, `cc-safety-net`, sandbox, and approval still win over anything automode decides. The full pipeline order is in [docs/extensions.md](docs/extensions.md).
+`/automode denied` lists the last denials from the audit log, and `/automode setup` drafts `environment` entries from the repo's git remotes and `ask` entries from repeated audit denials. The full pipeline order, judge tiers, classifier pinning, and fallback chains are in the [automode section](docs/extensions.md#automode) of docs/extensions.md.
 
 ## Configuration
 
@@ -105,27 +95,7 @@ User-level configuration lives in one file, `~/.torus/config.json` (`config.json
 
 A section present in config.json shadows its legacy file: torus serves the config section and warns, naming both files and pointing at `torus config migrate`. A section missing from config.json falls back to its legacy file, so you can move over one section at a time.
 
-Single-value settings live in their own knob sections, one key each:
-
-| Env var | Config key | Value |
-| --- | --- | --- |
-| `TORUS_APPROVAL` | `approval.enabled` | boolean |
-| `TORUS_BANNER` | `ui.banner` | boolean |
-| `TORUS_STATUSLINE_COST` | `ui.statuslineCost` | boolean |
-| `TORUS_TITLE_MODEL` | `sessionTitle.titleModel` | string |
-| `TORUS_GUARDS` | `guards.enabled` | boolean |
-| `TORUS_MAX_TOOL_OUTPUT` | `guards.maxToolOutput` | number |
-| `TORUS_HASHLINE` | `hashline.enabled` | boolean |
-| `TORUS_FMT_CMD` | `hashline.fmtCmd` | string |
-| `TORUS_INTERACTIVE` | `interactive.enabled` | boolean |
-| `TORUS_MONITOR` | `monitor.enabled` | boolean |
-| `TORUS_NOTIFY` | `notify.enabled` | boolean |
-| `TORUS_COMMENT_CHECKER` | `commentChecker.enabled` | boolean |
-| `TORUS_TEAM_NOTIFY` | `team.teamNotify` | boolean |
-| `TORUS_TASK_STALE_MIN` | `team.taskStaleMin` | number |
-| `TORUS_REFLECTION` | `reflection.enabled` | boolean |
-| `TORUS_REFLECT_TURNS` | `reflection.reflectTurns` | number |
-| `TORUS_DREAMING` | `reflection.dreaming` | boolean |
+Single-value settings live in their own knob sections, one key each: `TORUS_BANNER`, `TORUS_NOTIFY`, `TORUS_MONITOR`, and `TORUS_APPROVAL` map to config keys such as `ui.banner`, `notify.enabled`, `monitor.enabled`, and `approval.enabled`. The complete knob table, every env var with its config key and effect, is in [docs/extensions.md](docs/extensions.md#environment-variables).
 
 Precedence is config, then env, then flag: a config value beats the built-in default, a set env var beats config, and a launcher flag (which sets the env var for one session) beats both. A config value of the wrong type is ignored and the default applies. Plumbing that decides where state and processes live before config is read stays env-only: `TORUS_ROOT`, `TORUS_PI_BIN`, the `TORUS_ENGINE*` family, `TORUS_HOME`, `TORUS_STATE_DIR`, `TORUS_WORKTREES_ROOT`, `TORUS_PLATFORM`, `TORUS_MEMORY_COMMIT`, `TORUS_THEME_DEBUG`, `TORUS_SANDBOX`, `TORUS_SERVE`, and `TORUS_TMUX`. The remaining vars (`TORUS_TITLE`, `TORUS_PERMISSION_MODEL`, `TORUS_COMMENT_CHECKER_PROMPT`) are env-only too; [docs/extensions.md](docs/extensions.md) carries the full table.
 

@@ -8,9 +8,10 @@ PRs welcome, especially **new agents** and **new skills**, both designed as drop
 git clone https://github.com/tankdonut/torus.git && cd torus
 ./make.sh npmrc   # one-time; .npmrc is agent-blocked by design, humans create it
 npm install
+./runtime/bin/torus.mjs
 ```
 
-Run `./runtime/bin/torus.mjs` and work against a real repo.
+Prerequisites and the other install paths: the [README quickstart](README.md#quickstart).
 
 ## The gate
 
@@ -18,18 +19,11 @@ Run `./runtime/bin/torus.mjs` and work against a real repo.
 
 ## PR mechanics
 
-Squash-merge is the rule, and **your PR title becomes the release commit verbatim**. release-please maps it to a version bump and changelog entry:
-
-| Subject | Effect |
-| --- | --- |
-| `feat(scope):` / `feat:` | minor bump, Features in changelog |
-| `fix(scope):` / `fix:` | patch bump, Bug Fixes in changelog |
-| `chore(scope):` `docs:` `test:` `ci:` | no bump, no changelog entry |
-| `!` or `BREAKING CHANGE:` footer | minor while 0.x, major after 1.0 |
+Squash-merge is the rule, and **your PR title becomes the release commit verbatim**. release-please maps it to a version bump and changelog entry: `feat:` bumps the minor, `fix:` the patch, `!` or a `BREAKING CHANGE:` footer is breaking (minor while 0.x, major after 1.0), and `chore:`, `docs:`, `test:`, `ci:` bump nothing.
 
 The scope is optional and never changes the bump: `fix(extensions/hashline):` names one item, `fix(agents):` the whole area, no scope for cross-cutting changes. Copy scope names from the repo's directory segments. Since your PR title becomes the commit verbatim, the scope belongs in the title.
 
-Details and rationale: [docs/release-workflow.md](docs/release-workflow.md).
+Details, rationale, and the full subject-to-effect table: [docs/release-workflow.md](docs/release-workflow.md).
 
 ## Gotchas
 

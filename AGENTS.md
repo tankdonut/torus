@@ -49,14 +49,7 @@
 
 ## Commit convention
 
-Commit subjects are release-mechanical: release-please maps them to version bumps and changelog entries (see `docs/release-workflow.md`). Subjects may carry a Conventional Commits scope after the type, e.g. `feat(extensions/hashline):` or `fix(agents):`.
-
-| Subject | Effect |
-| --------- | -------- |
-| `feat(scope):` or `feat:` | minor bump, Features in changelog |
-| `fix(scope):` or `fix:` | patch bump, Bug Fixes in changelog |
-| `!` or `BREAKING CHANGE:` footer | minor while 0.x (`bump-minor-pre-major`), major after 1.0 |
-| `chore(scope):`, `ci:`, `docs:`, `test:` | no bump, no changelog entry |
+Commit subjects are release-mechanical: release-please maps them to version bumps and changelog entries. `feat:` lands under Features and bumps the minor, `fix:` lands under Bug Fixes and bumps the patch, `!` or a `BREAKING CHANGE:` footer is breaking (minor while 0.x via `bump-minor-pre-major`, major after 1.0), and `chore:`, `ci:`, `docs:`, `test:` bump nothing. Subjects may carry a Conventional Commits scope after the type, e.g. `feat(extensions/hashline):` or `fix(agents):`; the full subject-to-effect table is in [docs/release-workflow.md](docs/release-workflow.md).
 
 - Scopes never change the bump: `feat(extensions/hashline):` bumps exactly like `feat:`. Use `area/name` when the change stays inside one item of an area (`fix(extensions/hashline):`, `feat(agents/leader):`), the bare area when it spans the area (`fix(agents):`, `chore(tests):`), and no scope for cross-cutting changes. Scope names copy the repo's directory segments (`extensions`, `agents`, `skills`, `tests`, `runtime`, `scripts`, `docs`) so each area keeps one spelling; `deps` is reserved for dependency bumps (engine pins land as `feat(deps):`, below).
 

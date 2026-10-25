@@ -101,11 +101,7 @@ Or whitelist via `+path` entries, which name exact allowed paths:
 
 ## npm, deliberately closed
 
-The npm channel is closed on purpose (decision recorded in [release-workflow.md](release-workflow.md) §6):
-
-- the unscoped name `torus` on the npm registry belongs to another owner;
-- the shipped artifact is a compiled binary plus a container image, not a node package;
-- `"private": true` in `package.json` makes an accidental `npm publish` impossible.
+The npm channel is closed on purpose: the unscoped name `torus` on the npm registry belongs to another owner, the shipped artifact is a compiled binary plus a container image rather than a node package, and `"private": true` in `package.json` makes an accidental `npm publish` impossible (decision recorded in [release-workflow.md](release-workflow.md) §6).
 
 What would change it: extension-pack consumers materializing and the [gallery](https://pi.dev/packages) mattering enough to justify a scoped `@tankdonut/torus`. That is mechanically cheap through the existing release automation, at the cost of publish metadata, an npm token, and one more version-consistency surface. The `pi-package` keyword is already in place, so the package is gallery-eligible the day that happens. Until then, git-source is the channel.
 
