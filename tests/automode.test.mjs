@@ -1214,3 +1214,69 @@ test("config bypass is refused: default mode runs, the startup-only warning surf
 	const warned = notifications.filter((n) => n.message.includes("startup-only"));
 	assert.equal(warned.length, 1, "the refusal warning surfaces exactly once");
 });
+
+function fixtureRow(n, verdict = "allow") {
+	return {
+		ts: 1700000000000 + n,
+		mode: "auto",
+		source: `fixture-${n}`,
+		verdict,
+		reason: `fixture reason ${n} padded so each JSON line runs well past a hundred bytes and a few thousand rows clear the half-megabyte tail cap`,
+		command: `echo fixture-row-${n}`,
+	};
+}
+
+function writeAuditRows(rows) {
+	writeFileSync(auditLogPath, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+}
+
+function fullParseDenials(limit) {
+	return auditRows()
+		.filter((row) => row.verdict === "deny")
+		.slice(-limit);
+}
+
+test("recentDenialRows on an oversized log returns the same tail as a full parse", () => {
+	resetAudit();
+	const rows = [];
+	for (let i = 0; i < 5000; i += 1) {
+		rows.push(fixtureRow(i, i >= 3500 && i % 200 === 0 ? "deny" : "allow"));
+	}
+	rows.push(fixtureRow(5000, "deny"), fixtureRow(5001, "deny"), fixtureRow(5002, "deny"));
+	writeAuditRows(rows);
+	assert.ok(statSync(auditLogPath).size > 512 * 1024, "fixture log exceeds the 512KB tail cap");
+	assert.equal(fullParseDenials(10).length, 10, "golden trims: eleven denials total");
+	assert.deepEqual(automode.recentDenialRows(10), fullParseDenials(10), "tail read matches golden");
+	assert.deepEqual(
+		automode
+			.recentDenialRows(Number.POSITIVE_INFINITY)
+			.slice(-10)
+			.map((row) => row.command),
+		fullParseDenials(Number.POSITIVE_INFINITY)
+			.slice(-10)
+			.map((row) => row.command),
+		"infinite limit still exposes the same recent tail as the handler's slice",
+	);
+	resetAudit();
+});
+
+test("recentDenialRows on a small log keeps today's full-read behavior", () => {
+	resetAudit();
+	writeAuditRows([fixtureRow(1, "deny"), fixtureRow(2), fixtureRow(3, "deny")]);
+	assert.ok(statSync(auditLogPath).size <= 512 * 1024, "fixture stays under the tail cap");
+	assert.deepEqual(automode.recentDenialRows(10), fullParseDenials(10));
+	assert.deepEqual(
+		automode.recentDenialRows(10).map((row) => row.command),
+		["echo fixture-row-1", "echo fixture-row-3"],
+		"both denials survive, non-denials never do",
+	);
+	resetAudit();
+});
+
+test("recentDenialRows on an empty or missing log returns nothing", () => {
+	resetAudit();
+	assert.deepEqual(automode.recentDenialRows(10), [], "missing log");
+	writeFileSync(auditLogPath, "");
+	assert.deepEqual(automode.recentDenialRows(10), [], "empty log");
+	resetAudit();
+});

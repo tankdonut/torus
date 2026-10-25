@@ -19,7 +19,7 @@
  * semantics: another extension's block always stays in effect.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import path from "node:path";
 import {
 	type ExtensionAPI,
@@ -94,11 +94,48 @@ export type SetupDraft = {
 	summary: string[];
 };
 
-/** Parse the audit log's deny rows, newest last, capped at `limit`; a missing or unreadable log contributes nothing. */
-function recentDenialRows(limit: number): AuditRow[] {
+/**
+ * Bytes read from an oversized audit log: only the trailing window is parsed,
+ * because the log is append-only and never rotated, so its size grows without
+ * bound while the denials asked for always sit at the end.
+ */
+const DENIAL_TAIL_BYTES = 512 * 1024;
+
+/**
+ * Read the audit log's text, keeping only the trailing 512KB when it is larger.
+ * The ranged window starts mid-line by construction, so bytes up to the first
+ * newline are a torn first line and are dropped. When the window holds no
+ * newline at all it is a single unterminated fragment and parses to nothing.
+ */
+function readAuditTail(): string {
+	const filePath = auditPath();
+	const size = statSync(filePath).size;
+	if (size <= DENIAL_TAIL_BYTES) {
+		return readFileSync(filePath, "utf8");
+	}
+	const buffer = Buffer.alloc(DENIAL_TAIL_BYTES);
+	const fd = openSync(filePath, "r");
+	try {
+		const bytesRead = readSync(fd, buffer, 0, DENIAL_TAIL_BYTES, size - DENIAL_TAIL_BYTES);
+		const text = buffer.subarray(0, bytesRead).toString("utf8");
+		const firstNewline = text.indexOf("\n");
+		return firstNewline === -1 ? "" : text.slice(firstNewline + 1);
+	} finally {
+		closeSync(fd);
+	}
+}
+
+/**
+ * Parse the audit log's deny rows, newest last, capped at `limit`; a missing or
+ * unreadable log contributes nothing. Logs larger than 512KB are read from
+ * their tail only, so `Number.POSITIVE_INFINITY` means "every deny row in the
+ * trailing 512KB", not every row ever written — callers slice a small suffix
+ * off the result anyway.
+ */
+export function recentDenialRows(limit: number): AuditRow[] {
 	let text: string;
 	try {
-		text = readFileSync(auditPath(), "utf8");
+		text = readAuditTail();
 	} catch {
 		return [];
 	}
