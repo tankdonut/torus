@@ -161,6 +161,22 @@ test("README quickstart: the pi-package install leads the from-source clone", ()
 	);
 });
 
+test("node floor stays in sync with package.json engines", () => {
+	const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+	const floor = pkg.engines.node.match(/(\d+)\.(\d+)/);
+	assert.ok(floor, `package.json engines.node has no major.minor floor: ${pkg.engines.node}`);
+	const [major, minor] = [floor[1], floor[2]];
+	const floorRe = new RegExp(`Node[^\n]*${major}\\.${minor}`);
+	for (const rel of ["README.md", path.join("site", "src", "pages", "index.astro")]) {
+		// index.astro is not markdown, so the md-walker never collects it; read it directly
+		const text = readFileSync(path.join(root, rel), "utf8");
+		assert.ok(
+			floorRe.test(text),
+			`${rel}: expected Node floor ${major}.${minor} (package.json engines.node) near a Node mention`,
+		);
+	}
+});
+
 test("coverage-sliced headings in the extension reference exist exactly once", () => {
 	const doc = readFileSync(path.join(root, "docs", "extensions.md"), "utf8");
 	const guarded = [

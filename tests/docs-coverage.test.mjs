@@ -49,6 +49,24 @@ test("every TORUS_* env read in extensions/ appears in docs/extensions.md", () =
 	}
 });
 
+test("every child extension in engine-child.ts appears in the child-set sentence", () => {
+	const childSource = readFileSync(path.join(root, "extensions", "engine-child.ts"), "utf8");
+	const children = [
+		...childSource.matchAll(/path\.join\(root, "extensions", "([a-z0-9-]+)", "index\.ts"\)/g),
+	].map((m) => m[1]);
+	assert.ok(children.length >= 5, `child-set extraction looks broken (found ${children.length})`);
+	const lineStart = doc.indexOf("Delegated children load:");
+	assert.ok(lineStart !== -1, "docs/extensions.md missing the child-set sentence");
+	const eol = doc.indexOf("\n", lineStart);
+	const sentence = doc.slice(lineStart, eol === -1 ? undefined : eol);
+	for (const name of children) {
+		assert.ok(
+			sentence.includes(`\`${name}\``),
+			`docs/extensions.md child-set sentence missing extension: ${name}`,
+		);
+	}
+});
+
 test("docs/skills.md exists and documents Agent Skills portability", () => {
 	const skillsDocPath = path.join(root, "docs/skills.md");
 	assert.ok(existsSync(skillsDocPath), "docs/skills.md does not exist");
@@ -71,7 +89,7 @@ test("SECURITY.md exists and documents trust handoffs and disclosure", () => {
 	const securityDocPath = path.join(root, "SECURITY.md");
 	assert.ok(existsSync(securityDocPath), "SECURITY.md does not exist");
 	const securityDoc = readFileSync(securityDocPath, "utf8");
-	for (const token of ["keywords.json", "Disclosure"]) {
+	for (const token of ["keywords.json", "Disclosure", "cc-safety-net", "torus_monitor"]) {
 		assert.ok(securityDoc.includes(token), `SECURITY.md missing token: ${token}`);
 	}
 });
