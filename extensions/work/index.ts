@@ -405,10 +405,10 @@ export function approvalBlocker(markdown: string): string | null {
 }
 
 /**
- * Resolve a slug the way a dispatch text carries it: exact, else unique
- * prefix, else unique substring (leads paraphrase dated stems —
- * "release-workflow-implementation" for "2026-10-04-release-workflow-
- * implementation"). Ambiguity and misses list candidates so one retry fixes it.
+ * Resolve a slug the way a dispatch text carries it: exact, else a unique
+ * substring match (leads paraphrase dated stems — "release-workflow-
+ * implementation" for "2026-10-04-release-workflow-implementation").
+ * Ambiguity and misses list candidates so one retry fixes it.
  */
 export function resolveLedgerSlug(slug: string): { slug: string } | { error: string } {
 	const known = [...new Set(listWorkStates().map((state) => state.slug))];
