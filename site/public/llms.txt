@@ -1,0 +1,17 @@
+# torus
+
+> torus is a multi-agent coding harness that runs delegated coding sessions on the pinned stock pi engine.
+
+https://tankdonut.github.io/torus/
+
+- [Landing](https://tankdonut.github.io/torus/): Overview of the harness, from the pinned engine and delegation roster to the docs site and container image.
+- [Docs](https://tankdonut.github.io/torus/docs/): Index of the rendered documentation, with one entry per page.
+- [Extensions](https://tankdonut.github.io/torus/docs/extensions/): Every extension, tool, slash command, and environment variable in the harness, cataloged by manifest entry.
+- [Serve](https://tankdonut.github.io/torus/docs/serve/): The authenticated HTTP surface over the delegation core, from bearer tokens to webhooks.
+- [Container](https://tankdonut.github.io/torus/docs/container/): The prebuilt multi-arch GHCR image: what ships inside, tag semantics, and how to run it.
+- [pi packages](https://tankdonut.github.io/torus/docs/pi-packages/): Installing torus as a pi package: what the manifest carries and how updates behave.
+- [Efficiency](https://tankdonut.github.io/torus/docs/efficiency/): How the harness-layer context overhead is measured: stock pi versus torus on identical prompts.
+- [Instructions](https://tankdonut.github.io/torus/docs/instructions/): How the engine discovers AGENTS.md instruction files, and what torus adds around them.
+- [Skills](https://tankdonut.github.io/torus/docs/skills/): The Agent Skills standard the skills directory follows, and how skills reach delegated children.
+- [Security](https://tankdonut.github.io/torus/security/): The threat model: what torus defends against, what it does not, and how to report issues.
+- [Changelog](https://tankdonut.github.io/torus/changelog/): Release history: every version with its changes.
