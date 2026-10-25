@@ -55,9 +55,9 @@ const USAGE_A = {
 };
 const USAGE_B = { input: 900, output: 40, cacheRead: 0, cacheWrite: 0, cost: { total: 0.0009 } };
 
-test("task suite: six tiered read-only tasks with unique ids and the guard sentence", () => {
-	assert.equal(TASKS.length, 6);
-	assert.deepEqual([...new Set(TASKS.map((t) => t.id))].length, 6);
+test("task suite: seven tiered read-only tasks with unique ids and the guard sentence", () => {
+	assert.equal(TASKS.length, 7);
+	assert.deepEqual([...new Set(TASKS.map((t) => t.id))].length, 7);
 	assert.deepEqual(new Set(TASKS.map((t) => t.tier)), new Set(["trivial", "aggregate", "reason"]));
 	for (const task of TASKS) {
 		assert.ok(task.prompt.length > 20, `task ${task.id} prompt looks wrong`);

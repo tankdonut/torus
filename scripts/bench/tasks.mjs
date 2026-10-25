@@ -29,6 +29,11 @@ export const TASKS = [
 		prompt: "Open docs/agents.md and list its section headings verbatim. Do not modify any files.",
 	},
 	{
+		id: "startup-ping",
+		tier: "trivial",
+		prompt: "Reply with exactly: ready. Do not modify any files.",
+	},
+	{
 		id: "register-tool-count",
 		tier: "aggregate",
 		prompt:
