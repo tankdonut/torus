@@ -5,7 +5,7 @@
  * session model, and when delegation is the right move.
  */
 
-import { readFileSync, unlinkSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -14,7 +14,7 @@ import { stripFrontmatter } from "../frontmatter.js";
 import {
 	projectStateDir,
 	pruneOrphanSessionFiles,
-	readJsonFallback,
+	readJson,
 	torusHome,
 	writeJson,
 } from "../fsutil.js";
@@ -35,17 +35,8 @@ function personaDir(): string {
 	return path.join(projectStateDir(), "persona");
 }
 
-/** Pre-project layout: read-only now, except the move-on-write unlink. */
-function legacyPersonaDir(): string {
-	return path.join(torusHome(), "persona");
-}
-
 function personaFile(sessionId: string): string {
 	return path.join(personaDir(), `${sessionId}.json`);
-}
-
-function legacyPersonaFile(sessionId: string): string {
-	return path.join(legacyPersonaDir(), `${sessionId}.json`);
 }
 
 export function persistPersona(sessionId: string, name: string | null): void {
@@ -55,20 +46,10 @@ export function persistPersona(sessionId: string, name: string | null): void {
 		// persistence is best-effort; persona still applies to this process
 		return;
 	}
-	try {
-		// move-on-write: a stale legacy twin must not resurrect cleared state
-		unlinkSync(legacyPersonaFile(sessionId));
-	} catch {
-		// legacy twin absent or already migrated
-	}
 }
 
 export function restorePersona(sessionId: string): string | null {
-	const parsed = readJsonFallback<{ persona?: string | null } | null>(
-		personaFile(sessionId),
-		legacyPersonaFile(sessionId),
-		null,
-	);
+	const parsed = readJson<{ persona?: string | null } | null>(personaFile(sessionId), null);
 	return typeof parsed?.persona === "string" ? parsed.persona : null;
 }
 
@@ -76,7 +57,7 @@ export function restorePersona(sessionId: string): string | null {
  * Orphan-only GC for per-project persona state: a `<sessionId>.json` is
  * deleted only when its session file is gone (`exists === false`) AND the
  * state is older than 30 days. Live sessions and unreadable session roots
- * (`null`) keep everything; the legacy dir is never touched.
+ * (`null`) keep everything.
  */
 export function prunePersonaOrphans(
 	exists: (sessionId: string) => boolean | null = (id) => sessionFileExists(id),

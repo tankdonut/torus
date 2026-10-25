@@ -7,12 +7,12 @@
  */
 
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
-import { projectStateDir, torusHome } from "../fsutil.js";
+import { projectStateDir } from "../fsutil.js";
 import { notifyMonitor } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { emitTorusCustom } from "../registry.js";
@@ -34,14 +34,6 @@ const CHECK_TIMEOUT_SEC = 30;
 function monitorLogDir(): string {
 	return path.join(projectStateDir(), "monitors");
 }
-
-/** Pre-namespacing log dir; only ever read for the one-time rename migration. */
-function legacyDir(): string {
-	return path.join(torusHome(), "monitors");
-}
-
-/** Log files whose legacy location has already been checked once this process. */
-const migratedLogFiles = new Set<string>();
 
 interface MonitorEntry {
 	name: string;
@@ -162,15 +154,6 @@ export async function runMonitorCheck(entry: MonitorEntry): Promise<void> {
 	const logDir = monitorLogDir();
 	mkdirSync(logDir, { recursive: true });
 	const logFile = path.join(logDir, `${entry.name}.log`);
-	// One-time migration: a pre-namespacing log is renamed (not copied) into
-	// the project dir on first write; history is durable and never pruned.
-	if (!migratedLogFiles.has(logFile)) {
-		migratedLogFiles.add(logFile);
-		const legacyFile = path.join(legacyDir(), `${entry.name}.log`);
-		if (existsSync(legacyFile) && !existsSync(logFile)) {
-			renameSync(legacyFile, logFile);
-		}
-	}
 	appendFileSync(
 		logFile,
 		`[${new Date().toISOString()}] check ${entry.checks} exit=${run.status} hash=${digest}\n${output.slice(0, 2000)}\n`,

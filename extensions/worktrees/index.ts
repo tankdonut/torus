@@ -6,10 +6,7 @@
  * (override with TORUS_WORKTREES_ROOT), where --<repo>-- is the canonical
  * project key of the repo root. Living outside the repo means no
  * accidental commits and no gitignore guard; `git worktree list` in the
- * main checkout still enumerates them wherever they live. Worktrees made
- * before the canonical key are addressed in place via a basename fallback
- * (see resolveWorktreePath) — git worktree metadata is position-sensitive,
- * so existing directories are never moved.
+ * main checkout still enumerates them wherever they live.
  *
  * Safety model ported from the managing-worktrees scripts: merge is
  * rebase → squash (one commit; ff opt-in) → tree-identity proof → only
@@ -81,18 +78,6 @@ export function worktreeRoot(repoRoot: string): string {
 
 export function worktreePath(repoRoot: string, branch: string): string {
 	return path.join(worktreeRoot(repoRoot), branch);
-}
-
-/**
- * Resolve an EXISTING worktree: canonical project-key layout first, falling
- * back to the pre-canonical basename layout when the canonical path is
- * absent — merge/remove/teardown must keep serving worktrees created before
- * the key change. New creates stay canonical-only via worktreePath.
- */
-export function resolveWorktreePath(repoRoot: string, branch: string): string {
-	const canonical = worktreePath(repoRoot, branch);
-	if (existsSync(canonical)) return canonical;
-	return path.join(worktreesBase(), path.basename(repoRoot), branch);
 }
 
 export interface GitResult {
@@ -302,7 +287,7 @@ export async function performRemove(
 ): Promise<WorktreeResult> {
 	const invalid = validateBranch(branch);
 	if (invalid) return { ok: false, error: invalid };
-	const wtPath = resolveWorktreePath(repoRoot, branch);
+	const wtPath = worktreePath(repoRoot, branch);
 	if (!statSync(wtPath, { throwIfNoEntry: false })?.isDirectory()) {
 		return { ok: false, error: `no worktree at ${wtPath}` };
 	}
@@ -351,7 +336,7 @@ export async function performMerge(
 	const strategy = opts?.strategy ?? "squash";
 	const mainBranch = opts?.mainBranch ?? "main";
 	const signal = opts?.signal;
-	const wtPath = resolveWorktreePath(repoRoot, branch);
+	const wtPath = worktreePath(repoRoot, branch);
 
 	if (!statSync(wtPath, { throwIfNoEntry: false })?.isDirectory()) {
 		return { ok: false, error: `no worktree at ${wtPath}` };

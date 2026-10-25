@@ -1,4 +1,3 @@
-import { unlinkSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import {
@@ -6,13 +5,7 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import {
-	projectStateDir,
-	pruneOrphanSessionFiles,
-	readJsonFallback,
-	torusHome,
-	writeJson,
-} from "../fsutil.js";
+import { projectStateDir, pruneOrphanSessionFiles, readJson, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { currentSessionId, setCurrentSessionId } from "../registry.js";
 import { sessionFileExists } from "../sessions/index.js";
@@ -22,11 +15,6 @@ export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin"
 
 /** Age floor for orphan GC — a goal file is never deleted for age alone. */
 const ORPHAN_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-
-/** Pre-project-scoped store: read-only fallback, unlinked once a session writes anew. */
-function legacyGoalFile(sessionId: string): string {
-	return path.join(torusHome(), "goal", `${sessionId}.json`);
-}
 
 export interface GoalState {
 	goal: string;
@@ -44,14 +32,13 @@ function goalFile(sessionId: string): string {
 }
 
 export function readGoal(sessionId: string): GoalState | null {
-	return readJsonFallback<GoalState | null>(goalFile(sessionId), legacyGoalFile(sessionId), null);
+	return readJson<GoalState | null>(goalFile(sessionId), null);
 }
 
 /**
  * Orphan-only GC for the project-scoped goal dir: a file goes only when its
  * session transcript no longer exists AND it is older than the age floor.
- * Live sessions (`true`) and unreadable session roots (`null`) keep everything;
- * the legacy store is never touched here.
+ * Live sessions (`true`) and unreadable session roots (`null`) keep everything.
  */
 export function pruneGoalOrphans(
 	exists: (sessionId: string) => boolean | null = (sessionId) => sessionFileExists(sessionId),
@@ -61,9 +48,6 @@ export function pruneGoalOrphans(
 
 export function writeGoal(sessionId: string, state: GoalState | null): void {
 	writeJson(goalFile(sessionId), state);
-	try {
-		unlinkSync(legacyGoalFile(sessionId));
-	} catch {}
 	pruneGoalOrphans();
 }
 

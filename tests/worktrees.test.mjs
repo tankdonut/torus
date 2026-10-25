@@ -1,14 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import {
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
@@ -23,7 +15,6 @@ const {
 	runGit,
 	worktreeRoot,
 	worktreePath,
-	resolveWorktreePath,
 } = await import("../extensions/worktrees/index.ts");
 
 const WT_ROOT = mkdtempSync(path.join(tmpdir(), "torus-wt-root-"));
@@ -35,7 +26,7 @@ process.env["TORUS_HOME"] = HOME_SANDBOX;
 
 const { projectKey } = await import("../extensions/fsutil.ts");
 const canonicalRoot = path.join(WT_ROOT, projectKey(repo));
-const legacyRoot = path.join(WT_ROOT, path.basename(repo));
+const basenameRoot = path.join(WT_ROOT, path.basename(repo));
 
 const sh = (cwd, args) => spawnSync("git", args, { cwd, encoding: "utf8", env: gitEnv });
 
@@ -105,7 +96,7 @@ test("performCreate reports a successful setup command as ready", async () => {
 
 test("worktreeRoot keys by the canonical project identity, not the bare basename", () => {
 	assert.equal(worktreeRoot(repo), canonicalRoot);
-	assert.notEqual(worktreeRoot(repo), legacyRoot);
+	assert.notEqual(worktreeRoot(repo), basenameRoot);
 	// same basename under a different parent must not collide
 	const twinRepo = path.join(tmpdir(), "elsewhere", path.basename(repo));
 	assert.notEqual(worktreeRoot(twinRepo), canonicalRoot);
@@ -124,57 +115,6 @@ test("full create→merge cycle lands via the canonical project-key path", async
 	assert.equal(merge.ok, true, JSON.stringify(merge));
 	assert.ok(existsSync(path.join(repo, "canon.txt")), "content landed on main");
 	assert.ok(!existsSync(wt), "canonical worktree torn down");
-});
-
-test("resolver prefers canonical-when-present, basename-when-canonical-missing", () => {
-	mkdirSync(path.join(canonicalRoot, "feat/twin"), { recursive: true });
-	mkdirSync(path.join(legacyRoot, "feat/twin"), { recursive: true });
-	assert.equal(resolveWorktreePath(repo, "feat/twin"), path.join(canonicalRoot, "feat/twin"));
-
-	mkdirSync(path.join(legacyRoot, "feat/only-legacy"), { recursive: true });
-	assert.equal(
-		resolveWorktreePath(repo, "feat/only-legacy"),
-		path.join(legacyRoot, "feat/only-legacy"),
-	);
-
-	// canonical missing → the basename form is the resolution default,
-	// even when neither layout holds the branch (callers report "no worktree")
-	assert.equal(
-		resolveWorktreePath(repo, "feat/absent-both"),
-		path.join(legacyRoot, "feat/absent-both"),
-	);
-});
-
-test("legacy basename-rooted worktree still merges and tears down via the fallback", async () => {
-	const legacyWt = path.join(legacyRoot, "feat/legacy");
-	const add = sh(repo, ["worktree", "add", legacyWt, "-b", "feat/legacy"]);
-	assert.equal(add.status, 0, `git worktree add failed: ${add.stderr}`);
-	writeFileSync(path.join(legacyWt, "legacy.txt"), "legacy\n");
-	commitAll(legacyWt, "add legacy file");
-
-	assert.equal(
-		resolveWorktreePath(repo, "feat/legacy"),
-		legacyWt,
-		"canonical twin absent: legacy wins",
-	);
-
-	const merge = await performMerge(repo, "feat/legacy", { subject: "feat: legacy worktree" });
-	assert.equal(merge.ok, true, JSON.stringify(merge));
-	assert.ok(existsSync(path.join(repo, "legacy.txt")), "legacy worktree content landed on main");
-	assert.ok(!existsSync(legacyWt), "legacy worktree torn down via the fallback");
-	assert.ok(
-		!sh(repo, ["rev-parse", "--verify", "feat/legacy"]).stdout,
-		"branch deleted post-proof",
-	);
-});
-
-test("legacy basename-rooted worktree removes via the fallback, branch intact", async () => {
-	const legacyWt = path.join(legacyRoot, "feat/legacy-remove");
-	assert.equal(sh(repo, ["worktree", "add", legacyWt, "-b", "feat/legacy-remove"]).status, 0);
-	const res = await performRemove(repo, "feat/legacy-remove");
-	assert.equal(res.ok, true, JSON.stringify(res));
-	assert.ok(!existsSync(legacyWt), "legacy worktree removed via the fallback");
-	assert.ok(sh(repo, ["rev-parse", "--verify", "feat/legacy-remove"]).stdout, "branch survives");
 });
 
 test("create refuses duplicate worktrees", async () => {

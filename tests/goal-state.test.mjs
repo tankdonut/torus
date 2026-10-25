@@ -23,14 +23,8 @@ const ORPHAN = "11111111-1111-7111-8111-111111111111";
 const LIVE = "22222222-2222-7222-8222-222222222222";
 
 const newGoalFile = (id) => path.join(fsutil.projectStateDir(), "goal", `${id}.json`);
-const legacyGoalFile = (id) => path.join(home, "goal", `${id}.json`);
 
 const goalState = (text) => ({ goal: text, status: "active", createdAt: 1, notes: [] });
-
-function plantLegacy(id, state) {
-	mkdirSync(path.join(home, "goal"), { recursive: true });
-	writeFileSync(legacyGoalFile(id), JSON.stringify(state, null, 2), "utf8");
-}
 
 function ageFile(file, days) {
 	const when = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -50,51 +44,17 @@ test("writeGoal lands under TORUS_HOME/state/<project-key>/goal", () => {
 		goal.writeGoal("sess-a", goalState("ship it"));
 		const file = newGoalFile("sess-a");
 		assert.equal(existsSync(file), true, "project-scoped file written");
-		assert.equal(
-			existsSync(path.join(home, "goal", "sess-a.json")),
-			false,
-			"nothing planted in legacy dir",
-		);
+		assert.equal(goal.readGoal("sess-a").goal, "ship it");
 		assert.equal(goal.readGoal("sess-a").goal, "ship it");
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}
 });
 
-test("legacy goal still reads when the project-scoped file is absent", () => {
+test("cleared goal writes a literal null that reads back null", () => {
 	try {
-		plantLegacy("sess-b", { goal: "legacy goal", status: "paused", createdAt: 2, notes: ["n1"] });
-		const state = goal.readGoal("sess-b");
-		assert.equal(state?.goal, "legacy goal");
-		assert.equal(state?.notes[0], "n1");
-		assert.equal(existsSync(newGoalFile("sess-b")), false);
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("writeGoal migrates: new file written, legacy twin unlinked", () => {
-	try {
-		plantLegacy("sess-c", goalState("old"));
-		goal.writeGoal("sess-c", goalState("new"));
-		assert.equal(existsSync(newGoalFile("sess-c")), true, "new file written");
-		assert.equal(
-			existsSync(legacyGoalFile("sess-c")),
-			false,
-			"legacy twin removed after the write",
-		);
-		assert.equal(goal.readGoal("sess-c").goal, "new");
-		assert.equal(JSON.parse(readFileSync(newGoalFile("sess-c"), "utf8")).goal, "new");
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("cleared goal (present-null) does not resurrect from a stale legacy twin", () => {
-	try {
-		plantLegacy("sess-d", goalState("stale"));
 		goal.writeGoal("sess-d", null);
-		assert.equal(existsSync(newGoalFile("sess-d")), true, "clear still writes the new file");
+		assert.equal(existsSync(newGoalFile("sess-d")), true, "clear still writes the file");
 		assert.equal(
 			JSON.parse(readFileSync(newGoalFile("sess-d"), "utf8")),
 			null,
@@ -103,8 +63,7 @@ test("cleared goal (present-null) does not resurrect from a stale legacy twin", 
 		assert.equal(goal.readGoal("sess-d"), null);
 
 		writeFileSync(newGoalFile("sess-d2"), "null", "utf8");
-		plantLegacy("sess-d2", goalState("stale twin"));
-		assert.equal(goal.readGoal("sess-d2"), null, "present-but-null wins over legacy");
+		assert.equal(goal.readGoal("sess-d2"), null, "present-but-null wins");
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}
@@ -177,17 +136,6 @@ test("unreadable sessions root keeps all goal files", () => {
 		);
 		assert.equal(existsSync(newGoalFile(LIVE)), true);
 		assert.equal(existsSync(newGoalFile(ORPHAN)), true, "null (unreadable) prunes nothing");
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("orphan GC never deletes files under the legacy goal dir", () => {
-	try {
-		plantLegacy(ORPHAN, goalState("legacy orphan"));
-		ageFile(legacyGoalFile(ORPHAN), 40);
-		goal.pruneGoalOrphans(() => false);
-		assert.equal(existsSync(legacyGoalFile(ORPHAN)), true, "legacy dir untouched by GC");
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}

@@ -17,6 +17,7 @@ const home = mkdtempSync(path.join(tmpdir(), "torus-memory-improve-"));
 process.env["TORUS_HOME"] = home;
 
 const memory = await import("../extensions/memory/index.ts");
+const { projectKeyFor } = await import("../extensions/fsutil.ts");
 
 const entriesDir = path.join(home, "memory", "entries");
 
@@ -210,7 +211,7 @@ test("dreamAppliedLine includes entry topics and deleted filenames", () => {
 });
 
 test("undreamedActivity ignores the dreamer's own delegation logs", () => {
-	const logs = path.join(home, "logs");
+	const logs = path.join(home, "state", projectKeyFor(process.cwd()), "logs");
 	mkdirSync(logs, { recursive: true });
 	writeFileSync(
 		path.join(home, "memory", ".dream-state"),

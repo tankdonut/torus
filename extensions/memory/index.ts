@@ -17,19 +17,8 @@ import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { parseFrontmatter } from "../frontmatter.js";
 import { readJson, splitList, torusHome, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
-import {
-	gcReflectState,
-	readReflectState,
-	unlinkLegacyReflectState,
-	writeReflectState,
-} from "../reflect-state.js";
-import {
-	currentSessionId,
-	emitTorusCustom,
-	legacyLogsDir,
-	logsDir,
-	recentLogFiles,
-} from "../registry.js";
+import { gcReflectState, readReflectState, writeReflectState } from "../reflect-state.js";
+import { currentSessionId, emitTorusCustom, logsDir, recentLogFiles } from "../registry.js";
 import { gitEnv } from "../worktrees/index.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
@@ -980,18 +969,11 @@ export function undreamedActivity(): boolean {
 	try {
 		// the dreamer's own delegation logs are outputs, not activity —
 		// counting them would let dreams self-trigger forever. The trigger must
-		// see the same log set dream itself reads: this project's dir plus the
-		// legacy flat dir.
-		const logs = [logsDir(), legacyLogsDir()].flatMap((dir) => {
-			try {
-				return readdirSync(dir)
-					.filter((f) => f.endsWith(".log"))
-					.filter((f) => !f.endsWith("-dreamer.log"))
-					.map((f) => path.join(dir, f));
-			} catch {
-				return [];
-			}
-		});
+		// see the same log set dream itself reads: this project's dir.
+		const logs = readdirSync(logsDir())
+			.filter((f) => f.endsWith(".log"))
+			.filter((f) => !f.endsWith("-dreamer.log"))
+			.map((f) => path.join(logsDir(), f));
 		const newest = logs
 			.map((file) => {
 				try {
@@ -1012,7 +994,7 @@ async function dream(_pi: ExtensionAPI): Promise<void> {
 	if (Date.now() - lastDreamAt() < DREAM_INTERVAL_MS) return;
 	if (!undreamedActivity()) return;
 	markDreamed();
-	const recentLogs = recentLogFiles(6, [logsDir(), legacyLogsDir()]).join(" ");
+	const recentLogs = recentLogFiles(6).join(" ");
 	if (!recentLogs) return;
 	const task = [
 		"You are dreaming: consolidating torus's memory store during idle time.",
@@ -1081,7 +1063,6 @@ export function latestUserQuery(messages: readonly LooseMessage[]): string {
 const injectedSessions = new Set<string>();
 
 export function registerMemory(pi: ExtensionAPI): void {
-	unlinkLegacyReflectState();
 	ensureStore();
 	pi.registerTool(rememberTool);
 	pi.registerTool(recallTool);

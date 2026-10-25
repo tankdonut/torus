@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -19,18 +19,6 @@ const newHostsFile = (cwd) =>
 		`--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`,
 		"sandbox-hosts.json",
 	);
-
-function plantLegacyHosts(cwd, hosts) {
-	const slug =
-		cwd
-			.replace(/[^a-zA-Z0-9-]/g, "")
-			.toLowerCase()
-			.slice(-48) || "default";
-	const file = path.join(home, "sandbox", `${slug}-hosts.json`);
-	mkdirSync(path.dirname(file), { recursive: true });
-	writeFileSync(file, JSON.stringify({ hosts }));
-	return file;
-}
 
 function handlerPi() {
 	const handlers = {};
@@ -73,21 +61,6 @@ test("writePersistedHosts: new file lands at state/--<project>--/sandbox-hosts.j
 	assert.deepEqual(readPersistedHosts("/proj/a"), []);
 });
 
-test("readPersistedHosts: legacy <slug>-hosts.json alone still feeds reads; present new file wins", () => {
-	plantLegacyHosts("/Old Layout", ["old.dev"]);
-	assert.deepEqual(readPersistedHosts("/Old Layout"), ["old.dev"]);
-	writePersistedHosts("/Old Layout", ["new.dev"]);
-	assert.deepEqual(readPersistedHosts("/Old Layout"), ["new.dev"]);
-});
-
-test("writePersistedHosts: first write migrates — new file appears, legacy twin gone", () => {
-	const legacyFile = plantLegacyHosts("/proj/migrate", ["old.dev"]);
-	writePersistedHosts("/proj/migrate", ["old.dev", "new.dev"]);
-	assert.ok(existsSync(newHostsFile("/proj/migrate")));
-	assert.ok(!existsSync(legacyFile));
-	assert.deepEqual(readPersistedHosts("/proj/migrate"), ["old.dev", "new.dev"]);
-});
-
 test("per-project isolation: two cwds keep separate host sets", () => {
 	writePersistedHosts("/proj/alpha", ["alpha.dev"]);
 	writePersistedHosts("/proj/beta", ["beta.dev"]);
@@ -110,16 +83,6 @@ test("decideTrust: persisted host allows silently without a dialog", async () =>
 	writePersistedHosts("/proj/known", ["known.dev"]);
 	const ctx = fakeCtx({ selectScript: [undefined], cwd: "/proj/known" });
 	const decision = await decideTrust(ctx, "known.dev", 443, {
-		persist: () => assert.fail("must not persist"),
-	});
-	assert.deepEqual(decision, { kind: "allow" });
-	assert.equal(ctx.calls.select.length, 0);
-});
-
-test("decideTrust: legacy-only approvals still allow without a dialog", async () => {
-	plantLegacyHosts("/proj/legacy", ["legacy.dev"]);
-	const ctx = fakeCtx({ selectScript: [undefined], cwd: "/proj/legacy" });
-	const decision = await decideTrust(ctx, "legacy.dev", 443, {
 		persist: () => assert.fail("must not persist"),
 	});
 	assert.deepEqual(decision, { kind: "allow" });

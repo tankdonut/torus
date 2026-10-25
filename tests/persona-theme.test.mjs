@@ -96,12 +96,11 @@ test("rapid persona switches keep last-call-wins order (timer FIFO)", async () =
 });
 
 // Per-project persona state: writes land under TORUS_HOME/state/--<cwd>--/persona/,
-// legacy files still read until a write migrates them, and GC is orphan-only.
+// and GC is orphan-only.
 const { projectKeyFor } = await import("../extensions/fsutil.ts");
 const dashedCwd = projectKeyFor(process.cwd());
 const personaStateDir = () => path.join(projectStateDir(), "persona");
 const personaFile = (id) => path.join(personaStateDir(), `${id}.json`);
-const legacyPersonaFile = (id) => path.join(home, "persona", `${id}.json`);
 const ageFile = (file, days) => {
 	const aged = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 	utimesSync(file, aged, aged);
@@ -115,33 +114,6 @@ test("persona write lands under the project state dir for the sandboxed cwd", ()
 		assert.equal(existsSync(expected), true);
 		assert.deepEqual(JSON.parse(readFileSync(expected, "utf8")), { persona: "builder" });
 		assert.equal(prompts.restorePersona("sess-a"), "builder");
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("legacy persona file still reads when no project-scoped file exists", () => {
-	try {
-		mkdirSync(path.join(home, "persona"), { recursive: true });
-		writeFileSync(
-			legacyPersonaFile("sess-legacy"),
-			JSON.stringify({ persona: "reviewer" }),
-			"utf8",
-		);
-		assert.equal(prompts.restorePersona("sess-legacy"), "reviewer");
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("write migrates: project file written, legacy twin unlinked", () => {
-	try {
-		mkdirSync(path.join(home, "persona"), { recursive: true });
-		writeFileSync(legacyPersonaFile("sess-mig"), JSON.stringify({ persona: "reviewer" }), "utf8");
-		prompts.persistPersona("sess-mig", "looker");
-		assert.equal(existsSync(personaFile("sess-mig")), true);
-		assert.equal(existsSync(legacyPersonaFile("sess-mig")), false);
-		assert.equal(prompts.restorePersona("sess-mig"), "looker");
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}
@@ -189,22 +161,6 @@ test("unreadable sessions root keeps all persona state", () => {
 		const removed = prompts.prunePersonaOrphans((id) => sessionFileExists(id, missingRoot));
 		assert.equal(removed, 0);
 		assert.equal(existsSync(personaFile("sess-null")), true);
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("orphan GC never deletes legacy-dir files", () => {
-	try {
-		mkdirSync(path.join(home, "persona"), { recursive: true });
-		writeFileSync(legacyPersonaFile("sess-old"), JSON.stringify({ persona: "builder" }), "utf8");
-		ageFile(legacyPersonaFile("sess-old"), 40);
-		prompts.persistPersona("sess-orphan", "builder");
-		ageFile(personaFile("sess-orphan"), 40);
-
-		const removed = prompts.prunePersonaOrphans(() => false);
-		assert.equal(removed, 1);
-		assert.equal(existsSync(legacyPersonaFile("sess-old")), true);
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}

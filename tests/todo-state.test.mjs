@@ -19,19 +19,6 @@ function newFile(sessionId) {
 	return path.join(todoDir(), `${sessionId}.json`);
 }
 
-function legacyFile(sessionId) {
-	return path.join(home, "todo", `${sessionId}.json`);
-}
-
-function plantLegacy(sessionId) {
-	mkdirSync(path.join(home, "todo"), { recursive: true });
-	writeFileSync(
-		legacyFile(sessionId),
-		JSON.stringify({ todos: [{ content: "legacy item", status: "pending" }] }, null, 2),
-		"utf8",
-	);
-}
-
 function age(file) {
 	const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
 	utimesSync(file, old, old);
@@ -52,34 +39,8 @@ test("writeTodos lands under <TORUS_HOME>/state/--<cwd>--/todo", () => {
 	try {
 		todo.writeTodos("sess-write", [{ content: "alpha", status: "pending", priority: "high" }]);
 		assert.equal(existsSync(newFile("sess-write")), true);
-		assert.equal(existsSync(legacyFile("sess-write")), false);
 		assert.deepEqual(todo.readTodos("sess-write"), [
 			{ id: "t1", content: "alpha", status: "pending", priority: "high" },
-		]);
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("legacy file still reads when the project file is absent", () => {
-	try {
-		plantLegacy("sess-legacy");
-		assert.deepEqual(todo.readTodos("sess-legacy"), [
-			{ content: "legacy item", status: "pending" },
-		]);
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("write migrates: new file appears, legacy twin is unlinked", () => {
-	try {
-		plantLegacy("sess-migrate");
-		todo.writeTodos("sess-migrate", [{ content: "migrated", status: "in_progress" }]);
-		assert.equal(existsSync(newFile("sess-migrate")), true);
-		assert.equal(existsSync(legacyFile("sess-migrate")), false);
-		assert.deepEqual(todo.readTodos("sess-migrate"), [
-			{ id: "t2", content: "migrated", status: "in_progress" },
 		]);
 	} finally {
 		rmSync(home, { recursive: true, force: true });
@@ -137,18 +98,6 @@ test("unreadable sessions root keeps everything", () => {
 		assert.equal(removed, 0);
 		assert.equal(existsSync(newFile("sess-null")), true);
 		rmSync(root, { recursive: true, force: true });
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("GC never deletes a legacy-dir file", () => {
-	try {
-		plantLegacy("sess-legacy-gc");
-		age(legacyFile("sess-legacy-gc"));
-		const removed = todo.pruneTodoOrphans(() => false);
-		assert.equal(removed, 0);
-		assert.equal(existsSync(legacyFile("sess-legacy-gc")), true);
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}
@@ -255,11 +204,16 @@ test("empty write clears the list but keeps the monotone counters", () => {
 	}
 });
 
-test("legacy items without ids are adopted on the next write", () => {
+test("items without ids are adopted on the next write", () => {
 	try {
-		plantLegacy("sess-adopt");
-		const state = todo.writeTodos("sess-adopt", [{ content: "legacy item", status: "completed" }]);
-		assert.deepEqual(state.todos, [{ id: "t1", content: "legacy item", status: "completed" }]);
+		mkdirSync(todoDir(), { recursive: true });
+		writeFileSync(
+			newFile("sess-adopt"),
+			JSON.stringify({ todos: [{ content: "adopted item", status: "pending" }] }, null, 2),
+			"utf8",
+		);
+		const state = todo.writeTodos("sess-adopt", [{ content: "adopted item", status: "completed" }]);
+		assert.deepEqual(state.todos, [{ id: "t1", content: "adopted item", status: "completed" }]);
 		assert.equal(state.stats.tracked, 1);
 	} finally {
 		rmSync(home, { recursive: true, force: true });

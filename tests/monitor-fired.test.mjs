@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -120,27 +120,6 @@ test("monitor history lands under TORUS_HOME/state/--<project>--/monitors/", asy
 	const text = readFileSync(logFile, "utf8");
 	assert.match(text, /check 1 exit=0/);
 	assert.match(text, /one/, "command output must ride along");
-});
-
-test("a pre-existing legacy monitors log migrates into the project state dir on first write", async () => {
-	const legacyFile = path.join(HOME, "monitors", "migrate-probe.log");
-	mkdirSync(path.dirname(legacyFile), { recursive: true });
-	writeFileSync(legacyFile, "legacy history\n", "utf8");
-
-	await monitor.runMonitorCheck(fakeEntry({ name: "migrate-probe" }));
-
-	const migrated = path.join(
-		HOME,
-		"state",
-		projectKey(process.cwd()),
-		"monitors",
-		"migrate-probe.log",
-	);
-	assert.ok(existsSync(migrated), "legacy content must live in the project dir after first write");
-	const text = readFileSync(migrated, "utf8");
-	assert.match(text, /legacy history\n/, "legacy content must be preserved");
-	assert.match(text, /check 1 exit=0/, "new check must append after the migrated history");
-	assert.ok(!existsSync(legacyFile), "legacy file must be renamed away, not copied");
 });
 
 test("the same monitor name in two project cwds keeps separate logs", async () => {

@@ -55,7 +55,7 @@ test("corrupt state file reads zeros", () => {
 	});
 });
 
-test("legacy state still reads before any write", () => {
+test("legacy flat twin is ignored: only the new file is read", () => {
 	reset();
 	mkdirSync(path.dirname(legacyPath("sess-leg")), { recursive: true });
 	writeFileSync(
@@ -64,13 +64,12 @@ test("legacy state still reads before any write", () => {
 		"utf8",
 	);
 	assert.deepEqual(rs.readReflectState("sess-leg"), {
-		lastReflectSettles: 5,
-		lastReflectAt: 99,
+		lastReflectSettles: 0,
+		lastReflectAt: 0,
 	});
-	assert.equal(existsSync(legacyPath("sess-leg")), true, "read must not move legacy state");
 });
 
-test("write migrates: new file written, legacy twin unlinked", () => {
+test("write does not touch the legacy twin", () => {
 	reset();
 	mkdirSync(path.dirname(legacyPath("sess-mig")), { recursive: true });
 	writeFileSync(
@@ -84,10 +83,10 @@ test("write migrates: new file written, legacy twin unlinked", () => {
 		lastReflectAt: 300,
 	});
 	assert.equal(existsSync(path.join(newDir, "sess-mig.json")), true);
-	assert.equal(existsSync(legacyPath("sess-mig")), false);
+	assert.equal(existsSync(legacyPath("sess-mig")), true);
 });
 
-test("a present new file wins over a valid legacy twin (no resurrection)", () => {
+test("a present new file wins over a legacy twin (no resurrection)", () => {
 	reset();
 	mkdirSync(newDir, { recursive: true });
 	mkdirSync(path.dirname(legacyPath("sess-win")), { recursive: true });
@@ -165,17 +164,6 @@ test("gc never deletes files under the legacy dir", () => {
 		"only the new-dir orphan goes",
 	);
 	assert.equal(existsSync(legacyPath("sess-legacy-orphan")), true, "legacy dir is never pruned");
-});
-
-test("unlinkLegacyReflectState removes the planted legacy file once", () => {
-	reset();
-	const legacy = path.join(home, "memory", ".reflect-state");
-	mkdirSync(path.join(home, "memory"), { recursive: true });
-	writeFileSync(legacy, "{}", "utf8");
-
-	assert.equal(rs.unlinkLegacyReflectState(), true);
-	assert.equal(existsSync(legacy), false);
-	assert.equal(rs.unlinkLegacyReflectState(), false);
 });
 
 test("interleaved session writes stay independent", () => {

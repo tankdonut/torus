@@ -1,4 +1,4 @@
-import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import {
@@ -7,12 +7,7 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import {
-	projectStateDir,
-	pruneOrphanSessionFiles,
-	readJsonFallback,
-	torusHome,
-} from "../fsutil.js";
+import { projectStateDir, pruneOrphanSessionFiles, readJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { sessionFileExists } from "../sessions/index.js";
 
@@ -66,13 +61,8 @@ function todoFile(sessionId: string): string {
 	return path.join(todoDir(), `${sessionId}.json`);
 }
 
-/** Pre-project-layout todo location, still read when the project file is absent. */
-function legacyTodoFile(sessionId: string): string {
-	return path.join(torusHome(), "todo", `${sessionId}.json`);
-}
-
 export function readTodoState(sessionId: string): TodoState {
-	const parsed = readJsonFallback<TodoFile>(todoFile(sessionId), legacyTodoFile(sessionId), {});
+	const parsed = readJson<TodoFile>(todoFile(sessionId), {});
 	const todos = Array.isArray(parsed.todos) ? parsed.todos : [];
 	const raw = parsed.stats ?? {};
 	const stats: TodoStats = {
@@ -92,9 +82,6 @@ function persistTodos(sessionId: string, todos: TodoItem[], stats: TodoStats): v
 	const file = todoFile(sessionId);
 	mkdirSync(path.dirname(file), { recursive: true });
 	writeFileSync(file, JSON.stringify({ todos, stats }, null, 2), "utf8");
-	try {
-		unlinkSync(legacyTodoFile(sessionId));
-	} catch {}
 	pruneTodoOrphans();
 }
 
@@ -208,7 +195,7 @@ export function writeTodos(sessionId: string, incoming: TodoInput[]): TodoState 
 	return { todos: merged, stats, done, pending: merged.length - done };
 }
 
-/** Orphan-only GC: never age-prune, never touch the legacy dir. */
+/** Orphan-only GC: never age-prune. */
 export function pruneTodoOrphans(
 	exists: (sessionId: string) => boolean | null = sessionFileExists,
 ): number {

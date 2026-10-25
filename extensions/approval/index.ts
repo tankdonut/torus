@@ -6,18 +6,15 @@
  * (this project) / Deny / Custom… (typed host or *.domain ⇒ session
  * allow). "Always" persists under ~/.torus/state/--<project>--/sandbox-hosts.json
  * — outside the sandbox's writable roots, so the agent cannot self-escalate.
- * Approvals from the pre-namespacing ~/.torus/sandbox/<slug>-hosts.json
- * layout are still read (never rewritten) so existing trusts keep working.
  * Headless sessions auto-deny. TORUS_APPROVAL=0 (or `approval.enabled: false`
  * in config.json) leaves the slot absent (sandbox denies unmatched hosts, as
  * before).
  */
-import { unlinkSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isBypassMode } from "../automode/config.js";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
-import { projectStateDir, readJsonFallback, torusHome, writeJson } from "../fsutil.js";
+import { projectStateDir, readJson, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
@@ -43,33 +40,14 @@ function hostsFile(cwd: string): string {
 	return path.join(projectStateDir(cwd), "sandbox-hosts.json");
 }
 
-/** Pre-namespacing slug: strip non-alphanumerics, lowercase, last 48 chars. */
-function legacyProjectSlug(cwd: string): string {
-	const slug = cwd
-		.replace(/[^a-zA-Z0-9-]/g, "")
-		.toLowerCase()
-		.slice(-48);
-	return slug.length > 0 ? slug : "default";
-}
-
-/** Old flat layout, kept as a read fallback only — never written. */
-function legacyHostsFile(cwd: string): string {
-	return path.join(torusHome(), "sandbox", `${legacyProjectSlug(cwd)}-hosts.json`);
-}
-
 export function readPersistedHosts(cwd: string): string[] {
-	const persisted = readJsonFallback<{ hosts?: unknown }>(hostsFile(cwd), legacyHostsFile(cwd), {
-		hosts: [],
-	});
+	const persisted = readJson<{ hosts?: unknown }>(hostsFile(cwd), { hosts: [] });
 	if (!Array.isArray(persisted.hosts)) return [];
 	return persisted.hosts.filter((host): host is string => typeof host === "string");
 }
 
 export function writePersistedHosts(cwd: string, hosts: string[]): void {
 	writeJson(hostsFile(cwd), { hosts: [...new Set(hosts)] });
-	try {
-		unlinkSync(legacyHostsFile(cwd));
-	} catch {}
 }
 
 const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;

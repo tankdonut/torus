@@ -215,7 +215,7 @@ test("applyDreamProposal updates a high-overlap near-duplicate in place (score >
 	);
 });
 
-test("dream log feed: project logs plus legacy flat, other projects excluded", () => {
+test("dream log feed: project logs only, other projects and legacy flat excluded", () => {
 	const projectLogs = path.join(home, "state", projectKeyFor(process.cwd()), "logs");
 	const otherLogs = path.join(home, "state", "--elsewhere--", "logs");
 	const legacyLogs = path.join(home, "logs");
@@ -227,23 +227,14 @@ test("dream log feed: project logs plus legacy flat, other projects excluded", (
 	// newest of all three — must NOT leak into this project's feed
 	writeFileSync(path.join(otherLogs, "2026-10-09T11-00-00-000Z-other.log"), "foreign\n", "utf8");
 	try {
-		const feed = registry.recentLogFiles(6, [registry.logsDir(), registry.legacyLogsDir()]);
+		const feed = registry.recentLogFiles(6);
 		assert.ok(
 			feed.includes(path.join(projectLogs, "2026-10-09T10-00-00-000Z-build.log")),
 			"project log is in the feed",
 		);
-		assert.ok(
-			feed.includes(path.join(legacyLogs, "2026-10-09T09-00-00-000Z-old.log")),
-			"legacy flat log is in the feed",
-		);
+		assert.ok(!feed.some((f) => f.includes("old.log")), "legacy flat log leaked into the feed");
 		assert.ok(!feed.some((f) => f.includes("other.log")), "another project's newer log leaked in");
-		assert.ok(feed[0]?.includes("10-00-00"), `newest first across dirs: ${feed[0]}`);
-		const mine = registry.recentLogFiles(6);
-		assert.ok(
-			mine.some((f) => f.includes("build.log")),
-			"project log in default scan",
-		);
-		assert.ok(!mine.some((f) => f.includes("old.log")), "legacy excluded from default scan");
+		assert.ok(feed[0]?.includes("10-00-00"), `newest first: ${feed[0]}`);
 	} finally {
 		rmSync(path.join(home, "state"), { recursive: true, force: true });
 		rmSync(legacyLogs, { recursive: true, force: true });

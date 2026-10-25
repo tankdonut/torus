@@ -16,14 +16,7 @@ import {
 	statSync,
 } from "node:fs";
 import path from "node:path";
-import {
-	formatCost,
-	listDirUnion,
-	projectKey,
-	projectStateDir,
-	torusHome,
-	writeJson,
-} from "./fsutil.js";
+import { formatCost, projectKey, projectStateDir, torusHome, writeJson } from "./fsutil.js";
 import { type DelegationToastInfo, notifyDelegation, RUNNING_LATE_MS } from "./osnotify.js";
 
 export interface DelegationRecord {
@@ -130,30 +123,21 @@ export function logsDir(): string {
 	return path.join(projectStateDir(), "logs");
 }
 
-/** Pre-project flat delegation-log directory (~/.torus/logs); read for old runs. */
-export function legacyLogsDir(): string {
-	return path.join(torusHome(), "logs");
-}
-
 /**
- * Newest-first (lexicographic) delegation log file paths, at most `n`. Pass
- * `dirs` to collect across several directories (dream reads this project's
- * logs plus the legacy flat dir); without it, only this project's dir scans.
+ * Newest-first (lexicographic) delegation log file paths from the project
+ * state logs dir, at most `n`.
  */
-export function recentLogFiles(n: number, dirs?: string[]): string[] {
-	const scanDirs = dirs ?? [logsDir()];
-	const found: Array<{ dir: string; file: string }> = [];
-	for (const dir of scanDirs) {
-		try {
-			for (const file of readdirSync(dir)) {
-				if (file.endsWith(".log")) found.push({ dir, file });
-			}
-		} catch {}
-	}
+export function recentLogFiles(n: number): string[] {
+	const found: string[] = [];
+	try {
+		for (const file of readdirSync(logsDir())) {
+			if (file.endsWith(".log")) found.push(file);
+		}
+	} catch {}
 	return found
-		.sort((a, b) => (a.file < b.file ? 1 : a.file > b.file ? -1 : 0))
+		.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0))
 		.slice(0, n)
-		.map((entry) => path.join(entry.dir, entry.file));
+		.map((file) => path.join(logsDir(), file));
 }
 
 /**
@@ -881,15 +865,14 @@ const TURN_RE =
 /**
  * The registry lives in process memory; a resumed session starts a fresh
  * engine with an empty registry even though logs and sub-agent sessions
- * persist on disk. Logs live under per-project state dirs with a legacy flat
- * fallback (~/.torus/logs), so both are scanned. Rebuild records from the
- * log files so alt+t and the fleet work across resumes.
+ * persist on disk. Rebuild records from the project state dir's log files
+ * so alt+t and the fleet work across resumes.
  */
 export function rehydrateFromLogs(currentSessionId?: string): void {
 	if (registry.size > 0) return;
 	let files: string[];
 	try {
-		files = listDirUnion(logsDir(), legacyLogsDir())
+		files = readdirSync(logsDir())
 			.filter((file) => file.endsWith(".log"))
 			.sort()
 			.reverse();
@@ -901,22 +884,18 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 	const beacons = beaconsByLogFile();
 	for (const file of files) {
 		if (count >= REHYDRATE_LIMIT) break;
-		// union order is lost — prefer the project dir, then the legacy flat dir
-		let logFile = path.join(logsDir(), file);
-		let raw: string | undefined;
-		for (const candidate of [logFile, path.join(legacyLogsDir(), file)]) {
-			try {
-				raw = readFileSync(candidate, "utf8");
-				logFile = candidate;
-				break;
-			} catch {}
+		const logFile = path.join(logsDir(), file);
+		let raw: string;
+		try {
+			raw = readFileSync(logFile, "utf8");
+		} catch {
+			continue;
 		}
-		if (raw === undefined) continue;
-		const start = parseTagStart(raw) ?? legacyStart(raw);
+		const start = parseTagStart(raw);
 		if (!start) continue;
 		const parentSession = start.groups.parent;
 		if (currentSessionId && parentSession !== currentSessionId) continue;
-		const end = parseTagEnd(raw) ?? legacyEnd(raw);
+		const end = parseTagEnd(raw);
 		const beacon = end ? undefined : beacons.get(logFile);
 		// A live foreign beacon owns this run: the fleet renders its external
 		// row, and rehydrating the log stem would duplicate it as "failed".
@@ -991,22 +970,6 @@ interface EndFields {
 	groups: { status: string; session: string | null };
 }
 
-function legacyStart(raw: string): StartFields | null {
-	const match = raw.match(
-		/^\[([^\]]+)\] delegate (\S+) \(([^)]+)\) start(?: · @(\S+))?(?: · parent (\S+))?/m,
-	);
-	if (!match) return null;
-	return {
-		groups: {
-			ts: match[1] ?? "",
-			agent: match[2] ?? "unknown",
-			model: match[3] ?? "unknown",
-			handle: match[4] ?? null,
-			parent: match[5] ?? null,
-		},
-	};
-}
-
 function tagAttrs(tag: string): Map<string, string> {
 	const attrs = new Map<string, string>();
 	for (const attr of tag.matchAll(/([a-zA-Z-]+)="([^"]*)"/g)) {
@@ -1035,10 +998,4 @@ function parseTagEnd(raw: string): EndFields | null {
 	if (!match) return null;
 	const attrs = tagAttrs(match[2] ?? "");
 	return { groups: { status: match[1] ?? "failed", session: attrs.get("session") ?? null } };
-}
-
-function legacyEnd(raw: string): EndFields | null {
-	const match = raw.match(/^\[([^\]]+)\] (done|failed)(?: · session (\S+))?\s*$/m);
-	if (!match) return null;
-	return { groups: { status: match[2] ?? "failed", session: match[3] ?? null } };
 }
