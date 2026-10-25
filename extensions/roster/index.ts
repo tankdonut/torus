@@ -54,6 +54,7 @@ import {
 	finishDelegation,
 	listDelegations,
 	redactSecrets,
+	registryShutdown,
 	rehydrateFromLogs,
 	repoRoot,
 	setCurrentSession,
@@ -795,7 +796,7 @@ async function runAcpDelegation(
 	const startedAt = Date.now();
 	const delegationId = randomUUID();
 	const modelLabel = `acp/${agentName}`;
-	startDelegation(delegationId, agentName, modelLabel, parentSession, handle);
+	await startDelegation(delegationId, agentName, modelLabel, parentSession, handle);
 	const announcement = announceText(announce, task);
 	if (announcement !== null) {
 		emitTorusCustom(
@@ -834,7 +835,7 @@ async function runAcpDelegation(
 				delegationId,
 			});
 		}
-		finishDelegation(delegationId, run.ok, text, run.sessionId);
+		await finishDelegation(delegationId, run.ok, text, run.sessionId);
 		if (emitResult) {
 			emitTorusCustom(
 				{
@@ -886,7 +887,7 @@ async function runAcpDelegation(
 		// Crash path mirrors the engine branch: finish best-effort so a start
 		// marker is never stranded without a failure marker, then rethrow.
 		try {
-			finishDelegation(delegationId, false, `acp delegation crashed: ${String(runError)}`);
+			await finishDelegation(delegationId, false, `acp delegation crashed: ${String(runError)}`);
 		} catch {
 			// registry finish failed (e.g. log unwritable); the marker below still goes out
 		}
@@ -1024,7 +1025,7 @@ export async function runDelegation(
 	const promptBody = systemPromptFor(agent);
 	const dir = await mkdtemp(path.join(tmpdir(), `torus-${agent.name}-`));
 	const delegationId = randomUUID();
-	startDelegation(delegationId, agent.name, firstModel, parentSession, handle, workingDir);
+	await startDelegation(delegationId, agent.name, firstModel, parentSession, handle, workingDir);
 	// Batch callers (fan-out, teams) pass announce=false and emit one combined
 	// marker instead of N per-run events staggering across turn boundaries.
 	const announcement = announceText(announce, task);
@@ -1160,7 +1161,7 @@ export async function runDelegation(
 				: "(interrupted — stopped from the fleet view before any model output)"
 			: finalResult.finalText ||
 				`(no text output; exit=${finalResult.exitCode})\n${finalResult.stderr.slice(0, 2000)}`;
-		finishDelegation(delegationId, ok, text, finalResult.sessionId);
+		await finishDelegation(delegationId, ok, text, finalResult.sessionId);
 		if (emitResult) {
 			emitTorusCustom(
 				{
@@ -1216,7 +1217,7 @@ export async function runDelegation(
 		// failure marker. finishDelegation is best-effort — an unwritable log
 		// must not suppress the marker or mask the original error.
 		try {
-			finishDelegation(delegationId, false, `delegation crashed: ${String(runError)}`);
+			await finishDelegation(delegationId, false, `delegation crashed: ${String(runError)}`);
 		} catch {
 			// registry finish failed (e.g. log unwritable); the marker below still goes out
 		}
@@ -1488,6 +1489,10 @@ export function registerRoster(pi: ExtensionAPI): void {
 		const sessionId = ctx.sessionManager.getSessionId();
 		setCurrentSession(sessionId);
 		rehydrateFromLogs(sessionId);
+	});
+
+	pi.on("session_shutdown", () => {
+		void registryShutdown();
 	});
 
 	pi.registerCommand("roster", {

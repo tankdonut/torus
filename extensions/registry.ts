@@ -5,7 +5,7 @@
  * file (which tmux panes tail), and is listed by the /torus browser overlay.
  */
 
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import {
 	appendFileSync,
 	chmodSync,
@@ -16,7 +16,14 @@ import {
 	statSync,
 } from "node:fs";
 import path from "node:path";
-import { formatCost, projectKey, projectStateDir, torusHome, writeJson } from "./fsutil.js";
+import {
+	formatCost,
+	projectKey,
+	projectStateDir,
+	readHead,
+	torusHome,
+	writeJson,
+} from "./fsutil.js";
 import { type DelegationToastInfo, notifyDelegation, RUNNING_LATE_MS } from "./osnotify.js";
 
 export interface DelegationRecord {
@@ -383,6 +390,22 @@ function writeRunBeacon(beacon: RunBeacon): void {
 	} catch {}
 }
 
+/**
+ * Beacon-write throttle state: last status and time written per record. A
+ * running delegation updates every turn, but a same-status beacon carries no
+ * new fleet information — rewriting it each turn is 3 fs ops for nothing.
+ */
+const BEACON_MIN_INTERVAL_MS = 10_000;
+const lastBeaconWrites = new Map<string, { status: RunBeacon["status"]; at: number }>();
+
+function writeRunBeaconThrottled(beacon: RunBeacon): void {
+	const now = Date.now();
+	const last = lastBeaconWrites.get(beacon.id);
+	if (last && last.status === beacon.status && now - last.at < BEACON_MIN_INTERVAL_MS) return;
+	writeRunBeacon(beacon);
+	lastBeaconWrites.set(beacon.id, { status: beacon.status, at: now });
+}
+
 function pruneRunBeacons(now: number): void {
 	try {
 		const files = readdirSync(RUNS_DIR).filter((f) => f.endsWith(".json"));
@@ -612,53 +635,105 @@ export function resetRegistryForTesting(): void {
 	registry.clear();
 	controls.clear();
 	externalRuns().length = 0;
+	lateToasts.clear();
+	lastBeaconWrites.clear();
 }
 
-function tmuxPaneFor(logFile: string, agent: string, handle: string | null): string | null {
-	if (process.env["TORUS_TMUX"] === "0" || !process.env["TMUX"]) return null;
-	const exists = spawnSync("tmux", ["has-session"], { stdio: "ignore" });
-	if (exists.status !== 0) return null;
-	const split = spawnSync(
-		"tmux",
-		[
-			"split-window",
-			"-h",
-			"-P",
-			"-F",
-			"#{pane_id}",
-			"-l",
-			"35%",
-			`tail -n +1 -f ${shellQuote(logFile)}`,
-		],
-		{ stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" },
-	);
-	if (split.status !== 0 || !split.stdout.trim()) return null;
-	const paneId = split.stdout.trim();
-	spawnSync("tmux", ["select-pane", "-L"], { stdio: "ignore" });
-	spawnSync("tmux", ["set-option", "-p", "-t", paneId, "pane-border-status", "top"], {
-		stdio: "ignore",
+/**
+ * Async tmux runner: spawn, pipe stdout, buffer, resolve on close — never
+ * blocks the engine event loop. A stuck server is killed after 5s.
+ */
+function runTmux(args: string[]): Promise<{ ok: boolean; stdout: string }> {
+	return new Promise((resolve) => {
+		let child: ChildProcess;
+		try {
+			child = spawn("tmux", args, { stdio: ["ignore", "pipe", "ignore"] });
+		} catch {
+			resolve({ ok: false, stdout: "" });
+			return;
+		}
+		let stdout = "";
+		let settled = false;
+		let termTimer: ReturnType<typeof setTimeout> | undefined;
+		let killTimer: ReturnType<typeof setTimeout> | undefined;
+		const finish = (ok: boolean) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(termTimer);
+			clearTimeout(killTimer);
+			resolve({ ok, stdout: stdout.trim() });
+		};
+		termTimer = setTimeout(() => {
+			child.kill("SIGTERM");
+			killTimer = setTimeout(() => child.kill("SIGKILL"), 250);
+		}, 5000);
+		child.stdout?.setEncoding("utf8");
+		child.stdout?.on("data", (chunk: string) => {
+			stdout += chunk;
+		});
+		child.on("error", () => finish(false));
+		child.on("close", (code) => finish(code === 0));
 	});
-	spawnSync(
-		"tmux",
-		["select-pane", "-t", paneId, "-T", `torus: ${handle ? `@${handle}` : agent}`],
-		{ stdio: "ignore" },
-	);
+}
+
+/**
+ * Open a tmux pane tailing the delegation log. Any failure (no server, no
+ * client, no split) yields a null paneId and the run continues paneless.
+ */
+async function tmuxPaneFor(
+	logFile: string,
+	agent: string,
+	handle: string | null,
+): Promise<string | null> {
+	if (process.env["TORUS_TMUX"] === "0" || !process.env["TMUX"]) return null;
+	// No has-session pre-check: a failed split-window already implies no
+	// server, and any non-zero exit counts as "no pane".
+	const split = await runTmux([
+		"split-window",
+		"-h",
+		"-P",
+		"-F",
+		"#{pane_id}",
+		"-l",
+		"35%",
+		`tail -n +1 -f ${shellQuote(logFile)}`,
+	]);
+	if (!split.ok || split.stdout === "") return null;
+	const paneId = split.stdout;
+	// One invocation for the follow-ups: focus back, border on, title the pane.
+	await runTmux([
+		"select-pane",
+		"-L",
+		";",
+		"set-option",
+		"-p",
+		"-t",
+		paneId,
+		"pane-border-status",
+		"top",
+		";",
+		"select-pane",
+		"-t",
+		paneId,
+		"-T",
+		`torus: ${handle ? `@${handle}` : agent}`,
+	]);
 	return paneId;
 }
 
-function killPane(paneId: string | null): void {
+async function killPane(paneId: string | null): Promise<void> {
 	if (!paneId) return;
-	spawnSync("tmux", ["kill-pane", "-t", paneId], { stdio: "ignore" });
+	await runTmux(["kill-pane", "-t", paneId]);
 }
 
-export function startDelegation(
+export async function startDelegation(
 	id: string,
 	agent: string,
 	model: string,
 	parentSession: string | null = null,
 	handle: string | null = null,
 	cwd: string = process.cwd(),
-): DelegationRecord {
+): Promise<DelegationRecord> {
 	const dir = logsDir();
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	// chmod covers a pre-existing directory created with wider perms
@@ -686,7 +761,9 @@ export function startDelegation(
 		sessionId: null,
 		parentSession,
 		project: projectKey(cwd),
-		paneId: tmuxPaneFor(logFile, agent, normalizedHandle),
+		// The pane opens asynchronously below; the record registers first so a
+		// stop or steer during the split-window race still lands on this record.
+		paneId: null,
 	};
 	registry.set(id, record);
 	const late: LateToast = { timer: null, notificationId: null };
@@ -699,7 +776,7 @@ export function startDelegation(
 	late.timer.unref();
 	lateToasts.set(id, late);
 	pruneRunBeacons(Date.now());
-	writeRunBeacon({
+	writeRunBeaconThrottled({
 		id,
 		agent,
 		model,
@@ -715,6 +792,7 @@ export function startDelegation(
 		logFile,
 		`<torus:start${formatStartAttrs(agent, model, normalizedHandle, parentSession)} />\n`,
 	);
+	record.paneId = await tmuxPaneFor(logFile, agent, normalizedHandle);
 	return record;
 }
 
@@ -768,7 +846,7 @@ export function updateDelegation(
 	record.cacheRead = finiteOrZero(snapshot.usage.cacheRead);
 	record.cacheWrite = finiteOrZero(snapshot.usage.cacheWrite);
 	record.cost = finiteOrZero(snapshot.usage.cost);
-	writeRunBeacon({
+	writeRunBeaconThrottled({
 		id: record.id,
 		agent: record.agent,
 		model: record.model,
@@ -805,21 +883,23 @@ export function setDelegationModel(id: string, model: string): void {
 	if (record) record.model = model;
 }
 
-export function finishDelegation(
+export async function finishDelegation(
 	id: string,
 	ok: boolean,
 	finalText: string,
 	sessionId: string | null = null,
 	opts?: { toast?: boolean },
-): DelegationRecord | undefined {
+): Promise<DelegationRecord | undefined> {
 	const record = registry.get(id);
 	if (!record) return undefined;
 	record.status = ok ? "done" : "failed";
 	record.finishedAt = Date.now();
-	record.text = finalText;
+	// Finished records keep a bounded tail — rehydrate applies the same cap,
+	// and an unbounded final pins memory for the life of the session.
+	record.text = finalText.slice(0, RECORD_TEXT_CAP);
 	record.sessionId = sessionId;
 	controls.delete(id);
-	writeRunBeacon({
+	writeRunBeaconThrottled({
 		id: record.id,
 		agent: record.agent,
 		model: record.model,
@@ -835,7 +915,7 @@ export function finishDelegation(
 		record.logFile,
 		`\n<torus:${record.status}${sessionId ? ` session="${escapeAttr(sessionId)}"` : ""} ts="${new Date().toISOString()}" />\n`,
 	);
-	killPane(record.paneId);
+	const paneId = record.paneId;
 	record.paneId = null;
 	const late = lateToasts.get(id);
 	if (late) {
@@ -850,6 +930,8 @@ export function finishDelegation(
 			late?.notificationId ?? undefined,
 		);
 	}
+	evictFinishedRecords();
+	await killPane(paneId);
 	return record;
 }
 
@@ -859,6 +941,12 @@ function finiteOrZero(value: number | undefined): number {
 }
 
 const REHYDRATE_LIMIT = 50;
+/** Bounded text tail kept on finished and rehydrated records (chars). */
+const RECORD_TEXT_CAP = 4000;
+/** Finished records retained in the registry; older ones evict (logs restore them). */
+const FINISHED_RECORDS_LIMIT = 50;
+/** Head bytes probed per candidate log before any full-file read. */
+const REHYDRATE_HEAD_BYTES = 4096;
 const TURN_RE =
 	/--- turn (\d+) \((\d+)\/(\d+) tok(?: · (\$[0-9.]+))?\) ---\n([\s\S]*?)(?=\n--- turn |\n\[|$)/g;
 
@@ -884,17 +972,21 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 	const beacons = beaconsByLogFile();
 	for (const file of files) {
 		if (count >= REHYDRATE_LIMIT) break;
+		// Only the head is read first: the start tag lives on line 1, so the
+		// parent-session filter runs before any full-file read.
 		const logFile = path.join(logsDir(), file);
+		const head = readHead(logFile, REHYDRATE_HEAD_BYTES);
+		if (head === null) continue;
+		const start = parseTagStart(head);
+		if (!start) continue;
+		const parentSession = start.groups.parent;
+		if (currentSessionId && parentSession !== currentSessionId) continue;
 		let raw: string;
 		try {
 			raw = readFileSync(logFile, "utf8");
 		} catch {
 			continue;
 		}
-		const start = parseTagStart(raw);
-		if (!start) continue;
-		const parentSession = start.groups.parent;
-		if (currentSessionId && parentSession !== currentSessionId) continue;
 		const end = parseTagEnd(raw);
 		const beacon = end ? undefined : beacons.get(logFile);
 		// A live foreign beacon owns this run: the fleet renders its external
@@ -944,7 +1036,7 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 			cacheRead: 0,
 			cacheWrite: 0,
 			cost,
-			text: text.slice(0, 4000),
+			text: text.slice(0, RECORD_TEXT_CAP),
 			logFile,
 			sessionId: end?.groups.session ?? null,
 			parentSession,
@@ -998,4 +1090,42 @@ function parseTagEnd(raw: string): EndFields | null {
 	if (!match) return null;
 	const attrs = tagAttrs(match[2] ?? "");
 	return { groups: { status: match[1] ?? "failed", session: attrs.get("session") ?? null } };
+}
+
+/**
+ * Session-shutdown cleanup: kill every live delegation pane, drop late-toast
+ * timers, and stop tracked controls so no pane, toast, or child outlives the
+ * parent session.
+ */
+export async function registryShutdown(): Promise<void> {
+	for (const late of lateToasts.values()) {
+		if (late.timer) clearTimeout(late.timer);
+	}
+	lateToasts.clear();
+	lastBeaconWrites.clear();
+	for (const control of [...controls.values()]) control.stop();
+	controls.clear();
+	const paneIds: string[] = [];
+	for (const record of registry.values()) {
+		if (record.paneId !== null) {
+			paneIds.push(record.paneId);
+			record.paneId = null;
+		}
+	}
+	await Promise.all(paneIds.map((paneId) => killPane(paneId)));
+}
+
+/**
+ * Keep at most the FINISHED_RECORDS_LIMIT most recent finished records in the
+ * registry — running records always stay, and evicted history remains
+ * reconstructible from the log files on the next resume.
+ */
+function evictFinishedRecords(): void {
+	const finished = [...registry.values()]
+		.filter((entry) => entry.status !== "running")
+		.sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
+	for (const record of finished.slice(FINISHED_RECORDS_LIMIT)) {
+		registry.delete(record.id);
+		lastBeaconWrites.delete(record.id);
+	}
 }

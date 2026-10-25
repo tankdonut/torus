@@ -155,7 +155,7 @@ test("non-deliberate crash of the last member wakes the session; team_delete nev
 
 	member("sentry").onState({ status: "working", sessionId: "s" });
 	member("sentry").onState({ status: "idle", sessionId: "s" });
-	member("sentry").onState({ status: "stopped", sessionId: "s" });
+	await member("sentry").onState({ status: "stopped", sessionId: "s" });
 	team.flushTeamWakesForTesting();
 	assert.equal(wakes.length, 1, "a crashed member is news even without a report");
 	assert.match(wakeText(wakes[0]), /@sentry \(builder\) is stopped/);

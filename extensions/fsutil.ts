@@ -8,10 +8,13 @@
 
 import { spawnSync } from "node:child_process";
 import {
+	closeSync,
 	existsSync,
 	mkdirSync,
+	openSync,
 	readdirSync,
 	readFileSync,
+	readSync,
 	renameSync,
 	statSync,
 	unlinkSync,
@@ -225,6 +228,28 @@ export function pruneOrphanSessionFiles(
 		}
 	} catch {}
 	return removed;
+}
+
+/**
+ * First `bytes` of `file` as utf8 text (shorter when the file is); null when
+ * unreadable. Lets scanners probe a log's head without a full-file read.
+ */
+export function readHead(file: string, bytes: number): string | null {
+	let fd: number | undefined;
+	try {
+		fd = openSync(file, "r");
+		const buffer = Buffer.alloc(bytes);
+		const bytesRead = readSync(fd, buffer, 0, bytes, 0);
+		return buffer.subarray(0, bytesRead).toString("utf8");
+	} catch {
+		return null;
+	} finally {
+		if (fd !== undefined) {
+			try {
+				closeSync(fd);
+			} catch {}
+		}
+	}
 }
 
 /** Promise-based sleep. */

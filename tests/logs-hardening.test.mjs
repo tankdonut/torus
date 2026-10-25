@@ -16,9 +16,9 @@ after(() => {
 	rmSync(HOME, { recursive: true, force: true });
 });
 
-test("delegation log surface: project dir 0700, log file 0600, steer text redacted", () => {
+test("delegation log surface: project dir 0700, log file 0600, steer text redacted", async () => {
 	const id = `perm-${Date.now()}`;
-	const record = registry.startDelegation(id, "tester", "some-model", null, null);
+	const record = await registry.startDelegation(id, "tester", "some-model", null, null);
 	const projectLogs = path.join(HOME, "state", projectKeyFor(process.cwd()), "logs");
 	assert.equal(registry.logsDir(), projectLogs, "logsDir resolves into the project state dir");
 	assert.equal(
@@ -31,14 +31,14 @@ test("delegation log surface: project dir 0700, log file 0600, steer text redact
 	assert.equal(record.project, projectKeyFor(process.cwd()), "record carries the project key");
 	const beacon = JSON.parse(readFileSync(path.join(HOME, "runs", `${id}.json`), "utf8"));
 	assert.equal(beacon.project, projectKeyFor(process.cwd()), "beacon carries the project key");
-	registry.finishDelegation(id, true, "done");
+	await registry.finishDelegation(id, true, "done");
 });
 
-test("startDelegation(cwd) logs into the dispatching project's state dir and tags record + beacon with the child cwd key", () => {
+test("startDelegation(cwd) logs into the dispatching project's state dir and tags record + beacon with the child cwd key", async () => {
 	const otherCwd = path.join(HOME, "worktree", "other");
 	const key = projectKeyFor(otherCwd);
 	const id = `cwd-${Date.now()}`;
-	const record = registry.startDelegation(id, "tester", "some-model", null, null, otherCwd);
+	const record = await registry.startDelegation(id, "tester", "some-model", null, null, otherCwd);
 	const dispatchingLogs = path.join(HOME, "state", projectKeyFor(process.cwd()), "logs");
 	assert.equal(
 		path.dirname(record.logFile),
@@ -55,7 +55,7 @@ test("startDelegation(cwd) logs into the dispatching project's state dir and tag
 	const beacon = JSON.parse(readFileSync(path.join(HOME, "runs", `${id}.json`), "utf8"));
 	assert.equal(beacon.project, key);
 	assert.equal(beacon.logFile, record.logFile);
-	registry.finishDelegation(id, true, "done");
+	await registry.finishDelegation(id, true, "done");
 });
 
 test("steerLogLine redacts credential shapes and keeps benign prose", () => {

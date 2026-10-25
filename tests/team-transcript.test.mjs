@@ -148,7 +148,7 @@ test("member crash emits ok:false result and fails the record with the last repo
 	const memberId = `${teamId}/sentry`;
 
 	spawner.spawned.at(-1).onReport("found 3 issues\nqueued fixes", false);
-	spawner.spawned.at(-1).onState({ status: "stopped", sessionId: "sess-bravo-sentry" });
+	await spawner.spawned.at(-1).onState({ status: "stopped", sessionId: "sess-bravo-sentry" });
 
 	const record = memberRecord(memberId);
 	assert.equal(record.status, "failed");
@@ -179,6 +179,7 @@ test("registry steer reaches the member mailbox and registry stop finishes the r
 	assert.match(inbox, /please check the flaky test/);
 
 	assert.equal(registry.stopDelegation(memberId), true);
+	await new Promise((resolve) => setTimeout(resolve, 0));
 	assert.equal(memberRecord(memberId).status, "done");
 
 	const result = customs.find((m) => m.customType === "torus.delegation-result");

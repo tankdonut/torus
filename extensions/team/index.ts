@@ -647,19 +647,19 @@ const suppressedResultMarkers = sharedState(
 	() => new Set<string>(),
 );
 
-function finishMemberDelegation(
+async function finishMemberDelegation(
 	teamId: string,
 	memberId: string,
 	ok: boolean,
 	finalText: string,
 	sessionId: string | null,
-): void {
+): Promise<void> {
 	const existing = listDelegations().find((r) => r.id === memberId);
 	if (existing?.status !== "running") return;
 	const durationMs = Date.now() - existing.startedAt;
 	const suppressed = suppressedResultMarkers.has(memberId);
 	try {
-		finishDelegation(memberId, ok, finalText, sessionId, { toast: !suppressed });
+		await finishDelegation(memberId, ok, finalText, sessionId, { toast: !suppressed });
 	} catch {
 		// registry finish failed (e.g. unwritable log); the marker below still goes out
 	}
@@ -705,21 +705,21 @@ function normalizeMemberModel(model: string | undefined): string {
  * lifecycle is mirrored into the transcript via torus.delegation-start/result.
  * Any prior control for the member id is stopped and replaced (respawn path).
  */
-function attachMember(
+async function attachMember(
 	teamId: string,
 	memberId: string,
 	spec: { name: string; agent: string; model?: string },
 	objective: string,
 	onStats?: boolean,
 	parentSession: string | null = null,
-): MemberHandle {
+): Promise<MemberHandle> {
 	const generation = (memberGenerations.get(memberId) ?? 0) + 1;
 	memberGenerations.set(memberId, generation);
 	const isCurrentGeneration = () => memberGenerations.get(memberId) === generation;
 	deliberateStops.delete(memberId);
 	memberHasNews.delete(memberId);
 	const model = normalizeMemberModel(spec.model);
-	startDelegation(memberId, spec.agent, model, parentSession, spec.name);
+	await startDelegation(memberId, spec.agent, model, parentSession, spec.name);
 	// Publish only after the registry record exists: a startDelegation throw
 	// must not strand a phantom running external run in the fleet.
 	publishExternalRun({
@@ -741,7 +741,7 @@ function attachMember(
 			teamId,
 			{ ...spec, model },
 			objective,
-			(state) => {
+			async (state) => {
 				const entry = getTeam(teamId)?.members.find((m) => m.id === memberId);
 				if (entry) {
 					entry.status = state.status;
@@ -782,7 +782,7 @@ function attachMember(
 						lastReport.trim().length > 0
 							? lastReport.trim().slice(0, 2000)
 							: `member stopped ${deliberate ? "(team shutdown)" : "(unexpected exit)"}`;
-					finishMemberDelegation(teamId, memberId, deliberate, summary, state.sessionId);
+					await finishMemberDelegation(teamId, memberId, deliberate, summary, state.sessionId);
 					notifyMemberEpisode(teamId, memberId);
 				}
 			},
@@ -823,7 +823,7 @@ function attachMember(
 				: undefined,
 		);
 	} catch (error) {
-		finishMemberDelegation(
+		await finishMemberDelegation(
 			teamId,
 			memberId,
 			false,
@@ -974,7 +974,14 @@ const teamCreateTool = defineTool({
 				mailboxDir: "",
 			};
 			record.members.push(memberRecord);
-			const handle = attachMember(teamId, memberId, spec, spawnObjective, true, parentSession);
+			const handle = await attachMember(
+				teamId,
+				memberId,
+				spec,
+				spawnObjective,
+				true,
+				parentSession,
+			);
 			memberRecord.mailboxDir = handle.mailboxDir;
 		}
 		emitTorusCustom(
@@ -1452,7 +1459,7 @@ const teamDeleteTool = defineTool({
 			memberControls.delete(member.id);
 			// Safety pass: a member whose supervisor never delivered its stopped
 			// state (hung child force-killed above) still gets a finished record.
-			finishMemberDelegation(
+			await finishMemberDelegation(
 				record.id,
 				member.id,
 				true,
@@ -1540,7 +1547,7 @@ const teamRespawnTool = defineTool({
 			const memberId = `${record.id}/${member.name}`;
 			const existing = record.members.find((m) => m.id === memberId);
 			if (existing && existing.status !== "stopped" && memberControls.has(memberId)) continue;
-			const handle = attachMember(
+			const handle = await attachMember(
 				record.id,
 				memberId,
 				member,
