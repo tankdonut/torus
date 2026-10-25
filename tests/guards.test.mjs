@@ -15,6 +15,7 @@ const {
 	truncateText,
 	writeBlockReason,
 } = await import("../extensions/guards/index.ts");
+const { _readCacheStats } = await import("../extensions/fsutil.ts");
 
 test("truncateText: under cap untouched; over cap keeps head+tail and reports omission", () => {
 	const short = "a".repeat(100);
@@ -135,6 +136,47 @@ test("writeBlockReason: symlinked write targets blocked, real nested targets all
 		writeBlockReason(path.join(dir, "real", "nested", "file"), "payload\n"),
 		null,
 		"real nested target with no symlinks is allowed (no false positive)",
+	);
+});
+
+test("writeBlockReason: one disk read per unchanged target; a rewrite invalidates and the new content is seen", () => {
+	const base = realpathSync(tmpdir());
+	const dir = mkdtempSync(path.join(base, "torus-guards-cache-"));
+	const file = path.join(dir, "target.md");
+	const linesA = [];
+	for (let i = 0; i < 12; i++) linesA.push(`alpha line ${i}`);
+	const diskA = `${linesA.join("\n")}\n`;
+	const linesB = [];
+	for (let i = 0; i < 12; i++) linesB.push(`beta line ${i}`);
+	const nextB = `${linesB.join("\n")}\n`;
+	writeFileSync(file, diskA, "utf8");
+
+	const before = _readCacheStats();
+	assert.equal(
+		writeBlockReason(file, nextB),
+		null,
+		"disjoint rewrite of an existing multi-line target proceeds",
+	);
+	const afterFirst = _readCacheStats();
+	assert.equal(afterFirst.misses, before.misses + 1, "first call reads the target exactly once");
+
+	assert.equal(writeBlockReason(file, nextB), null, "second look at the unchanged target");
+	const afterSecond = _readCacheStats();
+	assert.equal(afterSecond.misses, afterFirst.misses, "unchanged target: no re-read");
+	assert.ok(afterSecond.hits >= afterFirst.hits + 1, "second call is served from the cache");
+
+	writeFileSync(file, nextB, "utf8");
+	const reason = writeBlockReason(file, nextB);
+	assert.match(
+		String(reason),
+		/% identical/,
+		"rewrite now near-identical — proof the NEW disk content was read, not the stale cache",
+	);
+	const afterThird = _readCacheStats();
+	assert.equal(
+		afterThird.misses,
+		afterSecond.misses + 1,
+		"rewritten target: cache invalidated, re-read",
 	);
 });
 

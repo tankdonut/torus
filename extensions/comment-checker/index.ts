@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
+import { readFileCached } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
@@ -140,12 +140,7 @@ export function registerCommentChecker(pi: ExtensionAPI): void {
 			const input = event.input as { path?: string; content?: string };
 			if (typeof input.path !== "string" || typeof input.content !== "string") return;
 			file = input.path;
-			let disk: string | null = null;
-			try {
-				disk = readFileSync(input.path, "utf8");
-			} catch {
-				disk = null;
-			}
+			const disk = readFileCached(input.path);
 			added = addedLinesForWrite(input.content, disk);
 		} else {
 			return;

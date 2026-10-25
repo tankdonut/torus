@@ -164,3 +164,42 @@ test("pruneOrphanSessionFiles: only orphan+old goes; live, unknown, and fresh st
 		assert.ok(existsSync(path.join(dir, kept)), `${kept} must survive`);
 	}
 });
+
+test("readFileCached: hit on unchanged stat, invalidated by rewrite, LRU-bounded, null on missing", () => {
+	const dir = mkdtempSync(path.join(home, "read-cache-"));
+	const file = path.join(dir, "a.txt");
+	writeFileSync(file, "one\ntwo\n", "utf8");
+
+	assert.equal(
+		fsutil.readFileCached(path.join(dir, "missing.txt")),
+		null,
+		"missing file: null, nothing cached",
+	);
+	const before = fsutil._readCacheStats();
+	assert.equal(fsutil.readFileCached(file), "one\ntwo\n");
+	assert.equal(fsutil.readFileCached(file), "one\ntwo\n");
+	const after = fsutil._readCacheStats();
+	assert.equal(after.misses, before.misses + 1, "one read for two calls");
+	assert.equal(after.hits, before.hits + 1, "second call is a hit");
+
+	writeFileSync(file, "one\ntwo\nthree\n", "utf8");
+	assert.equal(
+		fsutil.readFileCached(file),
+		"one\ntwo\nthree\n",
+		"changed stat invalidates the entry",
+	);
+
+	for (let i = 0; i < 40; i++) {
+		const bulk = path.join(dir, `bulk-${i}.txt`);
+		writeFileSync(bulk, `bulk ${i}\n`, "utf8");
+		fsutil.readFileCached(bulk);
+	}
+	assert.ok(fsutil._readCacheStats().size <= 32, "cache holds at most 32 entries");
+	const missesAfterBulk = fsutil._readCacheStats().misses;
+	assert.equal(fsutil.readFileCached(file), "one\ntwo\nthree\n");
+	assert.equal(
+		fsutil._readCacheStats().misses,
+		missesAfterBulk + 1,
+		"LRU-evicted entry is re-read, not resurrected",
+	);
+});

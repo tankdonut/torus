@@ -252,6 +252,66 @@ export function readHead(file: string, bytes: number): string | null {
 	}
 }
 
+/**
+ * Cached whole-file text read for write-tool guards: the write guard and the
+ * comment checker both inspect the same target within one write call, so the
+ * disk is read at most once per unchanged file. Entries are keyed by absolute
+ * path and validated against {mtimeMs, size}; a mismatch re-reads. Any stat
+ * or read failure yields null and caches nothing (callers treat that as
+ * "not found / unreadable" and proceed). Bounded to the most recent 32 files.
+ */
+export function readFileCached(file: string): string | null {
+	let mtimeMs: number;
+	let size: number;
+	try {
+		const stat = statSync(file);
+		mtimeMs = stat.mtimeMs;
+		size = stat.size;
+	} catch {
+		return null;
+	}
+	const cached = readCache.get(file);
+	if (cached !== undefined && cached.mtimeMs === mtimeMs && cached.size === size) {
+		readCache.delete(file);
+		readCache.set(file, cached);
+		readCounters.hits += 1;
+		return cached.content;
+	}
+	readCache.delete(file);
+	let content: string;
+	try {
+		content = readFileSync(file, "utf8");
+	} catch {
+		return null;
+	}
+	readCache.set(file, { mtimeMs, size, content });
+	readCounters.misses += 1;
+	while (readCache.size > READ_CACHE_LIMIT) {
+		const oldest = readCache.keys().next().value;
+		if (oldest === undefined) break;
+		readCache.delete(oldest);
+	}
+	return content;
+}
+
+interface CachedRead {
+	mtimeMs: number;
+	size: number;
+	content: string;
+}
+
+const READ_CACHE_LIMIT = 32;
+const readCache = new Map<string, CachedRead>();
+const readCounters = { hits: 0, misses: 0 };
+
+/**
+ * Cumulative read-cache counters (hit/miss totals plus live entry count) for
+ * tests asserting single-read behavior; production code never calls this.
+ */
+export function _readCacheStats(): { hits: number; misses: number; size: number } {
+	return { hits: readCounters.hits, misses: readCounters.misses, size: readCache.size };
+}
+
 /** Promise-based sleep. */
 export function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));

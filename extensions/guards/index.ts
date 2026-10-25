@@ -17,7 +17,7 @@
  * the session runs without the context guards like every other guard.
  */
 
-import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import {
@@ -33,7 +33,7 @@ import {
 import { resolveToCwd } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/path-utils.js";
 import { isBypassMode } from "../automode/config.js";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
-import { torusHome } from "../fsutil.js";
+import { readFileCached, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
@@ -146,6 +146,7 @@ export function isBareFileDump(command: string): boolean {
 
 /** Line-overlap ratio between disk content and proposed rewrite (0..1). */
 export function rewriteSimilarity(disk: string, next: string): number {
+	if (disk === next) return 1;
 	const a = disk.split("\n").filter((line) => line.trim().length > 0);
 	const b = next.split("\n").filter((line) => line.trim().length > 0);
 	if (a.length === 0 || b.length === 0) return 0;
@@ -206,13 +207,8 @@ export function isKeywordsTarget(target: string): boolean {
 export function writeBlockReason(target: string, content: string): string | null {
 	if (hasSymlinkInPath(target)) return SYMLINK_BLOCK_REASON;
 	if (isKeywordsTarget(target)) return KEYWORDS_BLOCK_REASON;
-	if (!existsSync(target)) return null;
-	let disk = "";
-	try {
-		disk = readFileSync(target, "utf8");
-	} catch {
-		return null;
-	}
+	const disk = readFileCached(target);
+	if (disk === null) return null;
 	if (disk.split("\n").length < WRITE_MIN_LINES) return null;
 	const similarity = rewriteSimilarity(disk, content);
 	if (similarity < WRITE_SIMILARITY_BLOCK) return null;
