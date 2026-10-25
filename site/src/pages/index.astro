@@ -298,6 +298,10 @@ const fontFaces = [
 </html>
 
 <style>
+	main {
+		max-width: 64rem;
+	}
+
 	.hero {
 		padding-block: calc(var(--spacing) * 16) calc(var(--spacing) * 10);
 	}
@@ -313,6 +317,10 @@ const fontFaces = [
 
 	.section h3 {
 		margin-block-start: calc(var(--spacing) * 10);
+	}
+
+	.section :is(p, dl) {
+		max-width: 72ch;
 	}
 
 	.section .cta {
