@@ -148,11 +148,11 @@ export async function mainRoot(from: string): Promise<string | null> {
 	return realpathSync(path.dirname(commonDir));
 }
 
+/** Clean = no changes to tracked files, staged or unstaged; untracked files
+ * never count as dirty (remove refuses on "uncommitted (tracked) changes"). */
 async function isClean(repoDir: string): Promise<boolean> {
-	return (
-		(await runGit(repoDir, ["diff", "--quiet", "HEAD"])).ok &&
-		(await runGit(repoDir, ["diff", "--cached", "--quiet", "HEAD"])).ok
-	);
+	const status = await runGit(repoDir, ["status", "--porcelain", "--untracked-files=no"]);
+	return status.ok && status.stdout.length === 0;
 }
 
 async function currentBranch(repoDir: string): Promise<string> {
@@ -360,14 +360,13 @@ export async function performMerge(
 				"main checkout has uncommitted changes — the squash commit would capture unrelated state",
 		};
 	}
-	if (
-		(await runGit(repoRoot, ["log", "--oneline", `${mainBranch}..${branch}`])).stdout.length === 0
-	) {
+	const commitCount = Number.parseInt(
+		(await runGit(repoRoot, ["rev-list", "--count", `${mainBranch}..${branch}`])).stdout,
+		10,
+	);
+	if (!(commitCount > 0)) {
 		return { ok: false, error: `${branch} has no commits beyond ${mainBranch}` };
 	}
-
-	const commitCount = (await runGit(repoRoot, ["rev-list", "--count", `${mainBranch}..${branch}`]))
-		.stdout;
 
 	const rebase = await runGit(wtPath, ["rebase", mainBranch], signal);
 	if (!rebase.ok) {

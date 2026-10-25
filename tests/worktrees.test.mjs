@@ -198,6 +198,27 @@ test("remove refuses a dirty worktree unless forced", async () => {
 	assert.ok(!existsSync(wt), "forced removal tears down");
 });
 
+test("dirty means tracked changes: staged edits refuse, untracked files pass the clean check", async () => {
+	assert.equal((await performCreate(repo, "feat/tracked-only")).ok, true);
+	const wt = worktreePath(repo, "feat/tracked-only");
+	writeFileSync(path.join(wt, "staged.txt"), "staged\n");
+	sh(wt, ["add", "staged.txt"]);
+	const stagedRefusal = await performRemove(repo, "feat/tracked-only");
+	assert.equal(stagedRefusal.ok, false);
+	assert.match(stagedRefusal.error, /uncommitted \(tracked\) changes/);
+
+	sh(wt, ["reset", "--hard", "HEAD"]);
+	writeFileSync(path.join(wt, "loose.txt"), "loose\n");
+	const untracked = await performRemove(repo, "feat/tracked-only");
+	assert.equal(untracked.ok, false);
+	assert.match(
+		untracked.error,
+		/git worktree remove failed \(untracked files\?\)/,
+		"untracked files pass the clean check; git itself refuses the removal",
+	);
+	assert.equal((await performRemove(repo, "feat/tracked-only", { force: true })).ok, true);
+});
+
 test("rebase conflict aborts cleanly, keeping branch and worktree", async () => {
 	assert.equal((await performCreate(repo, "feat/conflict")).ok, true);
 	const wt = worktreePath(repo, "feat/conflict");
