@@ -1,7 +1,12 @@
 ---
-import "@fontsource-variable/inter";
-import "@fontsource-variable/jetbrains-mono";
-import "@fontsource-variable/source-serif-4";
+import interLatinExt from "@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2";
+import interLatin from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2";
+import monoLatinExt from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-ext-wght-normal.woff2";
+import monoLatin from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2";
+import serifLatinItalicExt from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-ext-wght-italic.woff2";
+import serifLatinExt from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-ext-wght-normal.woff2";
+import serifLatinItalic from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-italic.woff2";
+import serifLatin from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2";
 import "../styles/global.css";
 
 interface Props {
@@ -10,6 +15,21 @@ interface Props {
 
 // biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
 const { title = "torus" } = Astro.props;
+
+// The woff2 files are imported directly (vite resolves + hashes the asset urls)
+// and the @font-face rules are inlined into <head>, so the three fontsource
+// variable families are declared in the page itself instead of the bundled css.
+// biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
+const fontFaces = [
+	`@font-face{font-family:'Inter Variable';font-style:normal;font-display:swap;font-weight:100 900;src:url(${interLatin}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
+	`@font-face{font-family:'Inter Variable';font-style:normal;font-display:swap;font-weight:100 900;src:url(${interLatinExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
+	`@font-face{font-family:'JetBrains Mono Variable';font-style:normal;font-display:swap;font-weight:100 800;src:url(${monoLatin}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
+	`@font-face{font-family:'JetBrains Mono Variable';font-style:normal;font-display:swap;font-weight:100 800;src:url(${monoLatinExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
+	`@font-face{font-family:'Source Serif 4 Variable';font-style:normal;font-display:swap;font-weight:200 900;src:url(${serifLatin}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
+	`@font-face{font-family:'Source Serif 4 Variable';font-style:normal;font-display:swap;font-weight:200 900;src:url(${serifLatinExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C4,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
+	`@font-face{font-family:'Source Serif 4 Variable';font-style:italic;font-display:swap;font-weight:200 900;src:url(${serifLatinItalic}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
+	`@font-face{font-family:'Source Serif 4 Variable';font-style:italic;font-display:swap;font-weight:200 900;src:url(${serifLatinItalicExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C4,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
+].join("\n");
 ---
 
 <!doctype html>
@@ -18,6 +38,7 @@ const { title = "torus" } = Astro.props;
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}/favicon.svg`} />
+		<style is:inline set:html={fontFaces} />
 		<title>{title}</title>
 	</head>
 	<body>
@@ -31,5 +52,25 @@ const { title = "torus" } = Astro.props;
 		<footer>
 			<a href="https://github.com/tankdonut/torus">tankdonut/torus</a> · MIT
 		</footer>
+		<script is:inline>
+			(() => {
+				const root = document.documentElement;
+				root.classList.add("js-reveal");
+				const targets = Array.from(root.querySelectorAll("[data-reveal]"));
+				if (targets.length === 0) return;
+				const io = new IntersectionObserver(
+					(entries) => {
+						for (const entry of entries) {
+							if (!entry.isIntersecting) continue;
+							entry.target.classList.add("is-visible");
+							io.unobserve(entry.target);
+						}
+						if (root.querySelectorAll("[data-reveal]:not(.is-visible)").length === 0) io.disconnect();
+					},
+					{ rootMargin: "0px 0px -10% 0px" },
+				);
+				for (const el of targets) io.observe(el);
+			})();
+		</script>
 	</body>
 </html>

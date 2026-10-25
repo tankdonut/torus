@@ -1,0 +1,35 @@
+---
+interface Props {
+	/** Section number; rendered zero-padded to two digits ("1" -> "01"). */
+	num: string;
+	/**
+	 * Plain-text title. Omit it and pass the `title` slot instead when the
+	 * heading needs markup, e.g. a serif-italic accent: <em>word</em>.
+	 */
+	title?: string;
+	/** Anchor id; links scroll to the section with the heading in view. */
+	id?: string;
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
+const { num, title, id } = Astro.props;
+// biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
+const padded = String(num).padStart(2, "0");
+---
+
+<section class="section" id={id}>
+	<h2 class="section-head">
+		<span class="section-num">{padded}</span>
+		{Astro.slots.has("title") ? <slot name="title" /> : title}
+	</h2>
+	<slot />
+</section>
+
+<style>
+	.section-head {
+		display: flex;
+		align-items: baseline;
+		gap: calc(var(--spacing) * 3);
+		margin-block: 0 calc(var(--spacing) * 5);
+	}
+</style>
