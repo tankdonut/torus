@@ -1,0 +1,169 @@
+---
+import repo from "../stats/repo.json";
+
+/**
+ * The "built in the open" card (salt.md's repo card): language shares, licence,
+ * latest release, commits, contributors, last push. Every value comes from
+ * repo.json; nothing is hand-maintained.
+ */
+const { languages, git, release, license } = repo;
+const topLanguages = languages.filter((language) => language.share >= 0.01).slice(0, 5);
+const othersShare = languages
+	.filter((language) => !topLanguages.includes(language))
+	.reduce((sum, language) => sum + language.share, 0);
+const bar = [...topLanguages.map((l) => ({ name: l.language, share: l.share }))];
+if (othersShare > 0) bar.push({ name: "Other", share: othersShare });
+
+const palette = ["#3178c6", "#f1e05a", "#519aba", "#a374be", "#e34c26", "#8b8b8b"];
+const colorFor = (name: string) => {
+	const index = bar.findIndex((entry) => entry.name === name);
+	return palette[index % palette.length];
+};
+
+const humanContributors = git.contributors.filter((c) => !c.bot).length;
+const lastPush = git.lastCommit ?? "";
+---
+
+<article class="repo" data-reveal>
+	<div class="head">
+		<a class="slug" href="https://github.com/tankdonut/torus" rel="noopener">tankdonut/torus</a>
+		<span class="vis">Public</span>
+	</div>
+	<p class="desc">
+		A multi-agent coding harness on the pinned stock pi engine: a lead session that delegates
+		to a roster of specialist agents with live visibility into everything they do.
+	</p>
+
+	<div class="langbar" role="img" aria-label={topLanguages.map((l) => `${l.language} ${Math.round(l.share * 100)}%`).join(", ")}>
+		{bar.map((entry) => <span style={`width:${entry.share * 100}%;background:${colorFor(entry.name)}`} title={entry.name}></span>)}
+	</div>
+	<ul class="langs">
+		{
+			bar.map((entry) => (
+				<li>
+					<span class="swatch" style={`background:${colorFor(entry.name)}`} aria-hidden="true" />
+					{entry.name} <span class="pct">{Math.round(entry.share * 100)}%</span>
+				</li>
+			))
+		}
+	</ul>
+
+	<dl class="facts">
+		<div>
+			<dt>Licence</dt>
+			<dd>{license}</dd>
+		</div>
+		<div>
+			<dt>Latest release</dt>
+			<dd>v{release}</dd>
+		</div>
+		<div>
+			<dt>Commits</dt>
+			<dd>{git.commits}</dd>
+		</div>
+		<div>
+			<dt>Contributors</dt>
+			<dd>{humanContributors}</dd>
+		</div>
+		<div>
+			<dt>Last push</dt>
+			<dd>{lastPush}</dd>
+		</div>
+	</dl>
+</article>
+
+<style>
+	.repo {
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		background: var(--color-surface);
+		padding: calc(var(--spacing) * 5);
+	}
+
+	.head {
+		display: flex;
+		align-items: baseline;
+		gap: calc(var(--spacing) * 3);
+	}
+
+	.slug {
+		font-family: var(--font-mono);
+		font-weight: 600;
+		color: var(--color-text);
+		text-decoration: none;
+	}
+
+	.slug:hover {
+		text-decoration: underline;
+	}
+
+	.vis {
+		font-size: 0.75rem;
+		color: var(--color-muted);
+		border: 1px solid var(--color-border);
+		border-radius: 99px;
+		padding: 0 0.5rem;
+	}
+
+	.desc {
+		margin: calc(var(--spacing) * 3) 0 calc(var(--spacing) * 5);
+	}
+
+	.langbar {
+		display: flex;
+		height: 8px;
+		border-radius: 99px;
+		overflow: hidden;
+	}
+
+	.langbar span {
+		display: block;
+		height: 100%;
+	}
+
+	.langs {
+		list-style: none;
+		display: flex;
+		flex-wrap: wrap;
+		gap: calc(var(--spacing) * 2) calc(var(--spacing) * 5);
+		margin: calc(var(--spacing) * 3) 0 calc(var(--spacing) * 5);
+		padding: 0;
+		font-size: var(--text-small);
+	}
+
+	.langs li {
+		display: flex;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+	}
+
+	.swatch {
+		width: 8px;
+		height: 8px;
+		border-radius: 2px;
+	}
+
+	.pct {
+		color: var(--color-muted);
+	}
+
+	.facts {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+		gap: calc(var(--spacing) * 4);
+		margin: 0;
+		padding-top: calc(var(--spacing) * 5);
+		border-top: 1px solid var(--color-border);
+	}
+
+	.facts dt {
+		font-size: var(--text-small);
+		color: var(--color-muted);
+	}
+
+	.facts dd {
+		margin: 0;
+		font-family: var(--font-mono);
+		font-variant-numeric: tabular-nums;
+	}
+</style>

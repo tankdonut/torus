@@ -1,0 +1,170 @@
+{
+	"generatedAt": "2026-10-25T21:25:42.446Z",
+	"counts": {
+		"extensions": 32,
+		"tools": 32,
+		"agents": 7,
+		"skills": 11
+	},
+	"git": {
+		"commits": 353,
+		"contributors": [
+			{
+				"name": "tankdonut",
+				"commits": 286,
+				"bot": false
+			},
+			{
+				"name": "renovate[bot]",
+				"commits": 48,
+				"bot": true
+			},
+			{
+				"name": "github-actions[bot]",
+				"commits": 19,
+				"bot": true
+			}
+		],
+		"firstCommit": "2026-10-04",
+		"lastCommit": "2026-10-25",
+		"days": [
+			{
+				"date": "2026-10-04",
+				"count": 28
+			},
+			{
+				"date": "2026-10-05",
+				"count": 25
+			},
+			{
+				"date": "2026-10-06",
+				"count": 11
+			},
+			{
+				"date": "2026-10-07",
+				"count": 61
+			},
+			{
+				"date": "2026-10-08",
+				"count": 1
+			},
+			{
+				"date": "2026-10-09",
+				"count": 40
+			},
+			{
+				"date": "2026-10-10",
+				"count": 6
+			},
+			{
+				"date": "2026-10-11",
+				"count": 16
+			},
+			{
+				"date": "2026-10-12",
+				"count": 1
+			},
+			{
+				"date": "2026-10-13",
+				"count": 7
+			},
+			{
+				"date": "2026-10-14",
+				"count": 2
+			},
+			{
+				"date": "2026-10-15",
+				"count": 4
+			},
+			{
+				"date": "2026-10-16",
+				"count": 6
+			},
+			{
+				"date": "2026-10-17",
+				"count": 10
+			},
+			{
+				"date": "2026-10-18",
+				"count": 21
+			},
+			{
+				"date": "2026-10-19",
+				"count": 7
+			},
+			{
+				"date": "2026-10-20",
+				"count": 0
+			},
+			{
+				"date": "2026-10-21",
+				"count": 0
+			},
+			{
+				"date": "2026-10-22",
+				"count": 27
+			},
+			{
+				"date": "2026-10-23",
+				"count": 0
+			},
+			{
+				"date": "2026-10-24",
+				"count": 28
+			},
+			{
+				"date": "2026-10-25",
+				"count": 52
+			}
+		]
+	},
+	"languages": [
+		{
+			"language": "JavaScript",
+			"share": 0.4692,
+			"lines": 30146
+		},
+		{
+			"language": "TypeScript",
+			"share": 0.3645,
+			"lines": 23421
+		},
+		{
+			"language": "Markdown",
+			"share": 0.0685,
+			"lines": 4401
+		},
+		{
+			"language": "JSON",
+			"share": 0.0654,
+			"lines": 4205
+		},
+		{
+			"language": "Astro",
+			"share": 0.012,
+			"lines": 774
+		},
+		{
+			"language": "CSS",
+			"share": 0.0111,
+			"lines": 716
+		},
+		{
+			"language": "YAML",
+			"share": 0.007,
+			"lines": 447
+		},
+		{
+			"language": "Shell",
+			"share": 0.0021,
+			"lines": 133
+		},
+		{
+			"language": "SVG",
+			"share": 0.0002,
+			"lines": 13
+		}
+	],
+	"release": "0.16.0",
+	"license": "MIT"
+}

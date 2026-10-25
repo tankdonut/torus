@@ -1,0 +1,60 @@
+---
+import repo from "../stats/repo.json";
+
+/**
+ * The stat row under the hero (salt.md's "1 process / 1 directory / 0 external
+ * services"): every number comes from repo.json, which scripts/repo-stats.mjs
+ * derives from the repository at build time.
+ */
+const { extensions, tools, agents, skills } = repo.counts;
+const facts = [
+	{ value: String(extensions), label: "extensions" },
+	{ value: String(tools), label: "tools" },
+	{ value: String(agents), label: "agents" },
+	{ value: String(skills), label: "skills" },
+	{ value: "1", label: "pinned engine" },
+];
+---
+
+<dl class="facts" data-reveal>
+	{
+		facts.map((fact) => (
+			<div class="fact">
+				<dt class="visually-hidden">{fact.label}</dt>
+				<dd>
+					<span class="value">{fact.value}</span>
+					<span class="label">{fact.label}</span>
+				</dd>
+			</div>
+		))
+	}
+</dl>
+
+<style>
+	.facts {
+		display: flex;
+		flex-wrap: wrap;
+		gap: calc(var(--spacing) * 8) calc(var(--spacing) * 12);
+		margin: 0;
+		padding-block: calc(var(--spacing) * 5);
+		border-block: 1px solid var(--color-border);
+	}
+
+	.fact dd {
+		margin: 0;
+		display: flex;
+		align-items: baseline;
+		gap: calc(var(--spacing) * 2);
+	}
+
+	.value {
+		font-family: var(--font-mono);
+		font-size: 1.75rem;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.label {
+		color: var(--color-muted);
+	}
+</style>

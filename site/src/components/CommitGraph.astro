@@ -1,0 +1,85 @@
+---
+import repo from "../stats/repo.json";
+
+/**
+ * Commit activity graph: one column per day since the public history began,
+ * as tall as that day's commits (hover a column for the date). Data comes from
+ * repo.json (git log at build time). Rendered as inline SVG with native
+ * <title> tooltips, so it works with scripting off.
+ */
+const days = repo.git.days;
+const max = Math.max(1, ...days.map((day) => day.count));
+const GAP = 3;
+const BAR = 7;
+const HEIGHT = 56;
+const width = days.length * (BAR + GAP) - GAP;
+
+const columns = days.map((day, index) => {
+	const barHeight = Math.round((day.count / max) * HEIGHT);
+	return {
+		x: index * (BAR + GAP),
+		y: HEIGHT - Math.max(day.count > 0 ? 2 : 1, barHeight),
+		height: Math.max(day.count > 0 ? 2 : 1, barHeight),
+		title: `${day.date}: ${day.count} commit${day.count === 1 ? "" : "s"}`,
+		active: day.count > 0,
+	};
+});
+---
+
+<figure class="commits" data-reveal>
+	<svg
+		viewBox={`0 0 ${width} ${HEIGHT}`}
+		width={width}
+		height={HEIGHT}
+		role="img"
+		aria-label={`Commits per day from ${days[0]?.date ?? ""} to ${days[days.length - 1]?.date ?? ""}; ${repo.git.commits} total`}
+	>
+		{
+			columns.map((column) => (
+				<rect
+					x={column.x}
+					y={column.y}
+					width={BAR}
+					height={column.height}
+					rx="1"
+					class={column.active ? "on" : "off"}
+				>
+					<title>{column.title}</title>
+				</rect>
+			))
+		}
+	</svg>
+	<figcaption>
+		{repo.git.commits} commits since {days[0]?.date}. One column per day since the public
+		history began, as tall as that day's commits.
+	</figcaption>
+</figure>
+
+<style>
+	.commits {
+		margin: calc(var(--spacing) * 5) 0 0;
+	}
+
+	svg {
+		max-width: 100%;
+		height: auto;
+	}
+
+	rect.on {
+		fill: var(--color-accent);
+	}
+
+	rect.on:hover {
+		fill: var(--color-text);
+	}
+
+	rect.off {
+		fill: var(--color-border);
+	}
+
+	figcaption {
+		margin-top: calc(var(--spacing) * 2);
+		font-size: var(--text-small);
+		color: var(--color-muted);
+	}
+</style>

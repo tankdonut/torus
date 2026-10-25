@@ -4,7 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "astro dev",
-		"prebuild": "node scripts/copy-generated-assets.mjs",
+		"prebuild": "node scripts/copy-generated-assets.mjs && node scripts/repo-stats.mjs",
 		"build": "npm run prebuild && astro build",
 		"capture": "node scripts/capture-tui.mjs",
 		"preview": "astro preview"
