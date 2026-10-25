@@ -1,0 +1,63 @@
+---
+import { getCollection } from "astro:content";
+import Base from "../../layouts/Base.astro";
+import { DOC_ROUTES, joinBase } from "../../lib/md-links.mjs";
+
+const base = import.meta.env.BASE_URL;
+const entries = await getCollection("docs");
+
+const listing: { id: string; description: string }[] = [
+	{ id: "docs/extensions.md", description: "Every extension, tool, slash command, and environment variable in the harness, cataloged by manifest entry." },
+	{ id: "docs/serve.md", description: "The authenticated HTTP surface over the delegation core, from bearer tokens to webhooks." },
+	{ id: "docs/container.md", description: "The prebuilt multi-arch GHCR image: what ships inside, tag semantics, and how to run it." },
+	{ id: "docs/pi-packages.md", description: "Installing torus as a pi package: what the manifest carries and how updates behave." },
+	{ id: "docs/efficiency.md", description: "How the harness-layer context overhead is measured: stock pi versus torus on identical prompts." },
+	{ id: "docs/instructions.md", description: "How the engine discovers AGENTS.md instruction files, and what torus adds around them." },
+	{ id: "docs/skills.md", description: "The Agent Skills standard the skills directory follows, and how skills reach delegated children." },
+	{ id: "SECURITY.md", description: "The threat model: what torus defends against, what it does not, and how to report issues." },
+	{ id: "CHANGELOG.md", description: "Release history: every version with its changes." },
+];
+
+const rows = listing.flatMap(({ id, description }) => {
+	const entry = entries.find((candidate) => candidate.id === id);
+	if (!entry) {
+		throw new Error(`${id} is missing from the docs collection; the index must list every rendered page`);
+	}
+	const title = entry.body?.match(/^#\s+(.+)$/m)?.[1] ?? id;
+	const route = DOC_ROUTES.get(id) ?? "/";
+	return [{ title, description, href: joinBase(base, route) }];
+});
+---
+
+<Base title="Docs · torus">
+	<div class="docs-index">
+		<h1>Docs</h1>
+		<ul>
+			{rows.map((row) => (
+				<li>
+					<a href={row.href}>{row.title}</a>
+					<p>{row.description}</p>
+				</li>
+			))}
+		</ul>
+	</div>
+</Base>
+
+<style>
+	.docs-index ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.docs-index li {
+		padding: 1rem 0;
+		border-top: 1px solid var(--color-border);
+	}
+	.docs-index li:last-child {
+		border-bottom: 1px solid var(--color-border);
+	}
+	.docs-index p {
+		margin: 0.25rem 0 0;
+		color: var(--color-muted);
+	}
+</style>

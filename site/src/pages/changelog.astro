@@ -1,0 +1,13 @@
+---
+import { getEntry, render } from "astro:content";
+import Doc from "../layouts/Doc.astro";
+
+const entry = await getEntry("docs", "CHANGELOG.md");
+if (!entry) throw new Error("CHANGELOG.md is missing from the docs collection");
+const { Content, headings } = await render(entry);
+const title = headings.find((heading) => heading.depth === 1)?.text ?? "Changelog";
+---
+
+<Doc title={title} sourcePath={entry.id} headings={headings}>
+	<Content />
+</Doc>
