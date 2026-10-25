@@ -46,15 +46,17 @@ Trust boundary: delegations inherit the serve process environment (provider cred
 
 ```json
 {
- "triggers": [
-  {
-   "name": "nightly-status",
-   "everyMinutes": 720,
-   "agent": "builder",
-   "task": "Summarize the fleet's runs from the last 12 hours.",
-   "model": "primary"
-  }
- ]
+ "serve": {
+  "triggers": [
+   {
+    "name": "nightly-status",
+    "everyMinutes": 720,
+    "agent": "builder",
+    "task": "Summarize the fleet's runs from the last 12 hours.",
+    "model": "primary"
+   }
+  ]
+ }
 }
 ```
 
@@ -79,15 +81,17 @@ Any trigger can also be fired over HTTP: add a `webhook` block and the trigger g
 
 ```json
 {
- "triggers": [
-  {
-   "name": "issue-hook",
-   "everyMinutes": 720,
-   "agent": "builder",
-   "task": "Triage issue {{payload.issue}} titled {{payload.title}}.",
-   "webhook": { "path": "/hook/issues" }
-  }
- ]
+ "serve": {
+  "triggers": [
+   {
+    "name": "issue-hook",
+    "everyMinutes": 720,
+    "agent": "builder",
+    "task": "Triage issue {{payload.issue}} titled {{payload.title}}.",
+    "webhook": { "path": "/hook/issues" }
+   }
+  ]
+ }
 }
 ```
 
