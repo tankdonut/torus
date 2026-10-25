@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const home = mkdtempSync(path.join(tmpdir(), "torus-config-"));
 process.env.TORUS_HOME = home;
@@ -18,6 +27,9 @@ const {
 	parseEnvBoolean,
 	effectiveConfigSnapshot,
 	writeSection,
+	_resetConfigCache,
+	_peekConfigCache,
+	_configFileReads,
 } = await import("../extensions/config/loader.ts");
 const { torusHome } = await import("../extensions/fsutil.ts");
 
@@ -57,6 +69,62 @@ test("loadConfigFile: non-object root degrades to empty config with one warning"
 test("loadConfigFile: valid object file loads as-is", () => {
 	setConfig({ chains: { default: "gpt" }, extra: 1 });
 	assert.deepEqual(loadConfigFile(), { config: { chains: { default: "gpt" }, extra: 1 } });
+});
+
+test("loadConfigFile memo: unchanged file is served from memory with one underlying read", () => {
+	clearConfig();
+	_resetConfigCache();
+	setConfig({ chains: { default: "gpt" } });
+	const first = loadConfigFile();
+	assert.equal(_configFileReads(), 1);
+	const second = loadConfigFile();
+	assert.equal(_configFileReads(), 1, "a hit performs no second read");
+	assert.strictEqual(second, first, "a hit hands back the memoized result object");
+	const peek = _peekConfigCache();
+	assert.equal(peek.size, 1);
+	const stats = statSync(configPath);
+	assert.deepEqual(peek.get(configPath), { mtimeMs: stats.mtimeMs, size: stats.size });
+});
+
+test("loadConfigFile memo: failure loads are never memoized", () => {
+	clearConfig();
+	_resetConfigCache();
+	assert.deepEqual(loadConfigFile(), { config: {} });
+	assert.equal(_peekConfigCache().has(configPath), false, "missing file is not memoized");
+
+	setRawConfig("{not json");
+	assert.ok(loadConfigFile().warning?.includes("not valid JSON"));
+	assert.ok(_configFileReads() >= 1, "the malformed read still hits the disk");
+	assert.equal(_peekConfigCache().has(configPath), false, "malformed file is not memoized");
+
+	setRawConfig("[1, 2]");
+	assert.ok(loadConfigFile().warning?.includes("not a JSON object"));
+	assert.equal(_peekConfigCache().has(configPath), false, "non-object root is not memoized");
+});
+
+test("loadConfigFile memo: an edit invalidates the entry and returns the new value", async () => {
+	clearConfig();
+	_resetConfigCache();
+	setConfig({ chains: { default: "gpt" } });
+	const before = loadConfigFile();
+	assert.equal(before.config.chains.default, "gpt");
+
+	// Same byte size, different value: only the mtime half of the key can catch it.
+	const statsBefore = statSync(configPath);
+	writeFileSync(configPath, '{"chains":{"default":"zmx"}}');
+	for (let i = 0; i < 50 && statSync(configPath).mtimeMs === statsBefore.mtimeMs; i++) {
+		await sleep(2);
+	}
+	assert.notEqual(statSync(configPath).mtimeMs, statsBefore.mtimeMs, "coarse mtime waited out");
+
+	const after = loadConfigFile();
+	assert.equal(after.config.chains.default, "zmx", "the edit is visible without a restart");
+	assert.notStrictEqual(after, before, "a new parse, not the memoized result");
+	assert.deepEqual(_peekConfigCache().get(configPath), {
+		mtimeMs: statSync(configPath).mtimeMs,
+		size: statSync(configPath).size,
+	});
+	assert.equal(_configFileReads(), 2, "one read per content version");
 });
 
 test("readSection: missing config.json falls back to the legacy loader", () => {
@@ -288,4 +356,38 @@ test("project config: malformed file degrades to empty with a warning, no throw"
 	const loaded = loadProjectConfig(dir);
 	assert.deepEqual(loaded.config, {});
 	assert.match(loaded.warning ?? "", /not valid JSON/);
+});
+
+test("writeSection: drops the memo for the file it writes, so the next load is fresh", () => {
+	clearConfig();
+	_resetConfigCache();
+	setConfig({ chains: { default: "gpt" } });
+	assert.equal(loadConfigFile().config.automode, undefined);
+	const written = writeSection("automode", { ask: ["b"] });
+	assert.equal(written.ok, true);
+	assert.equal(_peekConfigCache().has(configPath), false, "the write drops the memo entry");
+	const after = loadConfigFile();
+	assert.deepEqual(after.config.automode, { ask: ["b"] });
+	assert.deepEqual(after.config.chains, { default: "gpt" });
+});
+
+test("project config: inherits the memo; the allowlist shaping stays per-call", () => {
+	const dir = mkdtempSync(path.join(tmpdir(), "torus-project-cfg-"));
+	mkdirSync(path.join(dir, ".torus"), { recursive: true });
+	writeFileSync(
+		projectConfigPath(dir),
+		JSON.stringify({ ui: { banner: false }, serve: { port: 1 } }),
+	);
+	_resetConfigCache();
+	const first = loadProjectConfig(dir);
+	const second = loadProjectConfig(dir);
+	assert.deepEqual(first.config, { ui: { banner: false } });
+	assert.deepEqual(first.ignored, ["serve"]);
+	assert.notStrictEqual(second.config, first.config, "shaping rebuilds its result per call");
+	assert.ok(_peekConfigCache().has(projectConfigPath(dir)), "the underlying read is memoized");
+	assert.equal(_configFileReads(), 1, "two project loads, one underlying read");
+	const raw = loadConfigFile(projectConfigPath(dir));
+	assert.notStrictEqual(raw.config, first.config, "the shaped result is not the memoized object");
+	const again = loadConfigFile(projectConfigPath(dir));
+	assert.strictEqual(raw.config, again.config, "hits share identity");
 });

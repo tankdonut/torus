@@ -10,7 +10,15 @@
  * this on every startup unguarded.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { torusHome } from "../fsutil.js";
 import { PROJECT_READABLE_SECTIONS } from "./sections.js";
@@ -78,16 +86,73 @@ export function loadProjectConfig(cwd: string = process.cwd()): ProjectConfigLoa
 export type ConfigLoad = { config: Record<string, unknown>; warning?: string };
 
 /**
+ * Memo of successful config loads, keyed by resolved path: while a file's
+ * mtime and size are unchanged, its parsed result is served from memory, so
+ * hot per-knob reads cost one stat instead of a read+parse. Failure results
+ * are never memoized — their documented fallback is rebuilt on every call —
+ * and writeSection drops the entry for the file it writes, because a rename
+ * can land within mtime granularity of the previous write at an unchanged
+ * size.
+ */
+type ConfigCacheEntry = { mtimeMs: number; size: number; result: ConfigLoad };
+
+const configCache = new Map<string, ConfigCacheEntry>();
+
+/** Successful underlying reads since the last reset (test-only). */
+let configFileReads = 0;
+
+/** Test-only: drop every memoized load and zero the read counter. */
+export function _resetConfigCache(): void {
+	configCache.clear();
+	configFileReads = 0;
+}
+
+/** Test-only: copy of the memo's stat keys, for asserting hits and invalidation. */
+export function _peekConfigCache(): Map<string, { mtimeMs: number; size: number }> {
+	const out = new Map<string, { mtimeMs: number; size: number }>();
+	for (const [file, entry] of configCache) {
+		out.set(file, { mtimeMs: entry.mtimeMs, size: entry.size });
+	}
+	return out;
+}
+
+/** Test-only: successful underlying reads loadConfigFile has made since the last reset. */
+export function _configFileReads(): number {
+	return configFileReads;
+}
+
+/**
  * Read and parse a config.json (defaults to the live config file). Missing
  * file → empty config with no warning; unreadable file, malformed JSON, or a
  * non-object root → empty config plus one warning naming the path and reason.
  * Never throws.
+ *
+ * Successful loads are memoized per resolved path, keyed on mtime and size:
+ * an unchanged file is served from memory, an edited file re-reads, and
+ * failures are never memoized. A hit hands back the same result object, so
+ * callers must treat the returned config as read-only.
  */
 export function loadConfigFile(file?: string): ConfigLoad {
 	const target = file ?? configFilePath();
+	// Stat first: a memo entry whose mtime and size still match means the file
+	// is unchanged. A stat failure (e.g. missing file) skips the memo entirely
+	// so the fallback below stays uncached.
+	let stats: { mtimeMs: number; size: number } | undefined;
+	try {
+		stats = statSync(target);
+	} catch {
+		// Fall through to the read; its error path handles the reason.
+	}
+	if (stats !== undefined) {
+		const cached = configCache.get(target);
+		if (cached !== undefined && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+			return cached.result;
+		}
+	}
 	let raw: string;
 	try {
 		raw = readFileSync(target, "utf8");
+		configFileReads += 1;
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code;
 		if (code === "ENOENT") return { config: {} };
@@ -105,7 +170,11 @@ export function loadConfigFile(file?: string): ConfigLoad {
 	if (!isPlainObject(parsed)) {
 		return { config: {}, warning: `${target}: root is not a JSON object; using empty config` };
 	}
-	return { config: parsed };
+	const result: ConfigLoad = { config: parsed };
+	if (stats !== undefined) {
+		configCache.set(target, { mtimeMs: stats.mtimeMs, size: stats.size, result });
+	}
+	return result;
 }
 
 /** Read one existing config file strictly for a write: any problem is a refusal. */
@@ -165,6 +234,9 @@ export function writeSection(
 		mkdirSync(dir, { recursive: true });
 		writeFileSync(temp, body, "utf8");
 		renameSync(temp, target);
+		// The rename can land within mtime granularity of the previous write and
+		// at an unchanged size, so drop the memo instead of trusting the stat key.
+		configCache.delete(target);
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code ?? "write error";
 		try {
