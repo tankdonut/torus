@@ -88,10 +88,9 @@ const rendered = lines
 		border-radius: var(--radius);
 		overflow: hidden;
 		background: #101216;
-		/* Hug the captured content: a 44-column pane should not stretch to the
-		 * full text column. */
-		width: fit-content;
-		max-width: 100%;
+		/* One uniform width for every capture, like a stack of same-sized
+		 * screenshots; narrower content letterboxes against the dark bg. */
+		width: 100%;
 	}
 
 	.chrome {

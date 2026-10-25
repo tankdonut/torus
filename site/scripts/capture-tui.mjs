@@ -40,10 +40,27 @@ const run = (command, env = {}) =>
 	});
 
 const paneText = (pane) => tmux(["capture-pane", "-p", "-t", pane]).stdout ?? "";
+
+// Captures must not leak the operator's directory layout: rewrite the repo
+// path (absolute and ~-abbreviated) and any other home path to a generic one
+// before the artifact is written.
+const home = process.env["HOME"] ?? "";
+const tildeRepo = home !== "" && repoRoot.startsWith(home) ? `~${repoRoot.slice(home.length)}` : "";
+const REDACTIONS = [
+	[repoRoot, "/home/user/torus"],
+	[tildeRepo, "~/torus"],
+	[home, "/home/user"],
+].filter(([from]) => from !== "");
+
+const redact = (text) => {
+	let out = text;
+	for (const [from, to] of REDACTIONS) out = out.replaceAll(from, to);
+	return out;
+};
 const capture = (pane, name) => {
 	const colored = tmux(["capture-pane", "-e", "-p", "-t", pane]);
 	if (colored.status !== 0) throw new Error(`capture failed for ${name}`);
-	writeFileSync(resolve(outDir, `${name}.ans`), colored.stdout);
+	writeFileSync(resolve(outDir, `${name}.ans`), redact(colored.stdout));
 	console.log(`site: captured ${name}`);
 };
 
@@ -107,11 +124,16 @@ try {
 	waitFor(`${SESSION}.0`, "torus · leader", 60_000, "TUI boot (statusline)");
 
 	// The roster scene is stateless; capture it before any dispatch or fleet
-	// overlay exists, while the editor is guaranteed empty and focused.
+	// overlay exists, while the editor is guaranteed empty and focused. 91
+	// columns is the width the main pane will have once the delegation split
+	// opens, so every scene renders at the same width.
+	tmux(["resize-window", "-t", SESSION, "-x", "91"]);
+	sleep(1500);
 	tmux(["send-keys", "-t", `${SESSION}.0`, "/roster", "Enter"]);
 	waitFor(`${SESSION}.0`, "concurrency caps", 20_000, "roster output");
 	sleep(1000);
 	capture(`${SESSION}.0`, "roster");
+	tmux(["resize-window", "-t", SESSION, "-x", String(WIDTH)]);
 	sleep(1500);
 
 	tmux(["send-keys", "-t", `${SESSION}.0`, `/explorer ${DISPATCH}`, "Enter"]);
@@ -122,7 +144,22 @@ try {
 	const sidePane = delegationPane();
 	if (sidePane) {
 		sleep(8000);
-		capture(sidePane, "delegation-pane");
+		// Capture the side pane at the main pane's width so every scene renders
+		// at one width: tmux reflows the tailed log onto the wider grid, and the
+		// split is restored before the main-pane scenes run.
+		const paneWidth = (pane) =>
+			(tmux(["display-message", "-p", "-t", pane, "#{pane_width}"]).stdout ?? "").trim();
+		const mainWidth = paneWidth(`${SESSION}.0`);
+		const sideWidth = paneWidth(sidePane);
+		if (mainWidth !== "" && sideWidth !== "") {
+			tmux(["resize-pane", "-t", sidePane, "-x", mainWidth]);
+			sleep(2500);
+			capture(sidePane, "delegation-pane");
+			tmux(["resize-pane", "-t", sidePane, "-x", sideWidth]);
+			sleep(1000);
+		} else {
+			capture(sidePane, "delegation-pane");
+		}
 	} else {
 		console.warn("site: delegation pane already closed; skipping delegation-pane");
 	}

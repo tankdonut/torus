@@ -24,6 +24,7 @@
 ## Conventions
 
 - `src/tui/*.ans`, `src/tui/captures.json`, and `src/stats/repo.json` are generated: never hand-edit; the landing's numbers must stay machine-derived (`AGENTS.md` root rule, enforced here by the two scripts).
+- `capture-tui.mjs` redacts the operator's home and repo paths before writing captures; keep the redaction intact when touching the script (history has been rewritten once to purge a leak).
 - `capture-tui.mjs` boots the real engine: needs repo-root `npm install`, provider credentials, and tmux; costs a few cents per run; `TORUS_DREAMING=0` keeps scenes deterministic.
 - Driving the TUI via tmux: keys must be `M-t`/`M-1`, never `Alt+t`/`Alt+1` (tmux types the latter literally into the chat editor).
 - Terminal figures on the landing are captures of real sessions, not mockups; keep it that way when editing copy or components.
