@@ -1,9 +1,12 @@
 import {
 	appendFileSync,
+	closeSync,
 	existsSync,
 	mkdirSync,
+	openSync,
 	readdirSync,
 	readFileSync,
+	readSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -184,6 +187,58 @@ export function deliverMail(teamId: string, member: string, from: string, text: 
 	return path.join(dir, "inbox.md");
 }
 
+/** Test-only counter: bytes readDelta has actually read — poll deltas plus shrink re-reads. */
+let deltaBytesRead = 0;
+
+export function _deltaBytesReadForTesting(): number {
+	return deltaBytesRead;
+}
+
+export function _resetDeltaBytesReadForTesting(): void {
+	deltaBytesRead = 0;
+}
+
+/**
+ * Read only what a mailbox poll needs: stat first, so an unchanged size costs
+ * no read at all. A grown file is read exactly over [cursor, size) — mailboxes
+ * are append-only, so the delta is the whole read cost. A file that shrank
+ * underneath the cursor (replaced, truncated) falls back to a full re-read
+ * with the cursor reset. Cursors are byte offsets; persistence writes are
+ * unchanged.
+ */
+export function readDelta(file: string, cursorRef: { value: number }, cursorFile?: string): string {
+	try {
+		const size = statSync(file).size;
+		if (size === cursorRef.value) return "";
+		let delta: string;
+		if (size < cursorRef.value) {
+			delta = readFileSync(file, "utf8");
+			deltaBytesRead += Buffer.byteLength(delta);
+			cursorRef.value = size;
+		} else {
+			const fd = openSync(file, "r");
+			try {
+				const tail = Buffer.alloc(size - cursorRef.value);
+				const read = readSync(fd, tail, 0, tail.length, cursorRef.value);
+				deltaBytesRead += read;
+				cursorRef.value += read;
+				delta = tail.subarray(0, read).toString("utf8");
+			} finally {
+				closeSync(fd);
+			}
+		}
+		if (delta.length <= 0) return "";
+		if (cursorFile) {
+			try {
+				writeFileSync(cursorFile, String(cursorRef.value), "utf8");
+			} catch {}
+		}
+		return delta.trim().length > 0 ? delta : "";
+	} catch {
+		return "";
+	}
+}
+
 export function tasksFile(teamId: string): string {
 	return path.join(teamDir(teamId), "tasks.json");
 }
@@ -328,7 +383,9 @@ export function dependencyCycle(tasks: Task[]): string[] | null {
  * tasks.json via bash while the lead uses team_task_update; an unlocked RMW
  * loses one side's update. A directory lock (rename-atomic) serializes both
  * this helper and itself across processes; stale locks are taken over after
- * STALE_LOCK_MS. Raw member writes bypass the lock entirely, so the RMW also
+ * STALE_LOCK_MS. Contention waits sleep asynchronously, so waiting on the
+ * lock never blocks the caller's event loop. Raw member writes bypass the
+ * lock entirely, so the RMW also
  * compares the file's mtime before read and before write: a change means
  * someone wrote underneath us and the mutation re-runs against a fresh read
  * (bounded to CAS_RETRIES, then last-writer-wins). Mutators must therefore be
@@ -350,11 +407,11 @@ function mtimeOf(file: string): number | null {
 	}
 }
 
-export function updateTasksFile(
+export async function updateTasksFile(
 	teamId: string,
 	// biome-ignore lint/suspicious/noConfusingVoidType: mutator returns a replacement or mutates in place
 	mutate: (file: TasksFile) => TasksFile | void,
-): TasksFile {
+): Promise<TasksFile> {
 	const lockDir = `${tasksFile(teamId)}.lock`;
 	const start = Date.now();
 	const deadline = start + STALE_LOCK_MS;
@@ -378,7 +435,7 @@ export function updateTasksFile(
 						`tasklist lock not acquirable at ${lockDir} after ${Date.now() - start}ms — check the team directory exists and is writable`,
 					);
 			}
-			sleepSync(LOCK_POLL_MS);
+			await sleep(LOCK_POLL_MS);
 		}
 	}
 	try {
@@ -394,10 +451,6 @@ export function updateTasksFile(
 	} finally {
 		rmSync(lockDir, { recursive: true, force: true });
 	}
-}
-
-function sleepSync(ms: number): void {
-	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 async function rolePromptFor(spec: MemberSpec, teamId: string, objective: string): Promise<string> {
@@ -532,23 +585,16 @@ export function spawnMember(
 		}
 	};
 
-	const readDelta = (file: string, cursorRef: { value: number }, cursorFile?: string): string => {
-		try {
-			const content = readFileSync(file, "utf8");
-			if (content.length < cursorRef.value) cursorRef.value = 0;
-			if (content.length <= cursorRef.value) return "";
-			const delta = content.slice(cursorRef.value);
-			cursorRef.value = content.length;
-			if (cursorFile) {
-				try {
-					writeFileSync(cursorFile, String(cursorRef.value), "utf8");
-				} catch {}
-			}
-			return delta.trim().length > 0 ? delta : "";
-		} catch {
-			return "";
-		}
+	// Idle repeats every poll cycle, and state handlers re-derive fleet
+	// bookkeeping on each fire, so idle is emitted only when ENTERING it —
+	// every other status is itself a transition and is emitted as it occurs.
+	let lastEmitted: "starting" | "working" | "idle" | "stopped" | undefined;
+	const emitState = (status: "starting" | "working" | "idle" | "stopped"): void => {
+		if (status === "idle" && lastEmitted === "idle") return;
+		lastEmitted = status;
+		onState({ status, sessionId });
 	};
+
 	const loadCursor = (cursorFile: string): { value: number } => {
 		try {
 			const raw = readFileSync(cursorFile, "utf8").trim();
@@ -567,7 +613,7 @@ export function spawnMember(
 	// only mail appended after start arrives as a delta).
 	const seedInboxCursor = (): { value: number } => {
 		try {
-			const length = readFileSync(inboxFile, "utf8").length;
+			const length = statSync(inboxFile).size;
 			writeFileSync(inboxCursorFile, String(length), "utf8");
 			return { value: length };
 		} catch {
@@ -608,24 +654,31 @@ export function spawnMember(
 		// log and re-enter the wait. Only "exited" (child gone or stop requested)
 		// escapes as failure — the former boolean conflated timeout with exit and
 		// marked live members failed.
-		for (;;) {
-			const start = Date.now();
-			while (!stopped && Date.now() - start < 600_000) {
-				let timer: ReturnType<typeof setTimeout> | undefined;
-				const wake = await Promise.race([
-					settleLatch.then(() => "settled" as const),
-					child.exited.then(() => "exited" as const),
-					new Promise<null>((resolve) => {
-						timer = setTimeout(() => resolve(null), POLL_MS);
-					}),
-				]);
-				if (timer) clearTimeout(timer);
-				drainOutbox();
-				if (wake === "settled") return "settled";
-				if (wake === "exited") return "exited";
+		const settledSignal = settleLatch.then(() => "settled" as const);
+		const exitedSignal = child.exited.then(() => "exited" as const);
+		// One timer per invocation: the settle/exit signals are built once, and
+		// each poll cycle re-arms this single timer instead of allocating a fresh
+		// Timeout per wake. Every race still gets a full POLL_MS window.
+		let firePoll: (value: null) => void = () => {};
+		const pollTimer = setTimeout(() => firePoll(null), POLL_MS);
+		try {
+			for (;;) {
+				const start = Date.now();
+				while (!stopped && Date.now() - start < 600_000) {
+					const pollWindow = new Promise<null>((resolve) => {
+						firePoll = resolve;
+					});
+					pollTimer.refresh();
+					const wake = await Promise.race([settledSignal, exitedSignal, pollWindow]);
+					drainOutbox();
+					if (wake === "settled") return "settled";
+					if (wake === "exited") return "exited";
+				}
+				if (stopped) return "exited";
+				appendLog("member still working after 600s — continuing to wait");
 			}
-			if (stopped) return "exited";
-			appendLog("member still working after 600s — continuing to wait");
+		} finally {
+			clearTimeout(pollTimer);
 		}
 	};
 
@@ -644,7 +697,7 @@ export function spawnMember(
 			}
 			const initialSessionId = sessionIdFromState(initial);
 			if (initialSessionId) sessionId = initialSessionId;
-			onState({ status: "working", sessionId });
+			emitState("working");
 
 			const role = await rolePromptFor(spec, teamId, objective);
 			const firstInstruction = `${role}\n\nFIRST INSTRUCTION: Read your inbox. If empty, append "ready" to your outbox and await instructions.`;
@@ -700,7 +753,7 @@ export function spawnMember(
 					// Set before the mail run: reports drained mid-turn (waitSettled
 					// polls) must already count as work, not handshake.
 					sawMail = true;
-					onState({ status: "working", sessionId });
+					emitState("working");
 					let settledRun = false;
 					try {
 						await sendPrompt(`NEW MAIL:\n${mail}\n\nAct on it, report to your outbox.`);
@@ -717,7 +770,7 @@ export function spawnMember(
 					drainOutbox();
 					continue;
 				}
-				onState({ status: "idle", sessionId });
+				emitState("idle");
 				await sleep(POLL_MS);
 				drainOutbox();
 			}
@@ -731,7 +784,7 @@ export function spawnMember(
 				(code) => resolveExited(typeof code === "number" ? code : 1),
 				() => resolveExited(1),
 			);
-			onState({ status: "stopped", sessionId });
+			emitState("stopped");
 			appendLog("member stopped");
 		}
 	})();

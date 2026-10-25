@@ -90,7 +90,7 @@ function idOrder(a, b) {
 	return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-function run() {
+async function run() {
 	if (!subcommand || !teamId) {
 		refuse(
 			"usage: team-task.mjs <list|claim|complete|release> <teamId> [--as <memberName>] [<taskId>] [--force]",
@@ -132,7 +132,7 @@ function list(teamId0) {
 	}
 }
 
-function claim(teamId0) {
+async function claim(teamId0) {
 	const member = option("--as");
 	if (!member) refuse("claim requires --as <memberName>");
 	// Conditions are re-derived from the freshest read inside every mutator
@@ -140,7 +140,7 @@ function claim(teamId0) {
 	// skipped or refused — never claimed on stale state.
 	let refusal = null;
 	let claimedId = null;
-	const result = updateTasksFile(teamId0, (file) => {
+	const result = await updateTasksFile(teamId0, (file) => {
 		refusal = null;
 		claimedId = null;
 		const blocked = blockedTasks(file.tasks);
@@ -161,13 +161,13 @@ function claim(teamId0) {
 	emit({ ok: true, action: "claim", task });
 }
 
-function complete(teamId0, taskId0) {
+async function complete(teamId0, taskId0) {
 	const member = option("--as");
 	if (!taskId0) refuse("complete requires <taskId>");
 	if (!member) refuse("complete requires --as <memberName>");
 	const force = argv.includes("--force");
 	let refusal = null;
-	const result = updateTasksFile(teamId0, (file) => {
+	const result = await updateTasksFile(teamId0, (file) => {
 		refusal = null;
 		const task = file.tasks.find((t) => t.id === taskId0);
 		if (!task) {
@@ -186,12 +186,12 @@ function complete(teamId0, taskId0) {
 	emit({ ok: true, action: "complete", task });
 }
 
-function release(teamId0, taskId0) {
+async function release(teamId0, taskId0) {
 	const member = option("--as");
 	if (!taskId0) refuse("release requires <taskId>");
 	if (!member) refuse("release requires --as <memberName>");
 	let refusal = null;
-	const result = updateTasksFile(teamId0, (file) => {
+	const result = await updateTasksFile(teamId0, (file) => {
 		refusal = null;
 		const task = file.tasks.find((t) => t.id === taskId0);
 		if (!task) {
@@ -211,4 +211,4 @@ function release(teamId0, taskId0) {
 	emit({ ok: true, action: "release", task });
 }
 
-run();
+await run();

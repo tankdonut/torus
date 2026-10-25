@@ -1234,7 +1234,7 @@ const teamTaskCreateTool = defineTool({
 			return { content: [{ type: "text", text: "No such team." }], details: {}, isError: true };
 		let created = "";
 		let refusal: string | null = null;
-		updateTasksFile(record.id, (file) => {
+		await updateTasksFile(record.id, (file) => {
 			// Validation lives inside the mutator so it sees the freshest file
 			// under the lock; a refusal returns the file untouched, which keeps
 			// the mutator idempotent across CAS retries.
@@ -1367,7 +1367,7 @@ const teamTaskUpdateTool = defineTool({
 		let updated: { id: string; subject: string; assignee: string | null; status: string } | null =
 			null;
 		let refusal: string | null = null;
-		updateTasksFile(record.id, (file) => {
+		await updateTasksFile(record.id, (file) => {
 			const task = file.tasks.find((t) => t.id === params.task);
 			if (!task) return;
 			if (params.status === "in_progress") {

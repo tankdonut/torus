@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import {
+	appendFileSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -274,4 +282,45 @@ test("TORUS_TEAM_NOTIFY=0 suppresses the wake-up", async () => {
 	} finally {
 		delete process.env.TORUS_TEAM_NOTIFY;
 	}
+});
+
+test("mailbox polls read only deltas: an unchanged inbox costs zero byte reads", async () => {
+	const runtime = await import("../extensions/team-runtime.ts");
+	const dir = path.join(HOME, "delta-poll");
+	mkdirSync(dir, { recursive: true });
+	const mailbox = path.join(dir, "inbox.md");
+	const cursorFile = path.join(dir, "inbox.cursor");
+	const line = "[2026-10-25T00:00:00.000Z] FROM lead:\ndo the thing\n";
+	writeFileSync(mailbox, line.repeat(40_000), "utf8");
+	const size = statSync(mailbox).size;
+	assert.ok(size >= 2_000_000, `fixture must reach 2MB, got ${size} bytes`);
+
+	const cursor = { value: size };
+	runtime._resetDeltaBytesReadForTesting();
+	const began = performance.now();
+	for (let poll = 0; poll < 100; poll++) {
+		assert.equal(
+			runtime.readDelta(mailbox, cursor, cursorFile),
+			"",
+			"an unchanged inbox polls as empty",
+		);
+	}
+	const elapsed = performance.now() - began;
+	assert.equal(
+		runtime._deltaBytesReadForTesting(),
+		0,
+		"100 unchanged polls must not read a single byte",
+	);
+	assert.ok(elapsed < 200, `100 stat-only polls must return instantly, took ${elapsed}ms`);
+
+	const appendage = "\nNEW MAIL: ship it\n";
+	appendFileSync(mailbox, appendage, "utf8");
+	const delta = runtime.readDelta(mailbox, cursor, cursorFile);
+	assert.equal(delta, appendage, "one append yields exactly the appended delta");
+	assert.equal(
+		runtime._deltaBytesReadForTesting(),
+		appendage.length,
+		"the read must be delta-sized, never file-sized",
+	);
+	assert.equal(readFileSync(cursorFile, "utf8"), String(size + appendage.length));
 });

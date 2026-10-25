@@ -575,7 +575,7 @@ test("CLI writers on a nonexistent team refuse fast instead of hanging", async (
 	assert.equal(listing.stdout, "");
 });
 
-test("updateTasksFile throws a bounded error when the lock can never be created", () => {
+test("updateTasksFile throws a bounded error when the lock can never be created", async () => {
 	const teamId = `blocked-${Date.now().toString(36)}`;
 	const teamsRoot = path.join(HOME, "teams");
 	mkdirSync(teamsRoot, { recursive: true });
@@ -585,8 +585,8 @@ test("updateTasksFile throws a bounded error when the lock can never be created"
 	writeFileSync(impostor, "not a directory", "utf8");
 	try {
 		const began = Date.now();
-		assert.throws(
-			() => runtime.updateTasksFile(teamId, () => {}),
+		await assert.rejects(
+			runtime.updateTasksFile(teamId, () => {}),
 			/tasklist lock not acquirable at .* after \d+ms — check the team directory exists and is writable/,
 		);
 		const elapsed = Date.now() - began;

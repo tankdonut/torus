@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { test } from "node:test";
 
-const { readTasksFile, updateTasksFile, writeTasksFile, teamDir } = await import(
+const { readTasksFile, tasksFile, updateTasksFile, writeTasksFile, teamDir } = await import(
 	"../extensions/team-runtime.ts"
 );
 
-test("dependsOn-carrying mutations survive the CAS rebase (mutator idempotency with the new field)", () => {
+test("dependsOn-carrying mutations survive the CAS rebase (mutator idempotency with the new field)", async () => {
 	const teamId = `test-${randomUUID().slice(0, 8)}`;
 	writeTasksFile(teamId, {
 		nextId: 3,
@@ -18,7 +18,7 @@ test("dependsOn-carrying mutations survive the CAS rebase (mutator idempotency w
 	});
 	try {
 		let sabotaged = false;
-		const result = updateTasksFile(teamId, (file) => {
+		const result = await updateTasksFile(teamId, (file) => {
 			if (!sabotaged) {
 				sabotaged = true;
 				const raw = readTasksFile(teamId);
@@ -68,7 +68,7 @@ test("dependsOn-carrying mutations survive the CAS rebase (mutator idempotency w
 	}
 });
 
-test("raw member write during the RMW window is rebased, not lost (mtime CAS)", () => {
+test("raw member write during the RMW window is rebased, not lost (mtime CAS)", async () => {
 	const teamId = `test-${randomUUID().slice(0, 8)}`;
 	writeTasksFile(teamId, {
 		nextId: 2,
@@ -76,7 +76,7 @@ test("raw member write during the RMW window is rebased, not lost (mtime CAS)", 
 	});
 	try {
 		let sabotaged = false;
-		const result = updateTasksFile(teamId, (file) => {
+		const result = await updateTasksFile(teamId, (file) => {
 			if (!sabotaged) {
 				sabotaged = true;
 				const raw = readTasksFile(teamId);
@@ -112,6 +112,74 @@ test("raw member write during the RMW window is rebased, not lost (mtime CAS)", 
 			onDisk.tasks.some((t) => t.subject === "member bash edit"),
 			"disk keeps the member write",
 		);
+	} finally {
+		rmSync(teamDir(teamId), { recursive: true, force: true });
+	}
+});
+
+test("contended updateTasksFile calls serialize: both mutations land and waiters never block the loop", async () => {
+	const teamId = `test-${randomUUID().slice(0, 8)}`;
+	writeTasksFile(teamId, {
+		nextId: 2,
+		tasks: [{ id: "t1", subject: "base", assignee: null, status: "pending", updatedAt: "x" }],
+	});
+	const lockDir = `${tasksFile(teamId)}.lock`;
+	try {
+		// Hold the lock so both writers park in the retry loop before either
+		// owns it, then release and let them contend for the takeover.
+		mkdirSync(lockDir);
+		const release = setTimeout(() => rmSync(lockDir, { recursive: true, force: true }), 250);
+		let ticks = 0;
+		const ticker = setInterval(() => {
+			ticks += 1;
+		}, 5);
+		try {
+			await Promise.all([
+				updateTasksFile(teamId, (file) => {
+					file.tasks = [
+						...file.tasks,
+						{
+							id: "t2",
+							subject: "first writer",
+							assignee: null,
+							status: "pending",
+							updatedAt: "a",
+						},
+					];
+				}),
+				updateTasksFile(teamId, (file) => {
+					file.tasks = [
+						...file.tasks,
+						{
+							id: "t3",
+							subject: "second writer",
+							assignee: null,
+							status: "pending",
+							updatedAt: "b",
+						},
+					];
+				}),
+			]);
+		} finally {
+			clearTimeout(release);
+			clearInterval(ticker);
+			rmSync(lockDir, { recursive: true, force: true });
+		}
+		assert.ok(
+			ticks >= 10,
+			`lock waits must sleep asynchronously — only ${ticks} timer ticks fired during contention`,
+		);
+		const onDisk = readTasksFile(teamId);
+		const subjects = onDisk.tasks.map((t) => t.subject);
+		assert.ok(
+			subjects.includes("first writer"),
+			"the first writer's task must survive the contention",
+		);
+		assert.ok(
+			subjects.includes("second writer"),
+			"the second writer's task must survive the contention",
+		);
+		assert.equal(onDisk.tasks.length, 3, "neither RMW may be lost or duplicated");
 	} finally {
 		rmSync(teamDir(teamId), { recursive: true, force: true });
 	}
