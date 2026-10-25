@@ -5,6 +5,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +31,7 @@ const {
 	listWorkStates,
 	activeWorkFor,
 	workContextBlock,
+	_workStats,
 } = await import("../extensions/work/index.ts");
 const { setCurrentSessionId } = await import("../extensions/registry.ts");
 const { projectKeyFor } = await import("../extensions/fsutil.ts");
@@ -184,6 +186,32 @@ test("ledger: append then tail newest-last; corrupt lines skipped; missing file 
 	assert.deepEqual(readLedger("missing-slug", 5), []);
 });
 
+test("readLedger: a ledger over 64KB reads only the tail window and matches the full parse", () => {
+	const slug = "big-ledger";
+	for (let i = 0; i < 200; i += 1) {
+		appendLedgerEntry(slug, {
+			ts: "2026-10-25T00:00:00.000Z",
+			sessionId: "s",
+			event: "note",
+			text: `row ${i} ${"x".repeat(300)}`,
+		});
+	}
+	const ledgerPath = path.join(projectDir(), "work", `${slug}.ledger.jsonl`);
+	assert.ok(statSync(ledgerPath).size > 64 * 1024, "fixture must exceed the tail threshold");
+
+	// golden: whole-file parse, the pre-window readLedger behavior
+	const full = readFileSync(ledgerPath, "utf-8")
+		.split("\n")
+		.filter((line) => line.trim().length > 0)
+		.map((line) => JSON.parse(line));
+	assert.equal(full.length, 200);
+	assert.deepEqual(
+		readLedger(slug, 2).map((e) => e.text),
+		full.slice(-2).map((e) => e.text),
+	);
+	assert.deepEqual(readLedger(slug, 2), full.slice(-2));
+});
+
 test("activeWorkFor: newest active binding for the session wins; paused/complete/other sessions skipped", () => {
 	assert.equal(activeWorkFor(null), null);
 	assert.equal(activeWorkFor("ses-none"), null);
@@ -267,6 +295,25 @@ test("workContextBlock: injects plan path, progress, next task; missing plan sur
 
 	plantState({ slug: "ctx", planPath: file, sessionId: "ses-c", status: "complete" });
 	assert.equal(workContextBlock("ses-c"), "");
+});
+
+test("workContextBlock caches the active-work lookup: the no-work case skips disk on repeat; writes invalidate", () => {
+	plantState({ slug: "stale-a", sessionId: "ses-other-a", lastActiveAt: 10 });
+	plantState({ slug: "stale-b", sessionId: "ses-other-b", lastActiveAt: 20 });
+	plantState({ slug: "stale-c", sessionId: "ses-other-c", lastActiveAt: 30 });
+
+	const before = _workStats().listScans;
+	assert.equal(workContextBlock("ses-idle"), "", "no active work bound for this session");
+	assert.equal(_workStats().listScans, before + 1, "first call scans once");
+
+	assert.equal(workContextBlock("ses-idle"), "");
+	assert.equal(_workStats().listScans, before + 1, "cached negative result: zero further scans");
+
+	// a work_start-shaped state write is the invalidation path; the next lookup rescans
+	plantState({ slug: "stale-d", sessionId: "ses-other-d", lastActiveAt: 40 });
+	assert.equal(_workStats().listScans, before + 1, "the write itself does not scan");
+	assert.equal(workContextBlock("ses-idle"), "");
+	assert.equal(_workStats().listScans, before + 2, "invalidated entry forces one rescan");
 });
 
 function workTools(pi = {}) {

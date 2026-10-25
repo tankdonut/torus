@@ -3,12 +3,23 @@
  *
  * Binds an active torus-plan plan file to the session so execution survives
  * compaction and restarts: progress is parsed live from the plan's column-zero
- * checkboxes (the plan stays the single source of truth — nothing is cached),
- * an append-only JSONL ledger records evidence, and an active-work context
- * block is injected into every turn until work_complete succeeds.
+ * checkboxes (the plan stays the single source of truth), a per-session cache
+ * holds the binding between mutations, an append-only JSONL ledger records
+ * evidence, and an active-work context block is injected into every turn until
+ * work_complete succeeds.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import {
+	appendFileSync,
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	readSync,
+	statSync,
+} from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -219,8 +230,27 @@ export function readWorkState(slug: string): WorkState | null {
 	return sibling === null ? null : readJson<WorkState | null>(sibling, null);
 }
 
+/**
+ * Session-id → active-work binding cache for the per-model-request context
+ * hook. Null results are cached too: most sessions have no active work, and
+ * that is the case the hook hits on every turn. Every mutation path funnels
+ * through writeWorkState or appendLedgerEntry, and both clear the whole map
+ * rather than evicting single keys — the map holds one entry per live session,
+ * so a clear is O(live sessions) and no writer can forget to invalidate.
+ */
+const activeWorkCache = new Map<string, WorkState | null>();
+
+/** Test-only scan counter; not part of the extension contract. */
+const workStats = { listScans: 0 };
+
 export function writeWorkState(state: WorkState): void {
+	activeWorkCache.clear();
 	writeJson(stateFile(state.slug), state);
+}
+
+/** Test-only: cumulative listWorkStates disk scans (cache misses). */
+export function _workStats(): { listScans: number } {
+	return { ...workStats };
 }
 
 /**
@@ -230,6 +260,8 @@ export function writeWorkState(state: WorkState): void {
 let mirrorSessionEntry: ((customType: string, data?: unknown) => void) | null = null;
 
 export function appendLedgerEntry(slug: string, entry: LedgerEntry): void {
+	// One invalidation rule: any mutation clears the active-work cache.
+	activeWorkCache.clear();
 	mkdirSync(workDir(), { recursive: true });
 	const ledger = ledgerFile(slug);
 	// The ledger JSONL file is the source of truth (cross-session by design);
@@ -246,7 +278,33 @@ export function appendLedgerEntry(slug: string, entry: LedgerEntry): void {
 	}
 }
 
-/** Last `n` ledger rows, newest last; corrupt lines are skipped, not fatal. */
+/** Ledgers above this size are read as a tail window instead of a whole-file parse. */
+const LEDGER_TAIL_BYTES = 64 * 1024;
+
+/**
+ * Ranged read of the last LEDGER_TAIL_BYTES bytes. The window can start
+ * mid-line, so bytes up to its first newline are discarded; UTF-8 continuation
+ * bytes never contain 0x0A, so a split multibyte character can only land inside
+ * that discarded fragment.
+ */
+function readTail(file: string, size: number): string {
+	const fd = openSync(file, "r");
+	try {
+		const buffer = Buffer.alloc(LEDGER_TAIL_BYTES);
+		const bytesRead = readSync(fd, buffer, 0, LEDGER_TAIL_BYTES, size - LEDGER_TAIL_BYTES);
+		const window = buffer.subarray(0, bytesRead).toString("utf-8");
+		const firstNewline = window.indexOf("\n");
+		return firstNewline === -1 ? "" : window.slice(firstNewline + 1);
+	} finally {
+		closeSync(fd);
+	}
+}
+
+/**
+ * Last `n` ledger rows, newest last; corrupt lines are skipped, not fatal.
+ * Ledgers over 64KB are read as a tail window, so results are bounded by the
+ * rows that fit in the last 64KB.
+ */
 export function readLedger(slug: string, n: number): LedgerEntry[] {
 	const candidates = [ledgerFile(slug)];
 	const sibling = siblingFile(slug, "ledger");
@@ -255,7 +313,10 @@ export function readLedger(slug: string, n: number): LedgerEntry[] {
 	if (file === undefined) return [];
 	let raw: string;
 	try {
-		raw = readFileSync(file, "utf-8");
+		const size = statSync(file).size;
+		// Only the tail matters (every caller slices the newest rows), so a large
+		// ledger is read as a bounded window instead of parsing the whole history.
+		raw = size > LEDGER_TAIL_BYTES ? readTail(file, size) : readFileSync(file, "utf-8");
 	} catch {
 		return [];
 	}
@@ -278,6 +339,7 @@ export function readLedger(slug: string, n: number): LedgerEntry[] {
  * slug collision.
  */
 export function listWorkStates(): WorkState[] {
+	workStats.listScans += 1;
 	const local = safeReaddir(workDir()).filter((file) => file.endsWith(".json"));
 	const siblings = siblingWorkDirs().flatMap((dir) => {
 		try {
@@ -303,11 +365,14 @@ export function listWorkStates(): WorkState[] {
 /** The work this session should advance: newest active binding, if any. */
 export function activeWorkFor(sessionId: string | null): WorkState | null {
 	if (!sessionId) return null;
-	return (
+	const cached = activeWorkCache.get(sessionId);
+	if (cached !== undefined) return cached;
+	const resolved =
 		listWorkStates().findLast(
 			(state) => state.sessionId === sessionId && state.status === "active",
-		) ?? null
-	);
+		) ?? null;
+	activeWorkCache.set(sessionId, resolved);
+	return resolved;
 }
 
 function formatElapsed(ms: number): string {
@@ -394,8 +459,10 @@ export function ledgerAppendError(slug: string): string | null {
 }
 
 /**
- * The per-turn active-work block. Rebuilt from disk every turn — this is what
- * makes execution survive compaction and session restarts.
+ * The per-turn active-work block. The plan and ledger tail are re-read from
+ * disk every turn — that is what makes execution survive compaction and
+ * session restarts; only the session→work binding is cached (see
+ * activeWorkCache), and any mutation clears it.
  */
 export function workContextBlock(sessionId: string | null): string {
 	const state = activeWorkFor(sessionId);
