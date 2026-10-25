@@ -1,0 +1,31 @@
+ [38;2;126;136;142mdelegation. Dispatch for build tasks with exact files, acceptance commands, and QA
+[39m [38;2;126;136;142mevidence; not for review or research. [chain=primary -> zai/glm-5.3]
+[39m [38;2;126;136;142mdreamer: Read-only memory distiller: reads logs and the torus memory store, returns
+[39m [38;2;126;136;142mstructured entry/delete/profile proposals; never writes [chain=fast ->
+[39m [38;2;126;136;142mzai/glm-5.3-flash]
+[39m [38;2;126;136;142mexplorer: Cheap contextual codebase grep (fast model) [chain=fast -> zai/glm-5.3-flash]
+[39m [38;2;126;136;142mlibrarian: External-reference researcher: remote repos, official docs, library
+[39m [38;2;126;136;142minternals, OSS usage examples (MCP context7 + grep_app; gh/git/curl via bash)
+[39m [38;2;126;136;142m[chain=fast -> zai/glm-5.3-flash]
+[39m [38;2;126;136;142mlooker: Vision specialist: answers questions about screenshots, diagrams, and UI
+[39m [38;2;126;136;142mcaptures (image-capable flash model). Dispatch whenever a question depends on seeing an
+[39m [38;2;126;136;142mimage. [chain=fast -> zai/glm-5.3-flash]
+[39m [38;2;126;136;142mreviewer: Practical adversarial reviewer: plans, docs, code, work descriptions;
+[39m [38;2;126;136;142mblocker-finder, not perfectionist [chain=primary -> zai/glm-5.3]
+[39m [38;2;126;136;142mconcurrency caps (max parallel runs per model, provider account-level): zai/glm-5.3=5,
+[39m [38;2;126;136;142mzai/glm-5.3-flash=50, opencode-go/glm-5.3-flash=uncapped[39m
+
+[38;2;205;154;34m▶[39m [38;2;157;165;169mexplorer delegated[38;2;126;136;142m · list every exported symbol in extensions/fsutil.ts with a one-line
+su…[39m
+
+[38;2;126;136;142m──────────────────────────────────────────────────────────────────────────────────────────
+torus fleet — 1 running · click/alt+1..1 · alt+t all[39m
+[38;2;126;136;142m1[39m [38;2;205;154;34m⠸[39m [38;2;205;154;34mexplorer[39m  [38;2;126;136;142mglm-5.3-flash[39m [38;2;126;136;142mt0 · 0→0 · 2s[39m
+[38;2;126;136;142m──────────────────────────────────────────────────────────────────────────────────────────
+
+[38;2;86;182;194m──────────────────────────────────────────────────────────────────────────────────────────
+[7m[39m [0m
+[38;2;86;182;194m──────────────────────────────────────────────────────────────────────────────────────────
+[38;2;126;136;142m~/torus (main)[39m
+[38;2;126;136;142m0.0%/1.0M (auto)                                                      (zai) glm-5.3 • high
+[1m[38;2;167;152;215mtorus[0m[38;2;126;136;142m · [38;2;86;182;194mleader[38;2;126;136;142m · [38;2;86;182;194mglm-5.3[38;2;126;136;142m · [38;2;86;182;194mhigh[38;2;126;136;142m · zai|opencode-go · [38;2;104;183;141mMCP 2[39m ctx 0% sbx:off

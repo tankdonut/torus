@@ -1,0 +1,156 @@
+---
+import { cropLines, parseAnsiScreen } from "../lib/ansi.mjs";
+
+/**
+ * Renders a real TUI capture (site/src/tui/<scene>.ans, produced by
+ * scripts/capture-tui.mjs from a live session) as colored HTML. Captures are
+ * screenshots, not adaptive UI: the palette is the terminal's own, so the
+ * block keeps a fixed dark background in both site themes.
+ */
+
+interface Props {
+	/** Scene file stem under src/tui/ (e.g. "fleet-list"). */
+	scene: string;
+	/** Chrome-bar title, e.g. "tmux · fleet browser". */
+	title?: string;
+	/** Caption under the capture. */
+	caption?: string;
+	/** Keep only the last n lines after blank-trimming (sheets render bottom). */
+	keepLast?: number;
+	/** 0-based line window into the blank-trimmed capture; negatives count from the end. */
+	from?: number;
+	to?: number;
+}
+
+const { scene, title, caption, keepLast, from, to } = Astro.props;
+
+const captures = import.meta.glob("../tui/*.ans", { query: "?raw", import: "default", eager: true });
+const raw = captures[`../tui/${scene}.ans`];
+if (typeof raw !== "string") {
+	throw new Error(`TUI capture "${scene}" is missing; run npm run -w site capture`);
+}
+const lines = cropLines(parseAnsiScreen(raw), { keepLast, from, to });
+
+const defaultFg = "#cfd6dd";
+
+const spanStyle = (run: Record<string, unknown>): string => {
+	const parts: string[] = [];
+	const fg = run.inverse ? (run.bg ?? "#101216") : run.fg;
+	const bg = run.inverse ? (run.fg ?? defaultFg) : run.bg;
+	if (fg !== undefined) parts.push(`color:${fg}`);
+	if (bg !== undefined) parts.push(`background:${bg}`);
+	if (run.bold) parts.push("font-weight:700");
+	if (run.italic) parts.push("font-style:italic");
+	if (run.dim) parts.push("opacity:.6");
+	if (run.underline) parts.push("text-decoration:underline");
+	return parts.join(";");
+};
+
+// set:html on <pre> renders this markup directly, so run text is escaped
+// first: captures legitimately contain <torus:start ...> and friends.
+const escapeHtml = (text: string) =>
+	text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
+const rendered = lines
+	.map((line) =>
+		line
+			.map((run) => {
+				const style = spanStyle(run);
+				return style === ""
+					? escapeHtml(run.text)
+					: `<span style="${style}">${escapeHtml(run.text)}</span>`;
+			})
+			.join("")
+			.replace(/\s+$/, ""),
+	)
+	.join("\n");
+---
+
+<figure class="tui">
+	<div class="frame">
+		<div class="chrome" aria-hidden="true">
+			<span class="dot"></span><span class="dot"></span><span class="dot"></span>
+			{title ? <span class="chrome-title">{title}</span> : null}
+			<span class="tag">live capture</span>
+		</div>
+		<pre set:html={rendered} />
+	</div>
+	{caption ? <figcaption>{caption}</figcaption> : null}
+</figure>
+
+<style>
+	.tui {
+		margin: calc(var(--spacing) * 6) 0;
+	}
+
+	.frame {
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		overflow: hidden;
+		background: #101216;
+		/* Hug the captured content: a 44-column pane should not stretch to the
+		 * full text column. */
+		width: fit-content;
+		max-width: 100%;
+	}
+
+	.chrome {
+		display: flex;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+		border-bottom: 1px solid #26262e;
+		background: #16161c;
+	}
+
+	.dot {
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		background: #2e2e38;
+	}
+
+	.chrome-title {
+		margin-left: calc(var(--spacing) * 2);
+		font-family: var(--font-mono);
+		font-size: var(--text-small);
+		color: #9a9aa4;
+	}
+
+	.tag {
+		margin-left: auto;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		letter-spacing: 0.08em;
+		color: #6f7f6f;
+		border: 1px solid #2c3a2c;
+		border-radius: 99px;
+		padding: 0.05rem 0.5rem;
+	}
+
+	pre {
+		margin: 0;
+		padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+		overflow-x: auto;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: #cfd6dd;
+		tab-size: 8;
+		/* global.css styles bare pre (surface bg + border); this block is its own
+		 * frame on a fixed terminal background, so neutralize it and hug content. */
+		background: transparent;
+		border: none;
+		border-radius: 0;
+		width: max-content;
+		max-width: 100%;
+	}
+
+	@media (width <= 40rem) {
+		pre {
+			width: auto;
+			white-space: pre-wrap;
+			overflow-wrap: anywhere;
+		}
+	}
+</style>

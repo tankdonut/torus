@@ -6,6 +6,7 @@
 		"dev": "astro dev",
 		"prebuild": "node scripts/copy-generated-assets.mjs",
 		"build": "npm run prebuild && astro build",
+		"capture": "node scripts/capture-tui.mjs",
 		"preview": "astro preview"
 	},
 	"dependencies": {

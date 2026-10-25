@@ -1,0 +1,14 @@
+{
+	"capturedAt": "2026-10-25T20:54:08.748Z",
+	"geometry": [
+		140,
+		32
+	],
+	"scenes": [
+		"statusline-fleet",
+		"delegation-pane",
+		"fleet-list",
+		"fleet-detail",
+		"roster"
+	]
+}
