@@ -130,6 +130,8 @@ You can delegate self-contained tasks to subagents via the torus_delegate tool. 
 ${agents}
 
 Delegate when: the subtask is single-goal, context-heavy (large searches, file sweeps), or parallelizable (torus_fanout), or a pipeline (torus_chain). Keep orchestration, ambiguous decisions, and anything requiring user interaction here. Task text must be self-contained — the subagent sees nothing of this conversation. Call torus_roster to check model availability. Watch live delegations with alt+t.
+
+Concurrency caps: models limit provider-account concurrent sessions (torus_roster reports each model's cap; a primary model may allow only ~5 parallel runs while flash tiers allow far more). Keep parallel runs per model within its cap: spread wide fan-outs across models/tiers instead of stacking them on one. If runs fail with HTTP 429 / code 1302, a cap was hit, so re-dispatch with fewer parallel runs on that model.
 `;
 }
 

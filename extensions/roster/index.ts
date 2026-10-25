@@ -38,7 +38,12 @@ import { parseFrontmatter, stripFrontmatter } from "../frontmatter.js";
 import { formatCost, sleep, splitList } from "../fsutil.js";
 import { clickable } from "../notify/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
-import { type ChainTier, modelChain, providerAvailabilities } from "../providers/index.js";
+import {
+	type ChainTier,
+	modelChain,
+	modelConcurrencyMap,
+	providerAvailabilities,
+} from "../providers/index.js";
 import {
 	AGENT_NAME_RE,
 	appendAction,
@@ -161,6 +166,61 @@ export function personaModel(name: string): string | null {
 	const agent = AGENTS.find((a) => a.name === name);
 	if (!agent) return null;
 	return agent.model ?? resolveModel(agent.chain) ?? null;
+}
+
+/**
+ * The model a planned delegation run would start on: explicit override, else
+ * the agent's frontmatter pin when credentialed, else its chain head — the
+ * same first-model resolution runDelegation performs.
+ */
+export function plannedRunModel(agentName: string, requested?: string): string | undefined {
+	const trimmed = requested?.trim();
+	if (trimmed) return resolveRequestedModel(trimmed);
+	const agent = DELEGATABLE.find((a) => a.name === agentName);
+	if (!agent) return undefined;
+	if (agent.model && availableModels().includes(agent.model)) return agent.model;
+	return resolveModel(agent.chain);
+}
+
+/**
+ * Pre-flight oversubscription warning for planned runs: per model, running
+ * delegations (registry snapshot) plus the planned starts are compared with
+ * the model's concurrency cap. One actionable paragraph when any model lands
+ * over cap, undefined otherwise. `active` replaces the registry snapshot
+ * (test seam).
+ */
+export function concurrencyWarning(
+	planned: (string | undefined)[],
+	active?: Record<string, number>,
+): string | undefined {
+	const caps = modelConcurrencyMap();
+	const counts: Record<string, number> = {};
+	if (active === undefined) {
+		for (const record of listDelegations()) {
+			if (record.status === "running") counts[record.model] = (counts[record.model] ?? 0) + 1;
+		}
+	} else {
+		for (const [model, count] of Object.entries(active)) counts[model] = count;
+	}
+	for (const model of planned) {
+		if (model !== undefined) counts[model] = (counts[model] ?? 0) + 1;
+	}
+	const over = Object.entries(counts)
+		.filter(([model, count]) => count > (caps[model] ?? Number.POSITIVE_INFINITY))
+		.map(([model, count]) => `${model}: ${count} parallel runs vs cap ${caps[model]}`);
+	if (over.length === 0) return undefined;
+	return (
+		`warning: provider concurrency cap exceeded — ${over.join("; ")}. Caps are ` +
+		`account-level concurrent-session limits (torus_roster reports them; override per ` +
+		`model via the chains config's "concurrency" map): oversubscribed models get ` +
+		`HTTP 429 / code 1302 rejections or queue server-side. Shift some runs to another ` +
+		`model or stagger them (the lead session's own requests count against the same cap).`
+	);
+}
+
+/** Prepend a concurrency warning to delegation result text. */
+export function withWarning(text: string, warning: string | undefined): string {
+	return warning === undefined ? text : `${warning}\n\n${text}`;
 }
 
 function piAgentDir(): string {
@@ -315,6 +375,10 @@ export function rosterText(): string {
 		return `${agent.name}: ${agent.description} [chain=${agent.chain} -> ${model}]`;
 	});
 	const lines = [providers, ...agents];
+	const caps = availableModels()
+		.map((model) => `${model}=${modelConcurrencyMap()[model] ?? "uncapped"}`)
+		.join(", ");
+	lines.push(`concurrency caps (max parallel runs per model, provider account-level): ${caps}`);
 	const acp = Object.keys(acpAgents()).sort();
 	if (acp.length > 0) lines.push(`acp agents (external, own models): ${acp.join(", ")}`);
 	return lines.join("\n");
@@ -1184,7 +1248,7 @@ const rosterTool = defineTool({
 	name: "torus_roster",
 	label: "Torus Roster",
 	description:
-		"List torus agents, their model fallback chains, and which providers currently have credentials",
+		"List torus agents, their model fallback chains, which providers currently have credentials, and per-model concurrency caps (max parallel runs)",
 	parameters: Type.Object({}),
 	async execute() {
 		return {
@@ -1334,6 +1398,7 @@ const delegateTool = defineTool({
 		if (onUpdate) {
 			onUpdate({ content: [{ type: "text", text: `▶ ${label} · running` }], details: {} });
 		}
+		const capWarning = concurrencyWarning([plannedRunModel(params.agent, params.model)]);
 		let outcome: DelegationOutcome;
 		try {
 			outcome = await runDelegation(
@@ -1383,7 +1448,7 @@ const delegateTool = defineTool({
 			// their tool block red while the text keeps the partial work.
 			const failedCleanExit = outcome.details.exitCode === 0;
 			return {
-				content: [{ type: "text", text: outcome.text }],
+				content: [{ type: "text", text: withWarning(outcome.text, capWarning) }],
 				details: outcome.details,
 				...(failedCleanExit ? { isError: true } : {}),
 			};
@@ -1391,7 +1456,7 @@ const delegateTool = defineTool({
 		const usage = (outcome.details.usage ?? {}) as Record<string, unknown>;
 		const num = (v: unknown): number => (typeof v === "number" ? v : 0);
 		return {
-			content: [{ type: "text", text: outcome.text }],
+			content: [{ type: "text", text: withWarning(outcome.text, capWarning) }],
 			details: outcome.details,
 			structuredContent: {
 				ok: true,

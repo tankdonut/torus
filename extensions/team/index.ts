@@ -28,9 +28,12 @@ import {
 } from "../registry.js";
 import {
 	AGENTS,
+	concurrencyWarning,
 	type DelegationOutcome,
+	plannedRunModel,
 	resolveRequestedModel,
 	runDelegation,
+	withWarning,
 } from "../roster/index.js";
 import {
 	blockedTasks,
@@ -114,11 +117,16 @@ const fanoutTool = defineTool({
 	}),
 	async execute(_toolCallId, params, _signal, onUpdate, ctx) {
 		const started = Date.now();
+		// plannedRunModel mirrors runDelegation's first-model resolution; keep the two in sync.
+		const capWarning = concurrencyWarning(
+			params.runs.map((r) => plannedRunModel(r.agent, r.model)),
+		);
 		const report = () => {
 			if (!onUpdate) return;
-			const line = params.runs
-				.map((r) => `${r.handle ? `@${r.handle.replace(/^@+/, "")}` : r.agent}:running`)
-				.join(" · ");
+			const line =
+				params.runs
+					.map((r) => `${r.handle ? `@${r.handle.replace(/^@+/, "")}` : r.agent}:running`)
+					.join(" · ") + (capWarning ? " ⚠ concurrency cap exceeded" : "");
 			onUpdate({ content: [{ type: "text", text: line }], details: { phase: "running" } });
 		};
 		report();
@@ -322,10 +330,12 @@ const fanoutTool = defineTool({
 			content: [
 				{
 					type: "text",
-					text:
+					text: withWarning(
 						`fan-out complete in ${Math.round((Date.now() - started) / 1000)}s` +
-						(okCount === outcomes.length ? "" : ` · ${okCount}/${outcomes.length} ok`) +
-						`\n\n${summary}`,
+							(okCount === outcomes.length ? "" : ` · ${okCount}/${outcomes.length} ok`) +
+							`\n\n${summary}`,
+						capWarning,
+					),
 				},
 			],
 			details: { runs: outcomes.length, ok: okCount },

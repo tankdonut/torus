@@ -560,3 +560,99 @@ test("frontmatter model: still wins over the overridden chain head", async () =>
 	);
 	removeChains();
 });
+
+// --- Concurrency caps (chains section `concurrency` map) ---
+
+test("no config → built-in concurrency defaults, unknown models uncapped", () => {
+	removeConfig();
+	removeChains();
+	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 5);
+	assert.equal(providers.modelConcurrency("zai/glm-5.3-flash"), 50);
+	assert.equal(providers.modelConcurrency("opencode-go/glm-5.3-flash"), undefined);
+	assert.equal(providers.modelConcurrency("ollama/gemma3:12b"), undefined);
+});
+
+test("concurrency map overrides per model; defaults fill the rest", () => {
+	removeChains();
+	writeConfig({ chains: { concurrency: { "zai/glm-5.3": 3 } } });
+	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 3);
+	assert.equal(providers.modelConcurrency("zai/glm-5.3-flash"), 50);
+	removeConfig();
+});
+
+test("config.json chains section wins wholesale over chains.json (concurrency included)", () => {
+	writeChains({ concurrency: { "zai/glm-5.3": 9 } });
+	writeConfig({ chains: { concurrency: { "zai/glm-5.3": 2 } } });
+	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 2);
+	removeConfig();
+	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 9);
+	removeChains();
+});
+
+test("malformed concurrency map warns and is ignored (defaults hold)", () => {
+	removeChains();
+	writeConfig({ chains: { concurrency: "five" } });
+	const lines = captureStderr(() => providers.modelConcurrencyMap());
+	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 5);
+	assert.ok(lines.some((l) => l.includes('"concurrency" must be an object')));
+	removeConfig();
+
+	writeConfig({ chains: { concurrency: { "zai/glm-5.3": 0, "zai/glm-5.3-flash": "many" } } });
+	const entryLines = captureStderr(() => providers.modelConcurrencyMap());
+	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 5);
+	assert.equal(providers.modelConcurrency("zai/glm-5.3-flash"), 50);
+	assert.equal(entryLines.filter((l) => l.includes("concurrency cap for")).length, 2);
+	removeConfig();
+});
+
+test("rosterText reports caps for available models", () => {
+	removeConfig();
+	removeChains();
+	const text = roster.rosterText();
+	assert.ok(text.includes("concurrency caps"));
+	assert.ok(text.includes("zai/glm-5.3=5"));
+	assert.ok(text.includes("zai/glm-5.3-flash=50"));
+	assert.ok(text.includes("opencode-go/glm-5.3-flash=uncapped"));
+});
+
+test("plannedRunModel mirrors runDelegation's first-model resolution", () => {
+	removeConfig();
+	removeChains();
+	assert.equal(roster.plannedRunModel("worker"), "zai/glm-5.3");
+	assert.equal(roster.plannedRunModel("pinned"), "zai/glm-5.3-flash");
+	assert.equal(roster.plannedRunModel("worker", "fast"), "zai/glm-5.3-flash");
+	assert.equal(
+		roster.plannedRunModel("worker", "opencode-go/glm-5.3-flash"),
+		"opencode-go/glm-5.3-flash",
+	);
+	assert.equal(roster.plannedRunModel("worker", "zai/not-a-model"), undefined);
+	assert.equal(roster.plannedRunModel("no-such-agent"), undefined);
+});
+
+test("concurrencyWarning flags only models pushed over cap", () => {
+	removeConfig();
+	removeChains();
+	const warning = roster.concurrencyWarning(
+		[
+			"zai/glm-5.3",
+			"zai/glm-5.3",
+			"zai/glm-5.3-flash",
+			"zai/glm-5.3-flash",
+			"opencode-go/glm-5.3-flash",
+		],
+		{ "zai/glm-5.3": 4, "zai/glm-5.3-flash": 48, "opencode-go/glm-5.3-flash": 99 },
+	);
+	assert.ok(typeof warning === "string");
+	assert.ok(warning.includes("zai/glm-5.3: 6 parallel runs vs cap 5"));
+	assert.ok(!warning.includes("zai/glm-5.3-flash: "));
+	assert.ok(!warning.includes("opencode-go"));
+	// Exactly at cap (48 + 2 = 50) is not over, and uncapped models never flag.
+	assert.equal(
+		roster.concurrencyWarning(["zai/glm-5.3-flash", "zai/glm-5.3-flash"], {
+			"zai/glm-5.3-flash": 48,
+		}),
+		undefined,
+	);
+	assert.equal(roster.withWarning("done", "warn"), "warn\n\ndone");
+	assert.equal(roster.withWarning("done", undefined), "done");
+});

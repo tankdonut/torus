@@ -293,6 +293,66 @@ function chainProviderRegistrations(
 export const DEFAULT_MEMBER_MODEL = MODEL_CHAINS.fast[0];
 
 /**
+ * Built-in per-model delegation caps: how many torus runs may target one
+ * model in parallel before the provider's account-level concurrent-session
+ * limit starts rejecting requests. Provenance: Z.ai publishes no official
+ * numbers (its rate-limits docs page redirects to the account console; the
+ * caps are per-account, per-model, in-flight request counts, tier-dependent
+ * and dynamically adjusted), so these mirror widely reported GLM Coding
+ * Plan figures — roughly 5 concurrent sessions on glm-5.3 versus far more
+ * on the flash tier. They are scheduling hints for delegation sizing, not a
+ * request rate limiter; override per model via the chains section's
+ * `concurrency` map to match your account tier.
+ */
+export const MODEL_CONCURRENCY_DEFAULTS: Readonly<Record<string, number>> = {
+	"zai/glm-5.3": 5,
+	"zai/glm-5.3-flash": 50,
+};
+
+/**
+ * Effective per-model caps: MODEL_CONCURRENCY_DEFAULTS overlaid with the
+ * chains section's `concurrency` map (`{"provider/model": <positive number>}`),
+ * per model — a config entry wins for its model, defaults fill the rest
+ * (the same mixed-validity model as tiers). A value that is not an object,
+ * or an entry that is not a positive finite number, warns naming `origin`
+ * and is ignored per model, never failing the section. Read every call,
+ * like modelChain, so edits apply without a restart.
+ */
+export function modelConcurrencyMap(): Record<string, number> {
+	const caps: Record<string, number> = { ...MODEL_CONCURRENCY_DEFAULTS };
+	const { value, source } = chainsSection();
+	const origin = chainsOrigin(source);
+	const raw = value === undefined ? undefined : value["concurrency"];
+	if (raw === undefined) return caps;
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+		console.error(
+			`torus: ${origin}: "concurrency" must be an object mapping model ids to positive numbers — ignored`,
+		);
+		return caps;
+	}
+	for (const [model, entry] of Object.entries(raw)) {
+		const cap = positiveNumber(entry);
+		if (cap === undefined) {
+			console.error(
+				`torus: ${origin}: concurrency cap for "${model}" must be a positive number — ignored`,
+			);
+			continue;
+		}
+		caps[model] = cap;
+	}
+	return caps;
+}
+
+/**
+ * Parallel-run cap for one model: the chains section's `concurrency` entry
+ * when present, else the built-in default, else undefined (no known cap —
+ * the model is treated as unconstrained).
+ */
+export function modelConcurrency(model: string): number | undefined {
+	return modelConcurrencyMap()[model];
+}
+
+/**
  * Providers whose models chains may resolve to: the engine's built-in `zai`
  * and `opencode-go` (declared = available; credential resolution is the
  * engine's job, so the roster filter never drops their chain entries for

@@ -56,7 +56,7 @@ If main-session context cost ever justifies slimming, the documented lever is `e
 
 ### `providers`
 
-GLM model routing: the model fallback chains every delegation path walks, plus user-configurable chains and alternate providers via `chains.json`.
+GLM model routing: the model fallback chains every delegation path walks, plus user-configurable chains, alternate providers, and per-model concurrency caps via `chains.json`.
 
 No tools, commands, or hooks.
 
@@ -77,6 +77,12 @@ The `chains` section of the [unified config](#unified-config) (legacy `chains.js
 | Unknown tier keys | Ignored |
 
 Overridden entries ride the same provider-availability filter as the defaults: a model whose provider is not credentialed is skipped. Agent frontmatter `model:` pins still win over any chain head.
+
+#### Concurrency caps
+
+The same section's optional `concurrency` map (`{"provider/model": <positive number>}`) sets how many parallel delegation runs a model may carry before provider account-level concurrent-session limits start rejecting requests (HTTP 429 with Z.ai business code `1302`). Providers publish no stable numbers: Z.ai's caps are per-account, per-model, in-flight request counts, tier-dependent and dynamically adjusted, so the built-in defaults in `MODEL_CONCURRENCY_DEFAULTS` (`extensions/providers`) mirror widely reported GLM Coding Plan figures (`zai/glm-5.3`: 5, `zai/glm-5.3-flash`: 50) and exist as sizing hints, not a rate limiter. A config entry wins per model and defaults fill the rest; a non-object map, or an entry that is not a positive finite number, warns naming the origin and is ignored per model.
+
+The caps surface in three places: `torus_roster` lists each credentialed model's cap, the delegation system prompt tells the lead to size fan-outs within them, and `torus_delegate`/`torus_fanout` prepend a warning to their result when running delegations plus the planned batch would push a model over its cap. The warning is advisory (no queueing, no refusal); the engine's own retry path still handles any 429 that slips through. Uncapped models (no default, no override) are treated as unconstrained, and team members are not counted (they idle between turns, and the default member model is the flash tier).
 
 #### Alternate providers
 
@@ -111,7 +117,7 @@ The delegation core: parses `agents/*.md` into the roster and spawns the pinned 
 
 | Tool | Purpose |
 | --- | --- |
-| `torus_roster` | List agents, chains, credentialed providers |
+| `torus_roster` | List agents, chains, credentialed providers, and per-model concurrency caps |
 | `torus_delegate` | Run one self-contained task on a roster agent; accepts `agent`, `task`, `handle`, `skills`, `cwd`, `model`; live `renderCall`/`renderResult` |
 
 - **Commands:** `/roster`; one command per agent file. Session-mode `/leader` toggles the persona. Child agents (`/builder`, `/dreamer`, `/explorer`, `/librarian` + alias `/research`, `/looker`, `/reviewer`) delegate the argument text, wait for that session's running delegations to quiesce (10-min cap), and inject the result as a follow-up user message
@@ -461,6 +467,8 @@ Multi-agent orchestration: parallel fan-out, sequential chains, and persistent t
 
 `torus_fanout` and `torus_chain` are thin wrappers over roster's `runDelegation`. Fan-out combines its start markers into one for the batch, and coalesces result markers: completions within a 5s window merge into one combined `torus.delegation-result` listing every run id, flushing early once the whole batch settles.
 
+Before spawning, fan-out resolves each run's start model and prepends a concurrency warning to the result when running delegations plus the batch would exceed a model's cap (see the providers extension's concurrency caps); the live status line carries a short `⚠ concurrency cap exceeded` tag. Chains are sequential and skip the check.
+
 #### Persistent teams
 
 Persistent teams spawn long-lived RPC-mode engine members with per-member file mailboxes (inbox/outbox), a shared locked tasklist (`tasks.json`), and a team spec on disk under the project store (`state/--<project>--/teams/<id>/team.json`, stamped with the creating project). A global id→project index at `~/.torus/teams.json` lets member children and explicit ids resolve teams from any cwd; pre-namespacing flat teams migrate on first spec rewrite, and default team resolution stays project-scoped.
@@ -572,7 +580,7 @@ Plan-execution state: binds a torus-plan plan file to a session so execution sur
 | Tool | Purpose |
 | --- | --- |
 | `work_start` | Bind a plan: absolute path or unique stem/prefix under the project's plans dir (`$TORUS_STATE_DIR/plans`, legacy `~/.torus/plans` still read). Approval gate: refuses unless the plan carries a column-zero `Approval: <user/date>` line or the recorded escape `Approval: skipped (--yes)`; `assumeApproved` binds an unmarked plan and journals `approval: "assumed"` in the start row. Creates or rebinds (rebinding resumes, elapsed spans runs). Parent sessions only |
-| `work_note` | Append a typed ledger row (event: task-done\|verified\|blocked\|wave-gate\|note\|converge, + wave/task/verification/evidence/verifiedBy) and return the tail. With an explicit `slug` any session appends: slug resolution is exact → unique prefix → unique substring, with ambiguity/miss errors listing candidates so a paraphrased dispatch slug costs at most one retry. Delegated builders journal gotchas this way, and rows carry the writer's session id |
+| `work_note` | Append a typed ledger row (event: task-done\|verified\|blocked\|wave-gate\|note\|converge, + wave/task/verification/evidence/verifiedBy) and return the tail. With an explicit `slug` any session appends: slug resolution is exact match, else unique substring match, with ambiguity/miss errors listing candidates so a paraphrased dispatch slug costs at most one retry. Delegated builders journal gotchas this way, and rows carry the writer's session id |
 | `work_complete` | Complete the work (summary). Machine gate: refuses while any column-zero checkbox is unchecked or the plan is missing, then records elapsed and stops the per-turn block. Parent sessions only |
 
 - **Hooks:** `context`: inject work block for the newest active binding of the session
@@ -587,7 +595,7 @@ Companion skill: `torus-execute` (writes checkboxes in the plan, journals via `w
 Folds the torus session context into the engine's compaction summary, so the goal, work, todo, and memory context blocks survive compaction instead of vanishing with the summarized turns.
 
 - **Hooks:** `session_start`: record session id, repaint context chip; `message_end` + `session_compact`: repaint context chip; `session_before_compact`: generate a summary that carries the four context blocks (goal, work, todos, memory) as summarization focus
-- **Interactions:** registered last in `pi.extensions` because hook composition across extensions is last-wins: this extension generates the whole summary itself and returns it as the compaction result, since the engine has no way for an extension to mutate the built-in summary's custom instructions
+- **Interactions:** the only `session_before_compact` registrant, so its ordering in `pi.extensions` never matters (hook composition across extensions is last-wins, but no other extension registers a compact hook): this extension generates the whole summary itself and returns it as the compaction result, since the engine has no way for an extension to mutate the built-in summary's custom instructions
 
 The hook fires for every compaction reason (`/compact`, context threshold, overflow recovery). When all four blocks are empty (no active goal, work, todos, or memories) the handler is a no-op and the engine's default compaction runs unchanged; the same fallback covers a failed summary call, and the handler never cancels a compaction.
 
@@ -641,12 +649,12 @@ The dialog always appends a `Custom…` free-text row and a `Chat more about thi
 
 The `torus` statusline segment and the torus startup banner.
 
-- **Hooks:** `session_start`, `turn_start`, `model_select`, `message_end`, `tool_execution_start`, `tool_execution_end` (`torus_delegate` only)
+- **Hooks:** `session_start`, `turn_start`, `model_select`, `thinking_level_select` (effort tracking for the identity block), `message_end`, `tool_execution_start`, `tool_execution_end` (`torus_delegate`, `torus_fanout`, `torus_chain` only)
 - **Env:** `TORUS_ENGINE` (display only; the engine tag appears only when overridden); `TORUS_STATUSLINE_COST=0` disables the session-cost chip; `TORUS_BANNER=0` keeps pi's built-in startup header
 
 Renders the brand, then the identity block (persona, shortened model id, thinking effort, all in the persona's truecolor RGB), then dim provider availability. Health and objective follow: the MCP connected count (`MCP N`, success/warning; polled as the `mcp` section describes) and the session goal as a compact chip (`▶ <48-char head>` warning while active, `⏸` dim while paused, absent when unset or complete; pushed by the goal extension). Model and effort are event-tracked module state, so every writer renders the same line.
 
-Two more chips: a warning `delegate ×N` chip while `torus_delegate` executions are in flight (ref-counted), and a persistent session-cost chip on its own `torus:cost` statusline key beside the torus segment. Assistant `message_end` usage is folded through the shared engine-child tally reducer and rendered with `formatCost`: `$0` shows only once tokens were spent, and the chip stays absent until something measurable happens. Source of the persona color map used by persona-theming.
+Two more chips: a warning `delegate ×N` chip while `torus_delegate`, `torus_fanout`, or `torus_chain` executions are in flight (ref-counted), and a persistent session-cost chip on its own `torus:cost` statusline key beside the torus segment. Assistant `message_end` usage is folded through the shared engine-child tally reducer and rendered with `formatCost`: `$0` shows only once tokens were spent, and the chip stays absent until something measurable happens. Source of the persona color map used by persona-theming.
 
 On `session_start` (interactive only) the same extension swaps pi's built-in startup header for a torus banner: the torus mark (a brand-teal ring with an amber glint, six half-block cells over two lines in the geometry of pi's own logo; terminals that misalign half blocks, Apple Terminal among them, get the `torus` text wordmark instead) with the payload and engine versions in the same shape `torus --version` prints, the engine's compact keybinding hints rebuilt through `keyHint`/`keyText` from the live keybinding config, and an onboarding line pointing at both torus and pi. `ctrl+o` keeps working because the component implements `setExpanded`: the expanded view adds the fleet row (`/roster`, `/doctor`, `alt+t`) and the launcher row (`torus serve`, `torus acp-agent`, `torus --help`) above the engine's full keybinding sheet. `quietStartup: true` leaves the header silenced, `quietStartup: "header"` drops the loaded-resources suffix, and `TORUS_BANNER=0` restores pi's own header. The hint rows mirror the engine's built-in header lists and follow the pinned engine, so pin bumps should re-check them.
 
@@ -683,7 +691,7 @@ The descriptors are the single source of truth for platform support. `/doctor` r
 
 ## Child set
 
-Delegated children load: `mcp`, `comment-checker`, `hashline`, `vision`, `guards`, `astgrep`, `sessions` + the bundled packages below. Children get **no** roster/team/fleet/browser (they cannot recurse delegations), and worktree tools are additionally gated by `TORUS_ENGINE_CHILD`.
+Delegated children load: `mcp`, `comment-checker`, `hashline`, `vision`, `guards`, `astgrep`, `sessions`, `work` + the bundled packages below; `work` registers only `work_note` in children. Children get **no** roster/team/fleet/browser (they cannot recurse delegations), and worktree tools are additionally gated by `TORUS_ENGINE_CHILD`.
 
 ## Bundled packages
 
@@ -750,7 +758,8 @@ Where torus itself spends model calls (and where it looks like it might but does
 
 | Call site | Trigger | Model today | Kind | Adoptable |
 | --- | --- | --- | --- | --- |
-| `session-title` (`generateTitle`, torus's only direct `modelRegistry.complete` call) | first `turn_end` with a real user prompt and no session name (background, 3 attempts); `/rename` regenerates from the transcript | fast chain head `zai/glm-5.3-flash` via `resolveTitleModel` (`TORUS_TITLE_MODEL` → authed fast default → session model) | Generation: a novel ≤50-char title from free text | No: `classify()` answers fixed-label choice/bool/score questions and cannot mint a title; picking among canned titles would gut the feature |
+| `session-title` (`generateTitle`, a direct `modelRegistry.complete` call) | first `turn_end` with a real user prompt and no session name (background, 3 attempts); `/rename` regenerates from the transcript | fast chain head `zai/glm-5.3-flash` via `resolveTitleModel` (`TORUS_TITLE_MODEL` → authed fast default → session model) | Generation: a novel ≤50-char title from free text | No: `classify()` answers fixed-label choice/bool/score questions and cannot mint a title; picking among canned titles would gut the feature |
+| `compact` (`defaultGenerate`, a direct `modelRegistry.complete` call) | compaction with non-empty context blocks: `/compact`, context threshold, overflow recovery; a failed call falls back to the engine's default compaction | session model | Generation: the compaction summary that carries the goal, work, todos, and memory blocks as summarization focus | No: authoring a summary is generation, not a closed-label decision; `classify()` cannot write the prose |
 | `memory` dream + reflect (`runDelegation` to the `dreamer` agent; gating itself, `reflectDecision` over `reflect-state` counters, is pure arithmetic) | `agent_settled`: dream after 6 h with undreamed log activity, reflect after `TORUS_REFLECT_TURNS` settles or 10 min idle; `/reflect` | full engine-child delegation walking the agent's model chain (read-only tools) | Generation + tool use: reads store/transcript/logs, authors ENTRY:/DELETE:/PROFILE: blocks | No: a one-shot classifier over JSON state cannot read files or author structured proposals |
 | `comment-checker` | every `edit`/`write` tool call | none: language comment-prefix table plus regexes over added lines | Deterministic check (no model) | No: no call to replace, and prefix matching is exact; a classifier would be slower and less reliable |
 | `monitor` | each interval check cycle | none: `spawnSync` plus output-hash compare | Deterministic check (no model) | No: no call to replace |
@@ -804,7 +813,7 @@ Rows carrying a config key also read that key from the [unified config](#unified
 | `TORUS_ROOT` | launcher → registry | Payload root override (source layout otherwise) |
 | `TORUS_ENGINE` | launcher sets, ui reads | Engine tag (display) |
 | `TORUS_ENGINE_BIN` | launcher sets, roster/engine-child read | Engine binary for child spawns |
-| `TORUS_ENGINE_CHILD` | engine-child sets, worktrees reads | Marks delegated children; gates worktree tool registration (internal) |
+| `TORUS_ENGINE_CHILD` | engine-child sets, worktrees + work read | Marks delegated children; gates worktree tool registration (internal) |
 | `TORUS_MEMORY_COMMIT=1` | memory sets, store pre-commit hook reads | Marks in-process git spawns on the memory store; agent-run commits are refused (internal) |
 | `TORUS_HOME` | fsutil | Base dir for torus state (default `~/.torus`) |
 | `TORUS_STATE_DIR` | fsutil | Exported in every torus process (main session, delegated children, team members): this project's state root, so skills, prompts, and bash commands use `$TORUS_STATE_DIR/…` instead of hand-derived dashed keys. Main sessions compute it from cwd (kept fresh); engine children treat the inherited value as authoritative (the dispatching session pins them to its root, so `$TORUS_STATE_DIR` paths and ledger appends land in the dispatching project even from a worktree cwd). Explicit-cwd resolution (sandbox hosts) always computes fresh, and delegation logs land in the dispatching session's root: a child running in another cwd never grows its own state dir. Tool output abbreviates state paths to `$TORUS_STATE_DIR/…` (`$TORUS_HOME/…` for other projects') via `displayPath` |
