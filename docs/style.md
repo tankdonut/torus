@@ -52,6 +52,8 @@ Generated files are exempt where the machine owns the bytes: `CHANGELOG.md` (rel
 
 - Every page opens with a one-paragraph summary of what it covers.
 - Headings sentence case and descriptive enough to guess the content ("Caveats when self-hosting", not "Notes").
+- A `skills/*/SKILL.md` H1 equals its skill's directory name. (test-enforced)
+- The `##` headings the coverage test slices in `docs/extensions.md`, plus `docs/serve.md`'s ACP heading, appear exactly once per page. (test-enforced)
 - Paragraphs 2 to 4 sentences, one idea per paragraph.
 - Reference docs organized by surface; task docs by reader task.
 - Three or more list-shaped items in prose: convert to a list. Introduce lists with a colon.
