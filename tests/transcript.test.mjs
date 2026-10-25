@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -17,7 +17,7 @@ const SESSIONS = path.join(AGENT_DIR, "sessions");
 const SLUG = "torus-test-transcript";
 const DIR = path.join(SESSIONS, SLUG);
 
-const { transcriptItems, liveTail } = await import("../extensions/transcript.ts");
+const { _transcriptStats, liveTail, transcriptItems } = await import("../extensions/transcript.ts");
 
 const UUID = "0f0e0d0c-1111-2222-3333-444455556666";
 
@@ -248,6 +248,143 @@ test("custom entries of other customTypes render nothing", () => {
 	const tool = items.find((i) => i.kind === "tool" && i.toolCallId === "tc1");
 	assert.ok(tool, "existing kinds unaffected");
 	if (tool && tool.kind === "tool") assert.equal(tool.output, "total 0");
+});
+
+const stats = () => _transcriptStats();
+
+function sessionFile(id) {
+	return path.join(DIR, `2026-09-30T00-00-00-000Z_${id}.jsonl`);
+}
+
+test("incremental parse: an appended line is the only thing parsed and old items keep identity", () => {
+	const id = `${UUID}-inc`;
+	plantSession(id, baseSession(id));
+	const before = stats();
+	const first = transcriptItems(id, 100);
+	const afterFull = stats();
+	assert.equal(afterFull.fullReparses - before.fullReparses, 1, "first call is a full parse");
+	assert.ok(afterFull.linesParsed > first.length, "every fixture line went through the parser");
+
+	appendFileSync(
+		sessionFile(id),
+		`${JSON.stringify({ type: "message", id: "m9", message: { role: "user", content: [{ type: "text", text: "appended turn" }] } })}\n`,
+		"utf8",
+	);
+	const second = transcriptItems(id, 100);
+	const afterAppend = stats();
+	assert.equal(
+		afterAppend.fullReparses,
+		afterFull.fullReparses,
+		"append must not trigger a full reparse",
+	);
+	assert.equal(
+		afterAppend.linesParsed - afterFull.linesParsed,
+		1,
+		"only the appended line is parsed",
+	);
+	assert.equal(second.length, first.length + 1, "appended record renders");
+	assert.equal(second.at(-1)?.text, "appended turn");
+	for (let i = 0; i < first.length; i += 1) {
+		assert.ok(first[i] === second[i], `item ${i} must keep its object identity across appends`);
+	}
+});
+
+test("interleaved tool results resolve exactly as the reverse-scan parse did", () => {
+	const id = `${UUID}-map`;
+	const toolCall = (tcId, name) =>
+		JSON.stringify({
+			type: "message",
+			id: `a-${tcId}`,
+			message: {
+				role: "assistant",
+				content: [{ type: "toolCall", id: tcId, name, arguments: {} }],
+			},
+		});
+	const result = (tcId, text, extra = {}) =>
+		JSON.stringify({
+			type: "message",
+			id: `r-${tcId}-${text}`,
+			message: {
+				role: "toolResult",
+				...(tcId ? { toolCallId: tcId } : {}),
+				content: [{ type: "text", text }],
+				...extra,
+			},
+		});
+	plantSession(id, [
+		JSON.stringify({ type: "session", id, timestamp: Date.now(), cwd: "/tmp" }),
+		toolCall("tcA", "bash"),
+		toolCall("tcB", "read"),
+		result(undefined, "out B"),
+		result(undefined, "out A"),
+		toolCall("tcC", "grep"),
+		result("tcGHOST", "orphan"),
+		result("tcC", "out C", { isError: true, details: { diff: "-a\n+b" } }),
+		toolCall("tcD", "ls"),
+		result("tcD", "first"),
+		result("tcD", "second"),
+	]);
+	const byId = Object.fromEntries(
+		transcriptItems(id, 100)
+			.filter((i) => i.kind === "tool")
+			.map((i) => [i.toolCallId, i]),
+	);
+	// Id-less results attach newest-open-first (B before A); the ghost id is
+	// dropped; a repeated id overwrites; every attach stamps isError.
+	assert.equal(byId.tcB.output, "out B");
+	assert.equal(byId.tcA.output, "out A");
+	assert.equal(byId.tcA.isError, false);
+	assert.equal(byId.tcC.output, "out C");
+	assert.equal(byId.tcC.isError, true);
+	assert.deepEqual(byId.tcC.details, { diff: "-a\n+b" });
+	assert.equal(byId.tcD.output, "second");
+	assert.equal(Object.keys(byId).length, 4, "the orphan result must not mint an item");
+
+	// The matching maps survive into the incremental pass: append a call and
+	// its result, and the result resolves without a full reparse.
+	const before = stats();
+	const firstItems = transcriptItems(id, 100);
+	appendFileSync(sessionFile(id), `${toolCall("tcE", "find")}\n${result("tcE", "late")}\n`, "utf8");
+	const items = transcriptItems(id, 100);
+	assert.equal(stats().fullReparses, before.fullReparses, "append resolves incrementally");
+	const late = items.find((i) => i.kind === "tool" && i.toolCallId === "tcE");
+	assert.ok(late, "appended call renders");
+	assert.equal(late.output, "late", "appended result pairs through the carried map");
+	for (let i = 0; i < firstItems.length; i += 1) {
+		assert.ok(firstItems[i] === items[i], "prior items keep identity through the append");
+	}
+});
+
+test("a transcript line without its trailing newline stays invisible until completed", () => {
+	const id = `${UUID}-partial`;
+	mkdirSync(DIR, { recursive: true });
+	const file = sessionFile(id);
+	const sessionLine = JSON.stringify({ type: "session", id, timestamp: Date.now(), cwd: "/tmp" });
+	const userLine = JSON.stringify({
+		type: "message",
+		id: "p1",
+		message: { role: "user", content: [{ type: "text", text: "partial writer" }] },
+	});
+	writeFileSync(file, `${sessionLine}\n${userLine}`, "utf8");
+	assert.equal(transcriptItems(id, 100).length, 0, "unterminated line must not render");
+
+	const reply = JSON.stringify({
+		type: "message",
+		id: "p2",
+		message: { role: "assistant", content: [{ type: "text", text: "completed" }] },
+	});
+	appendFileSync(file, `\n${reply}\n`, "utf8");
+	const items = transcriptItems(id, 100);
+	assert.equal(
+		items.filter((i) => i.kind === "user").length,
+		1,
+		"completed line renders exactly once",
+	);
+	assert.ok(items.some((i) => i.kind === "user" && i.text === "partial writer"));
+	assert.ok(
+		items.some((i) => i.kind === "assistant"),
+		"the record after the completed line renders too",
+	);
 });
 
 test("cleanup: planted fixtures removed", () => {

@@ -47,12 +47,7 @@ import {
 	steerDelegation,
 	stopDelegation,
 } from "../registry.js";
-import {
-	liveTail,
-	type TranscriptItem,
-	transcriptItems,
-	transcriptMtimeMs,
-} from "../transcript.js";
+import { liveTail, type TranscriptItem, transcriptItems } from "../transcript.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin", "win32"],
@@ -272,7 +267,7 @@ class FleetBrowser implements Component {
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private readonly componentCache = new Map<
 		string,
-		{ mtimeMs: number | undefined; component: Component; resultApplied?: boolean }
+		{ item: TranscriptItem; component: Component; resultApplied?: boolean }
 	>();
 	/** True once the list view has actually been shown: esc from detail goes back
 	 * to the list only when the user came through it, otherwise it closes. */
@@ -688,25 +683,24 @@ class FleetBrowser implements Component {
 
 	private componentForItem(sessionId: string, item: TranscriptItem): Component | null {
 		const cacheKey = `${sessionId}:${item.kind}:${item.id}`;
-		// transcriptItems caches by file mtime; an entry built against an older
-		// transcript (e.g. an assistant message that grew) must be dropped, or the
-		// first snapshot renders forever.
-		const mtimeMs = transcriptMtimeMs(sessionId);
+		// transcriptItems reuses item objects for unchanged lines and mints fresh
+		// ones on a full reparse; an entry built against a different item instance
+		// must be dropped, or the first snapshot renders forever.
 		let cached = this.componentCache.get(cacheKey);
-		if (cached && cached.mtimeMs !== mtimeMs) {
+		if (cached && cached.item !== item) {
 			this.componentCache.delete(cacheKey);
 			cached = undefined;
 		}
 		if (item.kind === "user") {
 			if (!cached || !(cached.component instanceof UserMessageComponent)) {
-				cached = { mtimeMs, component: new UserMessageComponent(item.text) };
+				cached = { item, component: new UserMessageComponent(item.text) };
 				this.componentCache.set(cacheKey, cached);
 			}
 			return cached.component;
 		}
 		if (item.kind === "assistant") {
 			if (!cached || !(cached.component instanceof AssistantMessageComponent)) {
-				cached = { mtimeMs, component: new AssistantMessageComponent(item.message) };
+				cached = { item, component: new AssistantMessageComponent(item.message) };
 				this.componentCache.set(cacheKey, cached);
 			}
 			return cached.component;
@@ -721,7 +715,7 @@ class FleetBrowser implements Component {
 				this.tui,
 				process.cwd(),
 			);
-			cached = { mtimeMs, component };
+			cached = { item, component };
 			this.componentCache.set(cacheKey, cached);
 		}
 		const component = cached.component as ToolExecutionComponent;

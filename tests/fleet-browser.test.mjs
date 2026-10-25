@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -891,6 +891,53 @@ test("detail transcript: edit success renders its diff from persisted result det
 		assert.ok(
 			rendered.includes("const FLAG = 2;"),
 			"edit success diff must render from persisted details, not sit on a pending header",
+		);
+	} finally {
+		component.dispose();
+	}
+});
+
+test("detail transcript: appended lines reuse cached components for unchanged items", () => {
+	registry.resetRegistryForTesting();
+	const sid = "0f0e0d0c-bbbb-4ccc-8ddd-444455550000";
+	mkdirSync(path.join(SESSIONS, "proj2"), { recursive: true });
+	const file = path.join(SESSIONS, "proj2", `2026-09-30T00-00-00-000Z_${sid}.jsonl`);
+	const userTurn = (id, text) =>
+		JSON.stringify({
+			type: "message",
+			id,
+			message: { role: "user", content: [{ type: "text", text }] },
+		});
+	writeFileSync(
+		file,
+		`${JSON.stringify({ type: "session", id: sid, timestamp: Date.now(), cwd: "/tmp" })}\n${userTurn("m1", "first turn")}\n`,
+		"utf8",
+	);
+	registry.startDelegation("fb-cache-1", "builder", "zai/glm-5.3", null, "cachey");
+	registry.finishDelegation("fb-cache-1", true, "done", sid, { toast: false });
+	const { hooks } = registerExtension();
+	const driver = makeCtx("fullscreen", { fg: (_color, text) => text, bold: (text) => text });
+	hooks.get("session_start")(undefined, driver.ctx);
+	globalThis[registry.FLEET_OPENER]("fb-cache-1");
+	const component = driver.component();
+	try {
+		assert.ok(
+			component.render(100).some((l) => l.includes("first turn")),
+			"initial turn renders",
+		);
+		const userEntry = [...component.componentCache].find(([key]) => key.includes(":user:"));
+		assert.ok(userEntry, "user component cached");
+
+		appendFileSync(file, `${userTurn("m2", "second turn")}\n`, "utf8");
+		const rendered = component
+			.render(100)
+			.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
+			.join("\n");
+		assert.ok(rendered.includes("second turn"), "appended turn renders");
+		assert.ok(rendered.includes("first turn"), "earlier turn still renders");
+		assert.ok(
+			component.componentCache.get(userEntry[0]) === userEntry[1],
+			"an unchanged item keeps its cached component across appends",
 		);
 	} finally {
 		component.dispose();
