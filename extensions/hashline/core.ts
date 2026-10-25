@@ -172,7 +172,8 @@ export function verifyAnchors(
  * Moved-line rebasing: an anchor whose hash no longer matches at its position
  * is remapped only when EXACTLY ONE line in the file still carries that hash.
  * Any ambiguous or vanished anchor aborts the rebase; the caller then reports
- * the mismatch as-is.
+ * the mismatch as-is. Hash occurrences are indexed in one pass up front, so
+ * resolving N stale anchors costs one hash per line, not one scan per anchor.
  */
 function tryRebase(
 	lines: string[],
@@ -180,20 +181,20 @@ function tryRebase(
 ): { remap: Map<string, LineRef>; moved: RebaseReport[] } | null {
 	const remap = new Map<string, LineRef>();
 	const moved: RebaseReport[] = [];
+	const index = new Map<string, { firstLine: number; matches: number }>();
+	for (let i = 0; i < lines.length; i += 1) {
+		const hash = computeLineHash(lines[i] ?? "");
+		const entry = index.get(hash);
+		if (entry === undefined) index.set(hash, { firstLine: i + 1, matches: 1 });
+		else entry.matches += 1;
+	}
 	for (const { ref, at } of refs) {
 		const current = lines[at.line - 1];
 		if (current !== undefined && computeLineHash(current) === at.hash) continue;
-		let to = 0;
-		let matches = 0;
-		for (let i = 0; i < lines.length; i += 1) {
-			if (computeLineHash(lines[i] ?? "") !== at.hash) continue;
-			matches += 1;
-			to = i + 1;
-			if (matches > 1) return null;
-		}
-		if (matches !== 1) return null;
-		remap.set(ref, { line: to, hash: at.hash });
-		moved.push({ ref, fromLine: at.line, toLine: to });
+		const entry = index.get(at.hash);
+		if (entry === undefined || entry.matches !== 1) return null;
+		remap.set(ref, { line: entry.firstLine, hash: at.hash });
+		moved.push({ ref, fromLine: at.line, toLine: entry.firstLine });
 	}
 	return { remap, moved };
 }

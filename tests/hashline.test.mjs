@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 const {
@@ -11,6 +14,7 @@ const {
 	stripAnchorPrefix,
 	verifyAnchors,
 } = await import("../extensions/hashline/core.ts");
+const { runFormatter } = await import("../extensions/hashline/index.ts");
 
 test("computeLineHash: deterministic, 4 dict chars, distinguishes content", () => {
 	const a = computeLineHash("const x = 1;");
@@ -209,6 +213,39 @@ test("applyHashlineEdits: rebase refuses ambiguous moved anchors", () => {
 	if (!out.ok) assert.equal(out.mismatch, true);
 });
 
+test("applyHashlineEdits: rebase on a 200-line fixture matches the golden remap", () => {
+	const pad = (n) => String(n).padStart(3, "0");
+	const original = Array.from({ length: 200 }, (_, i) => `line-${pad(i + 1)}`);
+	const moves = [
+		{ content: "line-010", target: 150 },
+		{ content: "line-060", target: 5 },
+		{ content: "line-190", target: 100 },
+	];
+	const movedSet = new Set(moves.map((m) => m.content));
+	const current = original.filter((l) => !movedSet.has(l));
+	for (const m of moves) current.splice(m.target - 1, 0, m.content);
+
+	const ops = moves.map((m, i) => ({
+		op: "replace",
+		pos: `${original.indexOf(m.content) + 1}#${computeLineHash(m.content)}`,
+		lines: [`EDIT-${pad(i + 1)}`],
+	}));
+
+	const out = applyHashlineEdits(current, ops, { rebase: true });
+	assert.ok(out.ok);
+	if (out.ok) {
+		assert.deepEqual(out.moved, [
+			{ ref: `10#${computeLineHash("line-010")}`, fromLine: 10, toLine: 152 },
+			{ ref: `60#${computeLineHash("line-060")}`, fromLine: 60, toLine: 5 },
+			{ ref: `190#${computeLineHash("line-190")}`, fromLine: 190, toLine: 100 },
+		]);
+		assert.equal(out.lines.length, 200);
+		assert.equal(out.lines[151], "EDIT-001");
+		assert.equal(out.lines[4], "EDIT-002");
+		assert.equal(out.lines[99], "EDIT-003");
+	}
+});
+
 test("verifyAnchors: duplicate refs report a single problem line", () => {
 	const lines = ["one", "two-changed", "three"];
 	const stale = `2#${computeLineHash("two-original")}`;
@@ -219,4 +256,20 @@ test("verifyAnchors: duplicate refs report a single problem line", () => {
 	assert.ok(err);
 	const hits = err.split("\n").filter((l) => l.includes(stale));
 	assert.equal(hits.length, 1);
+});
+
+test("runFormatter: TORUS_FMT_CMD=true resolves async with the ok note", async () => {
+	const prev = process.env.TORUS_FMT_CMD;
+	process.env.TORUS_FMT_CMD = "true";
+	const dir = mkdtempSync(join(tmpdir(), "hashline-fmt-"));
+	try {
+		const target = join(dir, "fixture.txt");
+		writeFileSync(target, "alpha\n");
+		const note = await runFormatter(target);
+		assert.equal(note, "\nformatter: ok");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+		if (prev === undefined) delete process.env.TORUS_FMT_CMD;
+		else process.env.TORUS_FMT_CMD = prev;
+	}
 });

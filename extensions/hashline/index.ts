@@ -7,7 +7,7 @@
  * edit/write tools remain available as fallback. TORUS_HASHLINE=0 disables.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { Type } from "@earendil-works/pi-ai";
 import {
@@ -80,16 +80,28 @@ function anchoredRegion(lines: string[], from: number, to: number): string {
 	return anchorAll(lines.slice(start - 1, end)).join("\n");
 }
 
-function runFormatter(target: string): string {
+export function runFormatter(target: string): Promise<string> {
 	const fmtCmd = knobString("TORUS_FMT_CMD", "hashline", "fmtCmd", "");
-	if (!fmtCmd || fmtCmd.trim().length === 0) return "";
-	try {
-		const run = spawnSync(fmtCmd, [target], { timeout: 15_000, encoding: "utf8" });
-		if (run.status === 0) return "\nformatter: ok";
-		return `\nformatter: exit ${String(run.status)}`;
-	} catch (err) {
-		return `\nformatter failed: ${String(err).slice(0, 120)}`;
-	}
+	if (!fmtCmd || fmtCmd.trim().length === 0) return Promise.resolve("");
+	return new Promise((resolve) => {
+		let settled = false;
+		const finish = (note: string) => {
+			if (settled) return;
+			settled = true;
+			resolve(note);
+		};
+		try {
+			const child = spawn(fmtCmd, [target], { timeout: 15_000, stdio: "ignore" });
+			// Spawn failures and the 15s kill both surface as a null exit code,
+			// matching the spawnSync timeout semantics this replaced.
+			child.on("error", () => finish("\nformatter: exit null"));
+			child.on("close", (code) =>
+				finish(code === 0 ? "\nformatter: ok" : `\nformatter: exit ${String(code)}`),
+			);
+		} catch (err) {
+			finish(`\nformatter failed: ${String(err).slice(0, 120)}`);
+		}
+	});
 }
 
 const hashlineEditTool = defineTool({
@@ -206,7 +218,7 @@ const hashlineEditTool = defineTool({
 		}
 
 		const target = params.rename ?? params.path;
-		const fmtNote = runFormatter(target);
+		const fmtNote = await runFormatter(target);
 		let displayLines = outcome.lines;
 		let fmtChanged = false;
 		if (fmtNote === "\nformatter: ok") {
