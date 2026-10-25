@@ -52,6 +52,8 @@ export type JudgeGuidance = {
 	softDenyExceptions?: string[];
 	hardDeny?: string[];
 	intent?: string[];
+	/** The hardcoded critical-operation class the judged command matched, when any. */
+	floor?: string;
 };
 
 /** Rendered intent is bounded: at most five lines, at most 2000 characters of content. */
@@ -98,6 +100,11 @@ function renderIntentLines(intent: readonly string[] | undefined): string[] {
  */
 export function judgeGuidanceText(guidance: JudgeGuidance | undefined): string {
 	const lines: string[] = [];
+	if (guidance?.floor !== undefined) {
+		lines.push(
+			`Critical operation floor — the command matches the hardcoded class "${guidance.floor}". Allow it ONLY when (a) a soft-boundary exception below directly matches the command, or (b) a recent user intent line directly and specifically describes this exact action. Otherwise deny (or ask when genuinely uncertain):`,
+		);
+	}
 	if (guidance?.environment !== undefined && guidance.environment.length > 0) {
 		lines.push(
 			"Environment context from the user's configuration (trusted infrastructure and known posture):",

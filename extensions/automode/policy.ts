@@ -3,7 +3,7 @@
  *
  * Pure, engine-free decision core for automode command permissions:
  * user-configured rules (deny → ask → allow, Claude-Code-style prefix
- * patterns), a hardcoded ask floor for critical operations, and a
+ * patterns), a hardcoded critical-operation floor, and a
  * read-only fast path. Detection works at the bash grammar level: words
  * are unfolded (POSIX quoting and backslash escapes removed) and commands
  * are split on shell separators before any token comparison. Injectable
@@ -104,7 +104,6 @@ const FLOOR_SUDO = "privilege escalation via sudo/su";
 const FLOOR_RM_ROOT = "recursive forced rm on a root or home path";
 const FLOOR_FORCE_PUSH = "git push --force";
 const FLOOR_PERM_ROOT = "recursive chmod/chown on a root path";
-const FLOOR_SUBST = "command substitution ($(...) or backticks)";
 
 /** Shell operators that end a word and start a new sub-command. */
 const SEGMENT_SEPARATORS = new Set([";", "&", "|", "(", ")", "<", ">", "\n", "\r"]);
@@ -530,7 +529,7 @@ function recursivePermOnRoot(tokens: string[]): boolean {
 }
 
 /**
- * Hardcoded ask floor for critical command classes. The command is split
+ * Hardcoded critical-operation floor. The command is split
  * on shell separators into segments, and every segment word is scanned as
  * a potential verb: the basename of the unfolded word, so quoted (`'rm'`),
  * escaped (`\rm`), and path-spelled (`/bin/rm`) verbs all resolve. Floors:
@@ -540,20 +539,23 @@ function recursivePermOnRoot(tokens: string[]): boolean {
  * `rm -rf /etc`, `./build`, and `~user` targets do not floor); `git push
  * --force`/`-f` after any git global options (`--force-with-lease` does
  * not floor); recursive `chmod`/`chown` with `/` or home as target root.
- * Command substitution (`$(...)` or backticks) anywhere in the raw command
- * floors: a subshell can hide anything. Scanning past wrappers (`nice rm
+ * Command substitution does not floor: the decision model judges the full
+ * command text (substitution bodies included) exactly as it judges pipes
+ * and `;` chains, and the read-only fast path already refuses substitutions.
+ * Scanning past wrappers (`nice rm
  * -rf /`, `env`) also floors `echo rm -rf /` style lines by design:
  * over-matching is safe, under-matching is the bug class. Returns the
  * triggering class label, or undefined when the command is not in any
  * critical class.
  *
- * Allow rules do NOT bypass this floor: matchRules is subordinate, and
- * callers must check criticalAskFloor BEFORE trusting a rule allow.
+ * These classes judge rather than ask: the caller routes a floor hit to
+ * the decision model with the class riding into the prompt as a boundary,
+ * skips every allow shortcut (allow rules, fast path, cache), and falls
+ * back to asking only when the judge cannot run. Allow rules therefore
+ * never bypass the floor; callers must check criticalAskFloor BEFORE
+ * trusting a rule allow.
  */
 export function criticalAskFloor(command: string): string | undefined {
-	if (command.includes("$(") || command.includes("`")) {
-		return FLOOR_SUBST;
-	}
 	for (const segment of lexSegments(command)) {
 		for (let i = 0; i < segment.length; i++) {
 			const verb = verbOf(segment[i] ?? "");

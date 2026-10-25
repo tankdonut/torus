@@ -570,6 +570,14 @@ test("decide: the chat fallback judges with the fast-chain model when resolvable
 	assert.equal(seen, flash);
 });
 
+test("judgeGuidanceText: the floor block leads and binds allow to an exception or intent", () => {
+	const text = judgeGuidanceText({ floor: "privilege escalation via sudo/su" });
+	assert.match(text, /Critical operation floor/);
+	assert.match(text, /privilege escalation via sudo\/su/);
+	assert.match(text, /Allow it ONLY/);
+	assert.ok(!text.includes("- "), "no bullet lines: the floor is a class label, not prose");
+});
+
 test("judgeGuidanceText: renders environment and hardDeny prose blocks", () => {
 	assert.equal(judgeGuidanceText(undefined), "");
 	assert.equal(judgeGuidanceText({}), "");
@@ -642,6 +650,7 @@ test("chat prompt: guidance prose reaches the system prompt", async () => {
 
 test("judgeGuidanceText: renders every tier block in the fixed order with intent last", () => {
 	const text = judgeGuidanceText({
+		floor: "privilege escalation via sudo/su",
 		environment: ["env line"],
 		softDeny: ["soft line"],
 		softDenyExceptions: ["exception line"],
@@ -649,6 +658,7 @@ test("judgeGuidanceText: renders every tier block in the fixed order with intent
 		intent: ["intent line"],
 	});
 	const headers = [
+		"Critical operation floor",
 		"Environment context",
 		"Soft boundaries",
 		"Soft-boundary exceptions",

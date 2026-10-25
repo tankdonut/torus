@@ -365,7 +365,7 @@ The decision pipeline runs in a fixed order:
 | Step | Behavior |
 | --- | --- |
 | Deny rules | Prefix-pattern deny entries block outright, naming the matched rule |
-| Ask floor | `sudo`/`su`, recursive forced `rm` on root or home paths, force pushes, recursive `chmod`/`chown` on root paths, and command substitution ask; no allow rule bypasses the floor |
+| Critical floor | `sudo`/`su`, recursive forced `rm` on root or home paths, force pushes, and recursive `chmod`/`chown` on root paths judge with the class riding into the prompt as a boundary; no allow-rule, fast-path, or cache shortcut applies, an ask rule or tripped breaker still asks, and an unreachable judge restores the ask instead of running unjudged. Command substitution is judged like any other command (the model reads the full text, sub-shells included) |
 | Ask rules | Ask-rule matches open the approval dialog |
 | Allow rules | Matching allow entries pass without a model call |
 | Circuit breaker | Three consecutive decision-model denies switch the session to asking for everything |

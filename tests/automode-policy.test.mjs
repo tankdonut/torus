@@ -290,10 +290,15 @@ test("ask floor: any git globals before push still detect force", () => {
 	assert.equal(criticalAskFloor("git push --force-with-lease"), undefined);
 });
 
-test("ask floor: command substitution anywhere floors the command", () => {
-	const commands = ["echo $(rm -rf /)", "$(git push --force)", "ls `sudo reboot`"];
+test("no ask floor for command substitution: the judge reads the full text", () => {
+	const commands = [
+		"echo $(date)",
+		"cat `whoami`",
+		"ls $(git rev-parse --show-toplevel)",
+		"ls `sudo reboot`",
+	];
 	for (const command of commands) {
-		assert.ok(criticalAskFloor(command), command);
+		assert.equal(criticalAskFloor(command), undefined, command);
 	}
 });
 

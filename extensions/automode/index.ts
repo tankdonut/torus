@@ -8,10 +8,12 @@
  * this extension never classifies, the context guards, cc-safety-net,
  * sandbox, and approval extensions never register, and the mode cannot be
  * changed mid-session. In auto mode every bash tool
- * call runs one fixed pipeline: deny rules, the critical ask floor (which no
- * allow rule can bypass), ask rules, allow rules, the circuit breaker, the
- * read-only fast path, the session decision cache, and finally the decision
- * model. Each concluding step appends one row to the audit log; a decision
+ * call runs one fixed pipeline: deny rules, the critical-operation floor
+ * (the four privilege/destruction classes take no allow shortcut — they
+ * judge, with the class riding into the prompt as a boundary, and an
+ * unreachable judge restores the ask), ask rules, allow rules, the circuit
+ * breaker, the read-only fast path, the session decision cache, and finally
+ * the decision model. Each concluding step appends one row to the audit log; a decision
  * model that cannot be reached fails open with an annotation on the tool
  * result. Blocks returned here compose with first-block-wins engine
  * semantics: another extension's block always stays in effect.
@@ -613,16 +615,17 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			};
 		}
 
-		// (b) the critical ask floor outranks every allow shortcut.
+		// (b) the critical-operation floor: the privilege/destruction classes
+		// take no allow shortcut — an ask rule, a tripped breaker, or the
+		// decision model decides them (the class riding into the judge prompt
+		// as a boundary), and an unreachable judge falls back to asking, never
+		// to running unjudged.
 		const floor = criticalAskFloor(command);
-		if (floor !== undefined) {
-			return askUser(ctx, command, `ask floor: ${floor}`);
-		}
 
 		if (ruleMatch?.verdict === "ask") {
 			return askUser(ctx, command, `ask rule "${ruleMatch.rule}" matched`);
 		}
-		if (ruleMatch?.verdict === "allow" && rules.classifyAllShell !== true) {
+		if (ruleMatch?.verdict === "allow" && floor === undefined && rules.classifyAllShell !== true) {
 			consecutiveDenies = 0;
 			audit(command, "rule", "allow", `allowed by rule "${ruleMatch.rule}"`);
 			return undefined;
@@ -634,14 +637,15 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		}
 
 		// (d) read-only fast path: no model call.
-		if (isReadOnlyFastPath(command)) {
+		if (floor === undefined && isReadOnlyFastPath(command)) {
 			consecutiveDenies = 0;
 			audit(command, "fastpath", "allow", "read-only fast path");
 			return undefined;
 		}
 
-		// (e) replay a decision approved for this session.
-		const cached = cache.get(command);
+		// (e) replay a decision approved for this session — floored commands
+		// always re-judge.
+		const cached = floor === undefined ? cache.get(command) : undefined;
 		if (cached !== undefined) {
 			audit(command, "cache", cached.verdict, cached.reason, cached);
 			if (cached.verdict === "allow") {
@@ -673,10 +677,17 @@ export function registerAutomode(pi: ExtensionAPI): void {
 				softDenyExceptions: rules.softDenyExceptions,
 				hardDeny: rules.hardDeny,
 				intent: [...intentLines],
+				floor,
 			},
 		);
 		const ms = Date.now() - startedAt;
-		audit(command, decision.source, decision.verdict, decision.reason, { ...decision, ms });
+		audit(
+			command,
+			decision.source,
+			decision.verdict,
+			floor === undefined ? decision.reason : `${decision.reason} [floor: ${floor}]`,
+			{ ...decision, ms },
+		);
 		switch (decision.verdict) {
 			case "allow": {
 				consecutiveDenies = 0;
@@ -699,6 +710,11 @@ export function registerAutomode(pi: ExtensionAPI): void {
 				return { block: true, reason: `automode: decision model denied — ${decision.reason}` };
 			}
 			default: {
+				// A floored command never runs unjudged: an unreachable judge
+				// restores the ask floor instead of failing open.
+				if (floor !== undefined) {
+					return askUser(ctx, command, `ask floor (judge unavailable): ${floor}`);
+				}
 				consecutiveDenies = 0;
 				failopenReasons.set(event.toolCallId, decision.reason);
 				ctx.ui.notify(`automode: ran unjudged (${decision.reason})`, "warning");

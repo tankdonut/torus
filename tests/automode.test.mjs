@@ -242,17 +242,72 @@ test("auto mode with UI: Always this session caches; repeat passes via cache wit
 	);
 });
 
-test("ask floor: sudo asks even with a matching allow rule", async () => {
+test("ask floor fail-safe: judge unavailable restores the ask for floored commands", async () => {
 	resetAudit();
-	const { pi, ctx } = setup({ rules: { allow: ["sudo *"] }, hasUI: false });
+	const { pi, ctx, reg } = setup({ rules: { allow: ["sudo *"] }, hasUI: false });
 	const result = await call(pi, ctx, "sudo id");
 	assert.equal(result.block, true, "allow rule must not bypass the floor");
-	assert.match(result.reason, /ask floor/);
-	assert.match(result.reason, /sudo/);
+	assert.match(result.reason, /ask floor \(judge unavailable\)/);
+	assert.match(result.reason, /sudo\/su/);
 	assert.match(result.reason, /no UI for approval/);
+	assert.equal(reg.calls.complete, 1, "the judge was tried before falling back to asking");
+	assert.deepEqual(
+		auditRows().map((row) => row.source),
+		["failopen", "dialog"],
+		"one row for the failed judgment, one for the ask",
+	);
+	assert.match(auditRows()[0].reason, /\[floor: privilege escalation via sudo\/su\]/);
+});
+
+test("ask floor: the judge decides floored commands; an allow rule never shortcuts them", async () => {
+	resetAudit();
+	const { pi, ctx, reg } = setup({ rules: { allow: ["sudo *"] }, replies: [jsonReply("allow")] });
+	assert.equal(await call(pi, ctx, "sudo id"), undefined, "judge allow runs the command");
+	assert.equal(reg.calls.complete, 1, "the judge was consulted despite the allow rule");
+	const prompt = reg.contexts[0]?.systemPrompt ?? "";
+	assert.match(prompt, /Critical operation floor/, "the floor class rides into the prompt");
+	assert.match(prompt, /privilege escalation via sudo\/su/);
 	const rows = auditRows();
 	assert.equal(rows.length, 1);
-	assert.equal(rows[0].source, "dialog");
+	assert.equal(rows[0].source, "model");
+	assert.match(rows[0].reason, /\[floor: privilege escalation via sudo\/su\]/);
+});
+
+test("ask floor: a judge deny blocks the floored command with the class tagged", async () => {
+	resetAudit();
+	const { pi, ctx } = setup({ replies: [jsonReply("deny")] });
+	const result = await call(pi, ctx, "git push --force origin main");
+	assert.equal(result.block, true);
+	assert.match(result.reason, /decision model denied/);
+	assert.match(auditRows()[0].reason, /\[floor: git push --force\]/);
+});
+
+test("ask floor: an ask rule outranks the judge for floored commands", async () => {
+	resetAudit();
+	const { pi, ctx, reg, dialog } = setup({
+		rules: { ask: ["sudo *"] },
+		replies: [jsonReply("allow")],
+		hasUI: true,
+		answer: "Deny",
+	});
+	const result = await call(pi, ctx, "sudo id");
+	assert.equal(result.block, true, "the ask rule dialog decides, not the judge");
+	assert.equal(reg.calls.complete, 0, "the judge is never called when an ask rule matches");
+	assert.equal(dialog.calls.length, 1);
+});
+
+test("sub-shells are judged like any other command, not floored", async () => {
+	resetAudit();
+	const { pi, ctx, reg } = setup({ replies: [jsonReply("deny")] });
+	const result = await call(pi, ctx, "echo $(date)");
+	assert.equal(result.block, true, "the judge denied it — proving it was judged, not floored");
+	assert.equal(reg.calls.complete, 1);
+	assert.doesNotMatch(
+		reg.contexts[0]?.systemPrompt ?? "",
+		/Critical operation floor/,
+		"no floor block for a plain substitution",
+	);
+	assert.doesNotMatch(auditRows()[0].reason, /\[floor:/);
 });
 
 test("fast path: read-only command passes with an audit row and no model call", async () => {
