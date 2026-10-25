@@ -38,19 +38,20 @@ function fakeEntry(overrides) {
 		lastHash: null,
 		checks: 0,
 		timer: null,
+		checkPromise: null,
 		...overrides,
 	};
 }
 
-test("stopOn change: first check records the hash, changed output fires torus.monitor-fired", () => {
+test("stopOn change: first check records the hash, changed output fires torus.monitor-fired", async () => {
 	const customs = captureCustoms();
 	const entry = fakeEntry({ name: "ci-probe" });
 
-	monitor.runMonitorCheck(entry);
+	await monitor.runMonitorCheck(entry);
 	assert.deepEqual(customs, [], "first check only records the baseline hash");
 
 	entry.command = "echo two";
-	monitor.runMonitorCheck(entry);
+	await monitor.runMonitorCheck(entry);
 
 	assert.equal(customs.length, 1);
 	const { message: fired, options } = customs[0];
@@ -66,11 +67,11 @@ test("stopOn change: first check records the hash, changed output fires torus.mo
 	);
 });
 
-test("stopOn fail: non-zero exit fires torus.monitor-fired on the first check", () => {
+test("stopOn fail: non-zero exit fires torus.monitor-fired on the first check", async () => {
 	const customs = captureCustoms();
 	const entry = fakeEntry({ name: "fail-probe", command: "echo oops; exit 3", stopOn: "fail" });
 
-	monitor.runMonitorCheck(entry);
+	await monitor.runMonitorCheck(entry);
 
 	assert.equal(customs.length, 1);
 	const fired = customs[0].message;
@@ -93,6 +94,7 @@ test("torus_monitor tool fires the transcript marker on its immediate first chec
 		intervalSec: 5,
 		stopOn: "fail",
 	});
+	await monitor.pendingChecks();
 
 	assert.match(result.content[0].text, /boom-probe/);
 	assert.equal(customs.length, 1, "fired monitor must land in the transcript");
@@ -104,8 +106,8 @@ test("torus_monitor tool fires the transcript marker on its immediate first chec
 	});
 });
 
-test("monitor history lands under TORUS_HOME/state/--<project>--/monitors/", () => {
-	monitor.runMonitorCheck(fakeEntry({ name: "state-probe" }));
+test("monitor history lands under TORUS_HOME/state/--<project>--/monitors/", async () => {
+	await monitor.runMonitorCheck(fakeEntry({ name: "state-probe" }));
 
 	const logFile = path.join(
 		HOME,
@@ -120,12 +122,12 @@ test("monitor history lands under TORUS_HOME/state/--<project>--/monitors/", () 
 	assert.match(text, /one/, "command output must ride along");
 });
 
-test("a pre-existing legacy monitors log migrates into the project state dir on first write", () => {
+test("a pre-existing legacy monitors log migrates into the project state dir on first write", async () => {
 	const legacyFile = path.join(HOME, "monitors", "migrate-probe.log");
 	mkdirSync(path.dirname(legacyFile), { recursive: true });
 	writeFileSync(legacyFile, "legacy history\n", "utf8");
 
-	monitor.runMonitorCheck(fakeEntry({ name: "migrate-probe" }));
+	await monitor.runMonitorCheck(fakeEntry({ name: "migrate-probe" }));
 
 	const migrated = path.join(
 		HOME,
@@ -141,17 +143,17 @@ test("a pre-existing legacy monitors log migrates into the project state dir on 
 	assert.ok(!existsSync(legacyFile), "legacy file must be renamed away, not copied");
 });
 
-test("the same monitor name in two project cwds keeps separate logs", () => {
+test("the same monitor name in two project cwds keeps separate logs", async () => {
 	const dirA = mkdtempSync(path.join(tmpdir(), "torus-monitor-collide-a-"));
 	const dirB = mkdtempSync(path.join(tmpdir(), "torus-monitor-collide-b-"));
 	const prev = process.cwd();
 	try {
 		process.chdir(dirA);
 		const cwdA = process.cwd();
-		monitor.runMonitorCheck(fakeEntry({ name: "shared-probe", command: "echo A" }));
+		await monitor.runMonitorCheck(fakeEntry({ name: "shared-probe", command: "echo A" }));
 		process.chdir(dirB);
 		const cwdB = process.cwd();
-		monitor.runMonitorCheck(fakeEntry({ name: "shared-probe", command: "echo B" }));
+		await monitor.runMonitorCheck(fakeEntry({ name: "shared-probe", command: "echo B" }));
 
 		assert.notEqual(cwdA, cwdB);
 		const logA = readFileSync(

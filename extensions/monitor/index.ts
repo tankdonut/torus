@@ -6,7 +6,7 @@
  * up on session shutdown. TORUS_MONITOR=0 disables.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
@@ -28,6 +28,7 @@ function toolDetails(d: Record<string, unknown>): Record<string, unknown> {
 
 const MIN_INTERVAL_SEC = 5;
 const MAX_MONITORS = 5;
+const CHECK_TIMEOUT_SEC = 30;
 
 /** Per-project monitor log dir, resolved per check — a session can cd after load. */
 function monitorLogDir(): string {
@@ -39,6 +40,9 @@ function legacyDir(): string {
 	return path.join(torusHome(), "monitors");
 }
 
+/** Log files whose legacy location has already been checked once this process. */
+const migratedLogFiles = new Set<string>();
+
 interface MonitorEntry {
 	name: string;
 	command: string;
@@ -47,6 +51,8 @@ interface MonitorEntry {
 	lastHash: string | null;
 	checks: number;
 	timer: ReturnType<typeof setInterval>;
+	/** In-flight check promise: guards against overlapping ticks, and awaitable by tests. */
+	checkPromise: Promise<void> | null;
 }
 
 const MONITORS_KEY = Symbol.for("torus.monitors");
@@ -106,9 +112,48 @@ function emitMonitorFired(
 	);
 }
 
+/**
+ * Async check runner: a monitor command must never block the engine's event
+ * loop (the TUI, streaming, and delegations all run on it), so each check
+ * spawns a detached child and resolves on close. A 30s ceiling SIGTERMs and
+ * then SIGKILLs a stuck command; a kill resolves with status null, matching
+ * spawnSync's timeout semantics.
+ */
+function runCommand(
+	command: string,
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+	return new Promise((resolve) => {
+		let stdout = "";
+		let stderr = "";
+		let settled = false;
+		const child = spawn("bash", ["-c", command], { stdio: ["ignore", "pipe", "pipe"] });
+		const finish = (status: number | null) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve({ status, stdout, stderr });
+		};
+		const timer = setTimeout(() => {
+			child.kill("SIGTERM");
+			setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
+			finish(null);
+		}, CHECK_TIMEOUT_SEC * 1000);
+		child.stdout.setEncoding("utf8");
+		child.stderr.setEncoding("utf8");
+		child.stdout.on("data", (chunk: string) => {
+			stdout += chunk;
+		});
+		child.stderr.on("data", (chunk: string) => {
+			stderr += chunk;
+		});
+		child.on("error", () => finish(null));
+		child.on("close", (code) => finish(code));
+	});
+}
+
 /** Run one check cycle: log every result, fire (toast + transcript + stop) on the stopOn outcome. */
-export function runMonitorCheck(entry: MonitorEntry): void {
-	const run = spawnSync("bash", ["-c", entry.command], { encoding: "utf8", timeout: 30000 });
+export async function runMonitorCheck(entry: MonitorEntry): Promise<void> {
+	const run = await runCommand(entry.command);
 	const output = `${run.stdout ?? ""}${run.stderr ?? ""}`;
 	const digest = hashOutput(output);
 	entry.checks += 1;
@@ -119,9 +164,12 @@ export function runMonitorCheck(entry: MonitorEntry): void {
 	const logFile = path.join(logDir, `${entry.name}.log`);
 	// One-time migration: a pre-namespacing log is renamed (not copied) into
 	// the project dir on first write; history is durable and never pruned.
-	const legacyFile = path.join(legacyDir(), `${entry.name}.log`);
-	if (existsSync(legacyFile) && !existsSync(logFile)) {
-		renameSync(legacyFile, logFile);
+	if (!migratedLogFiles.has(logFile)) {
+		migratedLogFiles.add(logFile);
+		const legacyFile = path.join(legacyDir(), `${entry.name}.log`);
+		if (existsSync(legacyFile) && !existsSync(logFile)) {
+			renameSync(legacyFile, logFile);
+		}
 	}
 	appendFileSync(
 		logFile,
@@ -142,6 +190,20 @@ export function runMonitorCheck(entry: MonitorEntry): void {
 		return;
 	}
 	entry.lastHash = digest;
+}
+
+/** Serialize checks per monitor: a tick is skipped while a check is in flight. */
+function scheduleCheck(entry: MonitorEntry): void {
+	if (entry.checkPromise !== null) return;
+	entry.checkPromise = runMonitorCheck(entry).finally(() => {
+		entry.checkPromise = null;
+	});
+}
+
+/** Resolve once every scheduled check has settled; test hook. */
+export async function pendingChecks(): Promise<void> {
+	const pending = [...monitors().values()].map((entry) => entry.checkPromise ?? Promise.resolve());
+	await Promise.all(pending);
 }
 
 export function stopMonitor(name: string): boolean {
@@ -200,10 +262,13 @@ const monitorTool = defineTool({
 			stopOn: params.stopOn ?? "change",
 			lastHash: null,
 			checks: 0,
-			timer: setInterval(() => runMonitorCheck(entry), intervalSec * 1000),
+			timer: setInterval(() => scheduleCheck(entry), intervalSec * 1000),
+			checkPromise: null,
 		};
 		monitors().set(params.name, entry);
-		runMonitorCheck(entry);
+		// First check runs detached: the tool returns immediately instead of
+		// freezing the engine for the command's full runtime.
+		scheduleCheck(entry);
 		return {
 			content: [
 				{
