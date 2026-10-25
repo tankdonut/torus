@@ -12,7 +12,7 @@
  * notify-send is absent; TORUS_NOTIFY=0 opts out entirely.
  */
 
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -243,37 +243,79 @@ function ensureDesktopEntry(): void {
 }
 
 /**
- * Fire a toast; returns the server notification id when chaining is
- * supported, so a later toast can replace this one in place.
+ * Fire a toast without blocking the event loop; resolves to the server
+ * notification id when chaining is supported, so a later toast can replace
+ * this one in place. replaceId may be the promise from an earlier call —
+ * thenable ids are awaited before the argv is built, so a stored result can
+ * be passed straight through. A failed spawn or a 3s timeout resolves null.
  */
-export function osNotify(toast: Toast, replaceId?: number): number | null {
+export async function osNotify(
+	toast: Toast,
+	replaceId?: number | PromiseLike<number | null>,
+): Promise<number | null> {
 	if (!knobBoolean("TORUS_NOTIFY", "notify", "enabled", true, parseZeroDisables)) return null;
 	ensureDesktopEntry();
 	const canChain = canChainIds();
-	try {
-		const run = spawnSync("notify-send", toastArgs(toast, replaceId, canChain), {
-			stdio: ["ignore", "pipe", "ignore"],
-			encoding: "utf8",
-			timeout: 3000,
-		});
-		if (!canChain || run.status !== 0) return null;
-		const id = Number.parseInt((run.stdout ?? "").trim(), 10);
-		return Number.isInteger(id) && id > 0 ? id : null;
-	} catch {
-		// absent binary or desktop bus — notifications are best-effort
-		return null;
+	// callers store an earlier toast's result and pass it back here unchanged;
+	// a thenable id is awaited (null resolves to no replacement) before the argv
+	// is built, so -r chaining keeps working across the async boundary.
+	let chainId: number | undefined;
+	if (typeof replaceId === "number") {
+		chainId = replaceId;
+	} else if (replaceId !== undefined) {
+		chainId = (await replaceId) ?? undefined;
 	}
+	return new Promise((resolve) => {
+		let child: ChildProcess;
+		try {
+			child = spawn("notify-send", toastArgs(toast, chainId, canChain), {
+				stdio: ["ignore", "pipe", "ignore"],
+			});
+		} catch {
+			// absent binary or desktop bus — notifications are best-effort
+			resolve(null);
+			return;
+		}
+		let stdout = "";
+		let settled = false;
+		let termTimer: ReturnType<typeof setTimeout> | undefined;
+		let killTimer: ReturnType<typeof setTimeout> | undefined;
+		const settle = (id: number | null) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(termTimer);
+			clearTimeout(killTimer);
+			resolve(id);
+		};
+		termTimer = setTimeout(() => {
+			child.kill("SIGTERM");
+			killTimer = setTimeout(() => child.kill("SIGKILL"), 250);
+		}, 3000);
+		child.stdout?.setEncoding("utf8");
+		child.stdout?.on("data", (chunk: string) => {
+			stdout += chunk;
+		});
+		child.on("error", () => settle(null));
+		child.on("close", (code) => {
+			if (!canChain || code !== 0) {
+				settle(null);
+				return;
+			}
+			const id = Number.parseInt(stdout.trim(), 10);
+			settle(Number.isInteger(id) && id > 0 ? id : null);
+		});
+	});
 }
 
-export function notifyDelegation(
+export async function notifyDelegation(
 	kind: DelegationToastKind,
 	info: DelegationToastInfo,
 	now = Date.now(),
-	replaceId?: number,
-): number | null {
+	replaceId?: number | PromiseLike<number | null>,
+): Promise<number | null> {
 	return osNotify(delegationToast(kind, info, now), replaceId);
 }
 
 export function notifyMonitor(kind: MonitorToastKind, info: MonitorToastInfo): void {
-	osNotify(monitorToast(kind, info));
+	osNotify(monitorToast(kind, info)).catch(() => {});
 }

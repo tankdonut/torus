@@ -73,8 +73,8 @@ export function shellQuote(value: string): string {
 /** Pending "still running" toasts, keyed by delegation id; cleared on finish. */
 interface LateToast {
 	timer: ReturnType<typeof setTimeout> | null;
-	/** Server notification id of the fired interim toast, replaced by the finish toast. */
-	notificationId: number | null;
+	/** Server notification id of the fired interim toast, replaced by the finish toast; a pending id arrives async and is awaited by the finish toast. */
+	notificationId: number | Promise<number | null> | null;
 }
 const lateToasts = new Map<string, LateToast>();
 

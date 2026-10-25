@@ -332,33 +332,31 @@ const TOAST = {
 	transient: true,
 };
 
-test("osnotify: config notify.enabled=false skips the spawn; env TORUS_NOTIFY=0 beats enabled:true", () => {
+test("osnotify: config notify.enabled=false skips the spawn; env TORUS_NOTIFY=0 beats enabled:true", async () => {
 	clearConfig();
-	withoutEnv("TORUS_NOTIFY", () => {
-		assert.equal(osnotify.osNotify(TOAST), 7, "baseline: shim answers with a chain id");
-		assert.equal(existsSync(CALLS), true, "baseline: the spawn reached the shim");
-	});
+	// osNotify reads the knob before its first await, so capturing the
+	// promise inside the env scope tests exactly that env state.
+	let pending = withoutEnv("TORUS_NOTIFY", () => osnotify.osNotify(TOAST));
+	assert.equal(await pending, 7, "baseline: shim answers with a chain id");
+	assert.equal(existsSync(CALLS), true, "baseline: the spawn reached the shim");
 
 	const callsBefore = withoutEnv("TORUS_NOTIFY", () => readFileSync(CALLS, "utf8")).split(
 		"\n",
 	).length;
 	setConfig({ notify: { enabled: false } });
-	withoutEnv("TORUS_NOTIFY", () => {
-		assert.equal(osnotify.osNotify(TOAST), null, "config enabled:false must return null");
-		assert.equal(
-			readFileSync(CALLS, "utf8").split("\n").length,
-			callsBefore,
-			"disabled knob must not spawn notify-send",
-		);
-	});
+	pending = withoutEnv("TORUS_NOTIFY", () => osnotify.osNotify(TOAST));
+	assert.equal(await pending, null, "config enabled:false must return null");
+	assert.equal(
+		readFileSync(CALLS, "utf8").split("\n").length,
+		callsBefore,
+		"disabled knob must not spawn notify-send",
+	);
 
 	setConfig({ notify: { enabled: true } });
-	withEnv("TORUS_NOTIFY", "0", () => {
-		assert.equal(osnotify.osNotify(TOAST), null, "env 0 must beat config enabled:true");
-	});
-	withoutEnv("TORUS_NOTIFY", () => {
-		assert.equal(osnotify.osNotify(TOAST), 7, "config enabled:true toasts again once env clears");
-	});
+	pending = withEnv("TORUS_NOTIFY", "0", () => osnotify.osNotify(TOAST));
+	assert.equal(await pending, null, "env 0 must beat config enabled:true");
+	pending = withoutEnv("TORUS_NOTIFY", () => osnotify.osNotify(TOAST));
+	assert.equal(await pending, 7, "config enabled:true toasts again once env clears");
 	clearConfig();
 });
 
