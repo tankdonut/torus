@@ -464,7 +464,7 @@ export default function worktreesExtension(pi: ExtensionAPI): void {
 			name: "worktree_create",
 			label: "Worktree Create",
 			description:
-				"Create an isolated git worktree for multi-step feature work (2+ commits, new files, refactors) at ~/.torus/worktrees/--<repo>--/<branch> — outside the repo, so no pollution and no gitignore changes. Run the baseline test suite in the new worktree before starting. Skip for single-file fixes. Branch naming: <type>/<short-description>.",
+				"Create an isolated git worktree for multi-step feature work (2+ commits, new files, refactors) at $TORUS_HOME/worktrees/--<repo>--/<branch> — outside the repo, so no pollution and no gitignore changes. Run the baseline test suite in the new worktree before starting. Skip for single-file fixes. Branch naming: <type>/<short-description>.",
 			parameters: Type.Object({
 				branch: Type.String({ description: "New branch name, e.g. feat/streaming-import" }),
 				base: Type.Optional(

@@ -162,7 +162,7 @@ export function transcriptItems(sessionId: string, maxItems: number): Transcript
 
 		// Custom entries are per-session mirrors of extension state. Only
 		// torus.work-ledger rows render — the ledger JSONL file under
-		// ~/.torus/work stays the cross-session source of truth; the mirrored
+		// $TORUS_STATE_DIR/work stays the cross-session source of truth; the mirrored
 		// entry just makes the row visible in this session's replay. Rendered
 		// through the tool-item pipeline so it draws as a compact ledger line;
 		// every other custom entry is ignored.

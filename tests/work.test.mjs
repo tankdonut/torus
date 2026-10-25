@@ -50,10 +50,6 @@ function plantPlan(name, body) {
 	return plantPlanIn(path.join(projectDir(), "plans"), name, body);
 }
 
-function plantLegacyPlan(name, body) {
-	return plantPlanIn(path.join(process.env["TORUS_HOME"], "plans"), name, body);
-}
-
 function plantState(overrides) {
 	const state = {
 		slug: "s",
@@ -416,11 +412,13 @@ test("work_start with a stem resolves the plan from the project dir and writes s
 	assert.equal(readLedger("proj-bind", 1).at(-1)?.event, "start");
 });
 
-test("a legacy plan, state, and ledger still resolve, read, and append", () => {
-	const legacyPlan = plantLegacyPlan("legacy-plan", "- [ ] 1. A\n");
+test("a legacy plan, state, and ledger twin is ignored", () => {
+	const legacyPlans = path.join(process.env["TORUS_HOME"], "plans");
+	mkdirSync(legacyPlans, { recursive: true });
+	const legacyPlan = plantPlanIn(legacyPlans, "legacy-plan", "- [ ] 1. A\n");
+
 	const resolved = resolvePlan("legacy-plan");
-	assert.ok(!("error" in resolved), resolved.error);
-	if (!("error" in resolved)) assert.equal(resolved.planPath, legacyPlan);
+	assert.ok("error" in resolved, "a plan in the abandoned dir must not resolve");
 
 	const legacyWork = path.join(process.env["TORUS_HOME"], "work");
 	mkdirSync(legacyWork, { recursive: true });
@@ -444,43 +442,9 @@ test("a legacy plan, state, and ledger still resolve, read, and append", () => {
 		"utf-8",
 	);
 
-	assert.equal(readWorkState("legacy-work")?.planPath, legacyPlan);
-	assert.ok(listWorkStates().some((s) => s.slug === "legacy-work"));
-	assert.deepEqual(
-		readLedger("legacy-work", 5).map((e) => e.text),
-		["old row"],
-	);
-
-	appendLedgerEntry("legacy-work", {
-		ts: "2",
-		sessionId: "ses-old",
-		event: "note",
-		text: "new row",
-	});
-	assert.deepEqual(
-		readLedger("legacy-work", 5).map((e) => e.text),
-		["old row", "new row"],
-	);
-});
-
-test("first ledger append migrates the legacy ledger: content preserved, legacy gone", () => {
-	const legacyLedger = path.join(process.env["TORUS_HOME"], "work", "mig.ledger.jsonl");
-	mkdirSync(path.dirname(legacyLedger), { recursive: true });
-	writeFileSync(
-		legacyLedger,
-		`${JSON.stringify({ ts: "1", sessionId: "s", event: "note", text: "history" })}\n`,
-		"utf-8",
-	);
-
-	appendLedgerEntry("mig", { ts: "2", sessionId: "s", event: "task-done", text: "fresh" });
-
-	assert.equal(existsSync(legacyLedger), false, "legacy ledger relocated on first append");
-	const migrated = path.join(projectDir(), "work", "mig.ledger.jsonl");
-	assert.equal(existsSync(migrated), true);
-	assert.deepEqual(
-		readLedger("mig", 5).map((e) => e.text),
-		["history", "fresh"],
-	);
+	assert.equal(readWorkState("legacy-work"), null);
+	assert.ok(!listWorkStates().some((s) => s.slug === "legacy-work"));
+	assert.deepEqual(readLedger("legacy-work", 5), []);
 });
 
 test("two project cwds with the same plan stem create separate work states and ledgers", async () => {

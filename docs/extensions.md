@@ -455,7 +455,7 @@ Before spawning, fan-out resolves each run's start model and prepends a concurre
 
 #### Persistent teams
 
-Persistent teams spawn long-lived RPC-mode engine members with per-member file mailboxes (inbox/outbox), a shared locked tasklist (`tasks.json`), and a team spec on disk under the project store (`state/--<project>--/teams/<id>/team.json`, stamped with the creating project). A global id→project index at `~/.torus/teams.json` lets member children and explicit ids resolve teams from any cwd; pre-namespacing flat teams migrate on first spec rewrite, and default team resolution stays project-scoped.
+Persistent teams spawn long-lived RPC-mode engine members with per-member file mailboxes (inbox/outbox), a shared locked tasklist (`tasks.json`), and a team spec on disk under the project store (`state/--<project>--/teams/<id>/team.json`, stamped with the creating project). A global id→project index (`$TORUS_HOME/teams.json`) lets member children and explicit ids resolve teams from any cwd; default team resolution stays project-scoped.
 
 A supervisor loop drives mail-driven cycles, model-chain fallback, and outbox delta logging. A member turn slower than 10 minutes keeps waiting: timeout is never treated as engine death. Teams rehydrate from disk on parent restart, and rehydrated log-only records defer to live run beacons, so a resume never shows a running member as a duplicate ✗ failed row.
 
@@ -563,7 +563,7 @@ Plan-execution state: binds a torus-plan plan file to a session so execution sur
 
 | Tool | Purpose |
 | --- | --- |
-| `work_start` | Bind a plan: absolute path or unique stem/prefix under the project's plans dir (`$TORUS_STATE_DIR/plans`, legacy `~/.torus/plans` still read). Approval gate: refuses unless the plan carries a column-zero `Approval: <user/date>` line or the recorded escape `Approval: skipped (--yes)`; `assumeApproved` binds an unmarked plan and journals `approval: "assumed"` in the start row. Creates or rebinds (rebinding resumes, elapsed spans runs). Parent sessions only |
+| `work_start` | Bind a plan: absolute path or unique stem/prefix under the project's plans dir (`$TORUS_STATE_DIR/plans`). Approval gate: refuses unless the plan carries a column-zero `Approval: <user/date>` line or the recorded escape `Approval: skipped (--yes)`; `assumeApproved` binds an unmarked plan and journals `approval: "assumed"` in the start row. Creates or rebinds (rebinding resumes, elapsed spans runs). Parent sessions only |
 | `work_note` | Append a typed ledger row (event: task-done\|verified\|blocked\|wave-gate\|note\|converge, + wave/task/verification/evidence/verifiedBy) and return the tail. With an explicit `slug` any session appends: slug resolution is exact match, else unique substring match, with ambiguity/miss errors listing candidates so a paraphrased dispatch slug costs at most one retry. Delegated builders journal gotchas this way, and rows carry the writer's session id |
 | `work_complete` | Complete the work (summary). Machine gate: refuses while any column-zero checkbox is unchecked or the plan is missing, then records elapsed and stops the per-turn block. Parent sessions only |
 
@@ -587,7 +587,7 @@ The extension also owns the live context-usage chip: a `torus:ctx` statusline se
 
 ### `worktrees`
 
-Git-worktree lifecycle under one canonical root outside the repo (`~/.torus/worktrees/--<repo>--/<branch>`).
+Git-worktree lifecycle under one canonical root outside the repo (`$TORUS_HOME/worktrees/--<repo>--/<branch>`).
 
 | Tool | Purpose |
 | --- | --- |
@@ -794,7 +794,7 @@ Rows carrying a config key also read that key from the [unified config](#unified
 | `TORUS_TEAM_NOTIFY=0` | team | Disable the per-member idle/crash wake-up markers (result markers still render) (config: `team.teamNotify`) |
 | `TORUS_TASK_STALE_MIN=<minutes>` | team | Stale-task threshold for `team_status`: an in_progress task under an idle member with no tasklist update for more than N minutes renders a read-only stale line (default 30; invalid values fall back to 30) (config: `team.taskStaleMin`) |
 | `TORUS_COMMENT_CHECKER=0` / `TORUS_COMMENT_CHECKER_PROMPT` | comment-checker | Disable / override the challenge text (config: `commentChecker.enabled`; `TORUS_COMMENT_CHECKER_PROMPT` is env-only) |
-| `TORUS_WORKTREES_ROOT` | worktrees | Worktree root override (default `~/.torus/worktrees`) |
+| `TORUS_WORKTREES_ROOT` | worktrees | Worktree root override (default `$TORUS_HOME/worktrees`) |
 | `TORUS_APPROVAL=0` | approval | Disable the trust-on-denial dialog (unmatched hosts deny; config: `approval.enabled`) |
 | `TORUS_PERMISSION_MODE` | automode | Opt into LLM-classified bash auto-approval (`1`/`on`/`auto`; unset or `0`/`off`/`default` keeps the built-in gate; `bypass` disables every permission guard, startup-only) (config: top-level `permissionMode`) |
 | `TORUS_PERMISSION_MODEL` | automode | Pin the permission classifier as `provider/model-id` (default: first available classifier, then the fast chain's first authed chat model, then the session model) |

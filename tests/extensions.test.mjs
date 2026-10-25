@@ -132,10 +132,9 @@ test("RpcChild resolves sends on response, rejects pending when child dies early
 // ---- team tasklist + team spec persistence ----
 const teamRuntime = await import("../extensions/team-runtime.ts");
 
-test("team tasklist migrates legacy array schema and issues monotonic ids", () => {
+test("team tasklist issues monotonic ids from nextId; a file without nextId is not re-derived", () => {
 	const teamId = `test-${randomUUID().slice(0, 8)}`;
 	try {
-		// legacy shape: bare array under "tasks", no nextId (pre-migration file)
 		mkdirSync(teamRuntime.teamDir(teamId), { recursive: true });
 		writeFileSync(
 			teamRuntime.tasksFile(teamId),
@@ -145,25 +144,26 @@ test("team tasklist migrates legacy array schema and issues monotonic ids", () =
 						{ id: "t1", subject: "a", assignee: null, status: "pending", updatedAt: "x" },
 						{ id: "t3", subject: "c", assignee: null, status: "completed", updatedAt: "x" },
 					],
+					nextId: 4,
 				},
 				null,
 				2,
 			),
 			"utf8",
 		);
-		const migrated = teamRuntime.readTasksFile(teamId);
-		assert.equal(migrated.nextId, 4, "legacy ids must migrate to max+1, not length+1");
+		const read = teamRuntime.readTasksFile(teamId);
+		assert.equal(read.nextId, 4, "nextId is read as written");
 		// create via the tool's flow: id from nextId, write back with nextId+1
 		const task = {
-			id: `t${migrated.nextId}`,
+			id: `t${read.nextId}`,
 			subject: "new",
 			assignee: null,
 			status: "pending",
 			updatedAt: "y",
 		};
 		teamRuntime.writeTasksFile(teamId, {
-			nextId: migrated.nextId + 1,
-			tasks: [...migrated.tasks, task],
+			nextId: read.nextId + 1,
+			tasks: [...read.tasks, task],
 		});
 		const after = teamRuntime.readTasksFile(teamId);
 		assert.equal(after.tasks.length, 3);
@@ -172,6 +172,10 @@ test("team tasklist migrates legacy array schema and issues monotonic ids", () =
 			"new id must be t4 (no collision with surviving t3)",
 		);
 		assert.equal(after.nextId, 5);
+
+		// a hand-trimmed file that lost nextId is not tolerantly re-derived
+		writeFileSync(teamRuntime.tasksFile(teamId), JSON.stringify({ tasks: after.tasks }), "utf8");
+		assert.equal(teamRuntime.readTasksFile(teamId).nextId, 1, "no max+1 derivation from task ids");
 	} finally {
 		rmSync(teamRuntime.teamDir(teamId), { recursive: true, force: true });
 	}

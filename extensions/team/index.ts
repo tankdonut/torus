@@ -853,8 +853,8 @@ function attachMember(
 
 function resolveTeam(id?: string): TeamRecord | undefined {
 	if (id) return getTeam(id);
-	// Default resolution stays inside the current project (legacy specs with
-	// no project match any); a foreign project's team is reached only by id.
+	// Default resolution stays inside the current project; a foreign project's
+	// team is reached only by id.
 	const key = projectKey(process.cwd());
 	return listTeams().find(
 		(t) =>

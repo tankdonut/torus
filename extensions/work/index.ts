@@ -8,50 +8,24 @@
  * block is injected into every turn until work_complete succeeds.
  */
 
-import {
-	appendFileSync,
-	existsSync,
-	mkdirSync,
-	readdirSync,
-	readFileSync,
-	renameSync,
-	unlinkSync,
-} from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-	displayPath,
-	listDirUnion,
-	projectStateDir,
-	readJson,
-	readJsonFallback,
-	torusHome,
-	writeJson,
-} from "../fsutil.js";
+import { displayPath, projectStateDir, readJson, torusHome, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { currentSessionId } from "../registry.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
-/** Plans live under the per-project state dir; ~/.torus/plans is the legacy home. */
+/** Plans live under the per-project state dir. */
 function plansDir(): string {
 	return path.join(projectStateDir(), "plans");
 }
-
-function legacyPlansDir(): string {
-	return path.join(torusHome(), "plans");
-}
-
-/** Work states and ledgers live under the per-project state dir; ~/.torus/work is the legacy home. */
+/** Work states and ledgers live under the per-project state dir. */
 function workDir(): string {
 	return path.join(projectStateDir(), "work");
 }
-
-function legacyWorkDir(): string {
-	return path.join(torusHome(), "work");
-}
-
 /**
  * Other projects' work dirs under the state root — explicit-slug addressing is
  * location-transparent, so a slug handed out in a dispatch stays addressable
@@ -77,6 +51,14 @@ function siblingFile(slug: string, kind: "state" | "ledger"): string | null {
 		if (existsSync(file)) return file;
 	}
 	return null;
+}
+
+function safeReaddir(dir: string): string[] {
+	try {
+		return readdirSync(dir);
+	} catch {
+		return [];
+	}
 }
 
 export type WorkStatus = "active" | "paused" | "complete";
@@ -148,9 +130,8 @@ export function parsePlanTasks(markdown: string): { tasks: ParsedTask[]; done: n
 
 /**
  * Resolve a user-supplied plan reference: an absolute file path, or a stem
- * (full or unique prefix) under the project's plans dir or the legacy
- * ~/.torus/plans dir. Errors carry candidates so the caller can surface a
- * selection instead of guessing.
+ * (full or unique prefix) under the project's plans dir. Errors carry
+ * candidates so the caller can surface a selection instead of guessing.
  */
 export function resolvePlan(ref: string): { planPath: string; slug: string } | { error: string } {
 	const trimmed = ref.trim();
@@ -161,21 +142,20 @@ export function resolvePlan(ref: string): { planPath: string; slug: string } | {
 		if (misfiled !== null) return { error: misfiled };
 		return { planPath: trimmed, slug: slugFor(trimmed) };
 	}
-	const project = plansDir();
-	const legacy = legacyPlansDir();
-	const stems = listDirUnion(project, legacy)
+	const dir = plansDir();
+	const stems = safeReaddir(dir)
 		.filter((file) => file.endsWith(".md"))
 		.sort()
 		.map((file) => file.replace(/\.md$/, ""));
 	if (stems.length === 0) {
 		return {
-			error: `no plans under ${displayPath(project)} or ${displayPath(legacy)} — pass an absolute plan path`,
+			error: `no plans under ${displayPath(dir)} — pass an absolute plan path`,
 		};
 	}
 	const exact = stems.filter((stem) => stem === trimmed);
-	if (exact.length === 1) return planResult(project, legacy, exact[0] ?? trimmed);
+	if (exact.length === 1) return planResult(dir, exact[0] ?? trimmed);
 	const prefix = stems.filter((stem) => stem.startsWith(trimmed));
-	if (prefix.length === 1) return planResult(project, legacy, prefix[0] ?? trimmed);
+	if (prefix.length === 1) return planResult(dir, prefix[0] ?? trimmed);
 	if (prefix.length > 1) {
 		return { error: `ambiguous plan "${trimmed}" — candidates: ${prefix.join(", ")}` };
 	}
@@ -200,15 +180,8 @@ function misfiledPlanError(file: string): string | null {
 	return `plan is filed under a different project state key: ${displayPath(file)} — this project's plans dir is ${displayPath(canonical)}. Hand-derived keys misfile plans; move the file (or pass its stem) instead. $TORUS_STATE_DIR expands to the correct root.`;
 }
 
-function planResult(
-	project: string,
-	legacy: string,
-	stem: string,
-): { planPath: string; slug: string } {
-	const file = `${stem}.md`;
-	// whichever dir actually holds the file; the project dir wins a name tie
-	const dir = existsSync(path.join(project, file)) ? project : legacy;
-	return { planPath: path.join(dir, file), slug: slugFor(stem) };
+function planResult(project: string, stem: string): { planPath: string; slug: string } {
+	return { planPath: path.join(project, `${stem}.md`), slug: slugFor(stem) };
 }
 
 function fileExists(file: string): boolean {
@@ -235,22 +208,12 @@ function slugFor(stemOrPath: string): string {
 function stateFile(slug: string): string {
 	return path.join(workDir(), `${slug}.json`);
 }
-
-function legacyStateFile(slug: string): string {
-	return path.join(legacyWorkDir(), `${slug}.json`);
-}
-
 function ledgerFile(slug: string): string {
 	return path.join(workDir(), `${slug}.ledger.jsonl`);
 }
-
-function legacyLedgerFile(slug: string): string {
-	return path.join(legacyWorkDir(), `${slug}.ledger.jsonl`);
-}
-
-/** State read: project dir first, then the legacy twin, then other projects' dirs. */
+/** State read: the project dir first, then other projects' dirs. */
 export function readWorkState(slug: string): WorkState | null {
-	const local = readJsonFallback<WorkState | null>(stateFile(slug), legacyStateFile(slug), null);
+	const local = readJson<WorkState | null>(stateFile(slug), null);
 	if (local !== null) return local;
 	const sibling = siblingFile(slug, "state");
 	return sibling === null ? null : readJson<WorkState | null>(sibling, null);
@@ -258,10 +221,6 @@ export function readWorkState(slug: string): WorkState | null {
 
 export function writeWorkState(state: WorkState): void {
 	writeJson(stateFile(state.slug), state);
-	// sanctioned move-on-write: the legacy twin goes only after the new write landed
-	try {
-		unlinkSync(legacyStateFile(state.slug));
-	} catch {}
 }
 
 /**
@@ -273,11 +232,6 @@ let mirrorSessionEntry: ((customType: string, data?: unknown) => void) | null = 
 export function appendLedgerEntry(slug: string, entry: LedgerEntry): void {
 	mkdirSync(workDir(), { recursive: true });
 	const ledger = ledgerFile(slug);
-	// one-time migration: a ledger that exists only at the legacy path moves
-	// here before the append (both live under TORUS_HOME) so history stays in
-	// one file
-	const legacy = legacyLedgerFile(slug);
-	if (!existsSync(ledger) && existsSync(legacy)) renameSync(legacy, ledger);
 	// The ledger JSONL file is the source of truth (cross-session by design);
 	// it is written first and its failure is the only fatal one.
 	appendFileSync(ledger, `${JSON.stringify(entry)}\n`, "utf-8");
@@ -294,7 +248,7 @@ export function appendLedgerEntry(slug: string, entry: LedgerEntry): void {
 
 /** Last `n` ledger rows, newest last; corrupt lines are skipped, not fatal. */
 export function readLedger(slug: string, n: number): LedgerEntry[] {
-	const candidates = [ledgerFile(slug), legacyLedgerFile(slug)];
+	const candidates = [ledgerFile(slug)];
 	const sibling = siblingFile(slug, "ledger");
 	if (sibling !== null) candidates.push(sibling);
 	const file = candidates.find((candidate) => existsSync(candidate));
@@ -319,12 +273,12 @@ export function readLedger(slug: string, n: number): LedgerEntry[] {
 }
 
 /**
- * All work states on disk, newest lastActiveAt last: the project dir plus the
- * legacy twin (deduped basename union), then other projects' dirs filling
- * slug gaps — the project's own state wins any slug collision.
+ * All work states on disk, newest lastActiveAt last: the project dir, then
+ * other projects' dirs filling slug gaps — the project's own state wins any
+ * slug collision.
  */
 export function listWorkStates(): WorkState[] {
-	const local = listDirUnion(workDir(), legacyWorkDir()).filter((file) => file.endsWith(".json"));
+	const local = safeReaddir(workDir()).filter((file) => file.endsWith(".json"));
 	const siblings = siblingWorkDirs().flatMap((dir) => {
 		try {
 			return readdirSync(dir).filter((file) => file.endsWith(".json"));

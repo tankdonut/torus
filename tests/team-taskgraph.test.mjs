@@ -40,7 +40,7 @@ const TEAM_TASK_CLI = fileURLToPath(new URL("../runtime/bin/team-task.mjs", impo
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 // Run the member CLI as a real child process — same env, so the child's
-// team-runtime resolves the same TEAMS_ROOT as the in-process one.
+// team-runtime resolves teams under the same TORUS_HOME as the in-process one.
 function teamTask(args) {
 	return new Promise((resolve) => {
 		const child = spawn(process.execPath, [TEAM_TASK_CLI, ...args], {

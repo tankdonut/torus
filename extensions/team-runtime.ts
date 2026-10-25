@@ -4,7 +4,6 @@ import {
 	mkdirSync,
 	readdirSync,
 	readFileSync,
-	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -24,10 +23,8 @@ import { AGENT_NAME_RE, repoRoot } from "./registry.js";
 import { AGENTS, resolveModels } from "./roster/index.js";
 import { RpcChild } from "./rpc.js";
 
-/** Pre-namespacing flat store (~/.torus/teams/<id>/) — read for legacy teams; migrated on spec write. */
-const TEAMS_ROOT = path.join(torusHome(), "teams");
 /**
- * Global team index (~/.torus/teams.json): team id → project key. Member children
+ * Global team index ($TORUS_HOME/teams.json): team id → project key. Member children
  * resolve their team from foreign cwds (worktrees, other projects), so teamDir(id)
  * needs a cwd-independent resolver — the index is it.
  */
@@ -93,8 +90,6 @@ function scanStateTeams(visit: (key: string, teamId: string) => void): void {
 export function teamDir(teamId: string): string {
 	const key = readTeamsIndex()[teamId];
 	if (key) return canonicalTeamDir(key, teamId);
-	const legacy = path.join(TEAMS_ROOT, teamId);
-	if (existsSync(legacy)) return legacy;
 	return path.join(projectStateDir(), "teams", teamId);
 }
 
@@ -107,23 +102,13 @@ export interface TeamSpec {
 	parentSession?: string | null;
 	/** Opt-in: members are taught the atomic self-claim CLI protocol in their objective. Default off — absent behaves as false. */
 	selfClaim?: boolean;
-	/** Project key that pins the team's state dir (state/--<key>--/teams/<id>/). Absent on unmigrated legacy specs — those match any project until first rewrite. */
+	/** Project key that pins the team's state dir (state/--<key>--/teams/<id>/); writeTeamSpec stamps it on every write. */
 	project?: string;
 }
 
 export function writeTeamSpec(teamId: string, spec: TeamSpec): void {
 	const key = spec.project ?? projectKey(process.cwd());
 	const canonical = canonicalTeamDir(key, teamId);
-	const legacy = path.join(TEAMS_ROOT, teamId);
-	if (existsSync(legacy)) {
-		// Move-on-write migration: legacy flat team → project-scoped store. Spec
-		// writes happen at create/respawn/status boundaries — never mid-cycle —
-		// so no supervisor holds stale mailbox paths across the rename.
-		try {
-			mkdirSync(path.dirname(canonical), { recursive: true });
-			renameSync(legacy, canonical);
-		} catch {}
-	}
 	writeJson(path.join(canonical, "team.json"), { id: teamId, ...spec, project: key });
 	const index = readTeamsIndex();
 	if (index[teamId] !== key) writeTeamsIndex({ ...index, [teamId]: key });
@@ -157,14 +142,12 @@ export function readTeamSpec(teamId: string): (TeamSpec & { id: string }) | null
 }
 
 /**
- * Whether a team belongs to the given project key. A spec that records a
- * project matches only that key; legacy specs without the field match any
- * project. Explicit team ids are never checked against this — only default
- * resolution filters by it.
+ * Whether a team belongs to the given project key: a spec matches only the
+ * key it records. Explicit team ids are never checked against this — only
+ * default resolution filters by it.
  */
 export function teamMatchesProject(teamId: string, key: string): boolean {
-	const project = readTeamSpec(teamId)?.project;
-	return project === undefined || project === key;
+	return readTeamSpec(teamId)?.project === key;
 }
 
 export function markTeamStatus(teamId: string, status: "active" | "shutdown"): void {
@@ -175,17 +158,9 @@ export function markTeamStatus(teamId: string, status: "active" | "shutdown"): v
 
 export function listTeamIds(): string[] {
 	// Every project's state store (explicit team ids are cross-project; default
-	// resolution filters by spec project afterwards) plus the pre-namespacing
-	// flat store — legacy specs match any project.
+	// resolution filters by spec project afterwards).
 	const ids = new Set<string>();
 	scanStateTeams((_key, id) => ids.add(id));
-	try {
-		for (const entry of readdirSync(TEAMS_ROOT, { withFileTypes: true })) {
-			if (entry.isDirectory() && existsSync(path.join(TEAMS_ROOT, entry.name, "team.json"))) {
-				ids.add(entry.name);
-			}
-		}
-	} catch {}
 	return [...ids];
 }
 
@@ -227,19 +202,6 @@ interface TasksFile {
 	tasks: Task[];
 	nextId: number;
 }
-
-function maxTaskId(tasks: TasksFile["tasks"]): number {
-	let max = 0;
-	for (const task of tasks) {
-		const match = /^t(\d+)$/.exec(task.id);
-		if (match) {
-			const n = Number(match[1]);
-			if (Number.isFinite(n) && n > max) max = n;
-		}
-	}
-	return max;
-}
-
 const TASK_STATUSES = new Set(["pending", "in_progress", "completed", "deleted"]);
 
 /**
@@ -293,7 +255,7 @@ export function readTasksFile(teamId: string): TasksFile {
 	}));
 	return {
 		tasks,
-		nextId: typeof parsed.nextId === "number" ? parsed.nextId : 1 + maxTaskId(tasks),
+		nextId: typeof parsed.nextId === "number" ? parsed.nextId : 1,
 	};
 }
 

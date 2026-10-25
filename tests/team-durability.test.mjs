@@ -525,53 +525,43 @@ test("default resolution reports none when only foreign-project teams exist", as
 	assert.match(explicit.content[0].text, /^team scoped-only-foreign \[active\]/m);
 });
 
-test("legacy flat specs match any project until rewritten; a status write migrates and pins them", async () => {
+test("a pre-namespacing flat team dir is ignored, never read or migrated", async () => {
 	const statusTool = craftStatusTool();
-	// Plant a pre-namespacing team: flat dir under TORUS_HOME/teams, spec without
-	// a project field, no index entry.
-	mkdirSync(path.join(HOME, "teams", "scoped-legacy"), { recursive: true });
+	// Plant a pre-namespacing team: flat dir under TORUS_HOME/teams, spec with
+	// no project field, no index entry.
+	mkdirSync(path.join(HOME, "teams", "flat-team"), { recursive: true });
 	writeFileSync(
-		path.join(HOME, "teams", "scoped-legacy", "team.json"),
+		path.join(HOME, "teams", "flat-team", "team.json"),
 		JSON.stringify({
-			id: "scoped-legacy",
-			name: "scoped-legacy",
-			objective: "scoped-legacy standing objective",
+			id: "flat-team",
+			name: "flat-team",
+			objective: "flat-team standing objective",
 			members: [{ name: "solo", agent: "builder" }],
 			status: "active",
 		}),
 	);
-	registry.registerTeam({
-		id: "scoped-legacy",
-		name: "scoped-legacy",
-		objective: "scoped-legacy standing objective",
-		status: "active",
-		dir: runtime.teamDir("scoped-legacy"),
-		members: [
-			{
-				id: "scoped-legacy/solo",
-				name: "solo",
-				agent: "builder",
-				model: "test-model",
-				status: "idle",
-			},
-		],
-		createdAt: 1000,
-	});
-	const byDefault = await statusTool.execute("call", {});
-	assert.match(byDefault.content[0].text, /^team scoped-legacy \[active\]/m);
 
-	runtime.markTeamStatus("scoped-legacy", "shutdown");
-	const reread = runtime.readTeamSpec("scoped-legacy");
-	assert.equal(reread?.status, "shutdown");
-	assert.equal(reread?.project, CURRENT_PROJECT, "a spec rewrite pins the writing project's key");
+	assert.equal(runtime.readTeamSpec("flat-team"), null, "the flat store is never read");
 	assert.equal(
-		runtime.teamDir("scoped-legacy"),
-		path.join(HOME, "state", CURRENT_PROJECT, "teams", "scoped-legacy"),
-		"the team resolves to the project-scoped store after migration",
-	);
-	assert.equal(
-		existsSync(path.join(HOME, "teams", "scoped-legacy")),
+		runtime.listTeamIds().includes("flat-team"),
 		false,
-		"the legacy flat dir is gone after migration",
+		"the flat store is never scanned",
+	);
+	const dir = runtime.teamDir("flat-team");
+	assert.notEqual(
+		dir,
+		path.join(HOME, "teams", "flat-team"),
+		"an unindexed id never resolves to the flat dir",
+	);
+	assert.ok(
+		dir.startsWith(path.join(HOME, "state", "--")),
+		`resolves under the state root: ${dir}`,
+	);
+	const byId = await statusTool.execute("call", { team: "flat-team" });
+	assert.equal(byId.isError, true, "explicit ids do not reach the flat store");
+	assert.equal(
+		existsSync(path.join(HOME, "teams", "flat-team", "team.json")),
+		true,
+		"the flat dir is left untouched",
 	);
 });
