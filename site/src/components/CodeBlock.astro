@@ -1,0 +1,114 @@
+---
+/**
+ * Shell command block with a copy button. Progressive enhancement only: the
+ * command is fully readable with JS off; the button copies with
+ * navigator.clipboard and flips to "copied" for a beat.
+ */
+interface Props {
+	/** Command line(s) to render; the copy payload joins them with newlines. */
+	lines: string[];
+	/** Chrome-bar label (e.g. "install"). */
+	title?: string;
+}
+const { lines, title } = Astro.props;
+const payload = lines.join("\n");
+---
+
+<figure class="codeblock">
+	<div class="frame">
+		<div class="chrome" aria-hidden="true">
+			<span class="dot"></span><span class="dot"></span><span class="dot"></span>
+			{title ? <span class="chrome-title">{title}</span> : null}
+			<button class="copy" type="button" data-copy={payload}>copy</button>
+		</div>
+		<pre><code>{lines.map((line, index) => `${index > 0 ? "\n" : ""}${line}`)}</code></pre>
+	</div>
+</figure>
+
+<style>
+	.frame {
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		background: var(--color-surface);
+		overflow: hidden;
+	}
+
+	.chrome {
+		display: flex;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.dot {
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		background: var(--color-border);
+	}
+
+	.chrome-title {
+		margin-left: calc(var(--spacing) * 2);
+		font-family: var(--font-mono);
+		font-size: var(--text-small);
+		color: var(--color-muted);
+	}
+
+	.copy {
+		margin-left: auto;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		color: var(--color-muted);
+		background: var(--color-bg);
+		border: 1px solid var(--color-border);
+		border-radius: 99px;
+		padding: 0.05rem 0.6rem;
+		cursor: pointer;
+	}
+
+	.copy:hover {
+		color: var(--color-text);
+		border-color: var(--color-muted);
+	}
+
+	.copy[data-copied] {
+		color: #4d7c4d;
+		border-color: #7cae7c;
+	}
+
+	pre {
+		margin: 0;
+		padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+		overflow-x: auto;
+		font-family: var(--font-mono);
+		font-size: var(--text-small);
+		line-height: 1.6;
+		background: var(--color-surface);
+		border: none;
+		border-radius: 0;
+	}
+
+	@media (width <= 40rem) {
+		pre {
+			white-space: pre-wrap;
+			overflow-wrap: anywhere;
+		}
+	}
+</style>
+
+<script>
+	for (const button of document.querySelectorAll<HTMLButtonElement>("[data-copy]")) {
+		button.addEventListener("click", () => {
+			const text = button.dataset.copy ?? "";
+			void navigator.clipboard?.writeText(text).then(() => {
+				button.textContent = "copied";
+				button.setAttribute("data-copied", "");
+				setTimeout(() => {
+					button.textContent = "copy";
+					button.removeAttribute("data-copied");
+				}, 1500);
+			});
+		});
+	}
+</script>

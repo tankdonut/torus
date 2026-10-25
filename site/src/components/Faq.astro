@@ -1,0 +1,65 @@
+---
+/**
+ * FAQ accordion (salt.md's "the ones that decide it") as native details/summary
+ * pairs, plus a matching FAQPage JSON-LD block for crawlers.
+ */
+interface Props {
+	questions: { q: string; a: string }[];
+}
+const { questions } = Astro.props;
+const jsonLd = JSON.stringify({
+	"@context": "https://schema.org",
+	"@type": "FAQPage",
+	mainEntity: questions.map((item) => ({
+		"@type": "Question",
+		name: item.q,
+		acceptedAnswer: { "@type": "Answer", text: item.a },
+	})),
+});
+---
+
+<div class="faq">
+	{
+		questions.map((item) => (
+			<details>
+				<summary>{item.q}</summary>
+				<p>{item.a}</p>
+			</details>
+		))
+	}
+</div>
+<script type="application/ld+json" set:html={jsonLd} />
+
+<style>
+	.faq details {
+		border-top: 1px solid var(--color-border);
+	}
+
+	.faq details:last-child {
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	summary {
+		cursor: pointer;
+		padding: calc(var(--spacing) * 4) 0;
+		font-weight: 600;
+		list-style-position: outside;
+	}
+
+	summary:hover {
+		color: var(--color-accent);
+	}
+
+	summary::marker {
+		color: var(--color-muted);
+	}
+
+	details[open] summary {
+		color: var(--color-accent);
+	}
+
+	details p {
+		margin: 0 0 calc(var(--spacing) * 4);
+		max-width: 72ch;
+	}
+</style>
