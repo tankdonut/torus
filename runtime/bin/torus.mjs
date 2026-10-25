@@ -15,17 +15,18 @@
  *   4. compiled layout: <execPath>/../lib/torus, <execPath>/torus-payload
  *   5. ~/.torus/runtime
  *
- * If the engine is missing in the resolved payload — or the embedded payload
- * changed since the last run — the launcher bootstraps it via `npm install`
- * there (cooldown-safe pin).
+ * If the engine is missing in the resolved payload — or the embedded payload's
+ * dependency manifest changed since the last run — the launcher bootstraps it
+ * via `npm install` there (cooldown-safe pin).
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { extractPayload, readMarker } from "./payload-extract.mjs";
+import { extractPayload, readMarker, shouldSkipInstall } from "./payload-extract.mjs";
 import { extractPermissionMode } from "./permission-mode.mjs";
 
 function isTorusRoot(candidate) {
@@ -55,6 +56,8 @@ function userHome() {
  */
 /** Set when a compiled binary re-extracted its payload this run (hash changed). */
 let payloadRefreshed = false;
+/** Deps-hash embedded in this binary (package.json + lockfile); null unless compiled. */
+let embeddedDepsHash = null;
 
 async function embeddedRoot() {
 	const bun = globalThis.Bun;
@@ -76,10 +79,17 @@ async function embeddedRoot() {
 			bytes: Buffer.from(assets.PAYLOAD_PACKAGE_LOCK, "utf8"),
 		});
 	}
+	// Deps-hash over the embedded manifest (package.json + lockfile when
+	// present): a payload refresh that leaves it unchanged skips the reinstall.
+	const depsHasher = createHash("sha256");
+	depsHasher.update(assets.PAYLOAD_PACKAGE_JSON, "utf8");
+	if (assets.PAYLOAD_PACKAGE_LOCK != null) depsHasher.update(assets.PAYLOAD_PACKAGE_LOCK, "utf8");
+	const depsHash = depsHasher.digest("hex");
 	process.stderr.write(`torus: extracting embedded payload to ${root}...\n`);
 	try {
-		extractPayload(root, assets.PAYLOAD_HASH, assets.OWNED_TOP_LEVELS, files);
+		extractPayload(root, assets.PAYLOAD_HASH, assets.OWNED_TOP_LEVELS, files, depsHash);
 		payloadRefreshed = true;
+		embeddedDepsHash = depsHash;
 	} catch (err) {
 		process.stderr.write(`torus: payload extraction failed: ${err?.message ?? err}\n`);
 		process.exit(1);
@@ -361,7 +371,7 @@ function resolveBinary() {
 	const envBin = process.env["TORUS_PI_BIN"];
 	if (envBin) return envBin;
 	const local = path.join(root, "node_modules", ".bin", "pi");
-	if (existsSync(local) && !payloadRefreshed) return local;
+	if (shouldSkipInstall(root, local, payloadRefreshed, embeddedDepsHash)) return local;
 
 	const pkg = path.join(root, "package.json");
 	if (!existsSync(pkg)) return "pi";
@@ -385,26 +395,74 @@ function resolveBinary() {
 	return local;
 }
 
-const bin = resolveBinary();
-
-if (pin) {
+/**
+ * Pin-drift probe with a cached verdict. Probing boots the full engine, so the
+ * result is memoized in ~/.torus/runtime/.pin-drift: line 1 keys the verdict to
+ * the binary's identity (absolute path, size, mtime) plus the pin, line 2
+ * records the last probed version. A key hit with a matching version skips the
+ * probe silently; a key hit with drift keeps warning without re-spawning. Any
+ * key change (new binary or pin) re-probes and rewrites the cache. Marker
+ * read/write failures fall back to probing, exactly the uncached behavior.
+ */
+function probePinDrift(bin, currentPin) {
+	const marker = path.join(userHome(), ".torus", "runtime", ".pin-drift");
+	let key = null;
+	try {
+		const stat = statSync(bin);
+		const hash = createHash("sha256");
+		hash.update(path.resolve(bin));
+		hash.update(`\0${stat.size}\0${stat.mtimeMs}\0${currentPin}`);
+		key = hash.digest("hex");
+		const lines = readFileSync(marker, "utf8").split("\n");
+		const cachedActual = (lines[1] ?? "").trim();
+		if ((lines[0] ?? "").trim() === key && cachedActual !== "") {
+			if (cachedActual !== currentPin) warnPinDrift(currentPin, cachedActual);
+			return;
+		}
+	} catch {
+		// missing/unreadable marker or unstat-able binary: probe uncached
+	}
 	const probe = spawnSync(bin, ["--version"], {
 		stdio: ["ignore", "pipe", "ignore"],
 		encoding: "utf8",
 		timeout: 10000,
 	});
 	const actual = (probe.stdout ?? "").trim();
-	if (probe.status === 0 && actual.length > 0 && actual !== pin) {
-		process.stderr.write(
-			`torus: engine pin drift — package.json pins pi@${pin}, binary reports ${actual}\n`,
-		);
+	if (probe.status !== 0 || actual.length === 0) return;
+	if (actual !== currentPin) warnPinDrift(currentPin, actual);
+	if (key === null) return;
+	try {
+		mkdirSync(path.dirname(marker), { recursive: true });
+		writeFileSync(marker, `${key}\n${actual}\n`);
+	} catch {
+		// a failed cache write only costs the next probe
 	}
+}
+
+function warnPinDrift(pin, actual) {
+	process.stderr.write(
+		`torus: engine pin drift — package.json pins pi@${pin}, binary reports ${actual}\n`,
+	);
+}
+
+const bin = resolveBinary();
+
+if (pin) probePinDrift(bin, pin);
+
+// V8 compile cache for the engine child: warm spawns skip recompiling the
+// engine's JavaScript. Best-effort — an unwritable cache dir just runs uncached.
+const compileCacheDir = path.join(userHome(), ".torus", ".cache", "compile");
+try {
+	mkdirSync(compileCacheDir, { recursive: true });
+} catch {
+	// the engine runs fine without a compile cache
 }
 
 const child = spawn(bin, ["--extension", root, ...engineArgv], {
 	stdio: "inherit",
 	env: {
 		...process.env,
+		NODE_COMPILE_CACHE: compileCacheDir,
 		TORUS_ENGINE: "pi",
 		TORUS_ENGINE_BIN: bin,
 		TORUS_ROOT: root,

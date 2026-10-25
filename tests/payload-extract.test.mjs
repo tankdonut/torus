@@ -8,6 +8,7 @@ import {
 	extractPayload,
 	MARKER_NAME,
 	readMarker,
+	readMarkerDeps,
 } from "../runtime/bin/payload-extract.mjs";
 
 function tmpRoot() {
@@ -82,6 +83,49 @@ test("readMarker: null when missing or unreadable", () => {
 		assert.equal(readMarker(root), null);
 		writeFileSync(path.join(root, MARKER_NAME), "abc123\n");
 		assert.equal(readMarker(root), "abc123");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("extractPayload: deps-hash round-trips on the marker's second line", () => {
+	const root = tmpRoot();
+	try {
+		const files = [
+			{ path: "extensions/a/index.ts", bytes: Buffer.from("export {};\n") },
+			{ path: "package.json", bytes: Buffer.from("{}\n") },
+		];
+		const hash = computePayloadHash(files);
+		extractPayload(root, hash, ["extensions"], files, "deadbeef");
+		assert.equal(readFileSync(path.join(root, MARKER_NAME), "utf8"), `${hash}\ndeadbeef\n`);
+		// line 1 stays the content hash for the fast-path comparison; line 2 is deps
+		assert.equal(readMarker(root), hash);
+		assert.equal(readMarkerDeps(root), "deadbeef");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("readMarker: two-line marker yields only the content hash", () => {
+	const root = tmpRoot();
+	try {
+		writeFileSync(path.join(root, MARKER_NAME), "contenthash\ndepshash\n");
+		assert.equal(readMarker(root), "contenthash");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("readMarkerDeps: null for missing marker, legacy single-line, or blank line", () => {
+	const root = tmpRoot();
+	try {
+		assert.equal(readMarkerDeps(root), null);
+		writeFileSync(path.join(root, MARKER_NAME), "abc123\n");
+		assert.equal(readMarkerDeps(root), null, "legacy single-line marker has no deps line");
+		writeFileSync(path.join(root, MARKER_NAME), "abc123\n\n");
+		assert.equal(readMarkerDeps(root), null, "blank second line is not a deps hash");
+		writeFileSync(path.join(root, MARKER_NAME), "abc123\ndeadbeef\n");
+		assert.equal(readMarkerDeps(root), "deadbeef");
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
