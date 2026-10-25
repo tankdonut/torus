@@ -6,7 +6,7 @@
  * state-dir writability, each with a concrete ok/warn/fail line.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -39,8 +39,15 @@ export function formatDoctorReport(checks: CheckResult[]): string {
 	);
 }
 
+const whichCache = new Map<string, boolean>();
+
+/** Look up a binary on PATH once per process; negatives are cached too. */
 function which(bin: string): boolean {
-	return spawnSync("which", [bin], { stdio: "ignore" }).status === 0;
+	const cached = whichCache.get(bin);
+	if (cached !== undefined) return cached;
+	const found = spawnSync("which", [bin], { stdio: "ignore" }).status === 0;
+	whichCache.set(bin, found);
+	return found;
 }
 
 const SANDBOX_SLOT = Symbol.for("torus.sandbox.v1");
@@ -135,106 +142,175 @@ export function torusVersionCheck(pinnedVersion: string): CheckResult {
 	}
 }
 
-export function runDoctorChecks(
-	repoRoot: string,
-	engineBin: string,
-	pinnedVersion: string,
-): CheckResult[] {
-	const checks: CheckResult[] = [];
+interface ProbeResult {
+	status: number | null;
+	stdout: string;
+}
 
-	checks.push(torusVersionCheck(pinnedVersion));
+/**
+ * Promisified probe spawn: resolves on close with the exit status and captured
+ * stdout, mirroring spawnSync's `status: null` on error or kill. An optional
+ * timeout kills the child (SIGTERM, then SIGKILL two seconds later).
+ */
+function runProbe(cmd: string, args: string[], timeoutMs?: number): Promise<ProbeResult> {
+	return new Promise((resolve) => {
+		let stdout = "";
+		let settled = false;
+		const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "ignore"] });
+		const finish = () => {
+			if (settled) return;
+			settled = true;
+			resolve({ status: child.exitCode, stdout });
+		};
+		child.stdout.setEncoding("utf8");
+		child.stdout.on("data", (d: string) => {
+			stdout += d;
+		});
+		child.on("error", () => finish());
+		child.on("close", () => finish());
+		if (timeoutMs !== undefined) {
+			setTimeout(() => {
+				child.kill("SIGTERM");
+				setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
+			}, timeoutMs).unref();
+		}
+	});
+}
 
-	const version = spawnSync(engineBin, ["--version"], { encoding: "utf8", timeout: 15000 });
-	const actual = (version.stdout ?? "").trim();
+async function engineCheck(engineBin: string, pinnedVersion: string): Promise<CheckResult> {
+	const version = await runProbe(engineBin, ["--version"], 15_000);
+	const actual = version.stdout.trim();
 	if (version.status !== 0 || actual.length === 0) {
-		checks.push({ name: "engine", status: "fail", detail: `could not run ${engineBin} --version` });
-	} else if (pinnedVersion && !actual.includes(pinnedVersion)) {
-		checks.push({
+		return { name: "engine", status: "fail", detail: `could not run ${engineBin} --version` };
+	}
+	if (pinnedVersion && !actual.includes(pinnedVersion)) {
+		return {
 			name: "engine",
 			status: "warn",
 			detail: `running ${actual}, package.json pins ${pinnedVersion}`,
-		});
-	} else {
-		checks.push({ name: "engine", status: "ok", detail: actual });
+		};
 	}
+	return { name: "engine", status: "ok", detail: actual };
+}
 
-	const agentDir = process.env["PI_CODING_AGENT_DIR"] ?? path.join(homedir(), ".pi", "agent");
-	checks.push({
+function providerAuthCheck(agentDir: string): CheckResult {
+	const present = existsSync(path.join(agentDir, "auth.json"));
+	return {
 		name: "provider auth",
-		status: existsSync(path.join(agentDir, "auth.json")) ? "ok" : "fail",
-		detail: existsSync(path.join(agentDir, "auth.json"))
-			? "auth.json present"
-			: "auth.json missing — run /login zai",
-	});
+		status: present ? "ok" : "fail",
+		detail: present ? "auth.json present" : "auth.json missing — run /login zai",
+	};
+}
+
+function defaultProviderCheck(agentDir: string): CheckResult {
 	try {
 		const settings = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8")) as {
 			defaultProvider?: string;
 		};
-		checks.push({
+		return {
 			name: "default provider",
 			status: settings.defaultProvider ? "ok" : "warn",
 			detail: settings.defaultProvider ?? "not set (model picker every session)",
-		});
+		};
 	} catch {
-		checks.push({ name: "default provider", status: "warn", detail: "settings.json unreadable" });
+		return { name: "default provider", status: "warn", detail: "settings.json unreadable" };
 	}
+}
 
-	checks.push({
+function mcpCheck(repoRoot: string): CheckResult {
+	const present = existsSync(path.join(repoRoot, "extensions", "mcp", "index.ts"));
+	return {
 		name: "mcp servers",
-		status: existsSync(path.join(repoRoot, "extensions", "mcp", "index.ts")) ? "ok" : "fail",
-		detail: existsSync(path.join(repoRoot, "extensions", "mcp", "index.ts"))
-			? "context7 + grep_app registered in-session"
-			: "extensions/mcp missing",
-	});
+		status: present ? "ok" : "fail",
+		detail: present ? "context7 + grep_app registered in-session" : "extensions/mcp missing",
+	};
+}
 
-	checks.push({
+function lspCheck(): CheckResult {
+	const present = which("typescript-language-server");
+	return {
 		name: "lsp",
-		status: which("typescript-language-server") ? "ok" : "warn",
-		detail: which("typescript-language-server")
+		status: present ? "ok" : "warn",
+		detail: present
 			? "typescript-language-server on PATH"
 			: "typescript-language-server absent — LSP tools will not start for TS",
-	});
+	};
+}
 
-	checks.push({
+function astGrepCheck(): CheckResult {
+	const present = which("sg");
+	return {
 		name: "ast-grep",
-		status: which("sg") ? "ok" : "warn",
-		detail: which("sg") ? "sg on PATH" : "sg absent — torus_astgrep disabled",
-	});
+		status: present ? "ok" : "warn",
+		detail: present ? "sg on PATH" : "sg absent — torus_astgrep disabled",
+	};
+}
 
-	checks.push({
+function tmuxCheck(): CheckResult {
+	const present = which("tmux");
+	const inSession = Boolean(process.env["TMUX"]);
+	return {
 		name: "tmux",
-		status: which("tmux") ? (process.env["TMUX"] ? "ok" : "warn") : "warn",
-		detail: which("tmux")
-			? process.env["TMUX"]
+		status: present ? (inSession ? "ok" : "warn") : "warn",
+		detail: present
+			? inSession
 				? "running inside tmux (panes active)"
 				: "installed but not in a tmux session (no live panes)"
 			: "not installed (no delegation panes)",
-	});
+	};
+}
 
-	const email = spawnSync("git", ["-C", repoRoot, "config", "user.email"], { encoding: "utf8" });
-	checks.push({
+async function gitIdentityCheck(repoRoot: string): Promise<CheckResult> {
+	const email = await runProbe("git", ["-C", repoRoot, "config", "user.email"]);
+	const value = email.stdout.trim();
+	return {
 		name: "git identity",
-		status: (email.stdout ?? "").trim().length > 0 ? "ok" : "warn",
-		detail: (email.stdout ?? "").trim() || "no user.email in this repo",
-	});
+		status: value.length > 0 ? "ok" : "warn",
+		detail: value || "no user.email in this repo",
+	};
+}
 
+function torusStateCheck(): CheckResult {
 	const probe = path.join(torusHome(), ".doctor-probe");
 	try {
 		appendFileSync(probe, "x\n");
 		rmSync(probe);
-		checks.push({ name: "torus state", status: "ok", detail: `${torusHome()} writable` });
+		return { name: "torus state", status: "ok", detail: `${torusHome()} writable` };
 	} catch (err) {
-		checks.push({
+		return {
 			name: "torus state",
 			status: "fail",
 			detail: `${torusHome()} not writable: ${String(err)}`,
-		});
+		};
 	}
+}
 
-	checks.push(sandboxCheck());
-
-	checks.push(platformCheck());
-
+/**
+ * Run every health check. The computations are independent, so they run
+ * concurrently (the two child spawns overlap via runProbe); results are
+ * assembled in the same order the synchronous version produced them, keeping
+ * the report byte-identical.
+ */
+export async function runDoctorChecks(
+	repoRoot: string,
+	engineBin: string,
+	pinnedVersion: string,
+): Promise<CheckResult[]> {
+	const agentDir = process.env["PI_CODING_AGENT_DIR"] ?? path.join(homedir(), ".pi", "agent");
+	const checks = await Promise.all([
+		torusVersionCheck(pinnedVersion),
+		engineCheck(engineBin, pinnedVersion),
+		providerAuthCheck(agentDir),
+		defaultProviderCheck(agentDir),
+		mcpCheck(repoRoot),
+		lspCheck(),
+		astGrepCheck(),
+		tmuxCheck(),
+		gitIdentityCheck(repoRoot),
+		torusStateCheck(),
+		sandboxCheck(),
+		platformCheck(),
+	]);
 	return checks;
 }
 
@@ -252,7 +328,9 @@ export function registerDoctor(pi: ExtensionAPI): void {
 				pkg.dependencies?.["@earendil-works/pi-coding-agent"] ??
 				pkg.devDependencies?.["@earendil-works/pi-coding-agent"] ??
 				"";
-			const report = formatDoctorReport(runDoctorChecks(repoRoot(), resolveEngineBin(), pinned));
+			const report = formatDoctorReport(
+				await runDoctorChecks(repoRoot(), resolveEngineBin(), pinned),
+			);
 			ctx.ui.notify(report, "info");
 		},
 	});
