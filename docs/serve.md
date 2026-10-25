@@ -8,14 +8,16 @@ The `serve` section of the unified config (`~/.torus/config.json`, read-with-fal
 
 ```json
 {
- "port": 4747,
- "bind": "127.0.0.1",
- "tokenPath": "optional/explicit/auth.json",
- "triggers": []
+ "serve": {
+  "port": 4747,
+  "bind": "127.0.0.1",
+  "tokenPath": "optional/explicit/auth.json",
+  "triggers": []
+ }
 }
 ```
 
-Defaults shown; every field is optional. `EADDRINUSE` fails startup with a clean error naming the port and the serve section override. `tokenPath` names the auth-token file to mint or read (default `~/.torus/serve/auth.json`); the token itself is minted runtime state, never a config value.
+Defaults shown; every field is optional (including `serve` itself: no section, defaults all). `EADDRINUSE` fails startup with a clean error naming the port and the serve section override. `tokenPath` names the auth-token file to mint or read (default `~/.torus/serve/auth.json`); the token itself is minted runtime state, never a config value.
 
 Run it:
 
