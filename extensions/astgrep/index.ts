@@ -6,7 +6,7 @@
  * Requires sg on PATH (/doctor reports it).
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateText } from "../guards/index.js";
@@ -22,7 +22,71 @@ function toolDetails(d: Record<string, unknown>): Record<string, unknown> {
 }
 
 const OUTPUT_CAP = 12_000;
+/** Run limits for the sg child: 30s wall clock, 4MB buffered output. */
+const SG_TIMEOUT_MS = 30_000;
+const SG_MAX_BUFFER = 4 * 1024 * 1024;
 
+/**
+ * PATH probe for the sg binary, memoized for the process lifetime (a negative
+ * result is cached too, so later calls fail fast without respawning `which`).
+ */
+let sgAvailable: boolean | null = null;
+
+async function probeSg(): Promise<boolean> {
+	if (sgAvailable !== null) return sgAvailable;
+	sgAvailable = await new Promise<boolean>((resolve) => {
+		const probe = spawn("which", ["sg"], { stdio: "ignore" });
+		probe.on("error", () => resolve(false));
+		probe.on("close", (code) => resolve(code === 0));
+	});
+	return sgAvailable;
+}
+
+interface SgResult {
+	stdout: string;
+	stderr: string;
+	status: number | null;
+}
+
+/**
+ * Async sg runner: piped stdio, both streams buffered, resolves on close so
+ * the engine event loop (the TUI renders on it) never blocks. A 30s kill
+ * timer bounds runaway scans, and output past the 4MB cap is trimmed —
+ * partial output with a null exit status, never a thrown error.
+ */
+function runSg(args: string[]): Promise<SgResult> {
+	return new Promise((resolve) => {
+		let stdout = "";
+		let stderr = "";
+		let settled = false;
+		let killTimer: NodeJS.Timeout | undefined;
+		const child = spawn("sg", args, { stdio: ["ignore", "pipe", "pipe"] });
+		const finish = (status: number | null) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(killTimer);
+			const trim = (s: string) => (s.length > SG_MAX_BUFFER ? s.slice(0, SG_MAX_BUFFER) : s);
+			resolve({ stdout: trim(stdout), stderr: trim(stderr), status });
+		};
+		killTimer = setTimeout(() => {
+			child.kill("SIGTERM");
+			setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
+		}, SG_TIMEOUT_MS);
+		killTimer.unref();
+		child.stdout.setEncoding("utf8");
+		child.stderr.setEncoding("utf8");
+		child.stdout.on("data", (d: string) => {
+			stdout += d;
+			if (stdout.length >= SG_MAX_BUFFER) child.kill("SIGTERM");
+		});
+		child.stderr.on("data", (d: string) => {
+			stderr += d;
+			if (stderr.length >= SG_MAX_BUFFER) child.kill("SIGTERM");
+		});
+		child.on("error", () => finish(null));
+		child.on("close", (code) => finish(code));
+	});
+}
 export function buildAstgrepArgs(
 	pattern: string,
 	language?: string,
@@ -50,8 +114,7 @@ const astgrepTool = defineTool({
 		),
 	}),
 	async execute(_toolCallId, params) {
-		const which = spawnSync("which", ["sg"], { stdio: "ignore" });
-		if (which.status !== 0) {
+		if (!(await probeSg())) {
 			return {
 				content: [
 					{
@@ -63,16 +126,10 @@ const astgrepTool = defineTool({
 				isError: true,
 			};
 		}
-		const run = spawnSync(
-			"sg",
+		const run = await runSg(
 			buildAstgrepArgs(params.pattern, params.language, params.paths, params.rewrite),
-			{
-				encoding: "utf8",
-				timeout: 30000,
-				maxBuffer: 4 * 1024 * 1024,
-			},
 		);
-		const out = `${run.stdout ?? ""}${run.stderr ?? ""}`.trim();
+		const out = `${run.stdout}${run.stderr}`.trim();
 		const text = truncateText(out.length > 0 ? out : "(no matches)", OUTPUT_CAP);
 		return {
 			content: [{ type: "text", text }],
