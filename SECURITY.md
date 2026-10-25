@@ -15,11 +15,15 @@ torus is a coding-agent harness: it runs a language model with tool access (file
   - Bare `cat` / `head` / `tail` file dumps in bash are blocked, with a pointer to the read tool.
   - Bash mutations of the memory store (`~/.torus/memory`: mutating git verbs, `--no-verify`, redirects, file mutations) are blocked, so memory writes go through `torus_remember` / `torus_forget`.
   - Write-tool full rewrites near-identical to disk content (≥ 0.7 line overlap on files ≥ 5 lines) are blocked in favor of targeted edits.
+  - Bash file dumps and write-tool calls through a symbolic link in the path are blocked (resolve the real target first).
   - Oversized tool output is truncated.
 
   These are context-integrity guards, not a security boundary.
+- **cc-safety-net**: [extensions/cc-safety-net/index.ts](extensions/cc-safety-net/index.ts), a shim over the engine's tool pipeline. Always-on `tool_call` guard: posix-shell secret analysis and `.npmrc` agent-blocking. Loaded in parent sessions and delegated children alike ([extensions/engine-child.ts](extensions/engine-child.ts)); policy is configurable under `.cc-safety-net/`; registration is skipped in bypass mode.
 - **Sandbox**: [extensions/sandbox/index.ts](extensions/sandbox/index.ts). Opt-in (`TORUS_SANDBOX=full`, or `TORUS_SANDBOX_DEFAULT=full` to run an environment default-on), off by default. Per-command isolation of agent bash calls built on `@anthropic-ai/sandbox-runtime`: writes confined to the workspace (plus tmp and worktree/git plumbing), network restricted to a curated exact-host allowlist plus user additions. Degrades to unsandboxed (with a one-time notice) when the runtime is missing or init fails; bash is never bricked.
 - **Approval**: [extensions/approval/index.ts](extensions/approval/index.ts). Trust-on-denial dialogs for the sandbox network allowlist: when sandboxed bash hits a non-allowlisted host, the user chooses Allow once / Always allow (this project) / Deny / Custom host. "Always" decisions persist under `~/.torus/state/--<project>--/sandbox-hosts.json`, outside the sandbox's writable roots, so an agent cannot self-escalate by editing them. Headless sessions auto-deny.
+
+`torus --permission-mode bypass` (a startup-only flag, not settable mid-session) skips every control listed above for the session: guards, cc-safety-net, sandbox, approval, and the automode classifier.
 
 ## Trust handoffs
 
@@ -29,7 +33,7 @@ Agent-writable files that trusted processes consume:
 | ---- | ----------- | ---------- |
 | `~/.torus/keywords.json` | `extensions/prompts/index.ts`: keyword values are matched against user messages and appended verbatim to the next turn's system prompt | **Partial.** Write-tool paths are matched through the engine's own path resolution (`@`-prefix, `~`, `file://` spellings, canary-tested); it stays user-owned. Bash-side writes (redirects, `rm`, `sed -i`) are not covered. |
 | `~/.torus/teams/<id>/team.json` + `tasks.json` | Team tools (`team_status`, `team_task_*`, and `team_respawn`, which revives members from the persisted spec) | Partial. Agent and member names are gated to `^[a-z0-9-]+$` before reaching shell command lines or tmux format strings; tasklist updates take a lock and re-read on mtime change. Spec and task text are otherwise consumed as-is. |
-| Monitor commands (`monitor_start`) | `extensions/monitor/index.ts` re-executes the stored command string via `bash -c` on an interval for the session's lifetime | **Unmitigated.** Bounded to 5 monitors, ≥ 5 s interval, 30 s per run, but the command executes with the session user's privileges on every tick. |
+| Monitor commands (`torus_monitor`, `torus_monitor_stop`) | `extensions/monitor/index.ts` re-executes the stored command string via `bash -c` on an interval for the session's lifetime | **Unmitigated.** Bounded to 5 monitors, ≥ 5 s interval, 30 s per run, but the command executes with the session user's privileges on every tick. |
 | `~/.pi/mcp.json` | The pi engine reads MCP server configs; `command` / `args` entries spawn local processes at session start | **Unmitigated by torus.** Engine-owned user config. torus's own registrations (`context7`, `grep_app`) are remote URLs registered in-session, with no local spawn. |
 
 ## Serve (headless listener)
