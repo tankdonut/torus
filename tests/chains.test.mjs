@@ -12,24 +12,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 
-// User-configurable model chains: `chains.json` under TORUS_HOME overrides the
-// built-in MODEL_CHAINS per tier. A tier counts only as a non-empty array of
-// non-empty ids; absent/empty/malformed tiers fall back to that tier's default
-// (mixed validity allowed), and a file that is not JSON warns on stderr while
-// both chains stay default. Overrides ride the same provider-availability
-// filter as the defaults, and agent frontmatter `model:` still wins.
+// User-configurable model chains: the `chains` section of the unified
+// config.json under TORUS_HOME overrides the built-in MODEL_CHAINS per tier.
+// A tier counts only as a non-empty array of non-empty ids; absent/empty/
+// malformed tiers fall back to that tier's default (mixed validity allowed),
+// and a config that is not JSON warns on stderr while both chains stay
+// default. Overrides ride the same provider-availability filter as the
+// defaults, and agent frontmatter `model:` still wins.
 //
-// The same file's `providers` map registers compatible endpoints (Ollama,
+// The same section's `providers` map registers compatible endpoints (Ollama,
 // OpenRouter, …) via pi.registerProvider: each valid entry becomes one call
 // with its models mapped to full chat configs; an invalid entry warns on
 // stderr naming the provider and is SKIPPED, never failing the rest.
-//
-// The same chains config also resolves from the unified config.json's
-// `chains` section, which wins wholesale over chains.json (tiers and
-// providers together, never merged; a shadow warning points at
-// `torus config migrate` while both exist) and leaves chains.json fully in
-// charge when the section is absent. Tier validation is identical for both
-// sources.
 //
 // TORUS_HOME and TORUS_ROOT must land before the registry/roster imports (the
 // registry derives its logs dir and the roster loads agents/ at module load).
@@ -73,7 +67,6 @@ writeFileSync(
 );
 process.env.TORUS_ROOT = ROOT;
 
-const CHAINS_JSON = path.join(HOME, "chains.json");
 const CONFIG_JSON = path.join(HOME, "config.json");
 const DEFAULT_PRIMARY = ["zai/glm-5.3", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"];
 const DEFAULT_FAST = ["zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"];
@@ -103,11 +96,7 @@ after(() => {
 });
 
 function writeChains(data) {
-	writeFileSync(CHAINS_JSON, JSON.stringify(data), "utf8");
-}
-
-function removeChains() {
-	rmSync(CHAINS_JSON, { force: true });
+	writeConfig({ chains: data });
 }
 
 function writeConfig(data) {
@@ -131,8 +120,8 @@ function captureStderr(fn) {
 	return lines;
 }
 
-test("no chains.json → built-in defaults, byte-identical", () => {
-	removeChains();
+test("no chains section → built-in defaults, byte-identical", () => {
+	removeConfig();
 	assert.deepEqual(roster.resolveModels("primary"), DEFAULT_PRIMARY);
 	assert.deepEqual(roster.resolveModels("fast"), DEFAULT_FAST);
 	assert.equal(roster.personaModel("worker"), DEFAULT_PRIMARY[0]);
@@ -143,16 +132,30 @@ test("no chains.json → built-in defaults, byte-identical", () => {
 	);
 });
 
+test("a pre-unification standalone chains file is not a source", () => {
+	removeConfig();
+	// The pre-unification chain-override file is gone as a config source:
+	// planted under TORUS_HOME, it must not steer any tier.
+	const preUnified = ["chains", ".json"].join("");
+	writeFileSync(path.join(HOME, preUnified), JSON.stringify({ fast: ["zai/impostor"] }), "utf8");
+	try {
+		assert.deepEqual(roster.resolveModels("fast"), DEFAULT_FAST);
+		assert.deepEqual(roster.resolveModels("primary"), DEFAULT_PRIMARY);
+	} finally {
+		rmSync(path.join(HOME, preUnified), { force: true });
+	}
+});
+
 test("valid override steers resolveModels and the chain head", () => {
 	writeChains({ fast: ["zai/custom-model", "zai/second-choice"] });
 	assert.deepEqual(roster.resolveModels("fast"), ["zai/custom-model", "zai/second-choice"]);
 	assert.deepEqual(roster.resolveModels("primary"), DEFAULT_PRIMARY, "primary stays default");
 	assert.equal(roster.personaModel("worker"), DEFAULT_PRIMARY[0], "primary head unchanged");
-	removeChains();
+	removeConfig();
 	assert.deepEqual(
 		roster.resolveModels("fast"),
 		DEFAULT_FAST,
-		"default returns after the file is gone",
+		"default returns after the section is gone",
 	);
 });
 
@@ -160,11 +163,11 @@ test("overridden entries still ride the provider-availability filter", () => {
 	writeChains({ fast: ["custom/provider-x", "zai/kept", "noproviderslash"] });
 	assert.deepEqual(roster.resolveModels("fast"), ["zai/kept"]);
 	assert.equal(roster.personaModel("worker"), DEFAULT_PRIMARY[0]);
-	removeChains();
+	removeConfig();
 });
 
-test("malformed chains.json → defaults plus a stderr warning naming the file", () => {
-	writeFileSync(CHAINS_JSON, "{not json at all", "utf8");
+test("malformed config.json → defaults plus a stderr warning naming the file", () => {
+	writeFileSync(CONFIG_JSON, "{not json at all", "utf8");
 	let primary;
 	let fast;
 	const lines = captureStderr(() => {
@@ -175,10 +178,24 @@ test("malformed chains.json → defaults plus a stderr warning naming the file",
 	assert.deepEqual(fast, DEFAULT_FAST);
 	assert.ok(lines.length > 0, "a warning must reach stderr");
 	assert.ok(
-		lines.every((l) => l.includes(CHAINS_JSON)),
+		lines.every((l) => l.includes(CONFIG_JSON)),
 		"warning must name the file path",
 	);
-	removeChains();
+	removeConfig();
+});
+
+test("non-object chains section warns and falls back to the built-ins", () => {
+	writeConfig({ chains: 5 });
+	let fast;
+	const lines = captureStderr(() => {
+		fast = roster.resolveModels("fast");
+	});
+	assert.deepEqual(fast, DEFAULT_FAST);
+	assert.ok(
+		lines.some((l) => l.includes('"chains" in config.json is not an object')),
+		"the section-level warning surfaces",
+	);
+	removeConfig();
 });
 
 test("empty tier falls back per-tier; the other tier still overrides", () => {
@@ -186,7 +203,7 @@ test("empty tier falls back per-tier; the other tier still overrides", () => {
 	assert.deepEqual(roster.resolveModels("primary"), ["zai/p-custom"], "valid tier overrides");
 	assert.deepEqual(roster.resolveModels("fast"), DEFAULT_FAST, "empty tier falls back");
 	assert.equal(roster.personaModel("worker"), "zai/p-custom");
-	removeChains();
+	removeConfig();
 });
 
 test("mixed valid + malformed tiers: valid overrides, malformed falls back with a warning", () => {
@@ -198,10 +215,10 @@ test("mixed valid + malformed tiers: valid overrides, malformed falls back with 
 	assert.deepEqual(roster.resolveModels("primary"), ["zai/p-custom"]);
 	assert.deepEqual(fast, DEFAULT_FAST);
 	assert.ok(
-		lines.some((l) => l.includes(CHAINS_JSON) && l.includes("fast")),
+		lines.some((l) => l.includes(CONFIG_JSON) && l.includes("fast")),
 		"warning must name the file and the tier",
 	);
-	removeChains();
+	removeConfig();
 });
 
 test("tier with non-string entries is invalid as a whole", () => {
@@ -209,76 +226,13 @@ test("tier with non-string entries is invalid as a whole", () => {
 	const lines = captureStderr(() => {
 		assert.deepEqual(roster.resolveModels("fast"), DEFAULT_FAST);
 	});
-	assert.ok(lines.some((l) => l.includes(CHAINS_JSON)));
-	removeChains();
+	assert.ok(lines.some((l) => l.includes(CONFIG_JSON)));
+	removeConfig();
 });
 
-test("unknown tiers in the file are ignored", () => {
+test("unknown tiers in the section are ignored", () => {
 	writeChains({ turbo: ["zai/turbo"], fast: ["zai/custom-model"] });
 	assert.deepEqual(roster.resolveModels("fast"), ["zai/custom-model"]);
-	removeChains();
-});
-
-test("config.json chains section overrides the built-in and legacy chains.json", () => {
-	writeChains({ fast: ["zai/legacy-choice"] });
-	writeConfig({ chains: { fast: ["zai/config-choice"] } });
-	assert.deepEqual(roster.resolveModels("fast"), ["zai/config-choice"], "config wins");
-	assert.deepEqual(roster.resolveModels("primary"), DEFAULT_PRIMARY, "primary stays default");
-	removeChains();
-	removeConfig();
-});
-
-test("chains.json still applies when config.json lacks the chains section", () => {
-	writeConfig({ automode: { mode: "auto" } });
-	writeChains({ fast: ["zai/legacy-choice"] });
-	assert.deepEqual(roster.resolveModels("fast"), ["zai/legacy-choice"]);
-	removeChains();
-	removeConfig();
-});
-
-test("config + legacy both present → config wins with one shadow warning", () => {
-	writeChains({ fast: ["zai/legacy-choice"] });
-	writeConfig({ chains: { fast: ["zai/config-choice"] } });
-	let fast;
-	const lines = captureStderr(() => {
-		fast = roster.resolveModels("fast");
-	});
-	assert.deepEqual(fast, ["zai/config-choice"]);
-	const shadows = lines.filter((l) => l.includes("torus config migrate"));
-	assert.equal(shadows.length, 1, "exactly one shadow warning per read");
-	assert.ok(shadows[0].includes("chains.json"), "warning names the shadowed file");
-	removeChains();
-	removeConfig();
-});
-
-test("malformed config.json → legacy chains.json still effective, no throw", () => {
-	writeFileSync(CONFIG_JSON, "{not json at all", "utf8");
-	writeChains({ fast: ["zai/legacy-choice"] });
-	let fast;
-	const lines = captureStderr(() => {
-		fast = roster.resolveModels("fast");
-	});
-	assert.deepEqual(fast, ["zai/legacy-choice"], "legacy tier survives the bad config");
-	assert.ok(
-		lines.some((l) => l.includes(CONFIG_JSON) && l.includes("not valid JSON")),
-		"malformed config warning names the file",
-	);
-	removeChains();
-	removeConfig();
-});
-
-test("malformed tier in the config section falls back with a warning naming config.json", () => {
-	writeConfig({ chains: { primary: ["zai/p-config"], fast: "not-an-array" } });
-	let fast;
-	const lines = captureStderr(() => {
-		fast = roster.resolveModels("fast");
-	});
-	assert.deepEqual(roster.resolveModels("primary"), ["zai/p-config"], "valid tier overrides");
-	assert.deepEqual(fast, DEFAULT_FAST, "malformed tier falls back");
-	assert.ok(
-		lines.some((l) => l.includes(CONFIG_JSON) && l.includes("fast")),
-		"warning must name the config path and the tier",
-	);
 	removeConfig();
 });
 
@@ -296,7 +250,7 @@ function registrationCalls() {
 	};
 }
 
-test("chains.json providers entry registers with the mapped provider config", () => {
+test("providers entry registers with the mapped provider config", () => {
 	writeChains({ providers: { ollama: OLLAMA } });
 	const { calls, pi } = registrationCalls();
 	providers.registerProviders(pi);
@@ -316,18 +270,18 @@ test("chains.json providers entry registers with the mapped provider config", ()
 			maxTokens: 16384,
 		},
 	]);
-	removeChains();
+	removeConfig();
 });
 
 test("declared provider + fast override: resolveModels keeps the local model id", () => {
 	writeChains({ fast: ["ollama/gemma3:12b"], providers: { ollama: OLLAMA } });
 	assert.deepEqual(roster.resolveModels("fast"), ["ollama/gemma3:12b"]);
 	assert.ok(roster.availableModels().includes("ollama/gemma3:12b"));
-	removeChains();
+	removeConfig();
 	assert.deepEqual(
 		roster.resolveModels("fast"),
 		DEFAULT_FAST,
-		"default returns after the file is gone",
+		"default returns after the section is gone",
 	);
 });
 
@@ -345,7 +299,7 @@ for (const [label, entry] of [
 		const lines = captureStderr(() => providers.registerProviders(pi));
 		assert.equal(calls.length, 0, "invalid entry must not register");
 		assert.ok(
-			lines.some((l) => l.includes(CHAINS_JSON) && l.includes("ollama") && l.includes("SKIPPED")),
+			lines.some((l) => l.includes(CONFIG_JSON) && l.includes("ollama") && l.includes("SKIPPED")),
 			"warning must name the file, the provider, and SKIPPED",
 		);
 		assert.deepEqual(
@@ -353,7 +307,7 @@ for (const [label, entry] of [
 			["zai/kept"],
 			"declared-but-invalid provider stays unavailable, so its models are filtered out",
 		);
-		removeChains();
+		removeConfig();
 	});
 }
 
@@ -371,7 +325,7 @@ test("invalid entry does not block a valid sibling from registering", () => {
 		["ollama"],
 	);
 	assert.ok(lines.some((l) => l.includes("broken") && l.includes("SKIPPED")));
-	removeChains();
+	removeConfig();
 });
 
 test("apiKey env-ref passes through to the registered provider config", () => {
@@ -392,44 +346,6 @@ test("apiKey env-ref passes through to the registered provider config", () => {
 	assert.equal(calls[0].config.apiKey, "$OPENROUTER_API_KEY");
 	assert.equal(calls[0].config.models[0].id, "z-ai/glm-4.7");
 	assert.equal(calls[0].config.models[0].contextWindow, 200000, "contextWindow passes through");
-	removeChains();
-});
-
-test("providers map from the config chains section registers", () => {
-	writeConfig({ chains: { providers: { ollama: OLLAMA } } });
-	const { calls, pi } = registrationCalls();
-	const lines = captureStderr(() => providers.registerProviders(pi));
-	assert.equal(calls.length, 1, "exactly one registerProvider call");
-	assert.equal(calls[0].name, "ollama");
-	assert.equal(calls[0].config.baseUrl, "http://127.0.0.1:11434/v1");
-	assert.deepEqual(lines, [], "a valid config entry warns about nothing");
-	assert.equal(providers.providerAvailabilities().ollama, true, "config providers are available");
-	removeConfig();
-});
-
-test("config section is all-or-nothing: legacy providers ignored while it is present", () => {
-	writeChains({
-		providers: {
-			lmstudio: {
-				baseUrl: "http://127.0.0.1:1234/v1",
-				api: "openai-completions",
-				models: [{ id: "qwen3:8b" }],
-			},
-		},
-	});
-	writeConfig({ chains: { providers: { ollama: OLLAMA } } });
-	const { calls, pi } = registrationCalls();
-	const lines = captureStderr(() => providers.registerProviders(pi));
-	assert.deepEqual(
-		calls.map((c) => c.name),
-		["ollama"],
-		"only the config providers register, never a legacy/config merge",
-	);
-	assert.ok(
-		lines.some((l) => l.includes("torus config migrate")),
-		"registering with both present surfaces the shadow warning",
-	);
-	removeChains();
 	removeConfig();
 });
 
@@ -475,12 +391,16 @@ test("ambient session-title cascade follows a fast-tier override onto the local 
 
 	found = undefined;
 	finds.length = 0;
-	removeChains();
+	removeConfig();
 	assert.equal(sessionTitle.resolveTitleModel(undefined, registry, sessionModel), sessionModel);
-	assert.deepEqual(finds, ["zai/glm-5.3-flash"], "built-in fast head returns with the file gone");
+	assert.deepEqual(
+		finds,
+		["zai/glm-5.3-flash"],
+		"built-in fast head returns with the section gone",
+	);
 });
 
-test("happy path: chains.json override reaches the engine child's --model argv", async () => {
+test("happy path: a chains-section override reaches the engine child's --model argv", async () => {
 	registry.resetRegistryForTesting();
 	registry.setCustomSender(() => {});
 	const dir = path.join(ENGINE_DIR, "argv-happy");
@@ -528,7 +448,7 @@ test("happy path: chains.json override reaches the engine child's --model argv",
 		}),
 		"no spawn may fall back to a default chain model",
 	);
-	removeChains();
+	removeConfig();
 });
 
 test("frontmatter model: still wins over the overridden chain head", async () => {
@@ -558,14 +478,13 @@ test("frontmatter model: still wins over the overridden chain head", async () =>
 		batches.every((args) => args[args.indexOf("--model") + 1] === "zai/glm-5.3-flash"),
 		"every attempt must run on the pinned model, never the overridden chain head",
 	);
-	removeChains();
+	removeConfig();
 });
 
 // --- Concurrency caps (chains section `concurrency` map) ---
 
 test("no config → built-in concurrency defaults, unknown models uncapped", () => {
 	removeConfig();
-	removeChains();
 	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 5);
 	assert.equal(providers.modelConcurrency("zai/glm-5.3-flash"), 50);
 	assert.equal(providers.modelConcurrency("opencode-go/glm-5.3-flash"), undefined);
@@ -573,24 +492,23 @@ test("no config → built-in concurrency defaults, unknown models uncapped", () 
 });
 
 test("concurrency map overrides per model; defaults fill the rest", () => {
-	removeChains();
 	writeConfig({ chains: { concurrency: { "zai/glm-5.3": 3 } } });
 	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 3);
 	assert.equal(providers.modelConcurrency("zai/glm-5.3-flash"), 50);
 	removeConfig();
 });
 
-test("config.json chains section wins wholesale over chains.json (concurrency included)", () => {
-	writeChains({ concurrency: { "zai/glm-5.3": 9 } });
+test("one chains section carries tiers and concurrency together; a rewrite replaces it wholesale", () => {
+	writeConfig({ chains: { fast: ["zai/custom-model"], concurrency: { "zai/glm-5.3": 9 } } });
+	assert.deepEqual(roster.resolveModels("fast"), ["zai/custom-model"]);
+	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 9);
 	writeConfig({ chains: { concurrency: { "zai/glm-5.3": 2 } } });
 	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 2);
+	assert.deepEqual(roster.resolveModels("fast"), DEFAULT_FAST, "the rewrite replaced the section");
 	removeConfig();
-	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 9);
-	removeChains();
 });
 
 test("malformed concurrency map warns and is ignored (defaults hold)", () => {
-	removeChains();
 	writeConfig({ chains: { concurrency: "five" } });
 	const lines = captureStderr(() => providers.modelConcurrencyMap());
 	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 5);
@@ -607,7 +525,6 @@ test("malformed concurrency map warns and is ignored (defaults hold)", () => {
 
 test("rosterText reports caps for available models", () => {
 	removeConfig();
-	removeChains();
 	const text = roster.rosterText();
 	assert.ok(text.includes("concurrency caps"));
 	assert.ok(text.includes("zai/glm-5.3=5"));
@@ -617,7 +534,6 @@ test("rosterText reports caps for available models", () => {
 
 test("plannedRunModel mirrors runDelegation's first-model resolution", () => {
 	removeConfig();
-	removeChains();
 	assert.equal(roster.plannedRunModel("worker"), "zai/glm-5.3");
 	assert.equal(roster.plannedRunModel("pinned"), "zai/glm-5.3-flash");
 	assert.equal(roster.plannedRunModel("worker", "fast"), "zai/glm-5.3-flash");
@@ -631,7 +547,6 @@ test("plannedRunModel mirrors runDelegation's first-model resolution", () => {
 
 test("concurrencyWarning flags only models pushed over cap", () => {
 	removeConfig();
-	removeChains();
 	const warning = roster.concurrencyWarning(
 		[
 			"zai/glm-5.3",

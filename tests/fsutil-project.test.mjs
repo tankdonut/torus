@@ -121,33 +121,6 @@ test("worktree canonical lookup runs once per cwd (later calls stay canonical)",
 	}
 });
 
-test("readJsonFallback: legacy used only when new file is absent, null wins", () => {
-	const dir = mkdtempSync(path.join(home, "fallback-"));
-	writeFileSync(path.join(dir, "legacy.json"), JSON.stringify({ v: 1 }), "utf8");
-	const file = path.join(dir, "state.json");
-
-	assert.deepEqual(fsutil.readJsonFallback(file, path.join(dir, "legacy.json"), null), { v: 1 });
-
-	writeFileSync(file, "null", "utf8");
-	assert.equal(fsutil.readJsonFallback(file, path.join(dir, "legacy.json"), { v: 2 }), null);
-	assert.equal(
-		fsutil.readJsonFallback(path.join(dir, "no.json"), path.join(dir, "nope.json"), "fb"),
-		"fb",
-	);
-});
-
-test("listDirUnion: deduped basename union, missing dirs contribute nothing", () => {
-	const a = mkdtempSync(path.join(home, "union-a-"));
-	const b = mkdtempSync(path.join(home, "union-b-"));
-	writeFileSync(path.join(a, "shared.md"), "", "utf8");
-	writeFileSync(path.join(a, "only-a.md"), "", "utf8");
-	writeFileSync(path.join(b, "shared.md"), "", "utf8");
-	writeFileSync(path.join(b, "only-b.md"), "", "utf8");
-
-	assert.deepEqual([...fsutil.listDirUnion(a, b)].sort(), ["only-a.md", "only-b.md", "shared.md"]);
-	assert.deepEqual(fsutil.listDirUnion(a, path.join(b, "missing")), ["only-a.md", "shared.md"]);
-});
-
 test("pruneOrphanSessionFiles: only orphan+old goes; live, unknown, and fresh stay", () => {
 	const dir = mkdtempSync(path.join(home, "orphan-"));
 	aged(path.join(dir, "gone-old.json"), 40);

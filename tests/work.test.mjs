@@ -459,21 +459,21 @@ test("work_start with a stem resolves the plan from the project dir and writes s
 	assert.equal(readLedger("proj-bind", 1).at(-1)?.event, "start");
 });
 
-test("a legacy plan, state, and ledger twin is ignored", () => {
-	const legacyPlans = path.join(process.env["TORUS_HOME"], "plans");
-	mkdirSync(legacyPlans, { recursive: true });
-	const legacyPlan = plantPlanIn(legacyPlans, "legacy-plan", "- [ ] 1. A\n");
+test("a flat-store plan, state, and ledger twin is ignored", () => {
+	const flatPlans = path.join(process.env["TORUS_HOME"], "plans");
+	mkdirSync(flatPlans, { recursive: true });
+	const flatPlan = plantPlanIn(flatPlans, "flat-plan", "- [ ] 1. A\n");
 
-	const resolved = resolvePlan("legacy-plan");
+	const resolved = resolvePlan("flat-plan");
 	assert.ok("error" in resolved, "a plan in the abandoned dir must not resolve");
 
-	const legacyWork = path.join(process.env["TORUS_HOME"], "work");
-	mkdirSync(legacyWork, { recursive: true });
+	const flatWork = path.join(process.env["TORUS_HOME"], "work");
+	mkdirSync(flatWork, { recursive: true });
 	writeFileSync(
-		path.join(legacyWork, "legacy-work.json"),
+		path.join(flatWork, "flat-work.json"),
 		JSON.stringify({
-			slug: "legacy-work",
-			planPath: legacyPlan,
+			slug: "flat-work",
+			planPath: flatPlan,
 			sessionId: "ses-old",
 			status: "active",
 			createdAt: 1,
@@ -484,14 +484,14 @@ test("a legacy plan, state, and ledger twin is ignored", () => {
 		"utf-8",
 	);
 	writeFileSync(
-		path.join(legacyWork, "legacy-work.ledger.jsonl"),
+		path.join(flatWork, "flat-work.ledger.jsonl"),
 		`${JSON.stringify({ ts: "1", sessionId: "ses-old", event: "note", text: "old row" })}\n`,
 		"utf-8",
 	);
 
-	assert.equal(readWorkState("legacy-work"), null);
-	assert.ok(!listWorkStates().some((s) => s.slug === "legacy-work"));
-	assert.deepEqual(readLedger("legacy-work", 5), []);
+	assert.equal(readWorkState("flat-work"), null);
+	assert.ok(!listWorkStates().some((s) => s.slug === "flat-work"));
+	assert.deepEqual(readLedger("flat-work", 5), []);
 });
 
 test("two project cwds with the same plan stem create separate work states and ledgers", async () => {

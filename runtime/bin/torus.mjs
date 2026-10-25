@@ -202,20 +202,15 @@ function acpHelp() {
 
 function configHelp() {
 	return [
-		"torus config - inspect the unified config and fold legacy files into it",
+		"torus config - report the unified config's effective state",
 		"",
 		"Usage:",
 		"  torus config status",
-		"  torus config migrate [--yes]",
 		"",
-		"status prints each config section's source: config.json, the legacy",
-		"standalone file, or default. migrate folds every legacy file (chains.json,",
-		"automode.json, serve.json, keywords.json) that has no config.json section",
-		"yet into the torus home's config.json (TORUS_HOME overrides ~/.torus). It",
-		"prints the plan and writes nothing without --yes; with --yes the write is",
-		"atomic, existing sections and unknown top-level keys are preserved",
-		"verbatim, and legacy files are left in place — delete them when ready.",
-		"Both commands resolve the torus home from TORUS_HOME.",
+		"status prints each config section's source: config.json or default,",
+		"plus any config.json keys outside the section registry and the",
+		"project-level .torus/config.json's readable and refused sections",
+		"(TORUS_HOME overrides ~/.torus).",
 		"",
 	].join("\n");
 }
@@ -229,7 +224,7 @@ function torusHelp(versionLine) {
 		"  torus --permission-mode <auto|default|bypass>         start in a permission mode (sets TORUS_PERMISSION_MODE for the session; bypass disables all permission guards and is startup-only)",
 		"  torus serve                                    authenticated HTTP server",
 		"  torus acp-agent                                ACP v1 agent over stdio",
-		"  torus config <status|migrate>                  inspect unified config / fold legacy files",
+		"  torus config status                           report the unified config's effective state",
 		"  torus --version, -v                            print torus + engine versions",
 		"  torus --help, -h, help                         show this help",
 		"",
@@ -313,10 +308,9 @@ if (argv[0] === "config" && (argv[1] === "--help" || argv[1] === "-h")) {
 	process.exit(0);
 }
 
-// torus config — inspect the unified config.json (status) or fold legacy
-// standalone files into it (migrate). Like serve/acp-agent this is the
-// process itself, never an engine session; unlike them it runs to completion
-// and exits with the CLI's status.
+// torus config — report the unified config.json's effective state (status).
+// Like serve/acp-agent this is the process itself, never an engine session;
+// unlike them it runs to completion and exits with the CLI's status.
 if (argv[0] === "config") {
 	if (!process.features.typescript && !process.env["TORUS_CONFIG_BOOTSTRAPPED"]) {
 		reexecStripTypes("TORUS_CONFIG_BOOTSTRAPPED");

@@ -69,7 +69,7 @@ export function resolveTitleModel(
 			if (candidate) return candidate;
 		}
 	}
-	// The fast chain is read per call, so a chains.json fast override retargets
+	// The fast chain is read per call, so a chains-section fast override retargets
 	// ambient titling without a restart; an unfindable head falls through to the
 	// session model below.
 	const [provider, modelId] = (modelChain("fast")[0] ?? DEFAULT_TITLE_MODEL).split("/");

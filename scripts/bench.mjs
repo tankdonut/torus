@@ -40,7 +40,7 @@ Options:
   --torus-only      run only the torus-extension config (no delta rows)
   --timeout <sec>   per-run wall-clock cap, SIGKILL after (default: 600)
   --json <path>     write the raw-records JSON sidecar to <path>; the file
-                    accumulates one entry per run (legacy single-run files
+                    accumulates one entry per run (single-run files
                     migrate; delete it to start a fresh history)
   --html <path>     write the self-contained HTML report to <path> (carries
                     the sidecar's run history when --json is given)

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -9,14 +9,12 @@ process.env.TORUS_HOME = home;
 
 const {
 	resolveMode,
-	loadRules,
+	validateRulesObject,
 	loadAutomodeRules,
 	parseModelPin,
 	isBypassMode,
 	appendAuditRow,
-	rulesPath,
 	auditPath,
-	RULES_FILE_NAME,
 	AUDIT_LOG_NAME,
 } = await import("../extensions/automode/config.ts");
 const { torusHome } = await import("../extensions/fsutil.ts");
@@ -28,19 +26,9 @@ const { torusHome } = await import("../extensions/fsutil.ts");
 delete process.env.TORUS_STATE_DIR;
 
 const configPath = path.join(home, "config.json");
-const legacyRulesPath = path.join(home, RULES_FILE_NAME);
 
 const setConfig = (value) => writeFileSync(configPath, JSON.stringify(value));
 const clearConfig = () => rmSync(configPath, { force: true });
-const setLegacyRules = (value) => writeFileSync(legacyRulesPath, JSON.stringify(value));
-const clearLegacyRules = () => rmSync(legacyRulesPath, { force: true });
-
-const rulesFile = (name, content) => {
-	const file = path.join(home, "rules", name);
-	mkdirSync(path.dirname(file), { recursive: true });
-	writeFileSync(file, content);
-	return file;
-};
 
 const sampleRow = (over = {}) => ({
 	ts: 1_761_000_000_000,
@@ -51,6 +39,14 @@ const sampleRow = (over = {}) => ({
 	command: "git status",
 	...over,
 });
+
+const validate = (source, origin = "config.json") => validateRulesObject(source, origin);
+
+const readLines = (file) =>
+	readFileSync(file, "utf8")
+		.trimEnd()
+		.split("\n")
+		.filter((line) => line !== "");
 
 test("resolveMode: unset, empty, 0/off/default keep default mode without warnings", () => {
 	assert.deepEqual(resolveMode({}), { mode: "default" });
@@ -76,58 +72,87 @@ test("resolveMode: junk value falls back to default with a warning naming it and
 	}
 });
 
-test("loadRules: missing file means empty rules, no warning", () => {
-	assert.deepEqual(loadRules(path.join(home, "nope", "automode.json")), {
-		rules: {},
-		warnings: [],
+test("validateRulesObject: unknown top-level keys warn", () => {
+	const { rules, warnings } = validate({
+		allow: ["bash *"],
+		ask: ["git push*"],
+		deny: ["rm -rf*"],
+		timeoutMs: 15,
 	});
+	assert.deepEqual(rules, { allow: ["bash *"], ask: ["git push*"], deny: ["rm -rf*"] });
+	assert.equal(warnings.length, 1);
+	assert.ok(warnings[0].includes("timeoutMs"));
 });
 
-test("loadRules: malformed JSON degrades to empty rules with one warning, no throw", () => {
-	const file = rulesFile("malformed.json", "{not json");
-	const got = loadRules(file);
-	assert.deepEqual(got.rules, {});
-	assert.equal(got.warnings.length, 1);
-	assert.ok(got.warnings[0].includes("not valid JSON"));
-	assert.ok(got.warnings[0].includes(file));
+test("validateRulesObject: non-array rule fields are ignored with a warning each", () => {
+	const { rules, warnings } = validate({ allow: "*", deny: null });
+	assert.deepEqual(rules, {});
+	assert.equal(warnings.length, 2);
+	assert.ok(warnings.some((w) => w.includes('"allow"')));
+	assert.ok(warnings.some((w) => w.includes('"deny"')));
 });
 
-test("loadRules: valid file loads allow/ask/deny arrays; unknown top-level keys warn", () => {
-	const file = rulesFile(
-		"valid.json",
-		JSON.stringify({ allow: ["bash *"], ask: ["git push*"], deny: ["rm -rf*"], timeoutMs: 15 }),
-	);
-	const got = loadRules(file);
-	assert.deepEqual(got.rules, { allow: ["bash *"], ask: ["git push*"], deny: ["rm -rf*"] });
-	assert.equal(got.warnings.length, 1);
-	assert.ok(got.warnings[0].includes("timeoutMs"));
+test("validateRulesObject: non-string entries are dropped with a warning, strings kept", () => {
+	const { rules, warnings } = validate({ allow: ["bash *", 42, null, "git *"] });
+	assert.deepEqual(rules, { allow: ["bash *", "git *"] });
+	assert.equal(warnings.length, 1);
+	assert.ok(warnings[0].includes("2 non-string entries"));
 });
 
-test("loadRules: non-array rule fields are ignored with a warning each", () => {
-	const file = rulesFile("non-array.json", JSON.stringify({ allow: "*", deny: null }));
-	const got = loadRules(file);
-	assert.deepEqual(got.rules, {});
-	assert.equal(got.warnings.length, 2);
-	assert.ok(got.warnings.some((w) => w.includes('"allow"')));
-	assert.ok(got.warnings.some((w) => w.includes('"deny"')));
+test("validateRulesObject: every warning carries the origin prefix", () => {
+	const { warnings } = validate({ allow: "*", bogus: true });
+	assert.ok(warnings.length >= 2);
+	for (const warning of warnings) {
+		assert.ok(warning.startsWith("config.json: "), warning);
+	}
 });
 
-test("loadRules: non-string entries are dropped with a warning, strings kept", () => {
-	const file = rulesFile(
-		"junk-entries.json",
-		JSON.stringify({ allow: ["bash *", 42, null, "git *"] }),
-	);
-	const got = loadRules(file);
-	assert.deepEqual(got.rules, { allow: ["bash *", "git *"] });
-	assert.equal(got.warnings.length, 1);
-	assert.ok(got.warnings[0].includes("2 non-string entries"));
+test("validateRulesObject: v2 keys — environment and hardDeny prose arrays, classifyAllShell boolean", () => {
+	const { rules, warnings } = validate({
+		environment: ["Source control: github.example.com/acme", 42],
+		hardDeny: ["never send repo contents to third parties"],
+		classifyAllShell: true,
+	});
+	assert.deepEqual(rules.environment, ["Source control: github.example.com/acme"]);
+	assert.deepEqual(rules.hardDeny, ["never send repo contents to third parties"]);
+	assert.equal(rules.classifyAllShell, true);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /non-string/);
 });
 
-test("loadRules: non-object JSON root degrades to empty rules with one warning", () => {
-	const file = rulesFile("array-root.json", "[1, 2]");
-	const got = loadRules(file);
-	assert.deepEqual(got.rules, {});
-	assert.equal(got.warnings.length, 1);
+test("validateRulesObject: non-boolean classifyAllShell is ignored with a warning", () => {
+	const { rules, warnings } = validate({ classifyAllShell: "yes" });
+	assert.equal(rules.classifyAllShell, undefined);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /classifyAllShell.*boolean/);
+});
+
+test("validateRulesObject: v1 shapes load unchanged (no v2 keys)", () => {
+	const { rules, warnings } = validate({ allow: ["ls *"] });
+	assert.deepEqual(rules, { allow: ["ls *"] });
+	assert.deepEqual(warnings, []);
+});
+
+test("validateRulesObject: softDeny and softDenyExceptions are prose arrays; junk entries drop with origin-prefixed warnings", () => {
+	const { rules, warnings } = validate({
+		softDeny: ["never run database migrations outside the CLI", 42],
+		softDenyExceptions: ["psql run by the deploy wrapper"],
+	});
+	assert.deepEqual(rules, {
+		softDeny: ["never run database migrations outside the CLI"],
+		softDenyExceptions: ["psql run by the deploy wrapper"],
+	});
+	assert.equal(warnings.length, 1);
+	assert.ok(warnings[0].startsWith("config.json: "), warnings[0]);
+	assert.match(warnings[0], /"softDeny" contains 1 non-string entry/);
+});
+
+test("validateRulesObject: non-array softDeny is ignored with an origin-prefixed warning", () => {
+	const { rules, warnings } = validate({ softDeny: "nope" });
+	assert.deepEqual(rules, {});
+	assert.equal(warnings.length, 1);
+	assert.ok(warnings[0].startsWith("config.json: "));
+	assert.match(warnings[0], /"softDeny" must be an array of strings/);
 });
 
 test("parseModelPin: unset or empty yields no pin and no warning", () => {
@@ -155,7 +180,7 @@ test("appendAuditRow: appends valid JSON lines, creating parent directories", ()
 	const log = path.join(home, "deep", "nested", "audit.log");
 	appendAuditRow(sampleRow(), log);
 	appendAuditRow(sampleRow({ verdict: "deny", ms: 12, confidence: 0.9, model: "m" }), log);
-	const lines = readFileSync(log, "utf8").trimEnd().split("\n");
+	const lines = readLines(log);
 	assert.equal(lines.length, 2);
 	assert.deepEqual(JSON.parse(lines[0]), sampleRow());
 	assert.deepEqual(
@@ -168,7 +193,7 @@ test("appendAuditRow: default path honors TORUS_HOME", () => {
 	appendAuditRow(sampleRow());
 	const log = path.join(home, AUDIT_LOG_NAME);
 	assert.ok(existsSync(log));
-	assert.equal(JSON.parse(readFileSync(log, "utf8", "r")).command, "git status");
+	assert.equal(JSON.parse(readLines(log)[0]).command, "git status");
 });
 
 test("appendAuditRow: default path prefers TORUS_STATE_DIR when set", () => {
@@ -178,7 +203,7 @@ test("appendAuditRow: default path prefers TORUS_STATE_DIR when set", () => {
 		appendAuditRow(sampleRow({ command: "git log --oneline" }));
 		const log = path.join(stateDir, AUDIT_LOG_NAME);
 		assert.ok(existsSync(log));
-		assert.equal(JSON.parse(readFileSync(log, "utf8", "r")).command, "git log --oneline");
+		assert.equal(JSON.parse(readLines(log)[0]).command, "git log --oneline");
 	} finally {
 		delete process.env.TORUS_STATE_DIR;
 	}
@@ -191,18 +216,16 @@ test("appendAuditRow: an unwritable target is swallowed without throwing", () =>
 	assert.equal(existsSync(path.join(blocker, "audit.log")), false);
 });
 
-test('rulesPath/auditPath: derived from fsutil torusHome(), including the TORUS_HOME="" case', () => {
+test('auditPath: derived from fsutil torusHome(), including the TORUS_HOME="" case', () => {
 	delete process.env.TORUS_STATE_DIR;
-	assert.equal(rulesPath(), path.join(torusHome(), RULES_FILE_NAME));
-	assert.equal(rulesPath(), path.join(home, RULES_FILE_NAME));
 	assert.equal(auditPath(), path.join(torusHome(), AUDIT_LOG_NAME));
+	assert.equal(auditPath(), path.join(home, AUDIT_LOG_NAME));
 	const previous = process.env.TORUS_HOME;
 	try {
 		process.env.TORUS_HOME = "";
-		assert.equal(rulesPath(), path.join(torusHome(), RULES_FILE_NAME), 'under TORUS_HOME=""');
-		assert.equal(rulesPath(), RULES_FILE_NAME, "empty home collapses to the bare file name");
+		assert.equal(auditPath(), path.join(torusHome(), AUDIT_LOG_NAME), 'under TORUS_HOME=""');
+		assert.equal(auditPath(), AUDIT_LOG_NAME, "empty home collapses to the bare file name");
 		process.env.TORUS_HOME = "/elsewhere";
-		assert.equal(rulesPath(), path.join("/elsewhere", RULES_FILE_NAME));
 		assert.equal(auditPath(), path.join("/elsewhere", AUDIT_LOG_NAME));
 		process.env.TORUS_STATE_DIR = "/state/dir";
 		try {
@@ -213,44 +236,11 @@ test('rulesPath/auditPath: derived from fsutil torusHome(), including the TORUS_
 	} finally {
 		process.env.TORUS_HOME = previous;
 	}
-	assert.equal(rulesPath(), path.join(home, RULES_FILE_NAME));
+	assert.equal(auditPath(), path.join(home, AUDIT_LOG_NAME));
 });
 
-test("loadRules: v2 keys — environment and hardDeny prose arrays, classifyAllShell boolean", () => {
-	const file = rulesFile(
-		"v2.json",
-		JSON.stringify({
-			environment: ["Source control: github.example.com/acme", 42],
-			hardDeny: ["never send repo contents to third parties"],
-			classifyAllShell: true,
-		}),
-	);
-	const { rules, warnings } = loadRules(file);
-	assert.deepEqual(rules.environment, ["Source control: github.example.com/acme"]);
-	assert.deepEqual(rules.hardDeny, ["never send repo contents to third parties"]);
-	assert.equal(rules.classifyAllShell, true);
-	assert.equal(warnings.length, 1);
-	assert.match(warnings[0], /non-string/);
-});
-
-test("loadRules: non-boolean classifyAllShell is ignored with a warning", () => {
-	const file = rulesFile("v2-bad-flag.json", JSON.stringify({ classifyAllShell: "yes" }));
-	const { rules, warnings } = loadRules(file);
-	assert.equal(rules.classifyAllShell, undefined);
-	assert.equal(warnings.length, 1);
-	assert.match(warnings[0], /classifyAllShell.*boolean/);
-});
-
-test("loadRules: v1 files load unchanged (no v2 keys)", () => {
-	const file = rulesFile("v1.json", JSON.stringify({ allow: ["ls *"] }));
-	const { rules, warnings } = loadRules(file);
-	assert.deepEqual(rules, { allow: ["ls *"] });
-	assert.deepEqual(warnings, []);
-});
-
-test("loadAutomodeRules: the config.json automode section governs, validated like the file (v2 keys)", () => {
+test("loadAutomodeRules: the config.json automode section governs, validated (v2 keys)", () => {
 	clearConfig();
-	clearLegacyRules();
 	setConfig({
 		automode: {
 			allow: ["cargo *"],
@@ -278,68 +268,21 @@ test("loadAutomodeRules: the config.json automode section governs, validated lik
 	}
 });
 
-test("loadAutomodeRules: legacy fallback is byte-identical to loadRules", () => {
+test("loadAutomodeRules: an empty section is the config source, distinct from no section", () => {
 	clearConfig();
-	setLegacyRules({ allow: ["bash *", 7], bogus: true });
-	try {
-		const got = loadAutomodeRules();
-		const fromFile = loadRules(legacyRulesPath);
-		assert.equal(got.source, "automode.json");
-		assert.deepEqual(got.rules, fromFile.rules);
-		assert.deepEqual(got.warnings, fromFile.warnings);
-	} finally {
-		clearLegacyRules();
-	}
-});
-
-test("loadAutomodeRules: an existing empty automode.json is legacy, not default", () => {
-	clearConfig();
-	setLegacyRules({});
+	setConfig({ automode: {} });
 	try {
 		assert.deepEqual(loadAutomodeRules(), {
 			rules: {},
 			warnings: [],
-			source: "automode.json",
+			source: "config.json",
 		});
 	} finally {
-		clearLegacyRules();
-	}
-});
-
-test("loadAutomodeRules: overlap yields config rules plus exactly one shadow warning", () => {
-	setLegacyRules({ deny: ["rm *"] });
-	setConfig({ automode: { deny: ["sudo *"] } });
-	try {
-		const got = loadAutomodeRules();
-		assert.equal(got.source, "config.json");
-		assert.deepEqual(got.rules, { deny: ["sudo *"] });
-		assert.equal(got.warnings.length, 1, "exactly one warning");
-		assert.ok(got.warnings[0].includes("torus config migrate"), got.warnings[0]);
-	} finally {
 		clearConfig();
-		clearLegacyRules();
 	}
 });
 
-test("loadAutomodeRules: malformed config.json falls back to the legacy file with a warning", () => {
-	writeFileSync(configPath, "{not json");
-	setLegacyRules({ deny: ["sudo *"] });
-	try {
-		const got = loadAutomodeRules();
-		assert.equal(got.source, "automode.json");
-		assert.deepEqual(got.rules, { deny: ["sudo *"] });
-		assert.ok(
-			got.warnings.some((w) => w.includes("not valid JSON") && w.includes(configPath)),
-			got.warnings.join(" | "),
-		);
-	} finally {
-		clearConfig();
-		clearLegacyRules();
-	}
-});
-
-test("loadAutomodeRules: validation warnings from config carry the config.json prefix", () => {
-	clearLegacyRules();
+test("loadAutomodeRules: validation warnings carry the config.json prefix", () => {
 	setConfig({ automode: { allow: "*", classifyAllShell: "yes", timeoutMs: 5 } });
 	try {
 		const got = loadAutomodeRules();
@@ -359,39 +302,41 @@ test("loadAutomodeRules: validation warnings from config carry the config.json p
 
 test("loadAutomodeRules: nothing configured means default source with no rules or warnings", () => {
 	clearConfig();
-	clearLegacyRules();
 	assert.deepEqual(loadAutomodeRules(), { rules: {}, warnings: [], source: "default" });
 });
 
-test("loadRules: softDeny and softDenyExceptions are prose arrays; junk entries drop with origin-prefixed warnings", () => {
-	const file = rulesFile(
-		"soft.json",
-		JSON.stringify({
-			softDeny: ["never run database migrations outside the CLI", 42],
-			softDenyExceptions: ["psql run by the deploy wrapper"],
-		}),
-	);
-	const { rules, warnings } = loadRules(file);
-	assert.deepEqual(rules, {
-		softDeny: ["never run database migrations outside the CLI"],
-		softDenyExceptions: ["psql run by the deploy wrapper"],
-	});
-	assert.equal(warnings.length, 1);
-	assert.ok(warnings[0].startsWith(`${file}: `), warnings[0]);
-	assert.match(warnings[0], /"softDeny" contains 1 non-string entry/);
+test("loadAutomodeRules: malformed config.json means no rules with its own warning", () => {
+	writeFileSync(configPath, "{not json");
+	try {
+		const got = loadAutomodeRules();
+		assert.equal(got.source, "default");
+		assert.deepEqual(got.rules, {});
+		assert.ok(
+			got.warnings.some((w) => w.includes("not valid JSON") && w.includes(configPath)),
+			got.warnings.join(" | "),
+		);
+	} finally {
+		clearConfig();
+	}
 });
 
-test("loadRules: non-array softDeny is ignored with an origin-prefixed warning", () => {
-	const file = rulesFile("soft-non-array.json", JSON.stringify({ softDeny: "nope" }));
-	const { rules, warnings } = loadRules(file);
-	assert.deepEqual(rules, {});
-	assert.equal(warnings.length, 1);
-	assert.ok(warnings[0].startsWith(`${file}: `));
-	assert.match(warnings[0], /"softDeny" must be an array of strings/);
+test("loadAutomodeRules: a pre-unification standalone rules file is not a source", () => {
+	clearConfig();
+	// The pre-unification rules file is gone as a config source: planted
+	// under the torus home, it must not reach the effective rules.
+	const preUnified = ["automode", ".json"].join("");
+	writeFileSync(path.join(home, preUnified), JSON.stringify({ deny: ["sudo *"] }), "utf8");
+	try {
+		const got = loadAutomodeRules();
+		assert.deepEqual(got.rules, {});
+		assert.equal(got.source, "default");
+		assert.deepEqual(got.warnings, []);
+	} finally {
+		rmSync(path.join(home, preUnified), { force: true });
+	}
 });
 
 test("loadAutomodeRules: valid softDeny and softDenyExceptions pass clean from config.json", () => {
-	clearLegacyRules();
 	setConfig({
 		automode: {
 			softDeny: ["never run database migrations outside the CLI"],
@@ -413,7 +358,6 @@ test("loadAutomodeRules: valid softDeny and softDenyExceptions pass clean from c
 });
 
 test("loadAutomodeRules: softDeny junk from config.json warns with the config.json prefix", () => {
-	clearLegacyRules();
 	setConfig({
 		automode: { softDeny: "nope", softDenyExceptions: ["psql run by the deploy wrapper", null] },
 	});

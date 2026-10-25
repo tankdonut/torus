@@ -27,7 +27,12 @@ import {
 	isToolCallEventType,
 	type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { loadConfigFile, loadProjectConfig, writeSection } from "../config/loader.js";
+import {
+	configFilePath,
+	loadConfigFile,
+	loadProjectConfig,
+	writeSection,
+} from "../config/loader.js";
 import { PROJECT_AUTOMODE_KEYS } from "../config/sections.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { refreshToruStatus, setStatusPermission } from "../ui/index.js";
@@ -45,7 +50,6 @@ import {
 	type PermissionModeSource,
 	parseModelPin,
 	resolveModeSource,
-	rulesPath,
 } from "./config.js";
 import {
 	criticalAskFloor,
@@ -57,17 +61,12 @@ import {
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
-/** Where to edit the rules behind a deny, keyed by the effective rules source. */
-const RULES_HINTS: Record<AutomodeRulesSource, string> = {
-	"config.json": "edit the automode section of ~/.torus/config.json to change",
-	"automode.json": "edit ~/.torus/automode.json to change",
-	default: "edit ~/.torus/automode.json to change",
-};
+/** Where to edit the rules behind a deny: the unified config's automode section. */
+const RULES_EDIT_HINT = "edit the automode section of ~/.torus/config.json to change";
 
 /** Suffix for a rules line, naming where the effective rules came from. */
 function rulesSourceSuffix(source: AutomodeRulesSource): string {
 	if (source === "config.json") return " (from config.json)";
-	if (source === "automode.json") return " (from automode.json)";
 	return " (none — defaults)";
 }
 
@@ -352,7 +351,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	let startupWarning: string | undefined;
 	let modeOverride: PermissionMode | undefined;
 	let rules: AutomodeRulesFile = {};
-	let rulesSource: AutomodeRulesSource = "automode.json";
+	let rulesSource: AutomodeRulesSource = "default";
 	let projectExtras: { deny: number; ask: number } | undefined;
 	let pin: { provider: string; modelId: string } | undefined;
 	const cache = new DecisionCache();
@@ -395,11 +394,10 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	}
 
 	/**
-	 * Load the rules (the automode section of config.json first, the legacy
-	 * automode.json second) and the model pin, surfacing every warning once.
-	 * Startup passes warnings it already holds: rules load before the "on"
-	 * notice so the notice can name their source, but their warnings still
-	 * follow it.
+	 * Load the rules (the automode section of config.json) and the model pin,
+	 * surfacing every warning once. Startup passes warnings it already holds:
+	 * rules load before the "on" notice so the notice can name their source,
+	 * but their warnings still follow it.
 	 */
 	function loadAutoConfig(ctx: ExtensionContext, preloadedWarnings?: string[]): void {
 		const warnings = preloadedWarnings ?? applyRules(loadAutomodeRules());
@@ -529,7 +527,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		const rulesWarnings = applyRules(loadAutomodeRules());
 		const origin = startupSource === "config" ? " (from config)" : "";
 		ctx.ui.notify(
-			`automode: on${origin} — bash calls auto-approved by ${await decisionModelLabel(ctx)}; rules: ${rulesPath()}${rulesSourceSuffix(rulesSource)}`,
+			`automode: on${origin} — bash calls auto-approved by ${await decisionModelLabel(ctx)}; rules: ${configFilePath()}${rulesSourceSuffix(rulesSource)}`,
 			"info",
 		);
 		loadAutoConfig(ctx, rulesWarnings);
@@ -611,7 +609,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			audit(command, "rule", "deny", `denied by rule "${ruleMatch.rule}"`);
 			return {
 				block: true,
-				reason: `automode: denied by rule "${ruleMatch.rule}" — ${RULES_HINTS[rulesSource]}`,
+				reason: `automode: denied by rule "${ruleMatch.rule}" — ${RULES_EDIT_HINT}`,
 			};
 		}
 
@@ -759,9 +757,9 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		} catch {
 			lines.push(`decision model: ${await decisionModelLabel(ctx)}`);
 		}
-		const path = rulesPath();
+		const rulesPathLabel = configFilePath();
 		if (mode() === "auto") {
-			lines.push(`rules: ${path}${rulesSourceSuffix(rulesSource)}`);
+			lines.push(`rules: ${rulesPathLabel}${rulesSourceSuffix(rulesSource)}`);
 			const list = (label: string, entries: string[] | undefined) => {
 				lines.push(
 					entries !== undefined && entries.length > 0
@@ -783,7 +781,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 				);
 			}
 		} else {
-			lines.push(`rules: ${path} (not loaded; ${mode()} mode)`);
+			lines.push(`rules: ${rulesPathLabel} (not loaded; ${mode()} mode)`);
 		}
 		lines.push(`cache: ${cache.size} ${cache.size === 1 ? "entry" : "entries"}`);
 		lines.push(
@@ -820,8 +818,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		current: { rules: AutomodeRulesFile; source: AutomodeRulesSource },
 	): boolean {
 		// The merge base is the automode section exactly as config.json holds
-		// it now — never the legacy file. With no section on disk, the base is
-		// the effective rules only when config.json supplied them, else empty.
+		// it on disk. With no section there, the base is empty.
 		const loaded = loadConfigFile();
 		const existing = isPlainRecord(loaded.config["automode"])
 			? loaded.config["automode"]
@@ -847,8 +844,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	 * /automode setup: draft environment and ask entries from the repo's git
 	 * remotes and the audit log's repeated denies, then — interactively —
 	 * write them into config.json's automode section and reload the session's
-	 * rules. Headless sessions only see the draft; the legacy automode.json
-	 * is never written.
+	 * rules. Headless sessions only see the draft; nothing else is written.
 	 */
 	async function runSetup(ctx: ExtensionContext): Promise<void> {
 		const current = loadAutomodeRules();

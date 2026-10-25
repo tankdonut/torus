@@ -71,7 +71,7 @@ movement within run-to-run noise.
   git commit, engine pin, and model list, so published numbers are
   reproducible claims.
 - **Run history.** The JSON sidecar accumulates one entry per run, so
-  re-benchmarking at each release appends rather than overwrites; legacy
+  re-benchmarking at each release appends rather than overwrites; older
   single-run sidecar files migrate to the envelope on first append. Both
   reports open with a summary table (newest totals plus movement since the
   prior release), and the HTML report adds a run-history table of
@@ -103,7 +103,7 @@ failures are reported and the bench keeps going.
 Artifacts in this repo: [`docs/efficiency.html`](efficiency.html) (generated
 report with distribution charts and a run-history table) and
 [`docs/bench-records.json`](bench-records.json) (raw per-run records; the
-sidecar carries one entry per run across releases, and legacy single-run
+sidecar carries one entry per run across releases, and single-run
 files migrate on first append).
 
 ## Numbers
@@ -397,7 +397,7 @@ Cells are medians; `±` is half the interquartile range across measured runs. Ve
 - Non-cached tokens-in deltas are mostly within run-to-run noise, and can be negative: on the multi-file reasoning task the stock engine flails (more turns, more fresh input) while the torus context reaches the answer directly.
 - Cost deltas are small but above noise on glm-5.3; on flash pricing they sit closer to the noise floor.
 - Wall-clock overhead per run is dominated by extension loading at spawn; amortized in real sessions that run many turns.
-- Ambient roles (dream/reflect, session-title) resolve via the fast tier, so a `chains.json` fast override pointing at a local model moves all ambient work to it.
+- Ambient roles (dream/reflect, session-title) resolve via the fast tier, so a fast-tier override in the config's `chains` section pointing at a local model moves all ambient work to it.
 - Consumed ACP agents bypass the chain machinery entirely (they run their own models), so their usage/cost figures are best-effort zeros; see the acp section in `docs/extensions.md`.
 - Compare models only within their own section; pricing and token behavior differ.
 - For release gating, cache read and cost deltas are the dependable signals.

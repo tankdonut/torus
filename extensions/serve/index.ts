@@ -20,8 +20,9 @@
  * is minted 0600). Only /health is unauthenticated; every other route
  * requires a constant-time bearer-token match.
  *
- * Scheduled triggers: serve.json `triggers: [{name, everyMinutes, agent,
- * task, model?}]` entries each run one unref'd setInterval that fires the
+ * Scheduled triggers: the config's `serve` section `triggers:
+ * [{name, everyMinutes, agent, task, model?}]` entries each run one unref'd
+ * setInterval that fires the
  * same roster pre-flight path as POST /run. An invalid entry refuses
  * startup (fail loud, fix the file) naming the trigger and field; a missing
  * or empty array schedules nothing. A tick skips while that trigger's own
@@ -48,7 +49,7 @@ import {
 	type ServerResponse,
 } from "node:http";
 import path from "node:path";
-import { readSection } from "../config/loader.js";
+import { configFilePath, readSection } from "../config/loader.js";
 import { readJson, sleep, torusHome, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { AGENT_NAME_RE, type DelegationRecord, listDelegations, repoRoot } from "../registry.js";
@@ -77,7 +78,7 @@ export interface ServeTrigger {
 	webhook?: { path: string };
 }
 
-/** Caps for serve.json triggers — max count and floor on the interval. */
+/** Caps for serve section triggers — max count and floor on the interval. */
 export const MAX_TRIGGERS = 8;
 export const MIN_EVERY_MINUTES = 5;
 /** Webhook paths must sit under /hook/ with a slug remainder (a-z, 0-9, -). */
@@ -90,25 +91,20 @@ const PAYLOAD_DEPTH_CAP = 8;
 const DEFAULT_CONFIG: ServeConfig = { port: 4747, bind: "127.0.0.1" };
 
 /**
- * House read-with-fallback for the non-secret keys: config.json's "serve"
- * section wins over the legacy serve.json with one shadow warning, and a
- * missing, malformed, or non-object tier degrades to the next one. The
- * warning goes to stderr here — loadServeConfig runs exactly once, at
- * startup, never per request. Fields with the wrong type keep falling to
- * their default, as before.
+ * House read of the config's "serve" section, fields falling to their
+ * defaults when absent or wrongly typed; a malformed config.json or a
+ * non-object serve section degrades to the defaults with one warning on
+ * stderr here — loadServeConfig runs exactly once, at startup, never per
+ * request.
  *
- * `tokenPath` deliberately stays serve.json-only: it points at auth.json,
- * runtime state holding the bearer token, and config.json must never be able
- * to redirect where the server reads its credential from. auth.json and
+ * `tokenPath` names the auth-token file to mint or read (default
+ * ~/.torus/serve/auth.json): it points at runtime state, not a secret, so it
+ * rides in the config like the other keys. auth.json and
  * triggers-state.json (bearer token, webhook secrets, lastFired) are minted
- * runtime state, never config — serve.json itself carries no secrets.
+ * runtime state — the config file itself carries no secrets.
  */
 export function loadServeConfig(): ServeConfig {
-	const legacy = readJson<Partial<ServeConfig> | undefined>(serveConfigPath(), undefined);
-	const section = readSection<Partial<ServeConfig>>("serve", {
-		load: () => legacy,
-		sourceHint: "serve.json",
-	});
+	const section = readSection<Partial<ServeConfig>>("serve");
 	if (section.warning !== undefined) {
 		process.stderr.write(`torus serve: ${section.warning}\n`);
 	}
@@ -116,13 +112,9 @@ export function loadServeConfig(): ServeConfig {
 	return {
 		port: typeof raw.port === "number" && raw.port >= 0 ? raw.port : DEFAULT_CONFIG.port,
 		bind: typeof raw.bind === "string" && raw.bind.length > 0 ? raw.bind : DEFAULT_CONFIG.bind,
-		tokenPath: typeof legacy?.tokenPath === "string" ? legacy.tokenPath : undefined,
+		tokenPath: typeof raw.tokenPath === "string" ? raw.tokenPath : undefined,
 		triggers: raw.triggers,
 	};
-}
-
-export function serveConfigPath(): string {
-	return path.join(torusHome(), "serve.json");
 }
 
 export function defaultAuthPath(): string {
@@ -148,7 +140,7 @@ export function triggerIntervalMs(trigger: Pick<ServeTrigger, "everyMinutes">): 
 }
 
 /**
- * Validate the raw serve.json `triggers` value. Absent/null/[] schedules
+ * Validate the raw `serve` section `triggers` value. Absent/null/[] schedules
  * nothing; anything else must be a well-formed array or startup refuses —
  * the error names the trigger and the offending field so the file can be
  * fixed in one pass.
@@ -156,12 +148,12 @@ export function triggerIntervalMs(trigger: Pick<ServeTrigger, "everyMinutes">): 
 export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; error: string | null } {
 	if (raw === undefined || raw === null) return { triggers: [], error: null };
 	if (!Array.isArray(raw)) {
-		return { triggers: [], error: 'serve.json "triggers" must be an array of trigger objects' };
+		return { triggers: [], error: 'serve section "triggers" must be an array of trigger objects' };
 	}
 	if (raw.length > MAX_TRIGGERS) {
 		return {
 			triggers: [],
-			error: `serve.json "triggers" lists ${raw.length} entries — the maximum is ${MAX_TRIGGERS}`,
+			error: `serve section "triggers" lists ${raw.length} entries — the maximum is ${MAX_TRIGGERS}`,
 		};
 	}
 	const agentNames = delegatableAgentNames();
@@ -171,19 +163,19 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 	for (let i = 0; i < raw.length; i += 1) {
 		const entry = raw[i];
 		if (!isRecord(entry)) {
-			return { triggers: [], error: `serve.json trigger [${i}] must be an object` };
+			return { triggers: [], error: `serve section trigger [${i}] must be an object` };
 		}
 		const name = entry.name;
 		if (typeof name !== "string" || !AGENT_NAME_RE.test(name)) {
 			return {
 				triggers: [],
-				error: `serve.json trigger [${i}]: "name" must be a slug matching ${AGENT_NAME_RE} (got ${JSON.stringify(name)})`,
+				error: `serve section trigger [${i}]: "name" must be a slug matching ${AGENT_NAME_RE} (got ${JSON.stringify(name)})`,
 			};
 		}
 		if (seen.has(name)) {
 			return {
 				triggers: [],
-				error: `serve.json trigger "${name}": duplicate name — trigger names must be unique`,
+				error: `serve section trigger "${name}": duplicate name — trigger names must be unique`,
 			};
 		}
 		const everyMinutes = entry.everyMinutes;
@@ -194,34 +186,34 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 		) {
 			return {
 				triggers: [],
-				error: `serve.json trigger "${name}": "everyMinutes" must be an integer ≥ ${MIN_EVERY_MINUTES} (got ${JSON.stringify(everyMinutes)})`,
+				error: `serve section trigger "${name}": "everyMinutes" must be an integer ≥ ${MIN_EVERY_MINUTES} (got ${JSON.stringify(everyMinutes)})`,
 			};
 		}
 		const agent = entry.agent;
 		if (typeof agent !== "string" || agent.length === 0) {
 			return {
 				triggers: [],
-				error: `serve.json trigger "${name}": "agent" must be a non-empty string`,
+				error: `serve section trigger "${name}": "agent" must be a non-empty string`,
 			};
 		}
 		if (!agentNames.includes(agent)) {
 			return {
 				triggers: [],
-				error: `serve.json trigger "${name}": unknown agent "${agent}" — must be a delegatable roster agent (${agentNames.join(", ")})`,
+				error: `serve section trigger "${name}": unknown agent "${agent}" — must be a delegatable roster agent (${agentNames.join(", ")})`,
 			};
 		}
 		const task = entry.task;
 		if (typeof task !== "string" || task.length === 0) {
 			return {
 				triggers: [],
-				error: `serve.json trigger "${name}": "task" must be a non-empty string`,
+				error: `serve section trigger "${name}": "task" must be a non-empty string`,
 			};
 		}
 		const model = entry.model;
 		if (model !== undefined && typeof model !== "string") {
 			return {
 				triggers: [],
-				error: `serve.json trigger "${name}": "model" must be a string`,
+				error: `serve section trigger "${name}": "model" must be a string`,
 			};
 		}
 		const webhook = entry.webhook;
@@ -229,21 +221,21 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 			if (!isRecord(webhook)) {
 				return {
 					triggers: [],
-					error: `serve.json trigger "${name}": "webhook" must be an object`,
+					error: `serve section trigger "${name}": "webhook" must be an object`,
 				};
 			}
 			const hookPath = webhook.path;
 			if (typeof hookPath !== "string" || !WEBHOOK_PATH_RE.test(hookPath)) {
 				return {
 					triggers: [],
-					error: `serve.json trigger "${name}": "webhook.path" must start with "/hook/" followed by a slug of lowercase letters, digits, and hyphens (got ${JSON.stringify(hookPath)})`,
+					error: `serve section trigger "${name}": "webhook.path" must start with "/hook/" followed by a slug of lowercase letters, digits, and hyphens (got ${JSON.stringify(hookPath)})`,
 				};
 			}
 			const hookOwner = seenWebhookPaths.get(hookPath);
 			if (hookOwner !== undefined) {
 				return {
 					triggers: [],
-					error: `serve.json trigger "${name}": webhook path "${hookPath}" is already used by trigger "${hookOwner}" — webhook paths must be unique`,
+					error: `serve section trigger "${name}": webhook path "${hookPath}" is already used by trigger "${hookOwner}" — webhook paths must be unique`,
 				};
 			}
 			seenWebhookPaths.set(hookPath, name);
@@ -838,7 +830,7 @@ export function startTriggers(
 /**
  * Start the delegation API server. Resolves once listening; the kill switch
  * (TORUS_SERVE=0) and bind failures reject — EADDRINUSE is rewritten as a
- * clean error naming the port and the serve.json override.
+ * clean error naming the port and the serve config override.
  */
 export async function startServe(options: ServeOptions = {}): Promise<ServeHandle> {
 	if (!gateExtension("serve", PLATFORM_SUPPORT)) {
@@ -885,7 +877,7 @@ export async function startServe(options: ServeOptions = {}): Promise<ServeHandl
 			if (err.code === "EADDRINUSE") {
 				reject(
 					new Error(
-						`port ${port} on ${bind} is already in use — stop the other listener or set "port" in ${serveConfigPath()} to pick another`,
+						`port ${port} on ${bind} is already in use — stop the other listener or set "port" in the serve section of ${configFilePath()} to pick another`,
 					),
 				);
 			} else {

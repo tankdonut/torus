@@ -172,33 +172,12 @@ export function readJson<T>(file: string, fallback: T): T {
 	}
 }
 
-/**
- * Read `file` as JSON, falling back to `legacyFile` only when `file` does not
- * exist — a present-but-null `file` wins (cleared state must not resurrect
- * from a stale legacy twin).
- */
-export function readJsonFallback<T>(file: string, legacyFile: string, fallback: T): T {
-	if (existsSync(file)) return readJson<T>(file, fallback);
-	return readJson<T>(legacyFile, fallback);
-}
-
 /** Atomically write `data` as pretty-printed JSON, creating parent dirs. */
 export function writeJson(file: string, data: unknown): void {
 	mkdirSync(path.dirname(file), { recursive: true });
 	const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.tmp`;
 	writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
 	renameSync(tmp, file);
-}
-
-/** Deduped basename union of two directories (missing dirs contribute nothing). */
-export function listDirUnion(newDir: string, legacyDir: string): string[] {
-	const names = new Set<string>();
-	for (const dir of [newDir, legacyDir]) {
-		try {
-			for (const entry of readdirSync(dir)) names.add(entry);
-		} catch {}
-	}
-	return [...names];
 }
 
 /**

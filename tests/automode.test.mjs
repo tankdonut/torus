@@ -28,7 +28,6 @@ const automode = await import("../extensions/automode/index.ts");
 const auditLogPath = process.env.TORUS_STATE_DIR
 	? path.join(process.env.TORUS_STATE_DIR, "automode.log")
 	: path.join(home, "automode.log");
-const rulesFilePath = path.join(home, "automode.json");
 const configFilePath = path.join(home, "config.json");
 
 function auditRows() {
@@ -41,11 +40,6 @@ function auditRows() {
 
 function resetAudit() {
 	rmSync(auditLogPath, { force: true });
-}
-
-function setRules(rules) {
-	if (rules === undefined) rmSync(rulesFilePath, { force: true });
-	else writeFileSync(rulesFilePath, JSON.stringify(rules));
 }
 
 function setConfig(config) {
@@ -110,7 +104,6 @@ function makePi() {
 function setup(options = {}) {
 	const mode = "mode" in options ? options.mode : "1";
 	setMode(mode);
-	setRules(options.rules);
 	setConfig(options.config);
 	const pi = makePi();
 	automode.default(pi);
@@ -167,11 +160,12 @@ test("default mode: every command passes with no audit rows and no prompts", asy
 
 test("auto mode: deny rule blocks with the rule named in the reason and one audit row", async () => {
 	resetAudit();
-	const { pi, ctx } = setup({ rules: { deny: ["rm *"] } });
+	const { pi, ctx } = setup({ config: { automode: { deny: ["rm *"] } } });
 	const result = await call(pi, ctx, "rm -rf build");
 	assert.deepEqual(result, {
 		block: true,
-		reason: 'automode: denied by rule "rm *" — edit ~/.torus/automode.json to change',
+		reason:
+			'automode: denied by rule "rm *" — edit the automode section of ~/.torus/config.json to change',
 	});
 	const rows = auditRows();
 	assert.equal(rows.length, 1);
@@ -185,7 +179,7 @@ test("auto mode: deny rule blocks with the rule named in the reason and one audi
 
 test("auto mode: ask rule headless blocks with the no-UI reason", async () => {
 	resetAudit();
-	const { pi, ctx } = setup({ rules: { ask: ["git push *"] }, hasUI: false });
+	const { pi, ctx } = setup({ config: { automode: { ask: ["git push *"] } }, hasUI: false });
 	const result = await call(pi, ctx, "git push origin main");
 	assert.equal(result.block, true);
 	assert.match(result.reason, /ask rule "git push \*"/);
@@ -199,7 +193,11 @@ test("auto mode: ask rule headless blocks with the no-UI reason", async () => {
 
 test("auto mode with UI: dialog deny blocks, allow once passes without caching", async () => {
 	resetAudit();
-	const denied = setup({ rules: { ask: ["git push *"] }, hasUI: true, answer: "Deny" });
+	const denied = setup({
+		config: { automode: { ask: ["git push *"] } },
+		hasUI: true,
+		answer: "Deny",
+	});
 	assert.deepEqual(await call(denied.pi, denied.ctx, "git push origin main"), {
 		block: true,
 		reason: "automode: denied by user",
@@ -209,7 +207,11 @@ test("auto mode with UI: dialog deny blocks, allow once passes without caching",
 	assert.deepEqual(denied.dialog.calls[0].options, ["Allow once", "Always this session", "Deny"]);
 
 	resetAudit();
-	const once = setup({ rules: { ask: ["git push *"] }, hasUI: true, answer: "Allow once" });
+	const once = setup({
+		config: { automode: { ask: ["git push *"] } },
+		hasUI: true,
+		answer: "Allow once",
+	});
 	assert.equal(await call(once.pi, once.ctx, "git push origin main"), undefined);
 	assert.equal(await call(once.pi, once.ctx, "git push origin main"), undefined);
 	assert.equal(once.dialog.calls.length, 2, "Allow once does not seed the cache");
@@ -244,7 +246,7 @@ test("auto mode with UI: Always this session caches; repeat passes via cache wit
 
 test("ask floor fail-safe: judge unavailable restores the ask for floored commands", async () => {
 	resetAudit();
-	const { pi, ctx, reg } = setup({ rules: { allow: ["sudo *"] }, hasUI: false });
+	const { pi, ctx, reg } = setup({ config: { automode: { allow: ["sudo *"] } }, hasUI: false });
 	const result = await call(pi, ctx, "sudo id");
 	assert.equal(result.block, true, "allow rule must not bypass the floor");
 	assert.match(result.reason, /ask floor \(judge unavailable\)/);
@@ -261,7 +263,10 @@ test("ask floor fail-safe: judge unavailable restores the ask for floored comman
 
 test("ask floor: the judge decides floored commands; an allow rule never shortcuts them", async () => {
 	resetAudit();
-	const { pi, ctx, reg } = setup({ rules: { allow: ["sudo *"] }, replies: [jsonReply("allow")] });
+	const { pi, ctx, reg } = setup({
+		config: { automode: { allow: ["sudo *"] } },
+		replies: [jsonReply("allow")],
+	});
 	assert.equal(await call(pi, ctx, "sudo id"), undefined, "judge allow runs the command");
 	assert.equal(reg.calls.complete, 1, "the judge was consulted despite the allow rule");
 	const prompt = reg.contexts[0]?.systemPrompt ?? "";
@@ -285,7 +290,7 @@ test("ask floor: a judge deny blocks the floored command with the class tagged",
 test("ask floor: an ask rule outranks the judge for floored commands", async () => {
 	resetAudit();
 	const { pi, ctx, reg, dialog } = setup({
-		rules: { ask: ["sudo *"] },
+		config: { automode: { ask: ["sudo *"] } },
 		replies: [jsonReply("allow")],
 		hasUI: true,
 		answer: "Deny",
@@ -312,7 +317,7 @@ test("sub-shells are judged like any other command, not floored", async () => {
 
 test("fast path: read-only command passes with an audit row and no model call", async () => {
 	resetAudit();
-	const { pi, ctx, reg } = setup({ rules: undefined });
+	const { pi, ctx, reg } = setup({});
 	assert.equal(await call(pi, ctx, "ls -la"), undefined);
 	assert.equal(reg.calls.complete, 0, "no chat call");
 	assert.equal(reg.calls.classify, 0, "no classifier call");
@@ -372,7 +377,7 @@ test("circuit breaker: three consecutive model denies make the fourth command a 
 test("broad allow entry warns and is ignored: the command still reaches the model", async () => {
 	resetAudit();
 	const { pi, ctx, notifications, reg } = setup({
-		rules: { allow: ["*"] },
+		config: { automode: { allow: ["*"] } },
 		replies: [jsonReply("deny")],
 	});
 	const result = await call(pi, ctx, "cargo build");
@@ -391,7 +396,7 @@ test("/automode: status shows mode and rules path; toggles clear the cache and r
 	await idle.pi.commands.automode.handler("", idle.ctx);
 	const status = idle.notifications[idle.notifications.length - 1].message;
 	assert.match(status, /mode: default/);
-	assert.ok(status.includes(rulesFilePath), "status names the rules path");
+	assert.ok(status.includes(configFilePath), "status names the config path");
 	assert.match(status, /cache: 0/);
 
 	const active = setup({ hasUI: true, answer: "Always this session", replies: [jsonReply("ask")] });
@@ -425,7 +430,7 @@ test("startup notice: auto mode announces on once, naming the session model and 
 	const on = notifications.filter((n) => n.message.startsWith("automode: on"));
 	assert.equal(on.length, 1, "notice fires once at startup");
 	assert.match(on[0].message, /bash calls auto-approved by session model/);
-	assert.ok(on[0].message.includes(rulesFilePath), "notice names the rules path");
+	assert.ok(on[0].message.includes(configFilePath), "notice names the config path");
 	assert.equal(on[0].type, "info");
 	await call(pi, ctx, "ls -la");
 	assert.equal(
@@ -460,7 +465,7 @@ test("statusline chip tracks session mode and breaker degradation", async () => 
 test("classifyAllShell: allow rules suspend, the model judges instead", async () => {
 	resetAudit();
 	const suspended = setup({
-		rules: { allow: ["cargo *"], classifyAllShell: true },
+		config: { automode: { allow: ["cargo *"], classifyAllShell: true } },
 		replies: [jsonReply("ask")],
 	});
 	const asked = await call(suspended.pi, suspended.ctx, "cargo build", "cas-1");
@@ -469,7 +474,10 @@ test("classifyAllShell: allow rules suspend, the model judges instead", async ()
 	assert.match(asked.reason, /no UI for approval/);
 
 	resetAudit();
-	const normal = setup({ rules: { allow: ["cargo *"] }, replies: [jsonReply("ask")] });
+	const normal = setup({
+		config: { automode: { allow: ["cargo *"] } },
+		replies: [jsonReply("ask")],
+	});
 	const passed = await call(normal.pi, normal.ctx, "cargo build", "cas-2");
 	assert.equal(passed, undefined);
 	assert.equal(
@@ -482,11 +490,13 @@ test("classifyAllShell: allow rules suspend, the model judges instead", async ()
 test("/automode prints the effective config including v2 keys", async () => {
 	resetAudit();
 	const { pi, ctx, notifications } = setup({
-		rules: {
-			allow: ["cargo *"],
-			environment: ["Source control: github.example.com/acme"],
-			hardDeny: ["no secrets leave the machine"],
-			classifyAllShell: true,
+		config: {
+			automode: {
+				allow: ["cargo *"],
+				environment: ["Source control: github.example.com/acme"],
+				hardDeny: ["no secrets leave the machine"],
+				classifyAllShell: true,
+			},
 		},
 	});
 	await call(pi, ctx, "ls /tmp", "status-1");
@@ -539,33 +549,14 @@ test("config.json automode section governs: rules load from config, surfaces and
 	);
 	const on = notifications.filter((n) => n.message.startsWith("automode: on"));
 	assert.equal(on.length, 1);
-	assert.ok(on[0].message.includes(rulesFilePath), "notice still names the rules path");
+	assert.ok(on[0].message.includes(configFilePath), "notice still names the config path");
 	assert.ok(on[0].message.includes("(from config.json)"), "notice names the config source");
 	await pi.commands.automode.handler("", ctx);
 	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
 	assert.ok(status, "status notify fired");
-	assert.ok(status.includes(rulesFilePath), "status still names the rules path");
+	assert.ok(status.includes(configFilePath), "status still names the config path");
 	assert.ok(status.includes("(from config.json)"), "status names the config source");
 	assert.match(status, /deny: sudo \*/);
-});
-
-test("config.json shadows the legacy rules file: config wins with exactly one migrate warning", async () => {
-	resetAudit();
-	const { pi, ctx, notifications } = setup({
-		config: { automode: { deny: ["make *"] } },
-		rules: { deny: ["cargo build*"] },
-	});
-	const result = await call(pi, ctx, "make -j4");
-	assert.equal(result.block, true, "config rule governs");
-	assert.match(result.reason, /denied by rule "make \*"/);
-	assert.match(result.reason, /edit the automode section of ~\/\.torus\/config\.json/);
-	assert.equal(
-		await call(pi, ctx, "cargo build"),
-		undefined,
-		"legacy-only rule does not apply — cargo falls through to fail-open allow",
-	);
-	const shadow = notifications.filter((n) => n.message.includes("torus config migrate"));
-	assert.equal(shadow.length, 1, "exactly one shadow warning via notify");
 });
 
 test("mode precedence: env auto beats a config default value; status says from env", async () => {
@@ -661,7 +652,7 @@ test("mode precedence: non-string config permissionMode is junk-warned default",
 
 test("/automode denied lists recent denials from the audit log", async () => {
 	resetAudit();
-	const { pi, ctx, notifications } = setup({ rules: { deny: ["make *"] } });
+	const { pi, ctx, notifications } = setup({ config: { automode: { deny: ["make *"] } } });
 	await call(pi, ctx, "make -j4", "denied-1");
 	await pi.commands.automode.handler("denied", ctx);
 	const denied = notifications.map((n) => n.message).find((m) => m.includes("recent denials"));
@@ -748,7 +739,10 @@ test("intent window: a model deny clears it", async () => {
 
 test("intent window: a rule deny clears it", async () => {
 	resetAudit();
-	const { pi, ctx, reg } = setup({ rules: { deny: ["rm *"] }, replies: [jsonReply("allow")] });
+	const { pi, ctx, reg } = setup({
+		config: { automode: { deny: ["rm *"] } },
+		replies: [jsonReply("allow")],
+	});
 	userSays(pi, ctx, "delete the build directory");
 	const denied = await call(pi, ctx, "rm -rf build", "rdeny-1");
 	assert.equal(denied.block, true);
@@ -775,9 +769,11 @@ test("intent window: the /automode mode toggle clears it", async () => {
 test("softDeny tier: psql migrations ride the guidance to the judge; scripted replies prove the judge enforces the tier", async () => {
 	resetAudit();
 	const denied = setup({
-		rules: {
-			softDeny: ["never run database migrations outside the CLI"],
-			softDenyExceptions: ["psql run by the deploy wrapper"],
+		config: {
+			automode: {
+				softDeny: ["never run database migrations outside the CLI"],
+				softDenyExceptions: ["psql run by the deploy wrapper"],
+			},
 		},
 		replies: [jsonReply("deny", "soft boundary: migration outside the CLI")],
 	});
@@ -797,7 +793,7 @@ test("softDeny tier: psql migrations ride the guidance to the judge; scripted re
 
 	resetAudit();
 	const allowed = setup({
-		rules: { softDeny: ["never run database migrations outside the CLI"] },
+		config: { automode: { softDeny: ["never run database migrations outside the CLI"] } },
 		replies: [jsonReply("allow", "the intent names the exact migration command")],
 	});
 	userSays(allowed.pi, allowed.ctx, "run the migration with psql directly");
@@ -849,7 +845,6 @@ test("/automode setup headless: prints the draft and never writes", async () => 
 	appendAuditRow(denyRow("git push --force origin"));
 	appendAuditRow(denyRow("cargo build"));
 	setConfig(undefined);
-	setRules(undefined);
 	const { pi, ctx, notifications } = setup({ mode: undefined });
 	ctx.cwd = projectDir;
 	await pi.commands.automode.handler("setup", ctx);
@@ -867,7 +862,6 @@ test("/automode setup headless: prints the draft and never writes", async () => 
 	assert.ok(!draft.includes("cargo *"), "a single deny does not suggest");
 	assert.match(draft, /rerun in an interactive session to write/);
 	assert.equal(existsSync(configFilePath), false, "headless never writes");
-	assert.equal(existsSync(rulesFilePath), false, "the legacy file is never written either");
 });
 
 test("buildSetupDraft: url forms, unparseable urls, and kept entries", () => {
@@ -888,10 +882,10 @@ test("buildSetupDraft: url forms, unparseable urls, and kept entries", () => {
 	const kept = automode.buildSetupDraft(
 		projectDir,
 		[denyRow("git push a"), denyRow("git push b")],
-		{ rules: { deny: ["rm *"], ask: ["git push *"] }, source: "automode.json" },
+		{ rules: { deny: ["rm *"], ask: ["git push *"] }, source: "config.json" },
 	);
 	assert.equal(kept.ask, undefined, "an already-present ask entry is not re-suggested");
-	assert.ok(kept.summary.some((line) => line.includes("keep (from automode.json)")));
+	assert.ok(kept.summary.some((line) => line.includes("keep (from config.json)")));
 	assert.ok(kept.summary.some((line) => line.includes("deny: rm *")));
 
 	clearGitConfig();
@@ -905,7 +899,6 @@ test("/automode setup Write: unions into config.json, notifies the path, reloads
 	seedGitConfig("https://github.com/tankdonut/torus.git");
 	appendAuditRow(denyRow("git push origin main"));
 	appendAuditRow(denyRow("git push --force"));
-	setRules(undefined);
 	const seeded = {
 		chains: { default: "gpt" },
 		automode: { environment: ["Source control: seeded"], deny: ["rm *"] },
@@ -955,7 +948,6 @@ test("/automode setup Discard: nothing written, file untouched", async () => {
 	seedGitConfig("git@github.com:tankdonut/torus.git");
 	appendAuditRow(denyRow("git push origin main"));
 	appendAuditRow(denyRow("git push --force"));
-	setRules(undefined);
 	const { pi, ctx, notifications, dialog } = setup({
 		mode: undefined,
 		hasUI: true,
@@ -977,7 +969,6 @@ test("/automode setup Show full draft: notifies the full JSON and loops back to 
 	resetAudit();
 	seedGitConfig("git@github.com:tankdonut/torus.git");
 	appendAuditRow(denyRow("cargo publish --dry-run"));
-	setRules(undefined);
 	setConfig(undefined);
 	const { pi, ctx, notifications, dialog } = setup({ mode: undefined, hasUI: true });
 	ctx.cwd = projectDir;
@@ -1003,7 +994,6 @@ test("/automode setup Write on a malformed config.json: error notify, bytes surv
 	seedGitConfig("git@github.com:tankdonut/torus.git");
 	appendAuditRow(denyRow("git push origin main"));
 	appendAuditRow(denyRow("git push --force"));
-	setRules(undefined);
 	const { pi, ctx, notifications } = setup({ mode: undefined, hasUI: true, answer: "Write" });
 	const bytes = "{not json";
 	writeFileSync(configFilePath, bytes);

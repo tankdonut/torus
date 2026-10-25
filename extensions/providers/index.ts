@@ -6,20 +6,15 @@
  * `/login zai` and `/login opencode-go` (the gateway also reads
  * OPENCODE_API_KEY); credential resolution is the engine's job.
  *
- * The chains config resolves through the unified config: config.json's
- * `chains` section (tiers + providers) wins wholesale over chains.json — never
- * merged — and without it chains.json applies unchanged.
- *
- * chains.json carries a `providers` map of compatible-endpoint
- * registrations — local Ollama/LM Studio, OpenRouter, anything speaking an API
- * the engine already supports. Each entry becomes one pi.registerProvider call
+ * The chains config is the unified config's `chains` section: tiers plus a
+ * `providers` map of compatible-endpoint registrations — local
+ * Ollama/LM Studio, OpenRouter, anything speaking an API the engine
+ * already supports. Each providers entry becomes one pi.registerProvider call
  * in registerProviders(), and its models are chain-addressable as
  * `<provider-name>/<model-id>`. pi's KnownProvider ids have no ollama/lmstudio
  * entries, so this registration IS the mechanism for local endpoints.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
 import type { KnownApi } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
@@ -27,7 +22,6 @@ import type {
 	ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
 import { configFilePath, readSection, type SectionSource } from "../config/loader.js";
-import { torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
@@ -39,78 +33,35 @@ export const MODEL_CHAINS = {
 
 export type ChainTier = keyof typeof MODEL_CHAINS;
 
-/** User chain-override file: `<torusHome>/chains.json`, so TORUS_HOME redirects tests. */
-export function chainsFile(): string {
-	return path.join(torusHome(), "chains.json");
-}
-
 /**
- * Resolve the chains section by precedence: config.json's `chains` section
- * wins over chains.json, which wins over the built-in defaults. All-or-nothing
- * by design — a present config section is the whole chains config, providers
- * included, and legacy providers apply only when the section is absent, so
- * `torus config migrate` stays a clean whole-file fold. `onLegacyError`
- * follows parseChainsFile's convention: loud for per-request tier reads, silent
- * where statusline repaints could spam stderr. Read every call — files are
- * tiny and edits apply without a restart.
+ * Resolve the chains section from the unified config: a present section is
+ * the whole chains config (tiers, providers, concurrency — never merged
+ * with the built-ins); an absent section leaves the built-in defaults.
+ * Read every call — files are tiny and edits apply without a restart.
  */
-function chainsSection(onLegacyError?: (message: string) => void): {
+function chainsSection(): {
 	value: Record<string, unknown> | undefined;
 	source: SectionSource;
 	warning?: string;
 } {
-	return readSection("chains", {
-		// Absent or malformed file → undefined (malformed already warned through
-		// onLegacyError), so the shadow warning fires only when the legacy file
-		// genuinely carries a chains config.
-		load: () => {
-			const file = chainsFile();
-			if (!existsSync(file)) return undefined;
-			return parseChainsFile(file, onLegacyError) ?? undefined;
-		},
-		sourceHint: "chains.json",
-	});
-}
-
-/** Origin label for warnings: where a resolved chains section came from. */
-function chainsOrigin(source: SectionSource): string {
-	return source === "config" ? configFilePath() : chainsFile();
+	return readSection("chains");
 }
 
 /**
- * Parse chains.json: null when the file is malformed (not JSON, or not an
- * object), otherwise the parsed object. `onError` receives the warning text —
- * the per-request tier path prints it per call, while the availability path
- * stays silent so statusline repaints cannot spam stderr.
+ * Origin label for warnings: where a resolved chains section came from.
+ * The default tier carries no section to warn about, so its label names
+ * the built-ins it serves.
  */
-function parseChainsFile(
-	file: string,
-	onError?: (message: string) => void,
-): Record<string, unknown> | null {
-	if (!existsSync(file)) return {};
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(readFileSync(file, "utf8"));
-	} catch (error) {
-		const reason = error instanceof Error ? error.message : String(error);
-		onError?.(`torus: malformed ${file} (${reason}) — using built-in model chains`);
-		return null;
-	}
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-		onError?.(
-			`torus: malformed ${file} (expected an object of tier arrays) — using built-in model chains`,
-		);
-		return null;
-	}
-	return parsed as Record<string, unknown>;
+function chainsOrigin(source: SectionSource): string {
+	return source === "config" ? configFilePath() : "the built-in chains";
 }
 
 /**
- * One tier lookup shared by both sources: a tier counts only when it is a
- * non-empty array of non-empty model ids; absent, empty, or malformed tiers
- * yield undefined and fall back to that tier's default (mixed validity is
- * fine). Tiers not in MODEL_CHAINS are ignored. Malformed tiers warn naming
- * `origin`, the file the map came from.
+ * One tier lookup over a resolved chains section: a tier counts only when it
+ * is a non-empty array of non-empty model ids; absent, empty, or malformed
+ * tiers yield undefined and fall back to that tier's default (mixed validity
+ * is fine). Tiers not in MODEL_CHAINS are ignored. Malformed tiers warn naming
+ * `origin`, where the section came from.
  */
 function tierChain(
 	tiers: Record<string, unknown> | undefined,
@@ -134,13 +85,12 @@ function tierChain(
 }
 
 /**
- * Effective chain for a tier: a valid config.json chains section wins, else a
- * valid chains.json override, else the built-in default. One read plus at most
- * one warning per call (shadow, malformed file, or malformed tier) — the same
- * per-call cost model as the chains.json-only path it replaced.
+ * Effective chain for a tier: a valid chains-section entry wins, else the
+ * built-in default. One read plus at most one warning per call (malformed
+ * config or malformed tier) — the same per-call cost model as before.
  */
 export function modelChain(tier: ChainTier): readonly string[] {
-	const { value, source, warning } = chainsSection((message) => console.error(message));
+	const { value, source, warning } = chainsSection();
 	if (warning !== undefined) console.error(`torus: ${warning}`);
 	return tierChain(value, tier, chainsOrigin(source)) ?? MODEL_CHAINS[tier];
 }
@@ -161,7 +111,7 @@ const SUPPORTED_APIS: readonly KnownApi[] = [
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const;
 
-/** A validated `providers` entry from chains.json, ready for pi.registerProvider. */
+/** A validated `providers` entry from the chains section, ready for pi.registerProvider. */
 export interface ChainProviderRegistration {
 	name: string;
 	config: ProviderConfig;
@@ -176,7 +126,8 @@ function positiveNumber(value: unknown): number | undefined {
 }
 
 /**
- * Map one chains.json model entry to a full chat model config. Optional fields
+ * Map one chains-section model entry to a full chat model config. Optional
+ * fields
  * the engine already knows (contextWindow, maxTokens, reasoning, input) pass
  * through; defaults mirror the engine's own bare-entry normalization
  * (provider-composer): text-only input, no reasoning, zero cost, 128k context,
@@ -202,8 +153,8 @@ function chainModelConfig(raw: unknown): ProviderModelConfig | null {
 }
 
 /**
- * Validated `providers` map from the resolved chains section (config.json's
- * `chains` or chains.json): every good entry maps to one pi.registerProvider
+ * Validated `providers` map from the resolved chains section (the unified
+ * config's `chains`): every good entry maps to one pi.registerProvider
  * call, every bad one to a warning naming the provider. Silent by design —
  * callers decide whether warnings reach stderr — and a broken entry never
  * fails the section: the rest still registers and the built-in chains hold.
@@ -372,8 +323,8 @@ export function providerAvailabilities(): Record<string, boolean> {
 }
 
 export function registerProviders(pi: ExtensionAPI): void {
-	// Legacy parse stays silent here as before; only the section-level warning
-	// (shadow or malformed config.json) surfaces, once at startup.
+	// Only the section-level warning (a malformed config.json) surfaces, once
+	// at startup.
 	const { value, source, warning } = chainsSection();
 	if (warning !== undefined) console.error(`torus: ${warning}`);
 	const origin = chainsOrigin(source);

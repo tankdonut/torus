@@ -186,13 +186,13 @@ test("unfinished log + terminal beacon: beacon status preferred over the failed 
 	}
 });
 
-test("legacy flat dir is ignored: rehydration reads only the project state logs dir", () => {
+test("flat dir is ignored: rehydration reads only the project state logs dir", () => {
 	registry.resetRegistryForTesting();
 	plantLogIn(LOGS, `rehy-${STAMP}-l`, "build", "zai/glm-5.3", "parent-4", "failed");
 	registry.rehydrateFromLogs("parent-4");
 	assert.ok(
 		!registry.listDelegations().some((r) => r.id === `rehy-${STAMP}-l`),
-		"legacy flat-dir log leaked into rehydration",
+		"flat-dir log leaked into rehydration",
 	);
 	rmSync(path.join(LOGS, `rehy-${STAMP}-l.log`), { force: true });
 	registry.resetRegistryForTesting();

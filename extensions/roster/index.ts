@@ -969,7 +969,7 @@ export async function runDelegation(
 	if (!chainHead) {
 		return {
 			ok: false,
-			text: "No available model in chain. Every entry must name a declared provider: the engine built-ins (zai, opencode-go) or a chains.json providers entry.",
+			text: "No available model in chain. Every entry must name a declared provider: the engine built-ins (zai, opencode-go) or a providers entry in the config's chains section.",
 			details: { error: "no-model" },
 			delegationId: null,
 		};

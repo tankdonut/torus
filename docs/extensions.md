@@ -56,7 +56,7 @@ If main-session context cost ever justifies slimming, the documented lever is `e
 
 ### `providers`
 
-GLM model routing: the model fallback chains every delegation path walks, plus user-configurable chains, alternate providers, and per-model concurrency caps via `chains.json`.
+GLM model routing: the model fallback chains every delegation path walks, plus user-configurable chains, alternate providers, and per-model concurrency caps via the unified config's `chains` section.
 
 No tools, commands, or hooks.
 
@@ -66,14 +66,14 @@ No tools, commands, or hooks.
 
 Registers no providers of its own: both chain providers are built into stock pi, so authenticate via `/login zai` and `/login opencode-go` (the gateway also reads `OPENCODE_API_KEY`). Built-in chains: primary `zai/glm-5.3 → zai/glm-5.3-flash → opencode-go/glm-5.3-flash`, fast `zai/glm-5.3-flash → opencode-go/glm-5.3-flash`.
 
-The `chains` section of the [unified config](#unified-config) (legacy `chains.json` under `TORUS_HOME`, default `~/.torus`, still read when the section is absent) overrides either built-in chain wholesale. Shape `{"primary": ["provider/model", …], "fast": […]}`, read per call so edits apply without a restart:
+The `chains` section of the [unified config](#unified-config) (`config.json` under `TORUS_HOME`, default `~/.torus`) overrides either built-in chain wholesale. Shape `{"primary": ["provider/model", …], "fast": […]}`, read per call so edits apply without a restart:
 
 | Condition | Result |
 | --- | --- |
 | A tier is a non-empty array of non-empty model ids | That tier is overridden |
 | An absent, empty, or malformed tier | falls back to that tier's built-in chain (mixed validity is fine: a valid `primary` beside a malformed `fast` overrides only `primary`) |
-| A file that is not valid JSON | Warns on stderr naming the file; both chains stay at the built-in defaults |
-| `chains` set in both config.json and chains.json | config.json wins with one shadow warning pointing at `torus config migrate` |
+| A config.json that is not valid JSON | Warns on stderr naming the file; both chains stay at the built-in defaults |
+| A `chains` section that is not a JSON object | Warns on stderr naming the section; both chains stay at the built-in defaults |
 | Unknown tier keys | Ignored |
 
 Overridden entries ride the same provider-availability filter as the defaults: a model whose provider is not credentialed is skipped. Agent frontmatter `model:` pins still win over any chain head.
@@ -195,7 +195,7 @@ Typing a keyword in a user message arms a one-shot mode injected into the next t
 | `blueprint` | Plan first: survey, write the plan, get approval before any edit |
 | `team` | Multi-axis work: orchestrate via `torus_fanout` / `torus_chain` / team tools |
 
-User keywords merge over these defaults via the `keywords` section of the [unified config](#unified-config) (flat word-to-mode-text map; legacy `~/.torus/keywords.json` still read when the section is absent):
+User keywords merge over these defaults via the `keywords` section of the [unified config](#unified-config) (flat word-to-mode-text map):
 
 ```json
 { "refactor": "REFACTOR MODE: behavior-preserving changes only; tests must stay green." }
@@ -348,7 +348,7 @@ LLM-classified bash auto-approval for unattended runs, opt-in via `TORUS_PERMISS
 - **Hooks:** `tool_call`: judges each bash command in auto mode; `tool_result`: annotates runs that went unjudged
 - **Env:** `TORUS_PERMISSION_MODE` (`1`/`on`/`auto` select auto mode; `bypass` disables every permission guard for the session, startup-only and refused from config.json; unset, `0`, `off`, `default` keep the built-in gate; other values fall back to default mode and `/automode` surfaces the warning; the `torus --permission-mode <auto|default|bypass>` launcher flag sets it for the spawned engine session, overriding any pre-set value; with none set, the unified config's top-level `permissionMode` key supplies the default, exactly `"auto"`/`"default"`, anything else warns and is treated as unset); `TORUS_PERMISSION_MODEL=provider/model-id` pins the permission classifier
 - **Statusline:** the statusline shows `auto` while the session is in auto mode, `auto·ask` once the circuit breaker degrades it to asking, and a red `bypass` chip for a session running without permission guards
-- **Interactions:** rules live in the `automode` section of the [unified config](#unified-config), falling back to `automode.json` under the torus home when the section is absent (`allow`/`ask`/`deny` prefix patterns; `environment` and `hardDeny` prose arrays that ride into both judge prompts; `softDeny` and `softDenyExceptions` prose arrays for the judge tier below; a `classifyAllShell` boolean that suspends allow rules); a project-level `.torus/config.json` may add `deny` and `ask` entries on top (tightening only, `/automode` status shows the extras); decisions append one JSON line each to `automode.log` under the project state dir (torus home when no project state exists); `sandbox`, `guards`, and cc-safety-net denials still win (the engine blocks on the first block)
+- **Interactions:** rules live in the `automode` section of the [unified config](#unified-config) and nowhere else (`allow`/`ask`/`deny` prefix patterns; `environment` and `hardDeny` prose arrays that ride into both judge prompts; `softDeny` and `softDenyExceptions` prose arrays for the judge tier below; a `classifyAllShell` boolean that suspends allow rules); a project-level `.torus/config.json` may add `deny` and `ask` entries on top (tightening only, `/automode` status shows the extras); decisions append one JSON line each to `automode.log` under the project state dir (torus home when no project state exists); `sandbox`, `guards`, and cc-safety-net denials still win (the engine blocks on the first block)
 
 The decision pipeline runs in a fixed order:
 
@@ -371,7 +371,7 @@ The judge prompts carry rule prose in a fixed tier order: environment context, s
 
 One-command health check.
 
-- **Commands:** `/doctor`: engine pin drift vs the `package.json` pin, provider auth (`auth.json`), default provider, MCP wiring, LSP binary, `sg` (ast-grep), tmux, git identity, `~/.torus` writability, platform support decisions, and a read-only `state-layout` scan for legacy flat-state residue; each check reports ok/warn/fail
+- **Commands:** `/doctor`: engine pin drift vs the `package.json` pin, provider auth (`auth.json`), default provider, MCP wiring, LSP binary, `sg` (ast-grep), tmux, git identity, torus home writability (honoring `TORUS_HOME`), sandbox state, and platform support decisions; each check reports ok/warn/fail
 
 No tools or hooks.
 
@@ -715,7 +715,7 @@ LSP tools over a shared server pool (lazy spawn, refcount, idle reaping, crash r
 
 ## `torus serve`
 
-`torus serve` (`extensions/serve/index.ts`) is an authenticated HTTP surface over the delegation core: session-free `runDelegation()` calls that land in the shared registry, fleet-visible like any other delegation, carrying `srv-` handles. The server binds loopback by default, never starts implicitly (the launcher intercepts the subcommand before the pi passthrough), and `TORUS_SERVE=0` refuses startup with exit 1. It exposes `GET /health`, the bearer-authenticated `POST /run` and `GET /runs`, scheduled `triggers`, and secret-authenticated webhook routes. The `Bearer` token is minted at first start into `~/.torus/serve/auth.json` (mode 0600), and per-trigger `lastFired` state persists to `~/.torus/serve/triggers-state.json` so a restart within the interval does not re-fire; `port` and `bind` resolve from the unified config's `serve` section or `~/.torus/serve.json`. The full route table, auth lifecycle (constant-time `timingSafeEqual` comparison over sha256 digests), trigger caps (`everyMinutes` minimum 5, max 8 triggers), and webhook handling live in [docs/serve.md](serve.md), the canonical guide.
+`torus serve` (`extensions/serve/index.ts`) is an authenticated HTTP surface over the delegation core: session-free `runDelegation()` calls that land in the shared registry, fleet-visible like any other delegation, carrying `srv-` handles. The server binds loopback by default, never starts implicitly (the launcher intercepts the subcommand before the pi passthrough), and `TORUS_SERVE=0` refuses startup with exit 1. It exposes `GET /health`, the bearer-authenticated `POST /run` and `GET /runs`, scheduled `triggers`, and secret-authenticated webhook routes. The `Bearer` token is minted at first start into `~/.torus/serve/auth.json` (mode 0600), and per-trigger `lastFired` state persists to `~/.torus/serve/triggers-state.json` so a restart within the interval does not re-fire; `port`, `bind`, `tokenPath`, and `triggers` resolve from the unified config's `serve` section. The full route table, auth lifecycle (constant-time `timingSafeEqual` comparison over sha256 digests), trigger caps (`everyMinutes` minimum 5, max 8 triggers), and webhook handling live in [docs/serve.md](serve.md), the canonical guide.
 
 ## Ambient model calls
 
@@ -745,17 +745,17 @@ Engine-owned configuration torus users can ride directly; torus's own code touch
 
 ## Unified config
 
-User-level torus config lives in one file: `config.json` under the torus home (`TORUS_HOME`, default `~/.torus`). The file is user-level by construction, so a repo checkout cannot set it for a session. Each registered section replaced a standalone legacy file:
+User-level torus config lives in one file: `config.json` under the torus home (`TORUS_HOME`, default `~/.torus`), the single user-level source for every section below. The file is user-level by construction, so a repo checkout cannot set it for a session.
 
-| Section | Legacy file | Configures |
-| --- | --- | --- |
-| `chains` | `chains.json` | Model chains per tier plus compatible-provider endpoints |
-| `automode` | `automode.json` | Auto permission-mode rules and circuit-breaker settings |
-| `serve` | `serve.json` | HTTP server bind, port, and scheduled triggers (`tokenPath` stays in serve.json; auth is runtime state) |
-| `keywords` | `keywords.json` | Keyword rows injected into the system prompt |
-| `permissionMode` | none | Default permission mode (top-level key, no legacy file) |
+| Section | Configures |
+| --- | --- |
+| `chains` | Model chains per tier plus compatible-provider endpoints |
+| `automode` | Auto permission-mode rules and circuit-breaker settings |
+| `serve` | HTTP server bind, port, token path, and scheduled triggers (auth is runtime state) |
+| `keywords` | Keyword rows injected into the system prompt |
+| `permissionMode` | Default permission mode (top-level key, not an object) |
 
-Shadow-read semantics: a section present in config.json wins over its legacy file with a warning naming both and pointing at `torus config migrate`; a section missing from config.json falls back to its legacy file. A section that is not a JSON object warns, names the section, and falls to legacy. A config.json that cannot be parsed reads as an empty config with one warning, so every consumer degrades to legacy or defaults instead of failing.
+A section that is not a JSON object warns, names the section, and reads as unset. A config.json that cannot be parsed reads as an empty config with one warning, so every consumer degrades to its defaults instead of failing.
 
 Single-value knobs live in their own sections (`ui`, `sessionTitle`, `guards`, `hashline`, `interactive`, `monitor`, `notify`, `commentChecker`, `team`, `reflection`), one key each; the [environment variables](#environment-variables) table maps each env var to its config key. Knob precedence is env over config over default, and a config value of the wrong type is ignored, so the default applies.
 
@@ -763,10 +763,9 @@ Single-value knobs live in their own sections (`ui`, `sessionTitle`, `guards`, `
 
 A project-level `.torus/config.json` in the session's working directory is read with the same tolerance and may set the knob sections plus the automode section's `deny` and `ask` keys only. Knob precedence is env over the user file over the project file over default; the automode contribution is a tightening-only union (project `deny`/`ask` entries add to the user's rules, never replace them). Every other top-level key in the project file, and any widening automode key (`allow`, `environment`, `hardDeny`, `softDeny`, `softDenyExceptions`, `classifyAllShell`), is refused with one warning: a checked-in repo must not be able to widen its own permissions, redirect model traffic, inject prompt keywords, or opt sessions into automode. `torus config status` reports the project file's readable sections and refused keys.
 
-The launcher subcommand manages the file (intercepted before the pi passthrough, no engine session):
+The launcher subcommand reports on the file (intercepted before the pi passthrough, no engine session):
 
-- `torus config status`: one line per section with its effective source (config.json, the legacy file, or default), plus config.json keys the registry does not know
-- `torus config migrate [--yes]`: folds every legacy file that has no config.json section yet into config.json; plan-only without `--yes`, an atomic write with it. Existing sections and unknown top-level keys survive verbatim; legacy files are left in place
+- `torus config status`: one line per section with its effective source (config.json or default), plus config.json keys the registry does not know and the project-level file's readable and refused sections
 
 ## Environment variables
 

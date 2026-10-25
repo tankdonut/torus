@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-// The fast chain resolves through modelChain("fast"), which reads
-// chains.json under TORUS_HOME on every call — point it at an empty sandbox
-// so the built-in chain is what tests see.
+// The fast chain resolves through modelChain("fast"), which reads the
+// chains section under TORUS_HOME on every call — point it at an empty
+// sandbox so the built-in chain is what tests see.
 process.env.TORUS_HOME = mkdtempSync(path.join(tmpdir(), "torus-automode-classify-"));
 
 const {

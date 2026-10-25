@@ -1,21 +1,20 @@
 /**
  * torus automode — configuration: permission mode, rules, model pin, audit log.
  *
- * Rules resolve through the unified config loader: the "automode" section of
- * config.json (same keys as the legacy file, validated the same way) wins over
- * automode.json, and neither configured means no rules. Path helpers derive
- * from fsutil's torusHome(), imported rather than mirrored, which reads the
- * live process env — callers and tests sandbox it via TORUS_HOME. Mode
- * resolution layers the config.json top-level "permissionMode" key under
+ * Rules come from the "automode" section of the unified config.json and
+ * from nowhere else; no section means no rules. Path helpers derive from
+ * fsutil's torusHome(), imported rather than mirrored, which reads the live
+ * process env — callers and tests sandbox it via TORUS_HOME. Mode resolution
+ * layers the config.json top-level "permissionMode" key under
  * TORUS_PERMISSION_MODE (a defined env value decides the tier outright), and
  * the mode and model-pin parsers take their env as a parameter with a real
  * default.
  * Parsing is best-effort by contract: config problems surface as warnings on
  * the returned object, never as throws — a broken config degrades to default
- * mode with an empty rules file, and the audit log never breaks execution.
+ * mode with no rules, and the audit log never breaks execution.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { CONFIG_FILE_NAME, readSection } from "../config/loader.js";
 import { torusHome } from "../fsutil.js";
@@ -31,19 +30,7 @@ export const LOW_CONFIDENCE_THRESHOLD = 0.6;
 /** Consecutive denies that trip the circuit breaker back to default mode. */
 export const CIRCUIT_BREAKER_DENIES = 3;
 
-export const RULES_FILE_NAME = "automode.json";
 export const AUDIT_LOG_NAME = "automode.log";
-
-/**
- * Rules-file path — the legacy automode.json, the canonical place rules lived
- * before the unified config (and the fallback when config.json has no
- * "automode" section). Derived from fsutil's torusHome() so every torus
- * consumer resolves the same root by construction, including the
- * TORUS_HOME=""-wins case under nullish coalescing.
- */
-export function rulesPath(): string {
-	return path.join(torusHome(), RULES_FILE_NAME);
-}
 
 /**
  * Audit-log path: the project state dir when the session provides one (every
@@ -169,17 +156,17 @@ const RULE_KEYS = [
 ] as const;
 
 /**
- * Validate one parsed rules object — the same shape the legacy file carries
- * and the "automode" section of config.json holds. Unknown top-level keys and
- * non-array rule fields are ignored with a warning; non-string entries inside
- * a rule array are dropped with a warning while the string entries are kept.
- * `environment`, `softDeny`, `softDenyExceptions`, and `hardDeny` are prose
- * string arrays for the decision model (trusted infrastructure context, soft
- * boundaries the judge may clear via an exception or specific recent intent,
- * their exceptions, and absolute boundaries); `classifyAllShell`
- * is a boolean that suspends allow rules while auto mode is active. Every
- * warning is prefixed by `origin`, naming where the object came from: the
- * legacy file's path, or config.json for the unified config's section.
+ * Validate one parsed rules object — the shape the "automode" section of
+ * config.json holds. Unknown top-level keys and non-array rule fields are
+ * ignored with a warning; non-string entries inside a rule array are dropped
+ * with a warning while the string entries are kept. `environment`,
+ * `softDeny`, `softDenyExceptions`, and `hardDeny` are prose string arrays
+ * for the decision model (trusted infrastructure context, soft boundaries
+ * the judge may clear via an exception or specific recent intent, their
+ * exceptions, and absolute boundaries); `classifyAllShell` is a boolean
+ * that suspends allow rules while auto mode is active. Every warning is
+ * prefixed by `origin`, naming where the object came from (config.json for
+ * the unified config's section).
  */
 export function validateRulesObject(
 	source: Record<string, unknown>,
@@ -223,43 +210,8 @@ export function validateRulesObject(
 	return { rules, warnings };
 }
 
-/**
- * Load the legacy automode rules file. A missing file means "no rules" with no
- * warning; anything unreadable or unparseable also degrades to no rules, with
- * one warning per problem. Key-level validation is shared with the unified
- * config's section through validateRulesObject.
- */
-export function loadRules(filePath: string): { rules: AutomodeRulesFile; warnings: string[] } {
-	let text: string;
-	try {
-		text = readFileSync(filePath, "utf8");
-	} catch (error) {
-		const code = (error as NodeJS.ErrnoException).code;
-		if (code === "ENOENT") {
-			return { rules: {}, warnings: [] };
-		}
-		return {
-			rules: {},
-			warnings: [`${filePath}: unreadable (${code ?? "unknown error"}); no rules loaded`],
-		};
-	}
-
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(text);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return { rules: {}, warnings: [`${filePath}: not valid JSON (${message}); no rules loaded`] };
-	}
-
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-		return { rules: {}, warnings: [`${filePath}: expected a JSON object; no rules loaded`] };
-	}
-	return validateRulesObject(parsed as Record<string, unknown>, filePath);
-}
-
 /** Where the effective automode rules came from. */
-export type AutomodeRulesSource = "config.json" | "automode.json" | "default";
+export type AutomodeRulesSource = "config.json" | "default";
 
 export type LoadedAutomodeRules = {
 	rules: AutomodeRulesFile;
@@ -268,39 +220,22 @@ export type LoadedAutomodeRules = {
 };
 
 /**
- * Load the effective automode rules by precedence through the unified config
- * loader: the "automode" section of config.json (validated by the shared
- * validateRulesObject, warnings prefixed with config.json), then the legacy
- * automode.json exactly as loadRules serves it, then no rules. A section set
- * in both places yields exactly one deprecation warning pointing at
- * `torus config migrate`; a config.json that cannot be parsed falls back to
- * the legacy file with that failure as its own warning. Never throws.
+ * Load the effective automode rules: the "automode" section of config.json,
+ * validated by validateRulesObject (its warnings prefixed with config.json).
+ * No section means no rules; a config that cannot be parsed contributes its
+ * own warning and resolves to no rules. Never throws.
  */
 export function loadAutomodeRules(): LoadedAutomodeRules {
-	const filePath = rulesPath();
-	const section = readSection<Record<string, unknown>>("automode", {
-		// The legacy loader answers "is there a legacy rules value?": a missing
-		// file is no value at all, keeping the default tier distinguishable from
-		// an existing (even empty) automode.json.
-		load: () => (existsSync(filePath) ? loadRules(filePath).rules : undefined),
-		sourceHint: RULES_FILE_NAME,
-	});
+	const section = readSection<Record<string, unknown>>("automode");
 	const warnings: string[] = section.warning === undefined ? [] : [section.warning];
-	if (section.source === "config") {
-		const validated = validateRulesObject(section.value ?? {}, CONFIG_FILE_NAME);
-		return {
-			rules: validated.rules,
-			warnings: [...warnings, ...validated.warnings],
-			source: CONFIG_FILE_NAME,
-		};
+	if (section.value === undefined) {
+		return { rules: {}, warnings, source: "default" };
 	}
-	// Legacy or default tier: serve loadRules directly so rules and warnings
-	// are byte-identical to the pre-unified-config behavior.
-	const loaded = loadRules(filePath);
+	const validated = validateRulesObject(section.value, CONFIG_FILE_NAME);
 	return {
-		rules: loaded.rules,
-		warnings: [...warnings, ...loaded.warnings],
-		source: section.source === "legacy" ? RULES_FILE_NAME : "default",
+		rules: validated.rules,
+		warnings: [...warnings, ...validated.warnings],
+		source: CONFIG_FILE_NAME,
 	};
 }
 

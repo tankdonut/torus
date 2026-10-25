@@ -14,9 +14,9 @@ const { projectKeyFor } = await import("../extensions/fsutil.ts");
 const DAY = 24 * 60 * 60 * 1000;
 const THIRTY_DAYS = 30 * DAY;
 const newDir = path.join(home, "state", projectKeyFor(process.cwd()), "reflect-state");
-const legacyPath = (id) => path.join(home, "reflect-state", `${id}.json`);
+const flatPath = (id) => path.join(home, "reflect-state", `${id}.json`);
 
-/** Drop state + legacy dirs so each test starts from a clean layout. */
+/** Drop state + flat dirs so each test starts from a clean layout. */
 function reset() {
 	rmSync(path.join(home, "state"), { recursive: true, force: true });
 	rmSync(path.join(home, "reflect-state"), { recursive: true, force: true });
@@ -55,11 +55,11 @@ test("corrupt state file reads zeros", () => {
 	});
 });
 
-test("legacy flat twin is ignored: only the new file is read", () => {
+test("flat twin is ignored: only the new file is read", () => {
 	reset();
-	mkdirSync(path.dirname(legacyPath("sess-leg")), { recursive: true });
+	mkdirSync(path.dirname(flatPath("sess-leg")), { recursive: true });
 	writeFileSync(
-		legacyPath("sess-leg"),
+		flatPath("sess-leg"),
 		JSON.stringify({ lastReflectSettles: 5, lastReflectAt: 99 }),
 		"utf8",
 	);
@@ -69,11 +69,11 @@ test("legacy flat twin is ignored: only the new file is read", () => {
 	});
 });
 
-test("write does not touch the legacy twin", () => {
+test("write does not touch the flat twin", () => {
 	reset();
-	mkdirSync(path.dirname(legacyPath("sess-mig")), { recursive: true });
+	mkdirSync(path.dirname(flatPath("sess-mig")), { recursive: true });
 	writeFileSync(
-		legacyPath("sess-mig"),
+		flatPath("sess-mig"),
 		JSON.stringify({ lastReflectSettles: 1, lastReflectAt: 2 }),
 		"utf8",
 	);
@@ -83,15 +83,15 @@ test("write does not touch the legacy twin", () => {
 		lastReflectAt: 300,
 	});
 	assert.equal(existsSync(path.join(newDir, "sess-mig.json")), true);
-	assert.equal(existsSync(legacyPath("sess-mig")), true);
+	assert.equal(existsSync(flatPath("sess-mig")), true);
 });
 
-test("a present new file wins over a legacy twin (no resurrection)", () => {
+test("a present new file wins over a flat twin (no resurrection)", () => {
 	reset();
 	mkdirSync(newDir, { recursive: true });
-	mkdirSync(path.dirname(legacyPath("sess-win")), { recursive: true });
+	mkdirSync(path.dirname(flatPath("sess-win")), { recursive: true });
 	writeFileSync(
-		legacyPath("sess-win"),
+		flatPath("sess-win"),
 		JSON.stringify({ lastReflectSettles: 42, lastReflectAt: 42 }),
 		"utf8",
 	);
@@ -147,15 +147,15 @@ test("gc: unreadable sessions root keeps everything", () => {
 	assert.equal(existsSync(path.join(newDir, "sess-blind.json")), true);
 });
 
-test("gc never deletes files under the legacy dir", () => {
+test("gc never deletes files under the flat dir", () => {
 	reset();
-	mkdirSync(path.dirname(legacyPath("sess-legacy-orphan")), { recursive: true });
+	mkdirSync(path.dirname(flatPath("sess-flat-orphan")), { recursive: true });
 	writeFileSync(
-		legacyPath("sess-legacy-orphan"),
+		flatPath("sess-flat-orphan"),
 		JSON.stringify({ lastReflectSettles: 1, lastReflectAt: 1 }),
 		"utf8",
 	);
-	ageFile(legacyPath("sess-legacy-orphan"));
+	ageFile(flatPath("sess-flat-orphan"));
 	rs.writeReflectState("sess-new-orphan", { lastReflectSettles: 2, lastReflectAt: 2 });
 	ageFile(path.join(newDir, "sess-new-orphan.json"));
 	assert.equal(
@@ -163,7 +163,7 @@ test("gc never deletes files under the legacy dir", () => {
 		1,
 		"only the new-dir orphan goes",
 	);
-	assert.equal(existsSync(legacyPath("sess-legacy-orphan")), true, "legacy dir is never pruned");
+	assert.equal(existsSync(flatPath("sess-flat-orphan")), true, "flat dir is never pruned");
 });
 
 test("interleaved session writes stay independent", () => {

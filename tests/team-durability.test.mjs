@@ -443,7 +443,7 @@ test("team_status structuredContent mirrors the rendered roster, stale, and bloc
 
 // ---- project-scoped default team resolution ----
 // Specs carry the project key of the creating cwd; default resolution only
-// considers same-project teams (legacy specs with no key match any). Explicit
+// considers same-project teams (older specs with no key match any). Explicit
 // ids are never filtered. Each scenario resets the registry and registers
 // crafted records so earlier fixtures cannot compete for the default pick;
 // the status tool is captured before the drop (tools() rehydrates from disk,

@@ -74,7 +74,7 @@ Record the provenance of every line you draft; the summary you show the human na
 1. **Repo.** `git remote -v` gives one `Source control: host/org` line per distinct remote org, the same shape the deterministic `/automode setup` wizard drafts. Lockfiles, package manifests, and CI configs give registry and provider lines: `Package registry: npm, @corp scope on registry.corp.internal`, `CI: GitHub Actions`.
 2. **Audit log.** `$TORUS_STATE_DIR/automode.log` holds one JSON row per decision. Deny rows sharing a first-two-token prefix two or more times become `ask` entries.
 3. **pi session transcripts.** The `torus_sessions` tool greps inside past session files; keep hits whose `project` matches this checkout's directory name. Mine for command families the user approved or denied, and for hostnames of registries and deploy targets that appeared in real work.
-4. **torus delegation logs.** `$TORUS_STATE_DIR/logs/*.log`, plus legacy `~/.torus/logs/*.log` for older runs: one file per delegated run, child output indented. Completed builder runs show which command families this repo's work actually uses; repeated families become environment or ask candidates.
+4. **torus delegation logs.** `$TORUS_STATE_DIR/logs/*.log`: one file per delegated run, child output indented. Completed builder runs show which command families this repo's work actually uses; repeated families become environment or ask candidates.
 5. **Memory.** `torus_recall` with the repo's hostnames and the word `automode` before drafting. Prior decisions bind: a line memory says was rejected is never re-proposed.
 
 ## Ask what no scan can see

@@ -438,9 +438,9 @@ test("buildJson: schema-2 envelope, one run, every record (warmups included)", (
 	assert.ok(run.records.some((r) => r.ok === false));
 });
 
-test("sidecar history: legacy single-run files migrate; envelopes round-trip; garbage fails loud", () => {
-	const legacy = JSON.stringify({ meta: { torusVersion: "0.6.0" }, records: [{ ok: true }] });
-	const migrated = parseRunsHistory(legacy);
+test("sidecar history: single-run files migrate; envelopes round-trip; garbage fails loud", () => {
+	const singleRun = JSON.stringify({ meta: { torusVersion: "0.6.0" }, records: [{ ok: true }] });
+	const migrated = parseRunsHistory(singleRun);
 	assert.equal(migrated.length, 1);
 	assert.equal(migrated[0].meta.torusVersion, "0.6.0");
 

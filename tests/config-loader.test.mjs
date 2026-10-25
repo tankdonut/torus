@@ -25,7 +25,6 @@ const {
 	readSection,
 	configOverEnv,
 	parseEnvBoolean,
-	effectiveConfigSnapshot,
 	writeSection,
 	_resetConfigCache,
 	_peekConfigCache,
@@ -127,91 +126,60 @@ test("loadConfigFile memo: an edit invalidates the entry and returns the new val
 	assert.equal(_configFileReads(), 2, "one read per content version");
 });
 
-test("readSection: missing config.json falls back to the legacy loader", () => {
-	clearConfig();
-	assert.deepEqual(
-		readSection("chains", () => ({ default: "claude" })),
-		{
-			value: { default: "claude" },
-			source: "legacy",
-		},
-	);
-});
-
-test("readSection: missing config.json with no legacy loader yields the default source", () => {
+test("readSection: missing config.json yields the default source", () => {
 	clearConfig();
 	assert.deepEqual(readSection("chains"), { value: undefined, source: "default" });
-	assert.deepEqual(
-		readSection("chains", () => undefined),
-		{ value: undefined, source: "default" },
-	);
 });
 
-test("readSection: malformed config.json still loads legacy with a warning, no throw", () => {
+test("readSection: malformed config.json resolves to the default with its warning, no throw", () => {
 	setRawConfig("{not json");
-	const got = readSection("automode", () => ({ mode: "auto" }));
-	assert.deepEqual(got.value, { mode: "auto" });
-	assert.equal(got.source, "legacy");
+	const got = readSection("automode");
+	assert.deepEqual(got.value, undefined);
+	assert.equal(got.source, "default");
 	assert.ok(got.warning?.includes("not valid JSON"));
 });
 
-test("readSection: config section wins over legacy with one shadow warning naming both", () => {
+test("readSection: present object section is served verbatim with the config source", () => {
 	setConfig({ chains: { default: "gpt" } });
-	const got = readSection("chains", {
-		load: () => ({ default: "claude" }),
-		sourceHint: "chains.json",
+	assert.deepEqual(readSection("chains"), {
+		value: { default: "gpt" },
+		source: "config",
 	});
-	assert.deepEqual(got.value, { default: "gpt" });
-	assert.equal(got.source, "config");
-	assert.equal(
-		got.warning,
-		'config: "chains" is set in config.json and shadowed from chains.json; run torus config migrate',
-	);
 });
 
-test("readSection: config shadow warning falls back to the plain 'legacy file' hint", () => {
-	setConfig({ chains: { default: "gpt" } });
-	const got = readSection("chains", () => ({ default: "claude" }));
-	assert.equal(got.source, "config");
-	assert.equal(
-		got.warning,
-		'config: "chains" is set in config.json and shadowed from legacy file; run torus config migrate',
-	);
-});
-
-test("readSection: config section with no legacy value wins silently", () => {
-	setConfig({ chains: { default: "gpt" } });
-	assert.deepEqual(
-		readSection("chains", () => undefined),
-		{
-			value: { default: "gpt" },
-			source: "config",
-		},
-	);
-});
-
-test("readSection: non-object config section warns, names the section, and falls to legacy", () => {
+test("readSection: non-object section warns, names the section, and reads as absent", () => {
 	for (const section of [3, "fast", [""], null]) {
 		setConfig({ chains: section });
-		const got = readSection("chains", () => ({ default: "claude" }));
-		assert.deepEqual(got.value, { default: "claude" }, `section ${JSON.stringify(section)}`);
-		assert.equal(got.source, "legacy", `section ${JSON.stringify(section)}`);
+		const got = readSection("chains");
+		assert.deepEqual(got.value, undefined, `section ${JSON.stringify(section)}`);
+		assert.equal(got.source, "default", `section ${JSON.stringify(section)}`);
 		assert.ok(got.warning?.includes('"chains"'), `section ${JSON.stringify(section)}`);
 		assert.ok(got.warning?.includes("not an object"), `section ${JSON.stringify(section)}`);
 	}
-	setConfig({ chains: 3 });
+});
+
+test("readSection: an empty object section is the config source, not the default", () => {
+	setConfig({ chains: {} });
 	const got = readSection("chains");
-	assert.equal(got.value, undefined);
-	assert.equal(got.source, "default");
-	assert.ok(got.warning?.includes('"chains"'));
+	assert.deepEqual(got.value, {});
+	assert.equal(got.source, "config");
 });
 
 test("readSection: explicit parsed config is used without touching disk", () => {
 	clearConfig();
-	const got = readSection("chains", () => ({ default: "claude" }), { chains: { default: "gpt" } });
+	const got = readSection("chains", { chains: { default: "gpt" } });
 	assert.deepEqual(got.value, { default: "gpt" });
 	assert.equal(got.source, "config");
-	assert.ok(got.warning?.includes('"chains"'));
+});
+
+test("readSection: a pre-unification standalone section file is not a source", () => {
+	clearConfig();
+	// The pre-unification per-section files are gone as config sources: one
+	// planted beside config.json must not reach the section at all.
+	const preUnified = ["chains", ".json"].join("");
+	writeFileSync(path.join(home, preUnified), JSON.stringify({ fast: ["zai/x"] }), "utf8");
+	const got = readSection("chains");
+	assert.deepEqual(got, { value: undefined, source: "default" });
 });
 
 test("configOverEnv: env beats config beats default; defined values always win over undefined", () => {
@@ -248,27 +216,6 @@ test('configFilePath: identical to fsutil torusHome() under TORUS_HOME="" and a 
 	}
 	process.env.TORUS_HOME = home;
 	assert.equal(configFilePath(), path.join(home, CONFIG_FILE_NAME));
-});
-
-test("effectiveConfigSnapshot: normalizes entries and preserves order", () => {
-	const got = effectiveConfigSnapshot([
-		{ name: "chains", source: "config", summary: "default=gpt" },
-		{ name: "   ", source: "legacy", summary: "dropped" },
-		{ name: "", source: "env", summary: "dropped" },
-		{ name: "automode", source: "junk", summary: "mode=auto" },
-		{ name: "logs", source: "env", summary: 3 },
-		null,
-		undefined,
-	]);
-	assert.deepEqual(got, [
-		{ name: "chains", source: "config", summary: "default=gpt" },
-		{ name: "automode", source: "absent", summary: "mode=auto" },
-		{ name: "logs", source: "env", summary: "" },
-	]);
-});
-
-test("effectiveConfigSnapshot: empty input yields empty output", () => {
-	assert.deepEqual(effectiveConfigSnapshot([]), []);
 });
 
 test("writeSection: creates the config file and home dir, pretty 2-space JSON with a trailing newline", () => {

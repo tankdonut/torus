@@ -1075,7 +1075,7 @@ test("delegate tool block renders turns and is mouse-clickable", () => {
 	assert.doesNotMatch(headline, /\? turns/, "no placeholder turn count");
 	assert.equal(typeof result.handleMouse, "function", "result line is a mouse region");
 
-	const legacyDetails = {
+	const usageOnlyDetails = {
 		content: [{ type: "text", text: "done" }],
 		details: {
 			agent: "reviewer",
@@ -1084,9 +1084,13 @@ test("delegate tool block renders turns and is mouse-clickable", () => {
 			usage: { input: 1, output: 2, turns: 3 },
 		},
 	};
-	const legacy = delegate.renderResult(legacyDetails, { expanded: false, isPartial: false }, theme);
+	const usageOnly = delegate.renderResult(
+		usageOnlyDetails,
+		{ expanded: false, isPartial: false },
+		theme,
+	);
 	assert.match(
-		legacy.render(200)[0],
+		usageOnly.render(200)[0],
 		/3 turns/,
 		"turns fall back to usage when top-level is absent",
 	);

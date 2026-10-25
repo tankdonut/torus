@@ -5,19 +5,12 @@
  * session model, and when delegation is the right move.
  */
 
-import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readSection } from "../config/loader.js";
 import { stripFrontmatter } from "../frontmatter.js";
-import {
-	projectStateDir,
-	pruneOrphanSessionFiles,
-	readJson,
-	torusHome,
-	writeJson,
-} from "../fsutil.js";
+import { projectStateDir, pruneOrphanSessionFiles, readJson, writeJson } from "../fsutil.js";
 import { applyPersonaTheme } from "../persona-theme.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { repoRoot, sessionPersona, setSessionPersona } from "../registry.js";
@@ -146,32 +139,19 @@ export function resetKeywordsWarningForTesting(): void {
 }
 
 /**
- * Keyword rows by precedence: config.json's "keywords" section wins over the
- * legacy keywords.json, and whichever source supplies the rows, user keywords
- * still merge over DEFAULT_KEYWORDS. A missing or malformed source is simply
- * the defaults, as before. The shadow/load warning prints once per process —
- * loadKeywords runs on every user message, a warning storm would not.
+ * Keyword rows from the unified config's "keywords" section, merged over
+ * DEFAULT_KEYWORDS: user rows win per key, the defaults fill the rest. A
+ * missing or malformed config is the defaults with one warning. The
+ * warning prints once per process — loadKeywords runs on every user
+ * message, a warning storm would not.
  */
 export function loadKeywords(): Record<string, string> {
-	const section = readSection<Record<string, string>>("keywords", {
-		load: loadLegacyKeywords,
-		sourceHint: "keywords.json",
-	});
+	const section = readSection<Record<string, string>>("keywords");
 	if (section.warning !== undefined && !warnedKeywordsConfig) {
 		warnedKeywordsConfig = true;
 		process.stderr.write(`torus: ${section.warning}\n`);
 	}
 	return mergeKeywords(section.value ?? {});
-}
-
-/**
- * Legacy keywords.json under the torus home, honoring TORUS_HOME (the old
- * hardcoded ~/.torus read leaked past test sandboxes into the real home).
- * Missing or malformed throws, which readSection reads as "no legacy value".
- */
-function loadLegacyKeywords(): Record<string, string> {
-	const raw = readFileSync(path.join(torusHome(), "keywords.json"), "utf8");
-	return JSON.parse(raw) as Record<string, string>;
 }
 
 let pendingKeyword: { word: string; text: string } | null = null;

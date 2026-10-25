@@ -165,7 +165,7 @@ test("knobNumber: env beats config beats default; non-finite and non-number conf
 	withEnv("TORUS_KNOB_PROBE", "abc", () => {
 		assert.ok(
 			Number.isNaN(knobNumber("TORUS_KNOB_PROBE", "guards", "maxToolOutput", 16000)),
-			"unparseable env wins as NaN like the legacy Number(env) read",
+			"unparseable env wins as NaN like the old Number(env) read",
 		);
 	});
 

@@ -89,7 +89,7 @@ test("SECURITY.md exists and documents trust handoffs and disclosure", () => {
 	const securityDocPath = path.join(root, "SECURITY.md");
 	assert.ok(existsSync(securityDocPath), "SECURITY.md does not exist");
 	const securityDoc = readFileSync(securityDocPath, "utf8");
-	for (const token of ["keywords.json", "Disclosure", "cc-safety-net", "torus_monitor"]) {
+	for (const token of ["config.json", "Disclosure", "cc-safety-net", "torus_monitor"]) {
 		assert.ok(securityDoc.includes(token), `SECURITY.md missing token: ${token}`);
 	}
 });
@@ -172,13 +172,13 @@ test("engine config surfaces section documents all four pinned-engine levers", (
 	}
 });
 
-test("model chain override file is documented", () => {
+test("model chain override section is documented", () => {
 	const start = doc.indexOf("### `providers`");
 	assert.ok(start !== -1, "docs/extensions.md missing the providers section");
 	const end = doc.indexOf("\n### ", start);
 	const section = doc.slice(start, end === -1 ? undefined : end);
 	for (const token of [
-		"chains.json",
+		"`chains` section",
 		"TORUS_HOME",
 		"non-empty array",
 		"falls back",
@@ -188,7 +188,7 @@ test("model chain override file is documented", () => {
 	}
 });
 
-test("chains.json alternate-provider registration is documented", () => {
+test("chains-section alternate-provider registration is documented", () => {
 	const start = doc.indexOf("### `providers`");
 	assert.ok(start !== -1, "docs/extensions.md missing the providers section");
 	const end = doc.indexOf("\n### ", start);
@@ -209,7 +209,7 @@ test("chains.json alternate-provider registration is documented", () => {
 
 test("efficiency doc notes ambient routing follows the fast tier", () => {
 	const efficiency = readFileSync(path.join(root, "docs/efficiency.md"), "utf8");
-	for (const token of ["ambient", "fast tier", "chains.json", "local model"]) {
+	for (const token of ["ambient", "fast tier", "`chains` section", "local model"]) {
 		assert.ok(efficiency.includes(token), `docs/efficiency.md missing token: ${token}`);
 	}
 });
@@ -246,7 +246,7 @@ test("torus serve section documents routes, auth, config, and the kill switch", 
 		"/runs",
 		"TORUS_SERVE",
 		"auth.json",
-		"serve.json",
+		"tokenPath",
 		"Bearer",
 		"0600",
 		"timingSafeEqual",

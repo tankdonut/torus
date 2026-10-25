@@ -115,7 +115,7 @@ export function knobString(
 
 /**
  * Number knob (env > user config.json > project config > fallback). The
- * default env parse is Number, preserving the legacy `Number(process.env[X])`
+ * default env parse is Number, preserving the old `Number(process.env[X])`
  * idiom: an unparseable env value resolves to NaN and still wins over config,
  * so consumers keep their own NaN clamping. A config value that is not a
  * finite number (JSON cannot carry NaN or Infinity, but strings and booleans

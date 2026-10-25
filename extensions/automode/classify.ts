@@ -153,7 +153,7 @@ function modelLabel(model: { provider: string; id: string }): string {
 
 /**
  * The chat fallback's default judge: the first fast-chain model the registry
- * knows with working credentials (chains.json overrides ride along), falling
+ * knows with working credentials (chains-section overrides ride along), falling
  * back to the session model. Undefined only when both miss.
  */
 export function pickChatModel(
