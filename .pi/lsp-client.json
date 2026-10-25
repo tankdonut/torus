@@ -1,0 +1,26 @@
+{
+	"lsp": {
+		"biome": {
+			"command": ["npx", "--no-install", "biome", "lsp-proxy", "--stdio"],
+			"extensions": [
+				".ts",
+				".tsx",
+				".js",
+				".jsx",
+				".mjs",
+				".cjs",
+				".mts",
+				".cts",
+				".json",
+				".jsonc",
+				".vue",
+				".astro",
+				".svelte",
+				".css",
+				".graphql",
+				".gql",
+				".html"
+			]
+		}
+	}
+}
