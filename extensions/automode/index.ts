@@ -460,7 +460,11 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		}
 	}
 
-	/** Display name of the model that will judge commands, for the on-notice. */
+	/**
+	 * Display name of the model that will judge commands — the one resolver
+	 * for both the on-notice and the /automode status panel, so the two
+	 * surfaces cannot drift apart.
+	 */
 	async function decisionModelLabel(ctx: ExtensionContext): Promise<string> {
 		try {
 			const picked = await pickModel(ctx.modelRegistry, pin);
@@ -482,7 +486,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		}
 		return ctx.model !== undefined
 			? `session model (${ctx.model.provider}/${ctx.model.id})`
-			: "session model";
+			: "none — will fail open";
 	}
 
 	/**
@@ -711,22 +715,18 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		if (startupWarning !== undefined) {
 			lines.push(`warning: ${startupWarning}`);
 		}
-		const fallback =
-			ctx.model !== undefined
-				? `session model fallback (${ctx.model.provider}/${ctx.model.id})`
-				: "none — will fail open";
 		try {
 			const picked = await pickModel(ctx.modelRegistry, pin);
 			if (picked.model !== undefined) {
 				lines.push(`decision model: ${picked.model.provider}/${picked.model.id}`);
 			} else {
-				lines.push(`decision model: ${fallback}`);
+				lines.push(`decision model: ${await decisionModelLabel(ctx)}`);
 			}
 			if (picked.warning !== undefined) {
 				lines.push(`warning: ${picked.warning}`);
 			}
 		} catch {
-			lines.push(`decision model: ${fallback}`);
+			lines.push(`decision model: ${await decisionModelLabel(ctx)}`);
 		}
 		const path = rulesPath();
 		if (mode() === "auto") {

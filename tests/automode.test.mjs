@@ -444,6 +444,35 @@ test("/automode prints the effective config including v2 keys", async () => {
 	assert.match(status, /classifyAllShell: on/);
 });
 
+test("/automode status names the fast-chain judge, matching the on-notice", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ mode: "1" });
+	// No classifier available; the fast chain's first entry resolves with auth,
+	// so the chat fallback judges with it before the session model is ever used.
+	const flash = { provider: "zai", id: "glm-5.3-flash" };
+	ctx.modelRegistry = {
+		getAvailableOfType: async () => [],
+		getModelOfType: () => undefined,
+		find: (provider, id) => (provider === "zai" && id === "glm-5.3-flash" ? flash : undefined),
+		hasConfiguredAuth: () => true,
+		classify: async () => {
+			throw new Error("no classifier in stub");
+		},
+		complete: async () => ({
+			stopReason: "stop",
+			content: [{ type: "text", text: jsonReply("allow") }],
+		}),
+	};
+	await call(pi, ctx, "ls /tmp", "status-fast");
+	const on = notifications.find((n) => n.message.startsWith("automode: on"));
+	assert.ok(on, "on-notice fired");
+	assert.ok(on.message.includes("fast chain (zai/glm-5.3-flash)"), on.message);
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
+	assert.ok(status, "status notify fired");
+	assert.match(status, /decision model: fast chain \(zai\/glm-5\.3-flash\)/);
+});
+
 test("config.json automode section governs: rules load from config, surfaces and hints name it", async () => {
 	resetAudit();
 	const { pi, ctx, notifications } = setup({ config: { automode: { deny: ["sudo *"] } } });
