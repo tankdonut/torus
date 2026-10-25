@@ -6,6 +6,7 @@
 | ------ | --------- |
 | Test one file | `node --experimental-strip-types --import ./tests/resolve-ts-hook.mjs --test tests/hashline.test.mjs` |
 | Test all | `npm test` |
+| Build the site | `npm run site:build` |
 | Typecheck | `npm run typecheck` |
 | Lint/format one file | `npx biome check extensions/hashline/index.ts` |
 | Lint all | `npm run lint` (biome + markdownlint) |
@@ -27,6 +28,7 @@
 | `runtime/bin/` | Launcher that spawns the pinned pi engine | `runtime/bin/torus.mjs` |
 | `scripts/` | Bench framework, binary build + payload-bake scripts | `scripts/bench.mjs` |
 | `docs/` | Reference docs (`docs/extensions.md`, coverage-tested; `docs/agents.md`, agent-file contract + enforcement; `docs/style.md`, the writing rubric both linters enforce; `docs/smoke-checklist.md`, manual TTY smokes) | `docs/extensions.md` |
+| `site/` | Astro static site deployed to GitHub Pages (own commands and rules) | `site/AGENTS.md` |
 
 ## External References
 
