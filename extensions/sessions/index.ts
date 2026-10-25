@@ -16,6 +16,7 @@ export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin"
 
 const DEFAULT_ROOT = path.join(homedir(), ".pi", "agent", "sessions");
 const SCAN_LIMIT = 300;
+const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
 
 export interface SessionHit {
 	file: string;
@@ -25,8 +26,48 @@ export interface SessionHit {
 	snippet: string;
 }
 
-export function searchSessions(query: string, root: string, limit: number): SessionHit[] {
-	const needle = query.toLowerCase();
+/** Scan bookkeeping for callers that surface it (the tool's result note). */
+export interface SessionScanStats {
+	skippedOversized: number;
+}
+
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Snippet for the first line that matches `needle`, or null when nothing in
+ * `raw` matches. One case-insensitive scan of the whole text gates the file;
+ * only then are line boundaries resolved around the first in-line match. A
+ * query that only matches across newlines yields an empty snippet (legacy
+ * `split("\n").find` behavior — the hit still counts).
+ */
+function snippetFor(needle: RegExp, raw: string): string | null {
+	needle.lastIndex = 0;
+	if (!needle.test(raw)) {
+		return null;
+	}
+	needle.lastIndex = 0;
+	for (let match = needle.exec(raw); match !== null; match = needle.exec(raw)) {
+		if (match[0].includes("\n")) continue;
+		const lineStart = raw.lastIndexOf("\n", match.index) + 1;
+		const lineEnd = raw.indexOf("\n", match.index);
+		const line = raw.slice(lineStart, lineEnd === -1 ? raw.length : lineEnd);
+		const indexInLine = match.index - lineStart;
+		needle.lastIndex = 0;
+		return line.slice(Math.max(0, indexInLine - 60), 220).replace(/\s+/g, " ");
+	}
+	needle.lastIndex = 0;
+	return "";
+}
+
+export function searchSessions(
+	query: string,
+	root: string,
+	limit: number,
+	stats?: SessionScanStats,
+): SessionHit[] {
+	const needle = new RegExp(escapeRegExp(query), "gi");
 	const dirs: Array<{ dir: string; mtimeMs: number }> = [];
 	try {
 		for (const entry of readdirSync(root, { withFileTypes: true })) {
@@ -51,25 +92,23 @@ export function searchSessions(query: string, root: string, limit: number): Sess
 		}
 		for (const file of files) {
 			const full = path.join(dir, file);
-			let raw: string;
 			try {
-				raw = readFileSync(full, "utf8");
-			} catch {
-				continue;
-			}
-			if (!raw.toLowerCase().includes(needle)) continue;
-			const line = raw.split("\n").find((candidate) => candidate.toLowerCase().includes(needle));
-			const snippet = (line ?? "")
-				.slice(Math.max(0, (line ?? "").toLowerCase().indexOf(needle) - 60), 220)
-				.replace(/\s+/g, " ");
-			hits.push({
-				file: full,
-				sessionId: /_([0-9a-f-]{36})\.jsonl$/.exec(file)?.[1] ?? file,
-				when: /^\d{4}-\d{2}-\d{2}T[\d-]+/.exec(file)?.[0] ?? "unknown",
-				project: path.basename(dir),
-				snippet,
-			});
-			if (hits.length >= limit) return hits;
+				if (statSync(full).size > MAX_TRANSCRIPT_BYTES) {
+					if (stats) stats.skippedOversized += 1;
+					continue;
+				}
+				const raw = readFileSync(full, "utf8");
+				const snippet = snippetFor(needle, raw);
+				if (snippet === null) continue;
+				hits.push({
+					file: full,
+					sessionId: /_([0-9a-f-]{36})\.jsonl$/.exec(file)?.[1] ?? file,
+					when: /^\d{4}-\d{2}-\d{2}T[\d-]+/.exec(file)?.[0] ?? "unknown",
+					project: path.basename(dir),
+					snippet,
+				});
+				if (hits.length >= limit) return hits;
+			} catch {}
 		}
 	}
 	return hits;
@@ -92,31 +131,95 @@ export function findSessionFile(sessionId: string, root: string = DEFAULT_ROOT):
 }
 
 /**
- * Does any session file for `sessionId` exist under `root`? `null` means the
- * root is unreadable — callers must prune nothing in that case. Sessions are
- * resumable indefinitely, so `true` must keep a session's satellite state
- * forever.
+ * Memoized one-level listing of a sessions root: every session id a file
+ * there can answer (`<ts>_<sessionId>.jsonl` in root or a project subdir,
+ * plus the bare `<sessionId>.jsonl` stem). Keyed by the root's mtime so new
+ * project dirs invalidate it; a TTL caps staleness for roots whose mtime
+ * never changes (new transcripts inside an existing project dir).
  */
-export function sessionFileExists(sessionId: string, root: string = DEFAULT_ROOT): boolean | null {
-	const suffix = `_${sessionId}.jsonl`;
+type SessionIndexEntry = { mtimeMs: number; builtAtMs: number; ids: Set<string> };
+
+const SESSION_INDEX_TTL_MS = 30_000;
+const SESSION_INDEX_MAX_ROOTS = 32;
+const sessionIndexCache = new Map<string, SessionIndexEntry>();
+
+/** Directory listings the memo has performed since process start (test-only). */
+let sessionDirListings = 0;
+
+/** Test-only: listing counter, for asserting the memo absorbs repeat lookups. */
+export function _sessionsStats(): { dirListings: number } {
+	return { dirListings: sessionDirListings };
+}
+
+/** Record every id `file` can answer: `_<id>.jsonl` suffixes plus the bare stem. */
+function indexSessionFile(ids: Set<string>, file: string): void {
+	if (!file.endsWith(".jsonl")) return;
+	const stem = file.slice(0, -".jsonl".length);
+	ids.add(stem);
+	for (let i = stem.indexOf("_"); i !== -1; i = stem.indexOf("_", i + 1)) {
+		ids.add(stem.slice(i + 1));
+	}
+}
+
+function buildSessionIndex(root: string, mtimeMs: number): SessionIndexEntry | null {
 	let entries: Dirent[];
 	try {
 		entries = readdirSync(root, { withFileTypes: true });
+		sessionDirListings += 1;
 	} catch {
 		return null;
 	}
+	const ids = new Set<string>();
 	for (const entry of entries) {
 		if (!entry.isDirectory()) {
-			if (entry.name.endsWith(suffix)) return true;
+			indexSessionFile(ids, entry.name);
 			continue;
 		}
 		try {
-			if (readdirSync(path.join(root, entry.name)).some((file) => file.endsWith(suffix))) {
-				return true;
+			for (const name of readdirSync(path.join(root, entry.name))) {
+				indexSessionFile(ids, name);
 			}
+			sessionDirListings += 1;
 		} catch {}
 	}
-	return false;
+	return { mtimeMs, builtAtMs: Date.now(), ids };
+}
+
+function sessionIndexFor(root: string): SessionIndexEntry | null {
+	let mtimeMs: number;
+	try {
+		mtimeMs = statSync(root).mtimeMs;
+	} catch {
+		sessionIndexCache.delete(root);
+		return null;
+	}
+	const cached = sessionIndexCache.get(root);
+	if (
+		cached &&
+		cached.mtimeMs === mtimeMs &&
+		Date.now() - cached.builtAtMs < SESSION_INDEX_TTL_MS
+	) {
+		return cached;
+	}
+	const entry = buildSessionIndex(root, mtimeMs);
+	if (!entry) return null;
+	if (!sessionIndexCache.has(root) && sessionIndexCache.size >= SESSION_INDEX_MAX_ROOTS) {
+		const oldest = sessionIndexCache.keys().next().value;
+		if (oldest !== undefined) sessionIndexCache.delete(oldest);
+	}
+	sessionIndexCache.set(root, entry);
+	return entry;
+}
+
+/**
+ * Does any session file for `sessionId` exist under `root`? `null` means the
+ * root is unreadable — callers must prune nothing in that case. Sessions are
+ * resumable indefinitely, so `true` must keep a session's satellite state
+ * forever. Lookups are served from the memoized root index.
+ */
+export function sessionFileExists(sessionId: string, root: string = DEFAULT_ROOT): boolean | null {
+	const index = sessionIndexFor(root);
+	return index ? index.ids.has(sessionId) : null;
 }
 
 const sessionsTool = defineTool({
@@ -131,17 +234,22 @@ const sessionsTool = defineTool({
 		),
 	}),
 	async execute(_toolCallId, params) {
-		const hits = searchSessions(params.query, DEFAULT_ROOT, params.limit ?? 8);
+		const stats: SessionScanStats = { skippedOversized: 0 };
+		const hits = searchSessions(params.query, DEFAULT_ROOT, params.limit ?? 8, stats);
+		const details: { hits: number; note?: string } = { hits: hits.length };
+		if (stats.skippedOversized > 0) {
+			details.note = `skipped ${stats.skippedOversized} oversized transcripts`;
+		}
 		if (hits.length === 0) {
 			return {
 				content: [{ type: "text", text: `no sessions match "${params.query}"` }],
-				details: { hits: 0 },
+				details,
 			};
 		}
 		const text = hits
 			.map((hit) => `${hit.when} · ${hit.project} · ${hit.sessionId}\n  ${hit.snippet}`)
 			.join("\n\n");
-		return { content: [{ type: "text", text }], details: { hits: hits.length } };
+		return { content: [{ type: "text", text }], details };
 	},
 });
 
