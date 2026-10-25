@@ -12,6 +12,7 @@ const {
 	loadRules,
 	loadAutomodeRules,
 	parseModelPin,
+	isBypassMode,
 	appendAuditRow,
 	rulesPath,
 	auditPath,
@@ -431,4 +432,29 @@ test("loadAutomodeRules: softDeny junk from config.json warns with the config.js
 	} finally {
 		clearConfig();
 	}
+});
+
+test("resolveMode: bypass selects bypass mode from env only, case and whitespace tolerant", () => {
+	assert.deepEqual(resolveMode({ TORUS_PERMISSION_MODE: "bypass" }), { mode: "bypass" });
+	assert.deepEqual(resolveMode({ TORUS_PERMISSION_MODE: " Bypass " }), { mode: "bypass" });
+	assert.equal(resolveMode({ TORUS_PERMISSION_MODE: "bypass" }).mode, "bypass");
+});
+
+test("resolveMode: config bypass is refused with the startup-only warning and default mode", () => {
+	const resolved = resolveMode({ TORUS_PERMISSION_MODE: undefined }, "bypass");
+	assert.equal(resolved.mode, "default");
+	assert.match(resolved.warning ?? "", /bypass/);
+	assert.match(resolved.warning ?? "", /startup-only/);
+});
+
+test("resolveMode: env bypass beats a config auto value — bypass wins its tier", () => {
+	assert.deepEqual(resolveMode({ TORUS_PERMISSION_MODE: "bypass" }, "auto"), { mode: "bypass" });
+});
+
+test("isBypassMode: true only for the exact bypass spelling", () => {
+	assert.equal(isBypassMode({ TORUS_PERMISSION_MODE: "bypass" }), true);
+	assert.equal(isBypassMode({ TORUS_PERMISSION_MODE: "BYPASS" }), true);
+	assert.equal(isBypassMode({ TORUS_PERMISSION_MODE: "auto" }), false);
+	assert.equal(isBypassMode({ TORUS_PERMISSION_MODE: " bypass " }), true);
+	assert.equal(isBypassMode({}), false);
 });

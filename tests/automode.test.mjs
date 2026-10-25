@@ -1121,3 +1121,51 @@ test("/automode setup apply: headless prints the draft and writes nothing; missi
 	assert.ok(!existsSync(configFilePath), "no config after discard");
 	rmSync(drafts, { recursive: true, force: true });
 });
+
+test("bypass mode: warns once, judges nothing, and cannot be switched mid-session", async () => {
+	resetAudit();
+	const { pi, ctx, notifications, reg } = setup({ mode: "bypass" });
+	const result = await call(pi, ctx, "rm -rf /tmp/whatever");
+	assert.equal(result, undefined, "nothing blocks in bypass mode");
+	assert.equal(reg.calls.complete, 0, "no model call ever happens");
+	assert.equal(reg.calls.classify, 0, "no classifier call ever happens");
+	assert.equal(auditRows().length, 0, "no audit rows");
+	const bypassNotice = notifications.find((n) => n.message.startsWith("automode: bypass"));
+	assert.ok(bypassNotice, "bypass announce fired");
+	assert.equal(bypassNotice.type, "warning");
+	assert.ok(
+		!notifications.some((n) => n.message.startsWith("automode: on")),
+		"bypass never announces auto",
+	);
+	await pi.commands.automode.handler("auto", ctx);
+	assert.ok(
+		notifications.some((n) => n.message.includes("startup-only")),
+		"switching out of bypass is refused as startup-only",
+	);
+	await pi.commands.automode.handler("", ctx);
+	const status = notifications.map((n) => n.message).find((m) => m.includes("automode status"));
+	assert.ok(status, "status notify fired");
+	assert.match(status, /mode: bypass \(from env\)/);
+	assert.match(status, /rules: .+ \(not loaded; bypass mode\)/);
+});
+
+test("config bypass is refused: default mode runs, the startup-only warning surfaces once", async () => {
+	resetAudit();
+	const { pi, ctx, notifications, reg } = setup({
+		mode: undefined,
+		config: { permissionMode: "bypass" },
+	});
+	const result = await call(pi, ctx, "rm -rf /tmp/whatever");
+	assert.equal(result, undefined, "default mode passes unclassified");
+	assert.equal(reg.calls.complete, 0, "no model call");
+	assert.ok(
+		!notifications.some((n) => n.message.startsWith("automode: on")),
+		"refused bypass never starts auto",
+	);
+	assert.ok(
+		!notifications.some((n) => n.message.startsWith("automode: bypass —")),
+		"refused bypass never starts bypass either",
+	);
+	const warned = notifications.filter((n) => n.message.includes("startup-only"));
+	assert.equal(warned.length, 1, "the refusal warning surfaces exactly once");
+});

@@ -15,6 +15,7 @@
 import { unlinkSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isBypassMode } from "../automode/config.js";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { projectStateDir, readJsonFallback, torusHome, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -177,5 +178,7 @@ export function registerApproval(pi: ExtensionAPI): void {
 
 export default function approvalExtension(pi: ExtensionAPI): void {
 	if (!gateExtension("approval", PLATFORM_SUPPORT)) return;
+	// Bypass mode (startup-only) runs without guards, so nothing ever asks.
+	if (isBypassMode()) return;
 	registerApproval(pi);
 }

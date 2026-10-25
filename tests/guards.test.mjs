@@ -353,3 +353,17 @@ test("writeBlockReason: @-prefixed and file:// spellings of the keywords file re
 		}
 	}
 });
+
+test("bypass mode: the guards extension registers no handlers", async () => {
+	const prev = process.env.TORUS_PERMISSION_MODE;
+	process.env.TORUS_PERMISSION_MODE = "bypass";
+	const registered = [];
+	const pi = { on: (name) => registered.push(name) };
+	try {
+		(await import("../extensions/guards/index.ts")).default(pi);
+		assert.equal(registered.length, 0, "bypass sessions load no guard handlers");
+	} finally {
+		if (prev === undefined) delete process.env.TORUS_PERMISSION_MODE;
+		else process.env.TORUS_PERMISSION_MODE = prev;
+	}
+});

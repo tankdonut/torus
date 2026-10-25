@@ -40,7 +40,7 @@
       "./extensions/session-title",
       "./extensions/ask",
       "./extensions/ui",
-      "./node_modules/cc-safety-net/dist/pi/index.js",
+      "./extensions/cc-safety-net",
       "./node_modules/pi-web-access/dist",
       "./node_modules/pi-lsp-client/src/index.ts",
       "./extensions/sandbox",

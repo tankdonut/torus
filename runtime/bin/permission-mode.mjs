@@ -10,8 +10,8 @@
  * Semantics:
  * - Both spellings are accepted anywhere in argv: `--permission-mode=VALUE`
  *   and two-token `--permission-mode VALUE`.
- * - VALUE must be exactly `auto` or `default` (lowercase); anything else is an
- *   error naming the bad value and the two valid ones.
+ * - VALUE must be exactly `auto`, `default`, or `bypass` (lowercase); anything
+ *   else is an error naming the bad value and the three valid ones.
  * - Every occurrence (and a two-token form's VALUE token) is stripped from the
  *   returned argv; other tokens keep their order.
  * - Repeated flags: the last occurrence's mode wins.
@@ -25,13 +25,14 @@
 
 const FLAG = "--permission-mode";
 const EQUALS_FLAG = "--permission-mode=";
-const VALID_MODES = new Set(["auto", "default"]);
+const VALID_MODES = new Set(["auto", "default", "bypass"]);
+const VALID_LIST = '"auto", "default", or "bypass"';
 
 /**
  * Extract the --permission-mode flag from an argv array.
  *
  * @param {string[]} argv Launcher argv (process.argv minus the first two).
- * @returns {{ argv: string[], mode?: "auto" | "default", error?: string }}
+ * @returns {{ argv: string[], mode?: "auto" | "default" | "bypass", error?: string }}
  *   Stripped argv plus the resolved mode, or an error message (mode undefined
  *   on error; argv still has every flag occurrence stripped).
  */
@@ -46,9 +47,9 @@ export function extractPermissionMode(argv) {
 			sawFlag = true;
 			const value = argv[i + 1];
 			if (value === undefined) {
-				error ??= 'missing value; expected "auto" or "default"';
+				error ??= `missing value; expected ${VALID_LIST}`;
 			} else if (!VALID_MODES.has(value)) {
-				error ??= `unknown value "${value}"; expected "auto" or "default"`;
+				error ??= `unknown value "${value}"; expected ${VALID_LIST}`;
 			} else {
 				mode = value;
 			}
@@ -59,7 +60,7 @@ export function extractPermissionMode(argv) {
 			sawFlag = true;
 			const value = token.slice(EQUALS_FLAG.length);
 			if (!VALID_MODES.has(value)) {
-				error ??= `unknown value "${value}"; expected "auto" or "default"`;
+				error ??= `unknown value "${value}"; expected ${VALID_LIST}`;
 			} else {
 				mode = value;
 			}

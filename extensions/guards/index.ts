@@ -12,7 +12,9 @@
  *     edit/bash results instead of raw model flailing)
  *
  * TORUS_GUARDS=0, or guards.enabled=false in config.json, disables everything;
- * TORUS_MAX_TOOL_OUTPUT (guards.maxToolOutput) tunes the cap.
+ * TORUS_MAX_TOOL_OUTPUT (guards.maxToolOutput) tunes the cap. Bypass mode
+ * (TORUS_PERMISSION_MODE=bypass, startup-only) skips registration entirely:
+ * the session runs without the context guards like every other guard.
  */
 
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -29,6 +31,7 @@ import {
 // The engine's exports map blocks deep package imports (ERR_PACKAGE_PATH_NOT_EXPORTED),
 // so reach the same module instance the engine's file tools use via a relative specifier.
 import { resolveToCwd } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/path-utils.js";
+import { isBypassMode } from "../automode/config.js";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -303,5 +306,6 @@ export function registerGuards(pi: ExtensionAPI): void {
 
 export default function guardsExtension(pi: ExtensionAPI): void {
 	if (!gateExtension("guards", PLATFORM_SUPPORT)) return;
+	if (isBypassMode()) return;
 	registerGuards(pi);
 }

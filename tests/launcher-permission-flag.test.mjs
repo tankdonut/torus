@@ -112,3 +112,28 @@ test("similar flags are not the flag: --permission-modex=auto passes through", (
 	assert.equal(result.error, undefined);
 	assert.deepEqual(result.argv, ["--permission-modex=auto"]);
 });
+
+test("equals spelling: --permission-mode=bypass yields mode bypass and strips the flag", () => {
+	const result = extractPermissionMode(["--permission-mode=bypass", "--version"]);
+	assert.deepEqual(result, { argv: ["--version"], mode: "bypass" });
+});
+
+test("two-token spelling: --permission-mode bypass consumes the value token", () => {
+	const result = extractPermissionMode(["--permission-mode", "bypass", "--version"]);
+	assert.deepEqual(result, { argv: ["--version"], mode: "bypass" });
+});
+
+test("repeated flags: a later default overrides an earlier bypass", () => {
+	const result = extractPermissionMode([
+		"--permission-mode=bypass",
+		"--permission-mode",
+		"default",
+	]);
+	assert.deepEqual(result, { argv: [], mode: "default" });
+});
+
+test("unknown value error names all three valid modes", () => {
+	const result = extractPermissionMode(["--permission-mode=yolo"]);
+	assert.equal(result.mode, undefined);
+	assert.match(result.error ?? "", /"auto", "default", or "bypass"/);
+});

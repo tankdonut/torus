@@ -20,7 +20,7 @@ import path from "node:path";
 import { CONFIG_FILE_NAME, readSection } from "../config/loader.js";
 import { torusHome } from "../fsutil.js";
 
-export type PermissionMode = "default" | "auto";
+export type PermissionMode = "default" | "auto" | "bypass";
 
 /** Milliseconds a permission-classifier call may run before it is abandoned. */
 export const CLASSIFY_TIMEOUT_MS = 15_000;
@@ -75,9 +75,11 @@ export type ModeResolution = {
  * "permissionMode" key of config.json beats "default". A defined env value
  * decides its tier outright, so env junk keeps default mode with a warning
  * and never falls through to a config value. A config value counts only when
- * it is exactly "auto" or "default"; anything else — including non-strings —
- * warns naming the value and is treated as unset. At most the deciding tier
- * warns. permissionMode is user-level only by construction: config.json
+ * it is exactly "auto" or "default"; "bypass" is refused with a warning
+ * naming the startup-only switch (sessions must be launched with it, so it
+ * can never be a sticky default), and anything else — including non-strings
+ * — warns naming the value and is treated as unset. At most the deciding
+ * tier warns. permissionMode is user-level only by construction: config.json
  * lives under the torus home (TORUS_HOME||~/.torus), so a repo checkout can
  * never set it for a session.
  */
@@ -90,15 +92,24 @@ export function resolveModeSource(
 		const value = raw.trim().toLowerCase();
 		if (AUTO_MODE_VALUES.has(value)) return { mode: "auto", source: "env" };
 		if (DEFAULT_MODE_VALUES.has(value)) return { mode: "default", source: "env" };
+		if (value === "bypass") return { mode: "bypass", source: "env" };
 		return {
 			mode: "default",
 			source: "env",
-			warning: `TORUS_PERMISSION_MODE=${raw} is not recognized; expected "1", "on", "auto" for auto mode or "0", "off", "default"/unset for default mode; using default mode`,
+			warning: `TORUS_PERMISSION_MODE=${raw} is not recognized; expected "1", "on", "auto" for auto mode, "bypass" for bypass mode, or "0", "off", "default"/unset for default mode; using default mode`,
 		};
 	}
 	if (configMode !== undefined) {
 		if (configMode === "auto") return { mode: "auto", source: "config" };
 		if (configMode === "default") return { mode: "default", source: "config" };
+		if (configMode === "bypass") {
+			return {
+				mode: "default",
+				source: "config",
+				warning:
+					'permissionMode="bypass" is refused: bypass is startup-only — launch each session with torus --permission-mode bypass (or TORUS_PERMISSION_MODE=bypass); using default mode',
+			};
+		}
 		return {
 			mode: "default",
 			source: "config",
@@ -122,6 +133,18 @@ export function resolveMode(
 } {
 	const { mode, warning } = resolveModeSource(env, configMode);
 	return warning === undefined ? { mode } : { mode, warning };
+}
+
+/**
+ * True when the session started in bypass mode. Guard extensions call this
+ * once, at registration time: the env is fixed for the engine's lifetime
+ * (the launcher sets it at spawn), so bypass is startup-only by construction —
+ * no slash command, config write, or tool call can flip it mid-session.
+ */
+export function isBypassMode(
+	env: { TORUS_PERMISSION_MODE?: string | undefined } = process.env,
+): boolean {
+	return (env["TORUS_PERMISSION_MODE"] ?? "").trim().toLowerCase() === "bypass";
 }
 
 export type AutomodeRulesFile = {

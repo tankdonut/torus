@@ -226,7 +226,7 @@ function torusHelp(versionLine) {
 		"",
 		"Usage:",
 		"  torus [options] [--] [@files...] [messages]    engine session (default)",
-		"  torus --permission-mode <auto|default>         start in a permission mode (sets TORUS_PERMISSION_MODE for the session)",
+		"  torus --permission-mode <auto|default|bypass>         start in a permission mode (sets TORUS_PERMISSION_MODE for the session; bypass disables all permission guards and is startup-only)",
 		"  torus serve                                    authenticated HTTP server",
 		"  torus acp-agent                                ACP v1 agent over stdio",
 		"  torus config <status|migrate>                  inspect unified config / fold legacy files",

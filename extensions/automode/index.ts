@@ -2,7 +2,12 @@
  * torus automode — engine wiring: LLM-classified bash auto-approval.
  *
  * Opt-in via TORUS_PERMISSION_MODE: in default mode the extension is inert —
- * no model calls, no audit rows, no prompts. In auto mode every bash tool
+ * no model calls, no audit rows, no prompts. In bypass mode (startup-only:
+ * TORUS_PERMISSION_MODE=bypass, set by the --permission-mode bypass launcher
+ * flag and refused from config.json) the whole permission layer is off —
+ * this extension never classifies, the context guards, cc-safety-net,
+ * sandbox, and approval extensions never register, and the mode cannot be
+ * changed mid-session. In auto mode every bash tool
  * call runs one fixed pipeline: deny rules, the critical ask floor (which no
  * allow rule can bypass), ask rules, allow rules, the circuit breaker, the
  * read-only fast path, the session decision cache, and finally the decision
@@ -362,7 +367,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 
 	/** Keep the statusline permission chip in sync with the live session mode. */
 	function paintPermission(ctx: ExtensionContext): void {
-		setStatusPermission(mode() === "auto" ? "auto" : "default", askEverything);
+		setStatusPermission(mode(), askEverything);
 		if (ctx.hasUI) refreshToruStatus(ctx);
 	}
 
@@ -508,6 +513,16 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		startupSource = resolved.source;
 		startupWarning = resolved.warning;
 		paintPermission(ctx);
+		if (startupWarning !== undefined) {
+			ctx.ui.notify(`automode: ${startupWarning}`, "warning");
+		}
+		if (startupMode === "bypass") {
+			ctx.ui.notify(
+				"automode: bypass — every permission guard (context guards, cc-safety-net, sandbox, approval, and this classifier) is off for this session; bypass is startup-only, restart without it to re-enable",
+				"warning",
+			);
+			return;
+		}
 		if (startupMode !== "auto") return;
 		const rulesWarnings = applyRules(loadAutomodeRules());
 		const origin = startupSource === "config" ? " (from config)" : "";
@@ -752,7 +767,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 				);
 			}
 		} else {
-			lines.push(`rules: ${path} (not loaded; default mode)`);
+			lines.push(`rules: ${path} (not loaded; ${mode()} mode)`);
 		}
 		lines.push(`cache: ${cache.size} ${cache.size === 1 ? "entry" : "entries"}`);
 		lines.push(
@@ -931,6 +946,13 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			if (arg !== "auto" && arg !== "default") {
 				ctx.ui.notify(
 					`automode: unknown mode "${args.trim()}" — usage: /automode [auto|default]`,
+					"warning",
+				);
+				return;
+			}
+			if (startupMode === "bypass") {
+				ctx.ui.notify(
+					"automode: this session started in bypass mode, which is startup-only — restart with torus --permission-mode auto (or default) to change the permission posture",
 					"warning",
 				);
 				return;

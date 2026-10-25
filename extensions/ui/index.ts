@@ -95,15 +95,17 @@ export interface GoalChip {
 let goalChip: GoalChip | undefined;
 
 /** Permission-mode chip state pushed by the automode extension; unset in default mode. */
-let permissionChip: { degraded: boolean } | undefined;
+let permissionChip: { kind: "auto" | "bypass"; degraded: boolean } | undefined;
 
 /**
  * Prod hook for the automode extension: auto mode renders a statusline chip
  * (`auto`, or `auto·ask` once the circuit breaker degrades the session to
- * asking); default mode drops it.
+ * asking); bypass mode renders a red `bypass` chip for the whole session so
+ * the missing guards stay visible; default mode drops it.
  */
-export function setStatusPermission(mode: "auto" | "default", degraded = false): void {
-	permissionChip = mode === "auto" ? { degraded } : undefined;
+export function setStatusPermission(mode: "auto" | "default" | "bypass", degraded = false): void {
+	permissionChip =
+		mode === "default" ? undefined : { kind: mode, degraded: mode === "auto" && degraded };
 }
 
 /**
@@ -187,8 +189,10 @@ export function buildStatus(theme?: StatusPainter): string {
 		segments.push(theme ? theme.fg("dim", `[${engine}]`) : `[${engine}]`);
 	}
 	if (permissionChip) {
-		const text = permissionChip.degraded ? "auto·ask" : "auto";
-		const color = permissionChip.degraded ? "warning" : "success";
+		const text =
+			permissionChip.kind === "bypass" ? "bypass" : permissionChip.degraded ? "auto·ask" : "auto";
+		const color =
+			permissionChip.kind === "bypass" ? "error" : permissionChip.degraded ? "warning" : "success";
 		segments.push(theme ? theme.fg(color, text) : text);
 	}
 	const mcpText = mcpStatusText(mcpCounts.connected, mcpCounts.registered);

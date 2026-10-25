@@ -57,6 +57,8 @@ All paths need provider auth on first run: `/login zai` signs in to the built-in
 
 torus starts in default mode: guards, sandboxing, and approval prompts judge tool calls as they run. Automode is an opt-in permission layer for unattended work: a decision model classifies each bash command, approves the safe ones, and asks before anything risky. Turn it on with `torus --permission-mode auto` or `TORUS_PERMISSION_MODE=auto`, or default it on with `"permissionMode": "auto"` in `~/.torus/config.json`; `1` and `on` also select auto mode, while unset, `0`, `off`, and `default` keep the built-in gate. The config key sets the default, the env var overrides it, and the flag sets the env var for one session. `/automode` reports the live status (naming where the mode came from) and switches the current session.
 
+Bypass mode turns every permission guard off at once: `torus --permission-mode bypass` (or `TORUS_PERMISSION_MODE=bypass`) starts the session with the context guards, cc-safety-net, the sandbox, the approval dialog, and the automode classifier all disabled, and the statusline carries a red `bypass` chip while it runs. Bypass is startup-only: it cannot be set from config.json (a `"bypass"` value there is refused with a warning) or switched mid-session, so each bypass session is a deliberate launch.
+
 Your rules run first, from the `automode` section of `~/.torus/config.json` (a missing section falls back to the legacy `~/.torus/automode.json`; see [Configuration](#configuration)):
 
 ```json

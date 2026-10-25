@@ -49,6 +49,7 @@ import {
 	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { readPersistedHosts } from "../approval/index.js";
+import { isBypassMode } from "../automode/config.js";
 import { torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
@@ -937,5 +938,8 @@ export async function registerSandbox(
 
 export default function sandboxExtension(pi: ExtensionAPI): void {
 	if (!gateExtension("sandbox", PLATFORM_SUPPORT)) return;
+	// Bypass mode (startup-only) disables every permission guard, this
+	// isolation layer included: no handlers, no chip, no activation.
+	if (isBypassMode()) return;
 	void registerSandbox(pi);
 }
