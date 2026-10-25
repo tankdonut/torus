@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.16.0](https://github.com/tankdonut/torus/compare/v0.15.0...v0.16.0) (2026-10-25)
+
+
+### Features
+
+* add /automode setup apply and the automode-setup skill ([e13256e](https://github.com/tankdonut/torus/commit/e13256e33df3d21e978940b0dac0e99cdde56163))
+* add project-level config with tightening-only automode ([6aaadeb](https://github.com/tankdonut/torus/commit/6aaadeb61873783543373cd4f0d5a27f687b6fad))
+* add startup-only bypassPermissions mode disabling all guards ([5ec9002](https://github.com/tankdonut/torus/commit/5ec9002387d1225f5b66abd139fa587d9d3e6d82))
+* add torus config status and migrate ([05af322](https://github.com/tankdonut/torus/commit/05af3229db0c28551e1c87d65f69751a84ded38e))
+* **extensions/ask:** navigate between questions with arrows and clicks ([c62ef19](https://github.com/tankdonut/torus/commit/c62ef19017bec7e0884bc5b7973b72a2c9d9b2ab))
+* **extensions/automode:** add command rules policy and ask floor ([e9ac4b5](https://github.com/tankdonut/torus/commit/e9ac4b5bac2ff27137c65bd5ebdff3699cead9fb))
+* **extensions/automode:** add decision-model client with classifier fallback ([79c95ff](https://github.com/tankdonut/torus/commit/79c95ff9f98e993854d724d8bac4f8966e49d389))
+* **extensions/automode:** add judge guidance and classifyAllShell to the rules file ([e278171](https://github.com/tankdonut/torus/commit/e278171adde97c5c7f0bd0fbd8f78481e4743458))
+* **extensions/automode:** add mode config, rules loading, and audit log ([11e9c1f](https://github.com/tankdonut/torus/commit/11e9c1f01cfa72ea90187c83f9cfaaa550934e4b))
+* **extensions/automode:** add the /automode setup wizard ([ecf112c](https://github.com/tankdonut/torus/commit/ecf112cbd689f2bd5cd5f435f1734bfb3a2160e7))
+* **extensions/automode:** add the softDeny tier with a since-last-ask intent window ([7aee847](https://github.com/tankdonut/torus/commit/7aee847551c0a227aed5e6821b5d7c9753b293b1))
+* **extensions/automode:** default the permission mode from the unified config ([31d36fe](https://github.com/tankdonut/torus/commit/31d36fef88b3285a14123fac47e6251b3f2ab78a))
+* **extensions/automode:** judge the critical floor and sub-shells instead of asking ([6df8fcc](https://github.com/tankdonut/torus/commit/6df8fcc924f3b8fa2fd124b3eb16383ab9c5c51f))
+* **extensions/automode:** judge with the fast model chain by default ([b8a02e5](https://github.com/tankdonut/torus/commit/b8a02e5eea0658418efe90006e85d732e95d60ac))
+* **extensions/automode:** read rules from the unified config ([ce54175](https://github.com/tankdonut/torus/commit/ce541757447d292571dcae5714a86863fd8580d0))
+* **extensions/automode:** scope the audit log to the project state dir ([cc584b2](https://github.com/tankdonut/torus/commit/cc584b2b3567561e874b3e6e7889cbc274c0035c))
+* **extensions/automode:** wire LLM-classified bash auto-approval ([3926b93](https://github.com/tankdonut/torus/commit/3926b93a21509325328e75eb48d1cd1abd464429))
+* **extensions/config:** add unified config loader and precedence kernel ([512fd62](https://github.com/tankdonut/torus/commit/512fd627a934c2c00a3dbd9d4eae8065781b38ca))
+* **extensions/providers:** read model chains from the unified config ([2c848a6](https://github.com/tankdonut/torus/commit/2c848a64f8081cc5f5358f5c3f3e3bc78e9a8d29))
+* **extensions/worktrees:** add teardownCommand to worktree_merge ([73b156d](https://github.com/tankdonut/torus/commit/73b156db607208f298b189c780094bb13ae02388))
+* **extensions:** read serve and keywords config from the unified config ([3cb83af](https://github.com/tankdonut/torus/commit/3cb83af93bfdbabf5f45eed1e30946e5cef4c491))
+* **extensions:** read tunable knobs from the unified config ([5fa7303](https://github.com/tankdonut/torus/commit/5fa7303ea627f2eccd2277f08ff3ea5d4af5fd19))
+* **runtime:** add --permission-mode launcher flag ([2f8e014](https://github.com/tankdonut/torus/commit/2f8e014cdd22550eeaab36598f14271abc726bbd))
+* show the permission mode as a statusline chip ([f94e78c](https://github.com/tankdonut/torus/commit/f94e78c25ee47bad7bfc75db2e6499ca7229c042))
+* **skills/automode-setup:** add trust profiles that seed drafts and boundary prose ([de3a45a](https://github.com/tankdonut/torus/commit/de3a45a4bdcd248e5e202eb60206c2b733b6d7b9))
+
+
+### Bug Fixes
+
+* **deps:** patch vulnerable transitive dependencies (body-parser, fast-uri, ip-address, undici, zod) ([a281c53](https://github.com/tankdonut/torus/commit/a281c53c59e53a5b5c796d5bbfe0e4b9c45199ed))
+* **extensions/approval:** read the approval toggle from the unified config ([b692e93](https://github.com/tankdonut/torus/commit/b692e93d85e6c1d9301b9e87e8cdefc05a4388e1))
+* **extensions/automode:** name the real decision model in /automode status ([e38d4dd](https://github.com/tankdonut/torus/commit/e38d4ddb116782515755dd7434648882c8683760))
+* **extensions/automode:** resolve torus-home paths, add startup notice ([7673737](https://github.com/tankdonut/torus/commit/76737375d178e9718fe51fa238e5fca5794364f0))
+* **extensions/config:** narrow the serve section description to what config sources ([6748bbe](https://github.com/tankdonut/torus/commit/6748bbe5bbe844fa7a76a5c92dc3f0d4fd30415b))
+* **extensions/config:** resolve the config CLI home through fsutil ([caa0ff9](https://github.com/tankdonut/torus/commit/caa0ff90b1155ebca2278bba33dbe658a49d6aad))
+
 ## [0.15.0](https://github.com/tankdonut/torus/compare/v0.14.0...v0.15.0) (2026-10-22)
 
 
