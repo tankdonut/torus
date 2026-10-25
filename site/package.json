@@ -1,0 +1,20 @@
+{
+	"name": "torus-site",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "astro dev",
+		"build": "astro build",
+		"preview": "astro preview"
+	},
+	"dependencies": {
+		"@astrojs/sitemap": "^3",
+		"@fontsource-variable/inter": "^5",
+		"@fontsource-variable/jetbrains-mono": "^5",
+		"@fontsource-variable/source-serif-4": "^5",
+		"astro": "^7.4.2"
+	},
+	"engines": {
+		"node": ">=22.23.4"
+	}
+}

@@ -11,6 +11,9 @@
   "keywords": [
     "pi-package"
   ],
+  "workspaces": [
+    "site"
+  ],
   "pi": {
     "extensions": [
       "./extensions/mcp",
@@ -60,6 +63,8 @@
     "test": "node --experimental-strip-types --import ./tests/resolve-ts-hook.mjs --test tests/",
     "bench:overhead": "node scripts/bench.mjs",
     "bench": "node scripts/bench.mjs",
+    "site:dev": "npm run dev -w site",
+    "site:build": "npm run build -w site",
     "prepare": "husky"
   },
   "peerDependencies": {

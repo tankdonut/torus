@@ -1,0 +1,35 @@
+---
+import "@fontsource-variable/inter";
+import "@fontsource-variable/jetbrains-mono";
+import "@fontsource-variable/source-serif-4";
+import "../styles/global.css";
+
+interface Props {
+	title?: string;
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
+const { title = "torus" } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}/favicon.svg`} />
+		<title>{title}</title>
+	</head>
+	<body>
+		<header>
+			<a class="wordmark" href="/">torus</a>
+			<a href="https://github.com/tankdonut/torus">GitHub</a>
+		</header>
+		<main>
+			<slot />
+		</main>
+		<footer>
+			<a href="https://github.com/tankdonut/torus">tankdonut/torus</a> · MIT
+		</footer>
+	</body>
+</html>
