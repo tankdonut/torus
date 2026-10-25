@@ -10,6 +10,7 @@
 	--font-serif: "Source Serif 4 Variable", ui-serif, Georgia, serif;
 	--spacing: 0.25rem;
 	--measure: 44rem;
+	--measure-wide: 82rem;
 	--text-h1: clamp(2.25rem, 5vw, 3rem);
 	--text-h2: clamp(1.5rem, 3vw, 1.875rem);
 	--text-h3: 1.25rem;
@@ -91,6 +92,10 @@ header .wordmark {
 main {
 	max-width: var(--measure);
 	margin: 0 auto;
+}
+
+main.wide {
+	max-width: var(--measure-wide);
 }
 
 footer {

@@ -11,10 +11,11 @@ import "../styles/global.css";
 
 interface Props {
 	title?: string;
+	wide?: boolean;
 }
 
 // biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
-const { title = "torus" } = Astro.props;
+const { title = "torus", wide = false } = Astro.props;
 
 // The woff2 files are imported directly (vite resolves + hashes the asset urls)
 // and the @font-face rules are inlined into <head>, so the three fontsource
@@ -46,7 +47,7 @@ const fontFaces = [
 			<a class="wordmark" href="/">torus</a>
 			<a href="https://github.com/tankdonut/torus">GitHub</a>
 		</header>
-		<main>
+		<main class={wide ? "wide" : ""}>
 			<slot />
 		</main>
 		<footer>

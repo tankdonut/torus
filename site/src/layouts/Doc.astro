@@ -19,7 +19,7 @@ const toc = headings.filter((heading) => heading.depth === 2 || heading.depth ==
 const sourceUrl = `https://github.com/tankdonut/torus/blob/main/${sourcePath}`;
 ---
 
-<Base title={`${title} · torus`}>
+<Base title={`${title} · torus`} wide>
 	<div class="doc">
 		<aside class="doc-toc">
 			<p class="doc-toc-title">On this page</p>
@@ -47,7 +47,7 @@ const sourceUrl = `https://github.com/tankdonut/torus/blob/main/${sourcePath}`;
 <style>
 	.doc {
 		display: grid;
-		grid-template-columns: minmax(14rem, 1fr) minmax(0, 3fr);
+		grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
 		gap: 3rem;
 		align-items: start;
 	}
@@ -90,6 +90,9 @@ const sourceUrl = `https://github.com/tankdonut/torus/blob/main/${sourcePath}`;
 	}
 	.doc-article :is(h1, h2, h3, h4) {
 		scroll-margin-top: 1.5rem;
+	}
+	.doc-article :is(p, ul, ol, blockquote) {
+		max-width: 72ch;
 	}
 	@media (max-width: 55rem) {
 		.doc {
