@@ -168,23 +168,7 @@ ACP agents skip model chains entirely (they run their own models): usage/cost fi
 
 #### Serve: torus as an ACP agent
 
-`torus acp-agent` answers the same protocol as the AGENT over stdio so editors (Zed, JetBrains) can drive torus. The launcher intercepts the subcommand before the pi passthrough (serve pattern) and runs `runAcpAgentRole()` from this module. The agent process is the surface, never an engine session, and stdout is protocol-only (logs to stderr).
-
-| Method | Behavior |
-| --- | --- |
-| `initialize` | Answers `loadSession: false`, `promptCapabilities.embeddedContext: false`, no `mcpCapabilities`, `authMethods: []` |
-| Any `session/*` before `initialize` | `-32002` (LSP-style ServerNotInitialized, borrowed by convention) |
-| `session/new` | Spawns a **fresh headless engine child** via `RpcChild` (`--mode rpc` + the canonical child extension set; no persona file, no `--model`) and returns an opaque `sessionId`; `mcpServers` params are ignored |
-| `session/prompt` | Concatenates the text blocks into one task and streams the child's events back as `session/update` (mapping below). The engine acks the prompt command at preflight, before the run finishes, and `agent_settled` settles the request → `{stopReason: "end_turn"}` |
-| `session/cancel` (notification) | Kills that session's child; the pending prompt settles `{stopReason: "cancelled"}` |
-| Engine child death mid-prompt | Settles the prompt with a `-32603` JSON-RPC error naming the failure, with no trailing chunk: the error is the surface, no hang |
-| A second in-flight prompt for the same session | Answers `-32602` |
-| `session/load` | `-32601` method-not-found: children are fresh-per-session |
-| `fs/*`, `terminal/*`, and every other unimplemented method | The same `-32601` method-not-found (capability-gated off at initialize) |
-
-Event mapping: `text_delta` → `agent_message_chunk` (one `messageId` per prompt turn); `tool_execution_start` → `tool_call` (`pending`, `kind: "other"`) + `tool_call_update` `in_progress`; `tool_execution_end` → `tool_call_update` `completed`/`failed`. All other engine events are omitted.
-
-EOF on stdin (or SIGINT/SIGTERM) kills all engine children and exits 0. Full guide: [docs/serve.md](serve.md).
+`torus acp-agent` answers the same protocol as the AGENT over stdio so editors (Zed, JetBrains) can drive torus: the launcher intercepts the subcommand before the pi passthrough (serve pattern) and runs `runAcpAgentRole()` from this module; the agent process is the surface (never an engine session), and stdout is protocol-only (logs to stderr). Each `session/new` spawns a fresh headless engine child whose events stream back as `session/update` (`text_delta` → `agent_message_chunk`, tool events → `tool_call`/`tool_call_update`); unimplemented methods (`session/load`, `fs/*`, `terminal/*`) answer `-32601` method-not-found, and stdin EOF or SIGINT/SIGTERM kills all engine children and exits 0. Method table, event mapping, and shutdown semantics live in [the ACP agent section of docs/serve.md](serve.md#acp-agent-torus-acp-agent).
 
 ### `prompts`
 
@@ -731,26 +715,7 @@ LSP tools over a shared server pool (lazy spawn, refcount, idle reaping, crash r
 
 ## `torus serve`
 
-`torus serve` boots an authenticated HTTP server over the delegation core (`extensions/serve/index.ts`): session-free `runDelegation()` calls with `parentSession: null`, the same production path memory reflect/dream and team respawn use. Every run lands in the shared registry (record + run beacon), is fleet-visible like any other delegation, and carries a unique `srv-` handle that also labels it in fleet views. The launcher intercepts the subcommand before the pi passthrough (`runtime/bin/torus.mjs`); the server is the process, never a pi manifest extension, and never starts implicitly. `TORUS_SERVE=0` refuses startup (exit 1).
-
-Routes (plain `node:http`, no framework):
-
-| Route | Auth | Behavior |
-| --- | --- | --- |
-| `GET /health` | none | `{ok: true, version}` |
-| `POST /run` | bearer | `{agent, task, model?, cwd?, wait?}`: default responds `{delegationId}` immediately; `wait: true` awaits the outcome (10-min cap → 504) and returns `{ok, text, usage, model, delegationId, error?}`. Agent/model validation is roster's own pre-flight (invalid agent or model → 400 naming the reason, no engine spawned) |
-| `GET /runs` | bearer | Delegation list from the shared registry (id, agent, model, handle, status, usage counters, `parentSession`) |
-| `POST /hook/<slug>` | per-trigger secret (`X-Torus-Secret`) | Webhook trigger fire; see Webhooks below |
-| anything else | none | 404 JSON |
-
-- **Config:** `port`, `bind`, and `triggers` resolve from the `serve` section of the [unified config](#unified-config), falling back to `~/.torus/serve.json` when the section is absent, then to defaults (`port` 4747, `bind` `127.0.0.1`); `tokenPath` is read from serve.json only, so config.json can never redirect the credential file; `EADDRINUSE` fails startup with a clean error naming the port and the override
-- **Auth:** bearer token in `~/.torus/serve/auth.json` (`{token, createdAt}`, mode 0600). First start mints 32 random bytes (hex) and prints `serve token: <token>` exactly once to stdout; subsequent starts read silently. Every `/run` and `/runs` request requires `Authorization: Bearer <token>`, compared constant-time (`crypto.timingSafeEqual` over sha256 digests); anything missing or wrong is 401 JSON
-- **Triggers:** `triggers[]` entries are time-based delegations, validated at startup (max 8, unique slug `name` matching `AGENT_NAME_RE`, `everyMinutes` integer ≥ 5, `agent` must be a delegatable roster agent, non-empty `task`, optional `model`, optional `webhook.path`: unique, `/hook/`-prefixed, slug remainder). An invalid entry refuses startup naming the trigger and field; a missing/empty array schedules nothing. Each trigger runs one unref'd `setInterval` firing the same roster pre-flight path as `POST /run`, and a tick skips while that trigger's own previous run is still active (per-trigger, never global). `lastFired` persists to `~/.torus/serve/triggers-state.json` (atomic write) after each attempt, so a restart within the interval does not re-fire. Intervals clear on shutdown
-- **Webhooks:** a `webhook` block adds a secret-authenticated `POST /hook/<slug>` route. The per-trigger secret is minted like the bearer token (persisted in triggers-state.json, printed once at first start). The JSON body (64 KiB cap → 413) renders into the trigger's task via `{{payload.<field>}}` (JSON-stringified, depth-capped at 8) and responds `{delegationId}` immediately; every request fires a new delegation with no skip gate. Wrong/missing secret → 401, unknown path → 404, non-POST → 405, malformed JSON → 400
-
-Trust boundary: delegations inherit the serve process environment, provider credentials included, so the bearer token is the entire boundary; anyone holding it can spend the account's models. Bind stays loopback by default.
-
-Full guide: [docs/serve.md](serve.md).
+`torus serve` (`extensions/serve/index.ts`) is an authenticated HTTP surface over the delegation core: session-free `runDelegation()` calls that land in the shared registry, fleet-visible like any other delegation, carrying `srv-` handles. The server binds loopback by default, never starts implicitly (the launcher intercepts the subcommand before the pi passthrough), and `TORUS_SERVE=0` refuses startup with exit 1. It exposes `GET /health`, the bearer-authenticated `POST /run` and `GET /runs`, scheduled `triggers`, and secret-authenticated webhook routes. The `Bearer` token is minted at first start into `~/.torus/serve/auth.json` (mode 0600), and per-trigger `lastFired` state persists to `~/.torus/serve/triggers-state.json` so a restart within the interval does not re-fire; `port` and `bind` resolve from the unified config's `serve` section or `~/.torus/serve.json`. The full route table, auth lifecycle (constant-time `timingSafeEqual` comparison over sha256 digests), trigger caps (`everyMinutes` minimum 5, max 8 triggers), and webhook handling live in [docs/serve.md](serve.md), the canonical guide.
 
 ## Ambient model calls
 
