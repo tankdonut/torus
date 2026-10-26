@@ -48,38 +48,11 @@ All paths need provider auth on first run: `/login zai` signs in to the built-in
 
 ## First five minutes
 
-1. `/roster`: the agents, their model chains, and credentialed providers.
-2. Delegate something small: `/explorer where does the roster load from?` Watch the right-hand pane, then **alt+t** for the live transcript.
-3. Say `team` in a message (or `deepwork`, `blueprint`). Keyword gates switch the session's execution mode.
-4. `/goal` to pin a standing objective; `/reflect` to distill the session into memory.
+Open with `/roster`, then delegate something small and watch it in the tmux pane and the **alt+t** fleet view. The walkthrough lives in [docs/getting-started.md](docs/getting-started.md).
 
 ## Permission modes
 
-torus starts in default mode: guards, sandboxing, and approval prompts judge tool calls as they run. Automode is an opt-in permission layer for unattended work: a decision model classifies each bash command, approves the safe ones, and asks before anything risky. Turn it on with `torus --permission-mode auto` or `TORUS_PERMISSION_MODE=auto`, or default it on with `"permissionMode": "auto"` in `~/.torus/config.json`; `1` and `on` also select auto mode, while unset, `0`, `off`, and `default` keep the built-in gate. The config key sets the default, the env var overrides it, and the flag sets the env var for one session. `/automode` reports the live status (naming where the mode came from) and switches the current session.
-
-Bypass mode turns every permission guard off at once: `torus --permission-mode bypass` (or `TORUS_PERMISSION_MODE=bypass`) starts the session with the context guards, cc-safety-net, the sandbox, the approval dialog, and the automode classifier all disabled, and the statusline carries a red `bypass` chip while it runs. Bypass is startup-only: it cannot be set from config.json (a `"bypass"` value there is refused with a warning) or switched mid-session, so each bypass session is a deliberate launch.
-
-Your rules run first, from the `automode` section of `~/.torus/config.json` (see [Configuration](#configuration)):
-
-```json
-{
-  "deny": ["git push --force *", "npm publish *"],
-  "ask": ["git push *", "npx *"],
-  "allow": ["npm test *", "node --test *"],
-  "environment": [
-    "Source control: github.com/tankdonut and all repos under it",
-    "Package registry: the default npm registry is fine"
-  ],
-  "softDeny": ["leave the staging database untouched"],
-  "softDenyExceptions": ["pg_dump against staging for a nightly backup"],
-  "hardDeny": ["never read or send ~/.ssh credentials anywhere"],
-  "classifyAllShell": false
-}
-```
-
-Entries are prefix patterns evaluated in deny, ask, then allow order; broad allow entries such as `*` match nothing and draw a warning at load. A fixed critical-operation floor covers `sudo` and `su`, recursive forced `rm` on root or home paths, force pushes, and recursive `chmod` or `chown` on root paths, and floored commands never take an allow-rule shortcut; `classifyAllShell` suspends allow rules while auto mode is on. The `environment`, `softDeny`, `softDenyExceptions`, and `hardDeny` entries are prose for the judge: a softDeny entry denies unless a matching `softDenyExceptions` entry or a recent, specific user intent line clears it. Read-only commands pass without a model call, three consecutive decision-model denies switch the session to asking for everything, and when every model path fails the command still runs unjudged with an `[automode]` notice in its tool result. Automode only adds gates: denials from guards, `cc-safety-net`, sandbox, and approval still win, and every decision appends one JSON line to `automode.log`.
-
-`/automode denied` lists the last denials from the audit log, and `/automode setup` drafts `environment` entries from the repo's git remotes and `ask` entries from repeated audit denials. The full pipeline order, judge tiers, classifier pinning, and fallback chains are in the [automode section](docs/extensions.md#automode) of docs/extensions.md.
+torus starts guarded in default mode; automode adds an opt-in classifier for unattended work, and bypass disables every guard for one deliberate launch. The modes, the rules example, and the narrative live in [docs/getting-started.md](docs/getting-started.md).
 
 ## Configuration
 

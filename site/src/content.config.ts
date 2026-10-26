@@ -10,6 +10,7 @@ const docs = defineCollection({
 	loader: glob({
 		base: new URL("../../", import.meta.url),
 		pattern: [
+			"docs/getting-started.md",
 			"docs/extensions.md",
 			"docs/configuration.md",
 			"docs/serve.md",

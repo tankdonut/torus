@@ -6,6 +6,7 @@ https://tankdonut.github.io/torus/
 
 - [Landing](https://tankdonut.github.io/torus/): Overview of the harness, from the pinned engine and delegation roster to the docs site and container image.
 - [Docs](https://tankdonut.github.io/torus/docs/): Index of the rendered documentation, with one entry per page.
+- [Getting started](https://tankdonut.github.io/torus/docs/getting-started/): Install torus, run your first session, and delegate your first task: the four install paths and the permission model.
 - [Extensions](https://tankdonut.github.io/torus/docs/extensions/): Every extension, tool, slash command, and environment variable in the harness, cataloged by manifest entry.
 - [Configuration](https://tankdonut.github.io/torus/docs/configuration/): Every user-facing knob in one place: config.json sections, environment variables, file policy, and the inspectors that show what's effective.
 - [Serve](https://tankdonut.github.io/torus/docs/serve/): The authenticated HTTP surface over the delegation core, from bearer tokens to webhooks.

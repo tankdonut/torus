@@ -10,6 +10,7 @@ export const DOC_ROUTES = new Map([
 	["README.md", "/"],
 	["CHANGELOG.md", "/changelog/"],
 	["SECURITY.md", "/security/"],
+	["docs/getting-started.md", "/docs/getting-started/"],
 	["docs/extensions.md", "/docs/extensions/"],
 	["docs/configuration.md", "/docs/configuration/"],
 	["docs/serve.md", "/docs/serve/"],
