@@ -191,6 +191,11 @@ table {
 	width: 100%;
 	font-size: var(--text-small);
 	line-height: 1.5;
+	/* Headings ship margin-top: 0 (spacing above them comes from the previous
+	   block's bottom margin), so tables need their own vertical margin or a
+	   heading directly after one renders flush against it. Same rhythm as
+	   blockquote/figure; sibling margin collapse keeps p + table gaps unchanged. */
+	margin: calc(var(--spacing) * 6) 0;
 }
 
 th,
