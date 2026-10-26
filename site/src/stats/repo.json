@@ -1,17 +1,17 @@
 {
-	"generatedAt": "2026-10-25T22:58:16.352Z",
+	"generatedAt": "2026-10-26T00:11:11.422Z",
 	"counts": {
 		"extensions": 32,
 		"tools": 32,
 		"agents": 7,
-		"skills": 11
+		"skills": 12
 	},
 	"git": {
-		"commits": 359,
+		"commits": 363,
 		"contributors": [
 			{
 				"name": "tankdonut",
-				"commits": 292,
+				"commits": 296,
 				"bot": false
 			},
 			{
@@ -114,40 +114,40 @@
 			},
 			{
 				"date": "2026-10-25",
-				"count": 58
+				"count": 62
 			}
 		]
 	},
 	"languages": [
 		{
 			"language": "JavaScript",
-			"share": 0.468,
+			"share": 0.466,
 			"lines": 30814
 		},
 		{
 			"language": "TypeScript",
-			"share": 0.3557,
+			"share": 0.3542,
 			"lines": 23421
 		},
 		{
 			"language": "Markdown",
-			"share": 0.0673,
-			"lines": 4433
+			"share": 0.0694,
+			"lines": 4589
 		},
 		{
 			"language": "JSON",
 			"share": 0.0667,
-			"lines": 4389
+			"lines": 4414
 		},
 		{
 			"language": "Astro",
-			"share": 0.0221,
-			"lines": 1455
+			"share": 0.0236,
+			"lines": 1562
 		},
 		{
 			"language": "CSS",
 			"share": 0.0111,
-			"lines": 733
+			"lines": 737
 		},
 		{
 			"language": "YAML",

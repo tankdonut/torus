@@ -1,29 +1,33 @@
 ---
+import pkg from "../../../package.json";
 import repo from "../stats/repo.json";
 
 /**
- * The stat row under the hero (salt.md's "1 process / 1 directory / 0 external
- * services"): every number comes from repo.json, which scripts/repo-stats.mjs
- * derives from the repository at build time.
+ * The machine strip under the hero, laid out in the statusline's own grammar:
+ * one mono line, segments joined by middle dots, every number derived from
+ * repo.json (scripts/repo-stats.mjs at build time) or package.json. The
+ * staggered segment boot is the page's one signature moment; each segment
+ * carries a transition-delay so the strip assembles left to right once, and
+ * prefers-reduced-motion (handled by the shared reveal rules) skips it.
  */
 const { extensions, tools, agents, skills } = repo.counts;
-const facts = [
+const segments = [
 	{ value: String(extensions), label: "extensions" },
 	{ value: String(tools), label: "tools" },
 	{ value: String(agents), label: "agents" },
 	{ value: String(skills), label: "skills" },
-	{ value: "1", label: "pinned engine" },
+	{ value: `v${pkg.version}`, label: "release" },
 ];
 ---
 
-<dl class="facts" data-reveal>
+<dl class="facts">
 	{
-		facts.map((fact) => (
-			<div class="fact">
-				<dt class="visually-hidden">{fact.label}</dt>
+		segments.map((segment, index) => (
+			<div class="fact" data-reveal style={`transition-delay:${index * 70}ms`}>
+				<dt class="visually-hidden">{segment.label}</dt>
 				<dd>
-					<span class="value">{fact.value}</span>
-					<span class="label">{fact.label}</span>
+					<span class="value">{segment.value}</span>
+					<span class="label"> {segment.label}</span>
 				</dd>
 			</div>
 		))
@@ -34,22 +38,29 @@ const facts = [
 	.facts {
 		display: flex;
 		flex-wrap: wrap;
-		gap: calc(var(--spacing) * 8) calc(var(--spacing) * 12);
+		align-items: baseline;
+		gap: calc(var(--spacing) * 2) 0;
 		margin: 0;
-		padding-block: calc(var(--spacing) * 5);
+		padding-block: calc(var(--spacing) * 3);
 		border-block: 1px solid var(--color-border);
+		font-family: var(--font-mono);
+		font-size: var(--text-mono-label);
+	}
+
+	.fact + .fact::before {
+		content: "·";
+		color: var(--color-muted);
+		margin: 0 calc(var(--spacing) * 4);
 	}
 
 	.fact dd {
 		margin: 0;
-		display: flex;
+		display: inline-flex;
 		align-items: baseline;
-		gap: calc(var(--spacing) * 2);
+		gap: 0.35em;
 	}
 
 	.value {
-		font-family: var(--font-mono);
-		font-size: 1.75rem;
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
 	}

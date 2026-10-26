@@ -3,10 +3,6 @@ import interLatinExt from "@fontsource-variable/inter/files/inter-latin-ext-wght
 import interLatin from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2";
 import monoLatinExt from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-ext-wght-normal.woff2";
 import monoLatin from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2";
-import serifLatinItalicExt from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-ext-wght-italic.woff2";
-import serifLatinExt from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-ext-wght-normal.woff2";
-import serifLatinItalic from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-italic.woff2";
-import serifLatin from "@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2";
 import "../styles/global.css";
 import GitHubMark from "../components/GitHubMark.astro";
 
@@ -17,20 +13,18 @@ interface Props {
 
 // biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
 const { title = "torus", wide = false } = Astro.props;
+const base = import.meta.env.BASE_URL;
 
-// The woff2 files are imported directly (vite resolves + hashes the asset urls)
-// and the @font-face rules are inlined into <head>, so the three fontsource
-// variable families are declared in the page itself instead of the bundled css.
+// Two type voices: mono is the machine voice (wordmark, labels, data),
+// sans is the explainer's. The woff2 files are imported directly (vite
+// resolves + hashes the asset urls) and the @font-face rules are inlined into
+// <head> for first paint.
 // biome-ignore lint/correctness/noUnusedVariables: rendered in the template below
 const fontFaces = [
 	`@font-face{font-family:'Inter Variable';font-style:normal;font-display:swap;font-weight:100 900;src:url(${interLatin}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
 	`@font-face{font-family:'Inter Variable';font-style:normal;font-display:swap;font-weight:100 900;src:url(${interLatinExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
 	`@font-face{font-family:'JetBrains Mono Variable';font-style:normal;font-display:swap;font-weight:100 800;src:url(${monoLatin}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
 	`@font-face{font-family:'JetBrains Mono Variable';font-style:normal;font-display:swap;font-weight:100 800;src:url(${monoLatinExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
-	`@font-face{font-family:'Source Serif 4 Variable';font-style:normal;font-display:swap;font-weight:200 900;src:url(${serifLatin}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
-	`@font-face{font-family:'Source Serif 4 Variable';font-style:normal;font-display:swap;font-weight:200 900;src:url(${serifLatinExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C4,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
-	`@font-face{font-family:'Source Serif 4 Variable';font-style:italic;font-display:swap;font-weight:200 900;src:url(${serifLatinItalic}) format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}`,
-	`@font-face{font-family:'Source Serif 4 Variable';font-style:italic;font-display:swap;font-weight:200 900;src:url(${serifLatinItalicExt}) format('woff2-variations');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C4,U+2113,U+2C60-2C7F,U+A720-A7FF}`,
 ].join("\n");
 ---
 
@@ -40,14 +34,16 @@ const fontFaces = [
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}/favicon.svg`} />
-		<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
-		<meta name="theme-color" content="#101014" media="(prefers-color-scheme: dark)" />
+		<meta name="theme-color" content="#f8f8f7" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#101216" media="(prefers-color-scheme: dark)" />
 		<style is:inline set:html={fontFaces} />
 		<title>{title}</title>
 	</head>
 	<body>
 		<header>
-			<a class="wordmark" href={`${import.meta.env.BASE_URL}/`}>torus</a>
+			<a class="wordmark" href={`${base}/`}>torus</a>
+			<span class="seg" aria-hidden="true">·</span>
+			<a class="seg" href={`${base}/docs/`}>docs</a>
 			<a class="gh" href="https://github.com/tankdonut/torus" aria-label="torus on GitHub">
 				<GitHubMark />
 			</a>
@@ -59,7 +55,8 @@ const fontFaces = [
 			<a class="gh" href="https://github.com/tankdonut/torus">
 				<GitHubMark />tankdonut/torus
 			</a>
-			· MIT
+			<span aria-hidden="true">·</span>
+			<span>MIT</span>
 		</footer>
 		<script is:inline>
 			(() => {
@@ -83,3 +80,22 @@ const fontFaces = [
 		</script>
 	</body>
 </html>
+
+<style>
+	header .seg {
+		color: var(--color-muted);
+	}
+
+	header a.seg:hover {
+		color: var(--color-accent);
+	}
+
+	header .gh {
+		margin-left: auto;
+		color: var(--color-muted);
+	}
+
+	header .gh:hover {
+		color: var(--color-text);
+	}
+</style>

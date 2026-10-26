@@ -15,7 +15,9 @@ const bar = [...topLanguages.map((l) => ({ name: l.language, share: l.share }))]
 if (othersShare > 0) bar.push({ name: "Other", share: othersShare });
 
 // GitHub linguist colors where they exist; anything else falls back to the
-// ordered palette so every language still gets a distinct hue.
+// ordered palette so every language still gets a distinct hue. JSON is the
+// one override: linguist pins it near-black, which disappears on the dark
+// repo card, so it shares the neutral gray instead.
 const LINGUIST: Record<string, string> = {
 	TypeScript: "#3178c6",
 	JavaScript: "#f1e05a",
@@ -25,7 +27,7 @@ const LINGUIST: Record<string, string> = {
 	YAML: "#cb171e",
 	Shell: "#89e051",
 	SVG: "#ffb13b",
-	JSON: "#292929",
+	JSON: "#8b8b8b",
 	Other: "#8b8b8b",
 };
 const fallbackPalette = ["#a374be", "#e34c26", "#519aba", "#f1502f", "#0db7ed", "#199f4b"];
@@ -87,7 +89,6 @@ const lastPush = git.lastCommit ?? "";
 <style>
 	.repo {
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
 		background: var(--color-surface);
 		padding: calc(var(--spacing) * 5);
 	}
@@ -110,11 +111,9 @@ const lastPush = git.lastCommit ?? "";
 	}
 
 	.vis {
-		font-size: 0.75rem;
+		font-family: var(--font-mono);
+		font-size: var(--text-mono-label);
 		color: var(--color-muted);
-		border: 1px solid var(--color-border);
-		border-radius: 99px;
-		padding: 0 0.5rem;
 	}
 
 	.desc {
@@ -124,7 +123,6 @@ const lastPush = git.lastCommit ?? "";
 	.langbar {
 		display: flex;
 		height: 8px;
-		border-radius: 99px;
 		overflow: hidden;
 	}
 
@@ -152,7 +150,6 @@ const lastPush = git.lastCommit ?? "";
 	.swatch {
 		width: 8px;
 		height: 8px;
-		border-radius: 2px;
 	}
 
 	.pct {

@@ -1,31 +1,53 @@
 :root {
-	--color-bg: #ffffff;
-	--color-surface: #f4f4f5;
-	--color-text: #1b1b1f;
-	--color-muted: #63636b;
-	--color-accent: #22798a;
-	--color-border: #e3e3e6;
+	/* Light theme: paper ground, dark terminal objects. Accent hues are the
+	 * TUI's own (cyan/violet/amber from the committed captures), darkened to
+	 * hold contrast on paper. */
+	--color-bg: #f8f8f7;
+	--color-surface: #eeefec;
+	--color-surface-2: #e4e5e1;
+	--color-text: #16161a;
+	--color-muted: #616169;
+	--color-accent: #1f7a89;
+	--color-accent-soft: color-mix(in srgb, #1f7a89 14%, transparent);
+	--color-amber: #8a620f;
+	--color-violet: #6f5cae;
+	--color-green: #2e7d51;
+	--color-border: #d8d9d4;
+	/* The terminal blocks keep the TUI's own palette in both themes. */
+	--term-bg: #101216;
+	--term-panel: #16161c;
+	--term-border: #26262e;
+	--term-ink: #cfd6dd;
+	--term-muted: #7e8892;
 	--font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
 	--font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
-	--font-serif: "Source Serif 4 Variable", ui-serif, Georgia, serif;
 	--spacing: 0.25rem;
 	--measure: 44rem;
-	--measure-wide: 82rem;
-	--text-h1: clamp(2.25rem, 5vw, 3rem);
-	--text-h2: clamp(1.5rem, 3vw, 1.875rem);
-	--text-h3: 1.25rem;
+	--measure-wide: 78rem;
+	--text-display: clamp(2.75rem, 6.5vw, 4.625rem);
+	--text-h1: clamp(2.25rem, 4.5vw, 3rem);
+	--text-h2: 1.625rem;
+	--text-h3: 1.125rem;
 	--text-small: 0.875rem;
-	--radius: 6px;
+	--text-mono-label: 0.8125rem;
 }
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--color-bg: #101014;
-		--color-surface: #1a1a20;
-		--color-text: #ebebee;
-		--color-muted: #9c9ca6;
-		--color-accent: #6fc3d1;
-		--color-border: #2b2b33;
+		/* Dark theme is the terminal's own world, not an inversion: the page
+		 * ground is the TUI background, panels are the TUI's pane color, and
+		 * the accents sit at their in-terminal values. */
+		--color-bg: #101216;
+		--color-surface: #16161c;
+		--color-surface-2: #1d1d25;
+		--color-text: #d6dbe1;
+		--color-muted: #8b939c;
+		--color-accent: #56b6c2;
+		--color-accent-soft: color-mix(in srgb, #56b6c2 18%, transparent);
+		--color-amber: #cd9a22;
+		--color-violet: #a798d7;
+		--color-green: #68b78d;
+		--color-border: #26262e;
 	}
 }
 
@@ -35,6 +57,7 @@
 
 html {
 	color-scheme: light dark;
+	scrollbar-color: var(--color-muted) transparent;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -48,8 +71,9 @@ body {
 	background: var(--color-bg);
 	color: var(--color-text);
 	font-family: var(--font-sans);
-	font-size: 1rem;
-	line-height: 1.6;
+	font-size: 1.0625rem;
+	line-height: 1.65;
+	caret-color: var(--color-accent);
 	-webkit-font-smoothing: antialiased;
 }
 
@@ -86,22 +110,37 @@ main {
 	padding: calc(var(--spacing) * 6);
 }
 
-header {
+/* Page chrome speaks the statusline grammar: one mono line, segments joined
+ * by middle dots, sitting on a hairline rule. */
+header,
+footer {
 	display: flex;
-	align-items: baseline;
-	justify-content: space-between;
+	align-items: center;
+	gap: calc(var(--spacing) * 2);
+	font-family: var(--font-mono);
+	font-size: var(--text-mono-label);
+}
+
+header {
+	justify-content: flex-start;
 	border-bottom: 1px solid var(--color-border);
 }
 
+footer {
+	border-top: 1px solid var(--color-border);
+	color: var(--color-muted);
+}
+
+/* The wordmark carries the TUI statusline's violet. */
 header .wordmark {
 	font-family: var(--font-mono);
 	font-weight: 700;
-	font-size: 1.25rem;
-	color: var(--color-text);
+	font-size: 1.125rem;
+	color: var(--color-violet);
 }
 
 main {
-	max-width: var(--measure);
+	max-width: var(--measure-wide);
 	margin: 0 auto;
 }
 
@@ -109,16 +148,8 @@ main.wide {
 	max-width: var(--measure-wide);
 }
 
-footer {
-	display: flex;
-	align-items: center;
-	gap: 0.45em;
-	border-top: 1px solid var(--color-border);
-	color: var(--color-muted);
-}
-
 ::selection {
-	background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+	background: var(--color-accent-soft);
 }
 
 h1,
@@ -126,9 +157,9 @@ h2,
 h3,
 h4 {
 	margin: 0 0 0.6em;
-	line-height: 1.15;
-	letter-spacing: -0.015em;
-	font-weight: 650;
+	line-height: 1.12;
+	letter-spacing: -0.012em;
+	font-weight: 600;
 	text-wrap: balance;
 }
 
@@ -144,38 +175,15 @@ h3 {
 	font-size: var(--text-h3);
 }
 
-/* Serif-italic accent inside headings: <em>word</em>. The italic glyph
-   slants away from following punctuation; the tiny pull-in keeps "layer,"
-   from reading as "layer ,". */
-h1 em,
-h2 em,
-h3 em {
-	font-family: var(--font-serif);
-	font-style: italic;
-	font-weight: 480;
-	letter-spacing: 0;
-	margin-inline-end: -0.05em;
-}
+/* Type contrast comes from size, not weight or accent styling; the serif
+   italic <em> accent inside headings was retired with the re-imagined site. */
 
 section[id] {
 	scroll-margin-top: calc(var(--spacing) * 8);
 }
 
 .section {
-	padding-block: calc(var(--spacing) * 14);
-}
-
-.section + .section {
-	border-top: 1px solid var(--color-border);
-}
-
-.section-num {
-	font-family: var(--font-mono);
-	font-size: var(--text-small);
-	font-weight: 500;
-	color: var(--color-muted);
-	letter-spacing: 0.1em;
-	font-variant-numeric: tabular-nums;
+	padding-block: calc(var(--spacing) * 16);
 }
 
 table {
@@ -207,15 +215,11 @@ pre {
 code {
 	font-size: 0.875em;
 	background: var(--color-surface);
-	border: 1px solid var(--color-border);
-	border-radius: 4px;
 	padding: 0.1em 0.35em;
 }
 
 pre {
 	background: var(--color-surface);
-	border: 1px solid var(--color-border);
-	border-radius: var(--radius);
 	padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
 	overflow-x: auto;
 	font-size: var(--text-small);
@@ -224,8 +228,6 @@ pre {
 
 pre code {
 	background: none;
-	border: none;
-	border-radius: 0;
 	padding: 0;
 	font-size: inherit;
 }
@@ -255,8 +257,8 @@ blockquote {
 	margin: calc(var(--spacing) * 6) 0;
 	padding-left: calc(var(--spacing) * 5);
 	border-left: 2px solid var(--color-border);
-	font-family: var(--font-serif);
-	font-size: 1.125rem;
+	color: var(--color-muted);
+	font-size: 1.0625rem;
 	line-height: 1.5;
 }
 
@@ -271,7 +273,6 @@ kbd {
 	background: var(--color-bg);
 	border: 1px solid var(--color-border);
 	border-bottom-width: 2px;
-	border-radius: 4px;
 	padding: 0.1em 0.4em;
 }
 
@@ -292,7 +293,10 @@ dl {
 }
 
 dt {
-	font-weight: 600;
+	font-family: var(--font-mono);
+	font-size: var(--text-mono-label);
+	font-weight: 500;
+	padding-top: 0.15em;
 }
 
 dd {

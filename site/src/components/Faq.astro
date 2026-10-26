@@ -41,17 +41,29 @@ const jsonLd = JSON.stringify({
 
 	summary {
 		cursor: pointer;
-		padding: calc(var(--spacing) * 4) 0;
+		padding: calc(var(--spacing) * 4) 0 calc(var(--spacing) * 4) 1.25rem;
 		font-weight: 600;
-		list-style-position: outside;
+		list-style: none;
+		position: relative;
+	}
+
+	/* Disclosure marker in the terminal's own vocabulary, hung in the left
+	 * margin so wrapped summary lines stay on the text grid. */
+	summary::before {
+		position: absolute;
+		left: 0;
+		content: "+";
+		font-family: var(--font-mono);
+		font-weight: 500;
+		color: var(--color-muted);
+	}
+
+	details[open] summary::before {
+		content: "–";
 	}
 
 	summary:hover {
 		color: var(--color-accent);
-	}
-
-	summary::marker {
-		color: var(--color-muted);
 	}
 
 	details[open] summary {

@@ -1,17 +1,27 @@
 ---
 import { cropLines, parseAnsiScreen } from "../lib/ansi.mjs";
+import capturesMeta from "../tui/captures.json";
 
 /**
  * Renders a real TUI capture (site/src/tui/<scene>.ans, produced by
  * scripts/capture-tui.mjs from a live session) as colored HTML. Captures are
  * screenshots, not adaptive UI: the palette is the terminal's own, so the
  * block keeps a fixed dark background in both site themes.
+ *
+ * Framing discipline: square corners, no window chrome, no device frame. A
+ * real capture does not need to be dressed as a fake terminal window; the
+ * amber "live" mark reuses the TUI's running color.
+ *
+ * Line semantics are the terminal's own: lines never wrap; content wider
+ * than the frame scrolls horizontally under a themed scrollbar, and the
+ * head row carries the capture geometry from captures.json. A wrapped
+ * capture would fake content the session never showed.
  */
 
 interface Props {
 	/** Scene file stem under src/tui/ (e.g. "fleet-list"). */
 	scene: string;
-	/** Chrome-bar title, e.g. "tmux · fleet browser". */
+	/** Pane-title label shown in the block's head row, e.g. "alt+t · fleet". */
 	title?: string;
 	/** Caption under the capture. */
 	caption?: string;
@@ -30,6 +40,9 @@ if (typeof raw !== "string") {
 	throw new Error(`TUI capture "${scene}" is missing; run npm run -w site capture`);
 }
 const lines = cropLines(parseAnsiScreen(raw), { keepLast, from, to });
+const [captureWidth, captureHeight] = capturesMeta.geometry;
+const fullHeight = parseAnsiScreen(raw).length;
+const geometry = `${captureWidth}×${captureHeight}`;
 
 const defaultFg = "#cfd6dd";
 
@@ -68,10 +81,10 @@ const rendered = lines
 
 <figure class="tui">
 	<div class="frame">
-		<div class="chrome" aria-hidden="true">
-			<span class="dot"></span><span class="dot"></span><span class="dot"></span>
-			{title ? <span class="chrome-title">{title}</span> : null}
-			<span class="tag">live capture</span>
+		<div class="head" aria-hidden="true">
+			{title ? <span class="head-title">{title}</span> : <span class="head-title">{scene}</span>}
+			<span class="geometry">{geometry}{lines.length !== fullHeight ? " · crop" : ""}</span>
+			<span class="live"><span class="pulse"></span>live capture</span>
 		</div>
 		<pre set:html={rendered} />
 	</div>
@@ -84,72 +97,98 @@ const rendered = lines
 	}
 
 	.frame {
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
+		border: 1px solid var(--term-border);
 		overflow: hidden;
-		background: #101216;
+		background: var(--term-bg);
 		/* One uniform width for every capture, like a stack of same-sized
 		 * screenshots; narrower content letterboxes against the dark bg. */
 		width: 100%;
 	}
 
-	.chrome {
+	.head {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: calc(var(--spacing) * 1.5);
-		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
-		border-bottom: 1px solid #26262e;
-		background: #16161c;
+		gap: calc(var(--spacing) * 1) calc(var(--spacing) * 2);
+		padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+		border-bottom: 1px solid var(--term-border);
+		background: var(--term-panel);
 	}
 
-	.dot {
-		width: 9px;
-		height: 9px;
-		border-radius: 50%;
-		background: #2e2e38;
-	}
-
-	.chrome-title {
-		margin-left: calc(var(--spacing) * 2);
+	/* Segments never break mid-phrase; the row wraps as whole segments on
+	 * narrow screens instead. */
+	.head-title,
+	.geometry {
 		font-family: var(--font-mono);
-		font-size: var(--text-small);
-		color: #9a9aa4;
+		font-size: var(--text-mono-label);
+		color: var(--term-muted);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 	}
 
-	.tag {
+	/* Amber is the TUI's running-agent color; the live mark spends it on the
+	 * one thing that is actually running. The head panel is dark in both site
+	 * themes, so the mark pins the in-terminal amber value. */
+	.live {
 		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45em;
 		font-family: var(--font-mono);
-		font-size: 0.6875rem;
-		letter-spacing: 0.08em;
-		color: #6f7f6f;
-		border: 1px solid #2c3a2c;
-		border-radius: 99px;
-		padding: 0.05rem 0.5rem;
+		font-size: 0.75rem;
+		color: #cd9a22;
+	}
+
+	.pulse {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: #cd9a22;
 	}
 
 	pre {
 		margin: 0;
 		padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
 		overflow-x: auto;
+		scrollbar-width: thin;
+		scrollbar-color: #3d3d4d transparent;
 		font-family: var(--font-mono);
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		line-height: 1.5;
-		color: #cfd6dd;
+		color: var(--term-ink);
 		tab-size: 8;
-		/* global.css styles bare pre (surface bg + border); this block is its own
-		 * frame on a fixed terminal background, so neutralize it and hug content. */
+		/* Terminal semantics: lines never wrap (see the component docblock). */
+		white-space: pre;
 		background: transparent;
 		border: none;
-		border-radius: 0;
 		width: max-content;
 		max-width: 100%;
 	}
 
-	@media (width <= 40rem) {
-		pre {
-			width: auto;
-			white-space: pre-wrap;
-			overflow-wrap: anywhere;
+	/* Chrome hides overlay scrollbars until touched; styling ::-webkit-scrollbar
+	 * forces a classic, always-reserved track so the affordance exists at every
+	 * width where the capture overflows. */
+	pre::-webkit-scrollbar {
+		height: 8px;
+	}
+
+	pre::-webkit-scrollbar-thumb {
+		background: #3d3d4d;
+	}
+
+	pre::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	/* Dark theme: the capture ground equals the page ground, so the frame needs
+	 * a visible edge and a lighter head panel to read as an object. */
+	@media (prefers-color-scheme: dark) {
+		.frame {
+			border-color: #343444;
+		}
+
+		.head {
+			background: #1a1a22;
 		}
 	}
 </style>
