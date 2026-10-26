@@ -8,17 +8,17 @@ const entries = await getCollection("docs");
 
 const listing: { id: string; description: string }[] = [
 	{ id: "docs/getting-started.md", description: "Install torus, run your first session, and delegate your first task: the four install paths and the permission model." },
-	{ id: "docs/extensions.md", description: "Every extension, tool, slash command, and environment variable in the harness, cataloged by manifest entry." },
 	{ id: "docs/configuration.md", description: "Every user-facing knob in one place: config.json sections, environment variables, file policy, and the inspectors that show what's effective." },
+	{ id: "docs/extensions.md", description: "Every extension, tool, slash command, and environment variable in the harness, cataloged by manifest entry." },
 	{ id: "docs/writing-agents.md", description: "Authoring roster agents: frontmatter schema, prompt markers, body skeleton, and the checklist for adding one." },
+	{ id: "docs/skills.md", description: "The Agent Skills standard the skills directory follows, and how skills reach delegated children." },
 	{ id: "docs/serve.md", description: "The authenticated HTTP surface over the delegation core, from bearer tokens to webhooks." },
 	{ id: "docs/container.md", description: "The prebuilt multi-arch GHCR image: what ships inside, tag semantics, and how to run it." },
 	{ id: "docs/pi-packages.md", description: "Installing torus as a pi package: what the manifest carries and how updates behave." },
 	{ id: "docs/updating.md", description: "What versions mean while torus is 0.x, and how to upgrade or roll back the binary and the image." },
-	{ id: "docs/troubleshooting.md", description: "When something breaks: doctor, kill switches, and the common failure modes." },
-	{ id: "docs/efficiency.md", description: "How the harness-layer context overhead is measured: stock pi versus torus on identical prompts." },
 	{ id: "docs/instructions.md", description: "How the engine discovers AGENTS.md instruction files, and what torus adds around them." },
-	{ id: "docs/skills.md", description: "The Agent Skills standard the skills directory follows, and how skills reach delegated children." },
+	{ id: "docs/efficiency.md", description: "How the harness-layer context overhead is measured: stock pi versus torus on identical prompts." },
+	{ id: "docs/troubleshooting.md", description: "When something breaks: doctor, kill switches, and the common failure modes." },
 	{ id: "SECURITY.md", description: "The threat model: what torus defends against, what it does not, and how to report issues." },
 	{ id: "CHANGELOG.md", description: "Release history: every version with its changes." },
 ];
