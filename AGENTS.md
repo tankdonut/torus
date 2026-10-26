@@ -16,6 +16,8 @@
 | Build container image | `./make.sh image` |
 | Test container image | `./make.sh image-test` |
 | Overhead bench (spawns engine, costs tokens) | `npm run bench:overhead` |
+| Startup bench (spawns engines, no tokens) | `npm run bench:startup` |
+| Per-turn FS microbench (no engine spawn) | `npm run bench:fs` |
 
 ## Layout
 
@@ -48,6 +50,7 @@
 - Guarded writes and reads: bare `cat`/`head`/`tail` of an absolute path is blocked: use the read tool; overwriting an existing similar file via `write` is blocked: use `edit` (`extensions/guards/index.ts`).
 - The engine is pinned in `package.json` (`@earendil-works/pi-coding-agent`); `TORUS_PI_BIN` overrides the binary path.
 - Repo docs (README, CONTRIBUTING, docs/) make no hand-written numerical claims that duplicate a machine source of truth: tool/skill/agent counts, version floors, model context sizes. They go stale silently; reference the authoritative file (`package.json`, `agents/`, `docs/extensions.md`) instead. Benchmark numbers pasted into `docs/efficiency.md` are the machine's report and stay exempt from this rule; the file itself is hand-maintained and follows `docs/style.md` like any other page. Truly regenerated output (`docs/efficiency.html`, `docs/bench-records.json`, `CHANGELOG.md`) is never hand-edited.
+- Changes that can shift delegation overhead (child system prompts, the canonical extension set, anything that grows what a spawned engine loads) carry a before/after comparison in the PR using the matching instrument: `npm run bench:overhead` for token/cost, `npm run bench:startup` for cold-start wall time, `npm run bench:fs` for per-turn filesystem ops (`scripts/bench/`); the overhead bench's run history lives in `docs/bench-records.json`.
 
 ## Commit convention
 

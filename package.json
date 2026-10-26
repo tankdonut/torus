@@ -62,6 +62,8 @@
     "lint:fix": "biome check --write . && markdownlint-cli2 --fix",
     "test": "node --experimental-strip-types --import ./tests/resolve-ts-hook.mjs --test tests/",
     "bench:overhead": "node scripts/bench.mjs",
+    "bench:startup": "node scripts/bench/startup.mjs",
+    "bench:fs": "node --experimental-strip-types --import ./tests/resolve-ts-hook.mjs scripts/bench/local-ops.mjs",
     "bench": "node scripts/bench.mjs",
     "site:dev": "npm run dev -w site",
     "site:build": "npm run build -w site",
