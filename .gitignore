@@ -5,3 +5,4 @@ dist/
 .tmp/
 runtime/bin/payload-assets.mjs
 site/public/docs/
+site/src/stats/repo.json

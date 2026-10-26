@@ -1,9 +1,9 @@
 /**
  * Derives the repo facts rendered on the landing page (facts strip, repo card,
  * commit activity graph) from the repository itself, so no number on the site
- * is hand-maintained. Writes site/src/stats/repo.json, which is committed so
- * `astro dev` works without a git history; `npm run -w site build` regenerates
- * it (the pages workflow checks out with fetch-depth: 0 for exactly this).
+ * is hand-maintained. Writes site/src/stats/repo.json, untracked and regenerated
+ * by `npm run -w site build` and `npm run -w site dev` (their prebuild/predev
+ * hooks); the pages workflow checks out with fetch-depth: 0 for exactly this.
  *
  *     node scripts/repo-stats.mjs
  */
