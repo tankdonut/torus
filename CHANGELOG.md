@@ -1,5 +1,71 @@
 # Changelog
 
+## [0.17.0](https://github.com/tankdonut/torus/compare/v0.16.0...v0.17.0) (2026-10-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* read every config section from config.json only
+* remove the legacy work and teams stores
+* remove legacy state fallbacks from leaf modules and delegation logs
+
+### Features
+
+* per-model delegation concurrency caps for parallel delegations ([5fb6c7c](https://github.com/tankdonut/torus/commit/5fb6c7cec6dea184e0a5b9b781dc2eb5e51e83a4))
+* **scripts:** add cold-start startup bench ([afa66f4](https://github.com/tankdonut/torus/commit/afa66f42764292b560a5d18b470f7ae398dd0de6))
+* **site:** add 404 page and llms.txt ([eebc9b3](https://github.com/tankdonut/torus/commit/eebc9b30513ff36e7e884665c0e8a32851e70645))
+* **site:** add astro site skeleton ([0eaa2b1](https://github.com/tankdonut/torus/commit/0eaa2b192fc505fd90991d88251f179538cfc280))
+* **site:** capture team mode instead of the raw delegation log ([b158bd2](https://github.com/tankdonut/torus/commit/b158bd2e6331877bd83b448fe6266afcc03fba7b))
+* **site:** deploy docs site to github pages ([96cfb83](https://github.com/tankdonut/torus/commit/96cfb834dc8590c605dcafd79f884042fe832947))
+* **site:** derive repo facts from git at build time ([1aab780](https://github.com/tankdonut/torus/commit/1aab7800ce141aeaf57edb307643ed94b9d96b02))
+* **site:** editorial landing page ([cd0a802](https://github.com/tankdonut/torus/commit/cd0a8023e2d16963d412e174d169834c45ba0327))
+* **site:** numbered-section design system ([edc4cb7](https://github.com/tankdonut/torus/commit/edc4cb735a901f3f4ea87ef2e2a77f5ec380e9ef))
+* **site:** re-imagine the landing around the TUI's own visual language ([874c9a3](https://github.com/tankdonut/torus/commit/874c9a3cb2932f12d2062579877a3b8fab781e2d))
+* **site:** re-imagine the landing in the terminal's own palette ([4c5da18](https://github.com/tankdonut/torus/commit/4c5da18ef4e2980ef62ffb672418d6420b481082))
+* **site:** render real TUI captures on the landing ([3c48dfc](https://github.com/tankdonut/torus/commit/3c48dfcd1520139df2493ebfca8310b4c1f4c446))
+* **site:** render the user-facing docs in place ([faf18bb](https://github.com/tankdonut/torus/commit/faf18bb937b5932c1365ebb24cd19662a6a7262e))
+* **site:** rework the landing around live captures and repo facts ([7903216](https://github.com/tankdonut/torus/commit/7903216a95788675380d2cf0241ff1f5d75391b0))
+* **skills:** add site-design skill ([90a86d3](https://github.com/tankdonut/torus/commit/90a86d33f360f0a6779eb098bbe391bdec539cd3))
+
+
+### Bug Fixes
+
+* correct the make.sh check help text ([b00598b](https://github.com/tankdonut/torus/commit/b00598b2e1adb9cbb48695bdfd557dd6d8beab66))
+* **extensions/astgrep:** run sg asynchronously and memoize the PATH probe ([33e7424](https://github.com/tankdonut/torus/commit/33e742464d3684f0d87819c76f6db150f2c6f09d))
+* **extensions/automode:** read only the audit log tail for denials ([500073d](https://github.com/tankdonut/torus/commit/500073df573f116521b3699f8cfe3d6fb83b6125))
+* **extensions/config:** memoize config file loads by mtime ([e5ed315](https://github.com/tankdonut/torus/commit/e5ed31532552edfcd8e31a2398f337e4dc389ae1))
+* **extensions/doctor:** run checks concurrently and memoize PATH probes ([9d7d93a](https://github.com/tankdonut/torus/commit/9d7d93a6617279c877971996929219aa55a59287))
+* **extensions/hashline:** run the formatter asynchronously and index rebase lookups ([408d74d](https://github.com/tankdonut/torus/commit/408d74d7cf28093e94cf123fecad9e8718c0e9c4))
+* **extensions/memory:** cache parsed entries and run store setup once ([dadd03b](https://github.com/tankdonut/torus/commit/dadd03b4933099dd795c967ff486d738e58470ce))
+* **extensions/monitor:** run monitor checks asynchronously ([46431dd](https://github.com/tankdonut/torus/commit/46431dd04ad8870198d0aeb85935e5d2c6773b12))
+* **extensions/osnotify:** send toasts without blocking the event loop ([3d68aeb](https://github.com/tankdonut/torus/commit/3d68aeb732e40de48ee3642ab0605597d0f03e9b))
+* **extensions/registry:** run delegation pane and telemetry lifecycle asynchronously ([e799322](https://github.com/tankdonut/torus/commit/e799322e2dd94de706fe6473fb762902532bd8f3))
+* **extensions/sessions:** budget session search scans and memoize session lookups ([e7a435f](https://github.com/tankdonut/torus/commit/e7a435ff6810dbed9a0157db2182b2bd7eba7f50))
+* **extensions/team:** poll mailbox deltas and lock tasks without blocking ([4282952](https://github.com/tankdonut/torus/commit/428295296fcba26babdf45e917497bbfdb331ca2))
+* **extensions/ui:** memoize the banner version lookup ([8d9b772](https://github.com/tankdonut/torus/commit/8d9b772bb65770e3f7be4a8b0484d3332f3b5930))
+* **extensions/work:** cache the active-work lookup and read only the ledger tail ([fd1251a](https://github.com/tankdonut/torus/commit/fd1251a7ad8abe65a044595449decb7845f748ef))
+* **extensions/work:** describe the actual slug resolution tiers ([6237687](https://github.com/tankdonut/torus/commit/6237687ce3ba109089d35e1787fc7a4a718fd370))
+* **extensions/worktrees:** halve the merge preamble git rounds ([f38ca61](https://github.com/tankdonut/torus/commit/f38ca616faffceec993d71a8e6cd0ed7c47cdfac))
+* **extensions:** cache the write-target disk read across guards ([7edd925](https://github.com/tankdonut/torus/commit/7edd92533229bafd966288f7c783242c50e16178))
+* **extensions:** parse transcripts incrementally in the fleet view ([67d6695](https://github.com/tankdonut/torus/commit/67d6695a65ab1a7fb9eca43d406d56b032914c2d))
+* resolve the biome language server from the repo-local install ([9d44b32](https://github.com/tankdonut/torus/commit/9d44b3238ec86800c60de9bd1a8715913193dd24))
+* **runtime:** cache the engine pin probe and skip reinstalls when deps are unchanged ([6e34268](https://github.com/tankdonut/torus/commit/6e342683f79bfb6b4bac833b5bc2291ceada9653))
+* **site:** copy shell commands without the prompt ([0d7c9d6](https://github.com/tankdonut/torus/commit/0d7c9d6d6b50b16357fbd7d64c6e9c3165914f83))
+* **site:** give doc pages a wide shell ([f36bb14](https://github.com/tankdonut/torus/commit/f36bb14064aa934f770c6cb87228cc4ba7ba7ab2))
+* **site:** let the hero lede fill the landing shell ([56ce2b3](https://github.com/tankdonut/torus/commit/56ce2b3237894af1bca00f76824f48c83a682104))
+* **site:** point header links at the site base ([256e642](https://github.com/tankdonut/torus/commit/256e64201626c8a175f62e781d886e8e8ca8caf2))
+* **site:** render the live captures at one uniform width ([b6626dd](https://github.com/tankdonut/torus/commit/b6626ddfd5fff0415e862f11cff2ea524cbf5352))
+* **site:** reuse the harness banner mark for the favicon ([c1c7c24](https://github.com/tankdonut/torus/commit/c1c7c24386c671245b47fb9e1b13c0810131644f))
+* **site:** space headings after tables ([331ad4c](https://github.com/tankdonut/torus/commit/331ad4cca0390b083389fd0770bdac15cc89e7b8))
+* **site:** widen the landing shell ([a29d4ad](https://github.com/tankdonut/torus/commit/a29d4ad9737089e0c73ce1a3453c51c857d63570))
+
+
+### Code Refactoring
+
+* read every config section from config.json only ([930d6a3](https://github.com/tankdonut/torus/commit/930d6a3f15852bea9669421b78bbcaf42d46f2d1))
+* remove legacy state fallbacks from leaf modules and delegation logs ([4aafa08](https://github.com/tankdonut/torus/commit/4aafa08fc22a9937b2bb4c3eaef0e730a563e3ad))
+* remove the legacy work and teams stores ([936b567](https://github.com/tankdonut/torus/commit/936b567ffae971402db2ee88528924056f2ccbc6))
+
 ## [0.16.0](https://github.com/tankdonut/torus/compare/v0.15.0...v0.16.0) (2026-10-25)
 
 
