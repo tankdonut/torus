@@ -1,6 +1,6 @@
 # torus as a pi package
 
-torus is installable as a pi package: one git source that loads the extension pack, the skills, and the agent roster into a stock [pi](https://github.com/earendil-works/pi) (the same engine torus runs on). This page records what installs, how versioning and updates behave, and how to take only part of the pack. Running the full harness (launcher, binary, container image) is a different consumption model. See the [README](../README.md) and [release-workflow.md](release-workflow.md).
+torus is installable as a pi package: one git source that loads the extension pack, the skills, and the agent roster into a stock [pi](https://github.com/earendil-works/pi) (the same engine torus runs on). This page records what installs, how versioning and updates behave, and how to take only part of the pack. Running the full harness (launcher, binary, container image) is a different consumption model. See the [README](../README.md) and [updating.md](updating.md).
 
 ## What the package carries
 

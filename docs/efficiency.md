@@ -9,10 +9,10 @@ torus's overhead.
 
 ## Summary
 
-Headline results first: totals per config across all six tasks, the overhead
-delta (torus − stock), and how that delta moved since the prior release's
-run. The table is pasted from the torus 0.14.0 bench output; the HTML report
-carries the same table, regenerated on every run.
+Headline results first: totals per config across the full task set, the
+overhead delta (torus − stock), and how that delta moved since the prior
+release's run. The table is pasted from the torus 0.14.0 bench output; the
+HTML report carries the same table, regenerated on every run.
 
 | model             |      field |     stock |     torus | Δ overhead |                Δ change |
 | ----------------- | :--------- | :-------- | :-------- | :--------- | :---------------------- |
@@ -35,7 +35,7 @@ movement within run-to-run noise.
 
 ## Method
 
-- **Task set.** Six fixed, read-only, repo-local prompts in three difficulty
+- **Task set.** A fixed, read-only, repo-local prompt set in three difficulty
   tiers (trivial lookup / aggregate sweep / multi-file reasoning), defined in
   `scripts/bench/tasks.mjs`. Deterministic inputs, no file writes, no network
   beyond the model API, so any token delta comes from the harness layer, not
@@ -91,7 +91,7 @@ npm run bench:overhead -- --model zai/glm-5.3-flash,zai/glm-5.3
 | `--model <ids>` | comma-separated model ids, one full sweep each (default `zai/glm-5.3-flash`) |
 | `--runs N` | measured runs per task × config (default 3) |
 | `--warmup N` | warmup runs per task × config, discarded from stats (default 1) |
-| `--tasks <ids>` | comma-separated task subset (default: all six) |
+| `--tasks <ids>` | comma-separated task subset (default: all tasks) |
 | `--stock-only` / `--torus-only` | single-config sweeps (no delta rows) |
 | `--timeout <sec>` | per-run wall-clock cap (default 600) |
 | `--json <path>` | append the run's raw records (warmups included) to the sidecar history; delete the file to start fresh |

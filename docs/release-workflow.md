@@ -35,6 +35,16 @@ The `v`-prefix tag convention is fixed by what already exists: `metadata-action`
 - `BREAKING CHANGE:` footer or `!` → **minor while 0.x** (never an automated jump to 1.0.0), major after 1.0
 - everything else (`chore:`, `docs:`, `test:`, `ci:`, unknown types) → no bump on its own; rides the next feat/fix
 
+The full subject-to-effect mapping:
+
+| Subject pattern | Version effect | Changelog |
+| --- | --- | --- |
+| `feat:` | minor | Features |
+| `fix:` | patch | Bug Fixes |
+| `feat!:` or a `BREAKING CHANGE:` footer | minor while 0.x, major at 1.0+ | Features/Breaking |
+| `chore:`, `ci:`, `docs:`, `test:`, unknown types | no bump | rides the next feat/fix |
+| `feat(deps):` (engine pins) | minor | Features |
+
 **[DECISION] Scopes carry no bump semantics.** Subjects may carry a Conventional Commits scope (`feat(extensions/hashline):`, `fix(agents):`); release-please ignores it for versioning, so `feat(anything):` is still the minor channel and `fix(anything):` still patch. Scopes exist for history readability. Convention: `area/name` when the change stays inside one item of an area (`fix(extensions/hashline):`, `feat(agents/leader):`), the bare area when it spans the area (`fix(agents):`, `chore(tests):`), no scope for cross-cutting work. Scope names copy the repo's directory segments so each area keeps one canonical spelling. `deps` is reserved for dependency bumps: the engine-pin rule below and Renovate's `commitMessagePrefix` prefixes.
 
 **[DECISION] Engine-pin bumps are user-visible features, not chores.** Every binary and image ships the pinned engine (`@earendil-works/pi-coding-agent`), and first-run installs exactly that pin: an engine bump changes runtime behavior for every consumer. Rule: a PR that moves the engine pin (typically Renovate's) must land with a `feat(deps):` subject (or `feat(deps)!:` when the engine's own changelog says breaking). It then correctly drives a minor bump and appears in the changelog instead of riding silently as a patch-level `chore(deps):`.

@@ -17,6 +17,8 @@ const docs = defineCollection({
 			"docs/serve.md",
 			"docs/container.md",
 			"docs/pi-packages.md",
+			"docs/updating.md",
+			"docs/troubleshooting.md",
 			"docs/efficiency.md",
 			"docs/instructions.md",
 			"docs/skills.md",

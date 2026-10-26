@@ -13,6 +13,8 @@ https://tankdonut.github.io/torus/
 - [Serve](https://tankdonut.github.io/torus/docs/serve/): The authenticated HTTP surface over the delegation core, from bearer tokens to webhooks.
 - [Container](https://tankdonut.github.io/torus/docs/container/): The prebuilt multi-arch GHCR image: what ships inside, tag semantics, and how to run it.
 - [pi packages](https://tankdonut.github.io/torus/docs/pi-packages/): Installing torus as a pi package: what the manifest carries and how updates behave.
+- [Updating](https://tankdonut.github.io/torus/docs/updating/): What versions mean while torus is 0.x, and how to upgrade or roll back the binary and the image.
+- [Troubleshooting](https://tankdonut.github.io/torus/docs/troubleshooting/): When something breaks: doctor, kill switches, and the common failure modes.
 - [Efficiency](https://tankdonut.github.io/torus/docs/efficiency/): How the harness-layer context overhead is measured: stock pi versus torus on identical prompts.
 - [Instructions](https://tankdonut.github.io/torus/docs/instructions/): How the engine discovers AGENTS.md instruction files, and what torus adds around them.
 - [Skills](https://tankdonut.github.io/torus/docs/skills/): The Agent Skills standard the skills directory follows, and how skills reach delegated children.

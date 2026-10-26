@@ -17,6 +17,8 @@ export const DOC_ROUTES = new Map([
 	["docs/serve.md", "/docs/serve/"],
 	["docs/container.md", "/docs/container/"],
 	["docs/pi-packages.md", "/docs/pi-packages/"],
+	["docs/updating.md", "/docs/updating/"],
+	["docs/troubleshooting.md", "/docs/troubleshooting/"],
 	["docs/efficiency.md", "/docs/efficiency/"],
 	["docs/instructions.md", "/docs/instructions/"],
 	["docs/skills.md", "/docs/skills/"],
