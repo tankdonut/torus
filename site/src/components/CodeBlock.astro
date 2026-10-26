@@ -12,7 +12,10 @@ interface Props {
 	title?: string;
 }
 const { lines, title } = Astro.props;
-const payload = lines.join("\n");
+// The copy payload drops the `$` shell-prompt decoration (if any) from each
+// line: pasting a copied command must yield a runnable command, and the prompt
+// is presentation only. Lines without a prompt prefix pass through untouched.
+const payload = lines.map((line) => line.replace(/^\$\s+/, "")).join("\n");
 ---
 
 <figure class="codeblock">
