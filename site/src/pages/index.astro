@@ -63,6 +63,10 @@ const faq = [
 		a: "Yes. alt+t opens the fleet browser over every live run: s steers one mid-run with a message, x stops it, and the transcripts are on screen the whole time.",
 	},
 	{
+		q: "Can I leave a session running unattended?",
+		a: "Opt in with --permission-mode auto. The automode decision model judges every shell command against your rules, risky commands stop for a dialog (or block when headless), and each decision lands in an audit log. The other guards stay on.",
+	},
+	{
 		q: "How do I get my work back out?",
 		a: "Plain git branches and commits. Teams, mailboxes, and state live under ~/.torus as ordinary files; nothing is stored in a proprietary format.",
 	},
@@ -206,6 +210,8 @@ const fontFaces = [
 					<dd>tmux panes, statusline, and the fleet browser.</dd>
 					<dt>memory</dt>
 					<dd>Git-backed notes injected into future sessions.</dd>
+					<dt>automode</dt>
+					<dd>Opt-in auto-approval for unattended runs: a decision model judges each shell command, and the audit log and other guards stay on.</dd>
 				</dl>
 			</Section>
 
