@@ -42,4 +42,4 @@ Keep skill names unique when sharing between agents; nothing re-ranks them for y
 
 ## Delegation
 
-Skills forward to delegated children via the delegation `skills` parameter (see [README](../README.md)).
+Skills forward to delegated children via the delegation `skills` parameter (see [the roster section](extensions.md#roster)).

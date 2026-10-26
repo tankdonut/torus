@@ -34,22 +34,13 @@ Keyless runs (CI, `--list-models`) stay clean; real agent use needs provider aut
 
 Not supported inside the container. `TORUS_SANDBOX` (and `TORUS_SANDBOX_DEFAULT`) default to off and should stay off there. The container itself is the isolation boundary, and bwrap's nested user namespaces conflict with container-runtime policy on most hosts (verified: rootless podman, GitHub runners, and Ubuntu 24.04+ hosts with `apparmor_restrict_unprivileged_userns=1`). `torus /doctor` reports the live sandbox state. The image still ships bwrap + socat as part of the full-toolkit inventory below; they are not exercised in-container.
 
-## Local build & test
-
-```sh
-./make.sh image        # builds the Dockerfile, tags torus:dev (pins from .tool-versions)
-./make.sh image-test   # container test suite against torus:dev (TORUS_IMAGE=<tag> to override)
-```
-
-The suite's static drift guards (Dockerfile ARG pins, runtime deps, entrypoint/user, baked payload wiring, CI job shape) run in plain `npm test` with no docker. The dynamic smokes need a docker daemon: engine boots keyless (also verified offline via `--network none`), tool inventory, tmux, bwrap.
-
 ## Versions & updating
 
 `.tool-versions` is the single source of truth for the node and bun versions. CI reads it (`setup-node` `node-version-file`, `setup-bun` `bun-version-file`); `./make.sh image` and the CI platform builds pass it as build args. The Dockerfile declares `NODE_VERSION`/`BUN_VERSION` without defaults, so Renovate's asdf updates move the container image versions with no separate bump.
 
 Two pins are renovate blind spots and must be bumped by hand: the Dockerfile `ARG AST_GREP_VERSION` and the global npm pins for `typescript-language-server`/`typescript`.
 
-One GHCR note: the first publish creates the package as private by default. The owner marks it public once in the package settings.
+Local build and test mechanics and the GHCR first-publish note live in [docs/internals.md](internals.md).
 
 ## What's inside
 
