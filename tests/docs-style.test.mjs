@@ -184,7 +184,7 @@ test("coverage-sliced headings in the extension reference exist exactly once", (
 		"### `providers`",
 		"### `acp`",
 		"## Ambient model calls",
-		"## Engine config surfaces",
+		"## Configuration",
 		"## `torus serve`",
 	];
 	for (const heading of guarded) {

@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const doc = readFileSync(path.join(root, "docs/extensions.md"), "utf8");
+const configDocPath = path.join(root, "docs/configuration.md");
+const configDoc = readFileSync(configDocPath, "utf8");
 const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 
 function collectTs(dir, acc = []) {
@@ -41,11 +43,14 @@ test("every registered tool/check name in extensions/ appears in docs/extensions
 	}
 });
 
-test("every TORUS_* env read in extensions/ appears in docs/extensions.md", () => {
+test("every TORUS_* env read in extensions/ appears in the docs", () => {
 	const vars = [...sources.matchAll(/process\.env\["(TORUS_[A-Z_]+)"\]/g)].map((m) => m[1]);
 	assert.ok(vars.length > 15, `env-var extraction looks broken (found ${vars.length})`);
 	for (const v of new Set(vars)) {
-		assert.ok(doc.includes(v), `docs/extensions.md missing env var: ${v}`);
+		assert.ok(
+			doc.includes(v) || configDoc.includes(v),
+			`docs/extensions.md or docs/configuration.md missing env var: ${v}`,
+		);
 	}
 });
 
@@ -163,13 +168,79 @@ test("ambient model calls map covers every site and records the no-op decision",
 	);
 });
 test("engine config surfaces section documents all four pinned-engine levers", () => {
-	const start = doc.indexOf("## Engine config surfaces");
-	assert.ok(start !== -1, "docs/extensions.md missing the Engine config surfaces section");
-	const end = doc.indexOf("\n## ", start + 1);
-	const section = doc.slice(start, end === -1 ? undefined : end);
+	const start = configDoc.indexOf("## Engine config surfaces");
+	assert.ok(start !== -1, "docs/configuration.md missing the Engine config surfaces section");
+	const end = configDoc.indexOf("\n## ", start + 1);
+	const section = configDoc.slice(start, end === -1 ? undefined : end);
 	for (const token of [".pi/mcp.json", "cimd", "samplingParamsByThinkingLevel", "azure"]) {
 		assert.ok(section.includes(token), `engine config surfaces section missing token: ${token}`);
 	}
+});
+
+test("configuration.md covers every registered config section and knob", () => {
+	const sectionsSource = readFileSync(
+		path.join(root, "extensions", "config", "sections.ts"),
+		"utf8",
+	);
+	const sectionNames = [...sectionsSource.matchAll(/name:\s*"([a-zA-Z]+)"/g)].map((m) => m[1]);
+	assert.ok(
+		sectionNames.length >= 4,
+		`config-section extraction looks broken (found ${sectionNames.length})`,
+	);
+
+	const knobRe =
+		/knob(?:Boolean|String|Number)\(\s*"(TORUS_[A-Z_]+)"\s*,\s*"([a-zA-Z]+)"\s*,\s*"([a-zA-Z]+)"/g;
+	const knobs = [...sources.matchAll(knobRe)].map((m) => `${m[1]}/${m[2]}.${m[3]}`);
+	assert.ok(knobs.length >= 10, `knob call-site extraction looks broken (found ${knobs.length})`);
+
+	const found = [...new Set(knobs)].sort();
+	const expected = [
+		"TORUS_APPROVAL/approval.enabled",
+		"TORUS_BANNER/ui.banner",
+		"TORUS_COMMENT_CHECKER/commentChecker.enabled",
+		"TORUS_DREAMING/reflection.dreaming",
+		"TORUS_FMT_CMD/hashline.fmtCmd",
+		"TORUS_GUARDS/guards.enabled",
+		"TORUS_HASHLINE/hashline.enabled",
+		"TORUS_INTERACTIVE/interactive.enabled",
+		"TORUS_MAX_TOOL_OUTPUT/guards.maxToolOutput",
+		"TORUS_MONITOR/monitor.enabled",
+		"TORUS_NOTIFY/notify.enabled",
+		"TORUS_REFLECT_TURNS/reflection.reflectTurns",
+		"TORUS_REFLECTION/reflection.enabled",
+		"TORUS_STATUSLINE_COST/ui.statuslineCost",
+		"TORUS_TASK_STALE_MIN/team.taskStaleMin",
+		"TORUS_TEAM_NOTIFY/team.teamNotify",
+		"TORUS_TITLE_MODEL/sessionTitle.titleModel",
+	].sort();
+	assert.deepEqual(
+		found,
+		expected,
+		`knob call sites drifted from the static contract\nfound:    ${found.join(", ")}\nexpected: ${expected.join(", ")}`,
+	);
+
+	for (const name of new Set(sectionNames)) {
+		assert.ok(
+			configDoc.includes(`| \`${name}\` |`),
+			`docs/configuration.md missing config section row: ${name}`,
+		);
+	}
+	for (const knob of found) {
+		const [envName, configKey] = knob.split("/");
+		assert.ok(
+			configDoc.includes(envName),
+			`docs/configuration.md missing knob env var: ${envName}`,
+		);
+		assert.ok(
+			configDoc.includes(configKey),
+			`docs/configuration.md missing knob config key: ${configKey}`,
+		);
+	}
+	assert.ok(configDoc.includes("approval"), "docs/configuration.md missing the approval knob");
+	assert.ok(
+		/not project-readable/i.test(configDoc),
+		"docs/configuration.md missing the not-project-readable contract",
+	);
 });
 
 test("model chain override section is documented", () => {

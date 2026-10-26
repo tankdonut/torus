@@ -83,25 +83,7 @@ Entries are prefix patterns evaluated in deny, ask, then allow order; broad allo
 
 ## Configuration
 
-User-level configuration lives in one file, `~/.torus/config.json` (`config.json` under `TORUS_HOME` when set). The file is user-level by construction: a repository checkout cannot set it for a session, and it is the single source for every section below.
-
-| Section | Configures |
-| --- | --- |
-| `chains` | Model chains per tier plus compatible-provider endpoints |
-| `automode` | Auto permission-mode rules and circuit-breaker settings |
-| `serve` | HTTP server bind, port, token path, and scheduled triggers (auth is runtime state) |
-| `keywords` | Keyword rows injected into the system prompt |
-| `permissionMode` | Default permission mode, a top-level `"auto"` or `"default"` key |
-
-Single-value settings live in their own knob sections, one key each: `TORUS_BANNER`, `TORUS_NOTIFY`, `TORUS_MONITOR`, and `TORUS_APPROVAL` map to config keys such as `ui.banner`, `notify.enabled`, `monitor.enabled`, and `approval.enabled`. The complete knob table, every env var with its config key and effect, is in [docs/extensions.md](docs/extensions.md#environment-variables).
-
-Precedence is config, then env, then flag: a config value beats the built-in default, a set env var beats config, and a launcher flag (which sets the env var for one session) beats both. A config value of the wrong type is ignored and the default applies. Plumbing that decides where state and processes live before config is read stays env-only: `TORUS_ROOT`, `TORUS_PI_BIN`, the `TORUS_ENGINE*` family, `TORUS_HOME`, `TORUS_STATE_DIR`, `TORUS_WORKTREES_ROOT`, `TORUS_PLATFORM`, `TORUS_MEMORY_COMMIT`, `TORUS_THEME_DEBUG`, `TORUS_SANDBOX`, `TORUS_SERVE`, and `TORUS_TMUX`. The remaining vars (`TORUS_TITLE`, `TORUS_PERMISSION_MODEL`, `TORUS_COMMENT_CHECKER_PROMPT`) are env-only too; [docs/extensions.md](docs/extensions.md) carries the full table.
-
-A second, project-level `.torus/config.json` in the working directory may set the knob sections above plus the automode section's `deny` and `ask` keys only. For knobs the user file wins over the project file, and env still beats both. The automode contribution is additive: project `deny` and `ask` entries union with the user's rules, so a repository can guardrail sessions working in it (never force-push here, always ask before publishing) but never widen them; its `allow`, `environment`, `hardDeny`, `softDeny`, `softDenyExceptions`, and `classifyAllShell` keys are ignored with a notice, and `chains`, `serve`, `keywords`, and `permissionMode` never come from the project file (a checked-in repo cannot redirect model traffic, inject prompt keywords, or opt a session into automode). `torus config status` shows the project file, its readable sections, and any refused keys.
-
-Inspect the file with the launcher subcommand:
-
-- `torus config status` prints each section's effective source: config.json or default, plus any config.json keys outside the registry and the project-level file's readable and refused sections.
+User-level configuration lives in one file, `~/.torus/config.json` (`config.json` under `TORUS_HOME` when set). Every section, knob, env var, and config-adjacent file is documented in [docs/configuration.md](docs/configuration.md). Run `torus config status` to see each section's effective source, including a project-level `.torus/config.json`.
 
 ## Where to go next
 

@@ -11,6 +11,7 @@ const docs = defineCollection({
 		base: new URL("../../", import.meta.url),
 		pattern: [
 			"docs/extensions.md",
+			"docs/configuration.md",
 			"docs/serve.md",
 			"docs/container.md",
 			"docs/pi-packages.md",

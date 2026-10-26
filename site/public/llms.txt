@@ -7,6 +7,7 @@ https://tankdonut.github.io/torus/
 - [Landing](https://tankdonut.github.io/torus/): Overview of the harness, from the pinned engine and delegation roster to the docs site and container image.
 - [Docs](https://tankdonut.github.io/torus/docs/): Index of the rendered documentation, with one entry per page.
 - [Extensions](https://tankdonut.github.io/torus/docs/extensions/): Every extension, tool, slash command, and environment variable in the harness, cataloged by manifest entry.
+- [Configuration](https://tankdonut.github.io/torus/docs/configuration/): Every user-facing knob in one place: config.json sections, environment variables, file policy, and the inspectors that show what's effective.
 - [Serve](https://tankdonut.github.io/torus/docs/serve/): The authenticated HTTP surface over the delegation core, from bearer tokens to webhooks.
 - [Container](https://tankdonut.github.io/torus/docs/container/): The prebuilt multi-arch GHCR image: what ships inside, tag semantics, and how to run it.
 - [pi packages](https://tankdonut.github.io/torus/docs/pi-packages/): Installing torus as a pi package: what the manifest carries and how updates behave.

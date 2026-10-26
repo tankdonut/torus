@@ -66,7 +66,7 @@ No tools, commands, or hooks.
 
 Registers no providers of its own: both chain providers are built into stock pi, so authenticate via `/login zai` and `/login opencode-go` (the gateway also reads `OPENCODE_API_KEY`). Built-in chains: primary `zai/glm-5.3 → zai/glm-5.3-flash → opencode-go/glm-5.3-flash`, fast `zai/glm-5.3-flash → opencode-go/glm-5.3-flash`.
 
-The `chains` section of the [unified config](#unified-config) (`config.json` under `TORUS_HOME`, default `~/.torus`) overrides either built-in chain wholesale. Shape `{"primary": ["provider/model", …], "fast": […]}`, read per call so edits apply without a restart:
+The `chains` section of the [unified config](configuration.md#the-unified-config-file) (`config.json` under `TORUS_HOME`, default `~/.torus`) overrides either built-in chain wholesale. Shape `{"primary": ["provider/model", …], "fast": […]}`, read per call so edits apply without a restart:
 
 | Condition | Result |
 | --- | --- |
@@ -146,9 +146,7 @@ No tools or commands of its own (the serve half is the launcher subcommand `toru
 
 #### Consume: external agents as children
 
-`acp.json` under `TORUS_HOME` (default `~/.torus`) declares them. Shape `{"agents": {"<name>": {"command": "…", "args": […], "env": {"KEY": "value"}}}}`; `args` defaults to `[]`, and `env` is merged over the inherited child environment. An absent file means no ACP agents and the engine delegation path is untouched. Malformed JSON, a non-object root, or a bad entry warns on stderr and skips only that entry.
-
-Name resolution: an exact name match in `acp.json` **wins over a roster agent** of the same name. The requested name is looked up there before the roster, and a name resolving nowhere is rejected naming both the roster agents and the configured ACP agent set (`torus_roster` and the roster section of the system prompt list configured ACP agents too).
+`acp.json` under `TORUS_HOME` (default `~/.torus`) declares them; the full shape, entry defaults, malformed-entry behavior, and name-resolution override semantics live in [docs/configuration.md](configuration.md).
 
 One delegation spawns a fresh child speaking Agent Client Protocol v1 (stable) over stdio. Spec pin: github.com/agentclientprotocol/agent-client-protocol, docs/protocol/v1/ (repo formerly zed-industries), accessed 2026-10-09; initialization.mdx blob ea16b093. No `@agentclientprotocol/sdk` dependency: node primitives mirroring `rpc.ts`'s line-buffered stdio handling.
 
@@ -195,7 +193,7 @@ Typing a keyword in a user message arms a one-shot mode injected into the next t
 | `blueprint` | Plan first: survey, write the plan, get approval before any edit |
 | `team` | Multi-axis work: orchestrate via `torus_fanout` / `torus_chain` / team tools |
 
-User keywords merge over these defaults via the `keywords` section of the [unified config](#unified-config) (flat word-to-mode-text map):
+User keywords merge over these defaults via the `keywords` section of the [unified config](configuration.md#the-unified-config-file) (flat word-to-mode-text map):
 
 ```json
 { "refactor": "REFACTOR MODE: behavior-preserving changes only; tests must stay green." }
@@ -348,7 +346,7 @@ LLM-classified bash auto-approval for unattended runs, opt-in via `TORUS_PERMISS
 - **Hooks:** `tool_call`: judges each bash command in auto mode; `tool_result`: annotates runs that went unjudged
 - **Env:** `TORUS_PERMISSION_MODE` (`1`/`on`/`auto` select auto mode; `bypass` disables every permission guard for the session, startup-only and refused from config.json; unset, `0`, `off`, `default` keep the built-in gate; other values fall back to default mode and `/automode` surfaces the warning; the `torus --permission-mode <auto|default|bypass>` launcher flag sets it for the spawned engine session, overriding any pre-set value; with none set, the unified config's top-level `permissionMode` key supplies the default, exactly `"auto"`/`"default"`, anything else warns and is treated as unset); `TORUS_PERMISSION_MODEL=provider/model-id` pins the permission classifier
 - **Statusline:** the statusline shows `auto` while the session is in auto mode, `auto·ask` once the circuit breaker degrades it to asking, and a red `bypass` chip for a session running without permission guards
-- **Interactions:** rules live in the `automode` section of the [unified config](#unified-config) and nowhere else (`allow`/`ask`/`deny` prefix patterns; `environment` and `hardDeny` prose arrays that ride into both judge prompts; `softDeny` and `softDenyExceptions` prose arrays for the judge tier below; a `classifyAllShell` boolean that suspends allow rules); a project-level `.torus/config.json` may add `deny` and `ask` entries on top (tightening only, `/automode` status shows the extras); decisions append one JSON line each to `automode.log` under the project state dir (torus home when no project state exists); `sandbox`, `guards`, and cc-safety-net denials still win (the engine blocks on the first block)
+- **Interactions:** rules live in the `automode` section of the [unified config](configuration.md#the-unified-config-file) and nowhere else (`allow`/`ask`/`deny` prefix patterns; `environment` and `hardDeny` prose arrays that ride into both judge prompts; `softDeny` and `softDenyExceptions` prose arrays for the judge tier below; a `classifyAllShell` boolean that suspends allow rules); a project-level `.torus/config.json` may add `deny` and `ask` entries on top (tightening only, `/automode` status shows the extras); decisions append one JSON line each to `automode.log` under the project state dir (torus home when no project state exists); `sandbox`, `guards`, and cc-safety-net denials still win (the engine blocks on the first block)
 
 The decision pipeline runs in a fixed order:
 
@@ -732,74 +730,6 @@ Where torus itself spends model calls (and where it looks like it might but does
 
 Decision: no-op. No ambient call site is a genuine classification, so `TORUS_CLASSIFY_MODEL` is deliberately read nowhere and behavior is unchanged; revisit when a call site with a genuinely closed label set appears.
 
-## Engine config surfaces
+## Configuration
 
-Engine-owned configuration torus users can ride directly; torus's own code touches none of it, so behavior follows the engine's docs (`mcp.md`, `models.md`, and the engine changelog under `node_modules/@earendil-works/pi-coding-agent/`). Sibling of [Ambient model calls](#ambient-model-calls).
-
-| Surface | What it gives |
-| --- | --- |
-| Project MCP overrides | A file-configured server (project `.pi/mcp.json`, read only after project trust; user-level `~/.pi/agent/mcp.json` likewise) takes precedence over torus's in-session `registerMcpServer` registrations: context7 and grep_app can be replaced or disabled per-project without code; `/mcp` lists the overridden registration and `/reload` picks up file changes |
-| MCP OAuth `clientRegistration: "cimd"` | Identifies pi by its Client ID Metadata Document on pi.dev instead of dynamic client registration, for authorization servers that allow-list clients by that URL; cannot be combined with `clientId` or `clientName` |
-| `samplingParamsByThinkingLevel` | models.json per-model map of sampling parameters keyed by pi thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), merged over the model's `samplingParams` per key; applies only to the `openai-completions`, `openai-responses`, and `azure-openai-responses` APIs. The engine's built-in GLM catalog entries set none, so a user-supplied entry has full effect |
-| Azure provider rename | The engine renamed `azure-openai-responses` to `azure` (engine changelog 1.0.3, inside torus's pin): rename the provider key in `auth.json`, `models.json`, and `settings.json` (`defaultProvider`, `enabledModels`, `modelThinkingLevels`); `AZURE_OPENAI_*` env vars are unchanged |
-
-## Unified config
-
-User-level torus config lives in one file: `config.json` under the torus home (`TORUS_HOME`, default `~/.torus`), the single user-level source for every section below. The file is user-level by construction, so a repo checkout cannot set it for a session.
-
-| Section | Configures |
-| --- | --- |
-| `chains` | Model chains per tier plus compatible-provider endpoints |
-| `automode` | Auto permission-mode rules and circuit-breaker settings |
-| `serve` | HTTP server bind, port, token path, and scheduled triggers (auth is runtime state) |
-| `keywords` | Keyword rows injected into the system prompt |
-| `permissionMode` | Default permission mode (top-level key, not an object) |
-
-A section that is not a JSON object warns, names the section, and reads as unset. A config.json that cannot be parsed reads as an empty config with one warning, so every consumer degrades to its defaults instead of failing.
-
-Single-value knobs live in their own sections (`ui`, `sessionTitle`, `guards`, `hashline`, `interactive`, `monitor`, `notify`, `commentChecker`, `team`, `reflection`), one key each; the [environment variables](#environment-variables) table maps each env var to its config key. Knob precedence is env over config over default, and a config value of the wrong type is ignored, so the default applies.
-
-`permissionMode` is a top-level scalar rather than a section: `"auto"` or `"default"` sets the default permission mode under `TORUS_PERMISSION_MODE` (the `--permission-mode` launcher flag sets the env var for one session). A defined env value decides its tier outright, even when unrecognized; the config key counts only when exactly `"auto"` or `"default"`, and `"bypass"` is refused with a warning (bypass is startup-only: sessions must be launched with the flag or env var, so it can never be a sticky default); anything else warns and is treated as unset.
-
-A project-level `.torus/config.json` in the session's working directory is read with the same tolerance and may set the knob sections plus the automode section's `deny` and `ask` keys only. Knob precedence is env over the user file over the project file over default; the automode contribution is a tightening-only union (project `deny`/`ask` entries add to the user's rules, never replace them). Every other top-level key in the project file, and any widening automode key (`allow`, `environment`, `hardDeny`, `softDeny`, `softDenyExceptions`, `classifyAllShell`), is refused with one warning: a checked-in repo must not be able to widen its own permissions, redirect model traffic, inject prompt keywords, or opt sessions into automode. `torus config status` reports the project file's readable sections and refused keys.
-
-The launcher subcommand reports on the file (intercepted before the pi passthrough, no engine session):
-
-- `torus config status`: one line per section with its effective source (config.json or default), plus config.json keys the registry does not know and the project-level file's readable and refused sections
-
-## Environment variables
-
-Rows carrying a config key also read that key from the [unified config](#unified-config) (env still wins); the rest are env-only.
-
-| Variable | Consumer | Purpose |
-| --- | --- | --- |
-| `TORUS_PI_BIN` | launcher | Explicit engine binary path (overrides `node_modules/.bin/pi`) |
-| `TORUS_ROOT` | launcher → registry | Payload root override (source layout otherwise) |
-| `TORUS_ENGINE` | launcher sets, ui reads | Engine tag (display) |
-| `TORUS_ENGINE_BIN` | launcher sets, roster/engine-child read | Engine binary for child spawns |
-| `TORUS_ENGINE_CHILD` | engine-child sets, worktrees + work read | Marks delegated children; gates worktree tool registration (internal) |
-| `TORUS_MEMORY_COMMIT=1` | memory sets, store pre-commit hook reads | Marks in-process git spawns on the memory store; agent-run commits are refused (internal) |
-| `TORUS_HOME` | fsutil | Base dir for torus state (default `~/.torus`) |
-| `TORUS_STATE_DIR` | fsutil | Exported in every torus process (main session, delegated children, team members): this project's state root, so skills, prompts, and bash commands use `$TORUS_STATE_DIR/…` instead of hand-derived dashed keys. Main sessions compute it from cwd (kept fresh); engine children treat the inherited value as authoritative (the dispatching session pins them to its root, so `$TORUS_STATE_DIR` paths and ledger appends land in the dispatching project even from a worktree cwd). Explicit-cwd resolution (sandbox hosts) always computes fresh, and delegation logs land in the dispatching session's root: a child running in another cwd never grows its own state dir. Tool output abbreviates state paths to `$TORUS_STATE_DIR/…` (`$TORUS_HOME/…` for other projects') via `displayPath` |
-| `TORUS_TMUX=0` | registry | Disable delegation tmux panes |
-| `TORUS_NOTIFY=0` | osnotify | Disable desktop notifications (config: `notify.enabled`) |
-| `TORUS_PLATFORM` | platform | Force platform detection (`linux`/`darwin`/`win32`) for the extension load gate; invalid values warn and fall back to the host platform |
-| `TORUS_GUARDS=0` / `TORUS_MAX_TOOL_OUTPUT` | guards | Disable guards / output truncation cap (default 16000) (config: `guards.enabled` / `guards.maxToolOutput`) |
-| `TORUS_HASHLINE=0` / `TORUS_FMT_CMD` | hashline | Disable anchoring / post-edit formatter command (config: `hashline.enabled` / `hashline.fmtCmd`) |
-| `TORUS_INTERACTIVE=0` | interactive | Disable `interactive_bash` overlay (config: `interactive.enabled`) |
-| `TORUS_MONITOR=0` | monitor | Disable monitors (config: `monitor.enabled`) |
-| `TORUS_STATUSLINE_COST=0` | ui | Disable the session-cost statusline chip (config: `ui.statuslineCost`) |
-| `TORUS_BANNER=0` | ui | Keep pi's built-in startup header instead of the torus banner (config: `ui.banner`) |
-| `TORUS_TEAM_NOTIFY=0` | team | Disable the per-member idle/crash wake-up markers (result markers still render) (config: `team.teamNotify`) |
-| `TORUS_TASK_STALE_MIN=<minutes>` | team | Stale-task threshold for `team_status`: an in_progress task under an idle member with no tasklist update for more than N minutes renders a read-only stale line (default 30; invalid values fall back to 30) (config: `team.taskStaleMin`) |
-| `TORUS_COMMENT_CHECKER=0` / `TORUS_COMMENT_CHECKER_PROMPT` | comment-checker | Disable / override the challenge text (config: `commentChecker.enabled`; `TORUS_COMMENT_CHECKER_PROMPT` is env-only) |
-| `TORUS_WORKTREES_ROOT` | worktrees | Worktree root override (default `$TORUS_HOME/worktrees`) |
-| `TORUS_APPROVAL=0` | approval | Disable the trust-on-denial dialog (unmatched hosts deny; config: `approval.enabled`) |
-| `TORUS_PERMISSION_MODE` | automode | Opt into LLM-classified bash auto-approval (`1`/`on`/`auto`; unset or `0`/`off`/`default` keeps the built-in gate; `bypass` disables every permission guard, startup-only) (config: top-level `permissionMode`) |
-| `TORUS_PERMISSION_MODEL` | automode | Pin the permission classifier as `provider/model-id` (default: first available classifier, then the fast chain's first authed chat model, then the session model) |
-| `TORUS_SANDBOX` / `TORUS_SANDBOX_WRITABLE` / `TORUS_SANDBOX_NET_ADD` / `TORUS_SANDBOX_NET_ONLY` / `TORUS_SANDBOX_DEFAULT` | sandbox | Per-command sandbox (`off` \| `full`, default **off**: `full`/`on`/`1` sandboxes agent bash; unset runs unsandboxed unless `TORUS_SANDBOX_DEFAULT=full` opts the environment into default-on; unknown values fall back to the effective default with a notice; confines writes to workspace+tmp+extras, network restricted to a curated exact-host allowlist of dev-workflow hosts, registries, GitHub incl. release assets, core toolchains, and `*.amazonaws.com`) / extra writable roots, colon-separated / comma-separated extra allowed hosts (exact-host; over-broad entries dropped) / comma-separated hosts replacing the curated allowlist / environment default for unset `TORUS_SANDBOX` (`full`/`on`/`1` enables; any other value is inert) |
-| `TORUS_REFLECTION=0` | memory | Disable idle reflection (config: `reflection.enabled`) |
-| `TORUS_REFLECT_TURNS=<n>` | memory | Reflect after N settles since the last reflect (0 = idle-only; default 12) (config: `reflection.reflectTurns`) |
-| `TORUS_DREAMING=0` | memory | Disable dream consolidation (config: `reflection.dreaming`) |
-| `TORUS_THEME_DEBUG` | persona-theme | Theme debugging |
-| `TORUS_SERVE=0` | serve | Kill switch: `torus serve` refuses to start (exit 1) |
+torus reads configuration from three layers: the user's `~/.torus/config.json` (registered sections plus single-value knob sections), engine-owned pi settings under `~/.pi/agent/` and project `.pi/` files, and per-session env vars and launcher flags. The registered-section table, the full environment-variables table mapping every `TORUS_*` var to its config key, the project-level `.torus/config.json` rules, the `torus.sandbox` file policy, and the `torus config status` inspector live in [docs/configuration.md](configuration.md), the canonical guide.
