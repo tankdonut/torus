@@ -18,7 +18,7 @@ At startup the engine discovers instruction files:
 
 torus never reads or writes `CLAUDE.md` itself; a repo that ships an `AGENTS.md` at a given directory never falls through to `CLAUDE.md` there. Subdirectories below the working directory are not scanned, not eagerly and not lazily on file reads; the chain is fixed at startup from cwd upward.
 
-Delegated child agents (`agents/*.md`) run the same engine: a child spawned with the default working directory inherits the same discovered `AGENTS.md` chain as the parent session, while a delegation given another `cwd` (worktree workflows pass one) discovers that directory's chain instead. Don't confuse this with the `{{AGENTS}}` marker in roster prompts: that substitutes the *agent roster* (the available-agents block) into a child prompt at spawn; see the Markers section of [agents.md](agents.md).
+Delegated child agents (`agents/*.md`) run the same engine: a child spawned with the default working directory inherits the same discovered `AGENTS.md` chain as the parent session, while a delegation given another `cwd` (worktree workflows pass one) discovers that directory's chain instead. Don't confuse this with the `{{AGENTS}}` marker in roster prompts: that substitutes the *agent roster* (the available-agents block) into a child prompt at spawn; see [the Markers section of writing-agents.md](writing-agents.md#markers).
 
 ## Claude Code interop
 

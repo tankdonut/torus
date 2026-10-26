@@ -9,6 +9,7 @@ https://tankdonut.github.io/torus/
 - [Getting started](https://tankdonut.github.io/torus/docs/getting-started/): Install torus, run your first session, and delegate your first task: the four install paths and the permission model.
 - [Extensions](https://tankdonut.github.io/torus/docs/extensions/): Every extension, tool, slash command, and environment variable in the harness, cataloged by manifest entry.
 - [Configuration](https://tankdonut.github.io/torus/docs/configuration/): Every user-facing knob in one place: config.json sections, environment variables, file policy, and the inspectors that show what's effective.
+- [Writing agents](https://tankdonut.github.io/torus/docs/writing-agents/): Authoring roster agents: frontmatter schema, prompt markers, body skeleton, and the checklist for adding one.
 - [Serve](https://tankdonut.github.io/torus/docs/serve/): The authenticated HTTP surface over the delegation core, from bearer tokens to webhooks.
 - [Container](https://tankdonut.github.io/torus/docs/container/): The prebuilt multi-arch GHCR image: what ships inside, tag semantics, and how to run it.
 - [pi packages](https://tankdonut.github.io/torus/docs/pi-packages/): Installing torus as a pi package: what the manifest carries and how updates behave.

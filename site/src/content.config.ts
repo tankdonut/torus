@@ -13,6 +13,7 @@ const docs = defineCollection({
 			"docs/getting-started.md",
 			"docs/extensions.md",
 			"docs/configuration.md",
+			"docs/writing-agents.md",
 			"docs/serve.md",
 			"docs/container.md",
 			"docs/pi-packages.md",

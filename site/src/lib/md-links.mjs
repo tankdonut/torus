@@ -13,6 +13,7 @@ export const DOC_ROUTES = new Map([
 	["docs/getting-started.md", "/docs/getting-started/"],
 	["docs/extensions.md", "/docs/extensions/"],
 	["docs/configuration.md", "/docs/configuration/"],
+	["docs/writing-agents.md", "/docs/writing-agents/"],
 	["docs/serve.md", "/docs/serve/"],
 	["docs/container.md", "/docs/container/"],
 	["docs/pi-packages.md", "/docs/pi-packages/"],
