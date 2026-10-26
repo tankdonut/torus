@@ -125,7 +125,8 @@ footer {
    reads as glue (·docs). They carry the sep class and take side margin so the
    dot rhythm matches the FactsStrip separators (1rem effective per side). */
 header .sep,
-footer .sep {
+footer .sep,
+main .sep {
 	margin-inline: calc(var(--spacing) * 2);
 }
 
