@@ -121,6 +121,14 @@ footer {
 	font-size: var(--text-mono-label);
 }
 
+/* The dot separators are bare glyphs with no side bearing; the flex gap alone
+   reads as glue (·docs). They carry the sep class and take side margin so the
+   dot rhythm matches the FactsStrip separators (1rem effective per side). */
+header .sep,
+footer .sep {
+	margin-inline: calc(var(--spacing) * 2);
+}
+
 header {
 	justify-content: flex-start;
 	border-bottom: 1px solid var(--color-border);
