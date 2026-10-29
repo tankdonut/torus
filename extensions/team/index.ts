@@ -3,7 +3,7 @@ import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
-import { displayPath, formatCost, projectKey } from "../fsutil.js";
+import { displayPath, formatCost, projectKey, sleep } from "../fsutil.js";
 import { osNotify } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { DEFAULT_MEMBER_MODEL } from "../providers/index.js";
@@ -30,6 +30,7 @@ import {
 	AGENTS,
 	concurrencyWarning,
 	type DelegationOutcome,
+	fireDelegationsBackground,
 	plannedRunModel,
 	resolveRequestedModel,
 	runDelegation,
@@ -115,6 +116,12 @@ const fanoutTool = defineTool({
 			}),
 			{ minItems: 2, maxItems: MAX_PARALLEL },
 		),
+		background: Type.Optional(
+			Type.Boolean({
+				description:
+					"Return immediately instead of blocking: each run's result arrives later as its own torus.delegation-result wake marker (batched with other pending wakes when busy); read the full output with torus_results",
+			}),
+		),
 	}),
 	async execute(_toolCallId, params, _signal, onUpdate, ctx) {
 		const started = Date.now();
@@ -133,6 +140,83 @@ const fanoutTool = defineTool({
 		report();
 
 		const parentSession = ctx.sessionManager.getSessionId();
+		let backgroundNote = "";
+		if (params.background === true) {
+			if (
+				!knobBoolean(
+					"TORUS_DELEGATE_BACKGROUND",
+					"roster",
+					"delegateBackground",
+					true,
+					parseZeroDisables,
+				)
+			) {
+				backgroundNote =
+					"(background requested but disabled via TORUS_DELEGATE_BACKGROUND=0 — ran blocking)\n\n";
+			} else {
+				// Fire-and-forget, one descriptor per run: each completion queues
+				// exactly one wake-gate entry (never the coalesced marker below — the
+				// gate is the only delivery path for background results, and it batches
+				// pending entries into one turn while the session is busy).
+				const runs = params.runs.map((run) => ({
+					agent: run.agent,
+					task: run.task,
+					cwd: run.cwd,
+					skills: run.skills,
+					model: run.model,
+					handle: run.handle?.trim().replace(/^@+/, "") ?? null,
+				}));
+				fireDelegationsBackground(
+					runs.map((run) => ({
+						agent: run.agent,
+						handle: run.handle,
+						start: () =>
+							runDelegation(
+								run.agent,
+								run.task,
+								run.cwd,
+								undefined,
+								parentSession,
+								run.handle,
+								run.skills ?? null,
+								false,
+								false,
+								{ model: run.model ?? null },
+							),
+					})),
+				);
+				// One settle so startDelegation's registry records exist for the id
+				// echo; the runs themselves are fire-and-forget.
+				await sleep(100);
+				const records = listDelegations();
+				const runLabels = runs
+					.map((r) => (r.handle ? `@${r.handle} (${r.agent})` : r.agent))
+					.join(", ");
+				return {
+					content: [
+						{
+							type: "text",
+							text: withWarning(
+								`background fan-out started — ${params.runs.length} runs: ${runLabels}. Completions arrive as torus.delegation-result markers (batched with other pending wakes when busy); read the full output with torus_results.`,
+								capWarning,
+							),
+						},
+					],
+					details: {
+						background: true,
+						runs: params.runs.length,
+						entries: runs.map((run) => {
+							const record = run.handle ? records.find((r) => r.handle === run.handle) : undefined;
+							return {
+								agent: run.agent,
+								handle: run.handle,
+								...(record ? { delegationId: record.id } : {}),
+							};
+						}),
+					},
+				};
+			}
+		}
 		// One combined start marker: N per-run torus.delegation-start events
 		// would trickle into the transcript one turn boundary apart.
 		emitTorusCustom(
@@ -332,7 +416,8 @@ const fanoutTool = defineTool({
 				{
 					type: "text",
 					text: withWarning(
-						`fan-out complete in ${Math.round((Date.now() - started) / 1000)}s` +
+						backgroundNote +
+							`fan-out complete in ${Math.round((Date.now() - started) / 1000)}s` +
 							(okCount === outcomes.length ? "" : ` · ${okCount}/${outcomes.length} ok`) +
 							`\n\n${summary}`,
 						capWarning,
@@ -379,6 +464,12 @@ const chainTool = defineTool({
 			}),
 			{ minItems: 2, maxItems: 6 },
 		),
+		background: Type.Optional(
+			Type.Boolean({
+				description:
+					"Return immediately instead of blocking: the whole chain runs to its final outcome and arrives as one torus.delegation-result wake marker (batched with other pending wakes when busy); read the full output with torus_results",
+			}),
+		),
 	}),
 	async execute(_toolCallId, params, _signal, onUpdate, ctx) {
 		const started = Date.now();
@@ -386,83 +477,154 @@ const chainTool = defineTool({
 		const outcomes: Array<{ agent: string; ok: boolean; text: string }> = [];
 		let carry = "";
 
-		for (let i = 0; i < params.steps.length; i += 1) {
-			const step = params.steps[i];
-			if (!step) continue;
-			const context =
-				carry.length > 0
-					? `${step.task}\n\n--- Previous step output (${outcomes[i - 1]?.agent ?? "prior"}):\n${carry.slice(0, CHAIN_CONTEXT_LIMIT)}`
-					: step.task;
-			onUpdate?.({
-				content: [
-					{
-						type: "text",
-						text: `step ${i + 1}/${params.steps.length}: ${step.handle ? `@${step.handle.replace(/^@+/, "")}` : step.agent} running`,
-					},
-				],
-				details: { phase: "running", step: i + 1 },
-			});
-			const handle = step.handle?.trim().replace(/^@+/, "") ?? null;
-			const label = handle ? `@${handle}` : step.agent;
-			// Id-suffixed from the first snapshot so handleless same-agent steps
-			// never share (or early-clear) one statusline entry.
-			const baseStatusKey = `torus:${handle ?? step.agent}`;
-			let statusKey = baseStatusKey;
-			ctx.ui.setStatus(statusKey, `▶ ${label} · starting`);
-			let outcome: DelegationOutcome;
-			try {
-				outcome = await runDelegation(
-					step.agent,
-					context,
-					step.cwd,
-					(snapshot) => {
-						if (snapshot.delegationId) {
-							const keyed = `${baseStatusKey}:${snapshot.delegationId.slice(0, 8)}`;
-							if (keyed !== statusKey) {
-								ctx.ui.setStatus(statusKey, undefined);
-								statusKey = keyed;
+		// The whole chain as one sequential walk. Background mode runs this as the
+		// body of a single background descriptor; the live update stream and the
+		// per-step marker policy stay parameters so blocking behaves exactly as
+		// before while background starts quiet.
+		const runAll = async (
+			update: typeof onUpdate,
+			announce: boolean | undefined,
+			emitResult: boolean | undefined,
+		): Promise<string | null> => {
+			let lastDelegationId: string | null = null;
+			for (let i = 0; i < params.steps.length; i += 1) {
+				const step = params.steps[i];
+				if (!step) continue;
+				const context =
+					carry.length > 0
+						? `${step.task}\n\n--- Previous step output (${outcomes[i - 1]?.agent ?? "prior"}):\n${carry.slice(0, CHAIN_CONTEXT_LIMIT)}`
+						: step.task;
+				update?.({
+					content: [
+						{
+							type: "text",
+							text: `step ${i + 1}/${params.steps.length}: ${step.handle ? `@${step.handle.replace(/^@+/, "")}` : step.agent} running`,
+						},
+					],
+					details: { phase: "running", step: i + 1 },
+				});
+				const handle = step.handle?.trim().replace(/^@+/, "") ?? null;
+				const label = handle ? `@${handle}` : step.agent;
+				// Id-suffixed from the first snapshot so handleless same-agent steps
+				// never share (or early-clear) one statusline entry.
+				const baseStatusKey = `torus:${handle ?? step.agent}`;
+				let statusKey = baseStatusKey;
+				ctx.ui.setStatus(statusKey, `▶ ${label} · starting`);
+				let outcome: DelegationOutcome;
+				try {
+					outcome = await runDelegation(
+						step.agent,
+						context,
+						step.cwd,
+						(snapshot) => {
+							if (snapshot.delegationId) {
+								const keyed = `${baseStatusKey}:${snapshot.delegationId.slice(0, 8)}`;
+								if (keyed !== statusKey) {
+									ctx.ui.setStatus(statusKey, undefined);
+									statusKey = keyed;
+								}
 							}
-						}
-						ctx.ui.setStatus(
-							statusKey,
-							`▶ ${label} · turn ${snapshot.turns} · ${snapshot.usage.output} tok`,
-						);
-					},
-					parentSession,
-					handle,
-					step.skills ?? null,
-					undefined,
-					undefined,
-					{ model: step.model ?? null },
-				);
-			} finally {
-				ctx.ui.setStatus(statusKey, undefined);
+							ctx.ui.setStatus(
+								statusKey,
+								`▶ ${label} · turn ${snapshot.turns} · ${snapshot.usage.output} tok`,
+							);
+						},
+						parentSession,
+						handle,
+						step.skills ?? null,
+						announce,
+						emitResult,
+						{ model: step.model ?? null },
+					);
+				} finally {
+					ctx.ui.setStatus(statusKey, undefined);
+				}
+				lastDelegationId = outcome.delegationId;
+				outcomes.push({ agent: step.agent, ok: outcome.ok, text: outcome.text });
+				if (!outcome.ok) break;
+				carry = outcome.text;
 			}
-			outcomes.push({ agent: step.agent, ok: outcome.ok, text: outcome.text });
-			if (!outcome.ok) break;
-			carry = outcome.text;
-		}
+			return lastDelegationId;
+		};
 
-		const summary = outcomes
-			.map((o) => `## ${o.agent} — ${o.ok ? "done" : "failed"}\n${o.text.slice(0, 2000)}`)
-			.join("\n\n");
+		const summary = () =>
+			outcomes
+				.map((o) => `## ${o.agent} — ${o.ok ? "done" : "failed"}\n${o.text.slice(0, 2000)}`)
+				.join("\n\n");
 		// A chain that broke early never completed its pipeline; flag the block red
 		// the same way delegate and fan-out do.
-		const okCount = outcomes.filter((o) => o.ok).length;
+		const okCount = () => outcomes.filter((o) => o.ok).length;
+		const chainText = () =>
+			`chain complete in ${Math.round((Date.now() - started) / 1000)}s` +
+			(okCount() === outcomes.length
+				? ""
+				: ` · stopped after ${okCount()} of ${params.steps.length} steps`) +
+			`\n\n${summary()}`;
+
+		let backgroundNote = "";
+		if (params.background === true) {
+			if (
+				!knobBoolean(
+					"TORUS_DELEGATE_BACKGROUND",
+					"roster",
+					"delegateBackground",
+					true,
+					parseZeroDisables,
+				)
+			) {
+				backgroundNote =
+					"(background requested but disabled via TORUS_DELEGATE_BACKGROUND=0 — ran blocking)\n\n";
+			} else {
+				// One descriptor for the whole chain: start() walks every step
+				// sequentially and resolves with the final outcome, so exactly one
+				// wake entry lands on completion — never one per step.
+				fireDelegationsBackground([
+					{
+						agent: "chain",
+						handle: null,
+						start: async () => {
+							const delegationId = await runAll(undefined, false, false);
+							return {
+								ok: okCount() === outcomes.length,
+								text: chainText(),
+								details: { steps: outcomes.length, ok: okCount() },
+								delegationId,
+							};
+						},
+					},
+				]);
+				// One settle so the first step's registry record exists (fleet views see
+				// a live chain immediately); the chain itself is fire-and-forget.
+				await sleep(100);
+				return {
+					content: [
+						{
+							type: "text",
+							text: `background chain started — ${params.steps.length} steps: ${params.steps
+								.map((s) => s.agent)
+								.join(
+									" → ",
+								)}. The final outcome arrives as one torus.delegation-result marker (batched with other pending wakes when busy); read the full output with torus_results.`,
+						},
+					],
+					details: {
+						background: true,
+						steps: params.steps.length,
+						agents: params.steps.map((s) => s.agent),
+					},
+				};
+			}
+		}
+		await runAll(onUpdate, undefined, undefined);
 		return {
 			content: [
 				{
 					type: "text",
-					text:
-						`chain complete in ${Math.round((Date.now() - started) / 1000)}s` +
-						(okCount === outcomes.length
-							? ""
-							: ` · stopped after ${okCount} of ${params.steps.length} steps`) +
-						`\n\n${summary}`,
+					text: backgroundNote + chainText(),
 				},
 			],
-			details: { steps: outcomes.length, ok: okCount },
-			...(okCount === outcomes.length ? {} : { isError: true }),
+			details: { steps: outcomes.length, ok: okCount() },
+			...(okCount() === outcomes.length ? {} : { isError: true }),
 		};
 	},
 });
