@@ -13,6 +13,7 @@ import { after, before, test } from "node:test";
 // harness hermetic (no credentials, no project extensions, in-memory session).
 const agentDir = mkdtempSync(path.join(tmpdir(), "torus-pi-wake-contract-"));
 const cwd = mkdtempSync(path.join(tmpdir(), "torus-pi-wake-cwd-"));
+const TORUS_HOME_SANDBOX = mkdtempSync(path.join(tmpdir(), "torus-wake-contract-home-"));
 
 const bodies = [];
 let delayMs = 0;
@@ -65,6 +66,11 @@ before(async () => {
 		}),
 	);
 	process.env.PI_CODING_AGENT_DIR = agentDir;
+	// The wake-gate contract tests below import torus extension modules (registry,
+	// wake-gate); keep their state writes inside the sandbox like everything else.
+	process.env.TORUS_HOME = TORUS_HOME_SANDBOX;
+	process.env.TORUS_TMUX = "0";
+	process.env.TORUS_NOTIFY = "0";
 	const { createAgentSession, SessionManager, ModelRuntime } = await import(
 		"@earendil-works/pi-coding-agent"
 	);
@@ -86,6 +92,7 @@ after(() => {
 	server.close();
 	rmSync(agentDir, { recursive: true, force: true });
 	rmSync(cwd, { recursive: true, force: true });
+	rmSync(TORUS_HOME_SANDBOX, { recursive: true, force: true });
 });
 
 test("idle session: a followUp user message starts a turn", async () => {
@@ -131,4 +138,84 @@ test("streaming session: a queued followUp drains once the run settles", async (
 		`queued follow-up must drain into its own turn (delta ${bodies.length - before})`,
 	);
 	delayMs = 0;
+});
+
+// Wake-gate contract: wake-class markers queued while the agent runs are held
+// in torus and flushed as ONE marker at settle, so a backlog of N pending
+// notifications costs the model exactly one turn instead of draining one
+// follow-up run apiece. Pins the engine-side behavior roster's agent_start /
+// agent_settled wiring relies on; the gate calls are driven directly the way
+// that wiring would.
+test("wake gate: entries queued mid-run settle into exactly ONE model request", async () => {
+	const registry = await import("../extensions/registry.ts");
+	const gate = await import("../extensions/wake-gate.ts");
+	gate._resetWakeGateForTesting();
+	registry.setCustomSender((message, options) => {
+		session.sendCustomMessage(message, options);
+	});
+
+	delayMs = 800;
+	const run = session.prompt("slow gate turn");
+	await sleep(300);
+	assert.equal(session.isStreaming, true);
+
+	gate.wakeGateAgentStart();
+	const before = bodies.length;
+	gate.queueWakeEntry({
+		customType: "torus.team-wake",
+		text: "GATE-ENTRY-ONE: @scout is idle",
+		details: { team: "t" },
+	});
+	gate.queueWakeEntry({
+		customType: "torus.team-wake",
+		text: "GATE-ENTRY-TWO: @looker is idle",
+		details: { team: "t" },
+	});
+	gate.queueWakeEntry({
+		customType: "torus.monitor-fired",
+		text: "GATE-ENTRY-THREE: monitor ci failed",
+		details: { name: "ci" },
+	});
+	await sleep(300);
+	assert.equal(bodies.length, before, "nothing may reach the model while the run is active");
+
+	await run;
+	gate.wakeGateAgentSettled();
+	await sleep(1500);
+	assert.equal(
+		bodies.length - before,
+		1,
+		`the whole backlog must drain as ONE model request, not one per entry (delta ${bodies.length - before})`,
+	);
+	const batch = bodies.slice(before).join(" ");
+	assert.ok(batch.includes("GATE-ENTRY-ONE"), "entry one rides the batch");
+	assert.ok(batch.includes("GATE-ENTRY-TWO"), "entry two rides the batch");
+	assert.ok(batch.includes("GATE-ENTRY-THREE"), "entry three rides the batch");
+	delayMs = 0;
+	registry.setCustomSender(() => {});
+	gate._resetWakeGateForTesting();
+});
+
+test("wake gate: a single entry on an idle session flushes as one marker, one turn", async () => {
+	const registry = await import("../extensions/registry.ts");
+	const gate = await import("../extensions/wake-gate.ts");
+	gate._resetWakeGateForTesting();
+	registry.setCustomSender((message, options) => {
+		session.sendCustomMessage(message, options);
+	});
+
+	const before = bodies.length;
+	gate.queueWakeEntry({
+		customType: "torus.team-wake",
+		text: "GATE-IDLE-ONLY: @builder is idle",
+		details: { team: "t" },
+	});
+	await sleep(1500);
+	assert.equal(bodies.length - before, 1, "idle queue flushes immediately as exactly one request");
+	assert.ok(
+		bodies.slice(before).some((body) => body.includes("GATE-IDLE-ONLY")),
+		"the single entry's payload must reach the model context",
+	);
+	registry.setCustomSender(() => {});
+	gate._resetWakeGateForTesting();
 });
