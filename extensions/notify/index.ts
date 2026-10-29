@@ -135,27 +135,26 @@ export function registerNotify(pi: ExtensionAPI): void {
 		);
 	});
 
-	pi.registerMessageRenderer("torus.monitor-fired", (message, _options, theme) => {
-		const details = (message.details ?? {}) as Record<string, unknown>;
+	const monitorLine = (details: Record<string, unknown>, theme: Theme): string => {
 		const name = typeof details["name"] === "string" ? sanitizeRender(details["name"]) : "monitor";
 		const failed = details["reason"] === "fail";
 		const exit = typeof details["exit"] === "number" ? `exit ${details["exit"]}` : "";
 		const tail = sanitizeRender(flattenPreview(details["tail"], 70));
-		return new Text(
-			delegationLine(
-				failed ? "✗" : "≈",
-				failed ? "error" : "warning",
-				`monitor ${name} ${failed ? "failed" : "output changed"}`,
-				[exit, tail].filter(Boolean).join(" · "),
-				theme,
-			),
-			0,
-			0,
+		return delegationLine(
+			failed ? "✗" : "≈",
+			failed ? "error" : "warning",
+			`monitor ${name} ${failed ? "failed" : "output changed"}`,
+			[exit, tail].filter(Boolean).join(" · "),
+			theme,
 		);
+	};
+
+	pi.registerMessageRenderer("torus.monitor-fired", (message, _options, theme) => {
+		const details = (message.details ?? {}) as Record<string, unknown>;
+		return new Text(monitorLine(details, theme), 0, 0);
 	});
 
-	pi.registerMessageRenderer("torus.team-wake", (message, _options, theme) => {
-		const details = (message.details ?? {}) as Record<string, unknown>;
+	const teamWakeLines = (details: Record<string, unknown>, theme: Theme): string => {
 		const team = typeof details["team"] === "string" ? sanitizeRender(details["team"]) : "team";
 		const episodeLine = (entry: Record<string, unknown>): string => {
 			const member = typeof entry["member"] === "string" ? sanitizeRender(entry["member"]) : "?";
@@ -173,9 +172,50 @@ export function registerNotify(pi: ExtensionAPI): void {
 			const lines = details["members"]
 				.filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null)
 				.map(episodeLine);
-			if (lines.length > 0) return new Text(lines.join("\n"), 0, 0);
+			if (lines.length > 0) return lines.join("\n");
 		}
-		return new Text(episodeLine(details), 0, 0);
+		return episodeLine(details);
+	};
+
+	pi.registerMessageRenderer("torus.team-wake", (message, _options, theme) => {
+		const details = (message.details ?? {}) as Record<string, unknown>;
+		return new Text(teamWakeLines(details, theme), 0, 0);
+	});
+
+	// One batch marker per wake-gate flush; each entry renders with the same
+	// lines its standalone marker would have shown.
+	pi.registerMessageRenderer("torus.wake-batch", (message, _options, theme) => {
+		const details = (message.details ?? {}) as Record<string, unknown>;
+		const lines: string[] = [];
+		const entries = Array.isArray(details["entries"]) ? details["entries"] : [];
+		for (const entry of entries) {
+			if (typeof entry !== "object" || entry === null) continue;
+			const entryDetails = (entry as Record<string, unknown>)["details"];
+			if (typeof entryDetails !== "object" || entryDetails === null) continue;
+			const customType = (entry as Record<string, unknown>)["customType"];
+			if (customType === "torus.team-wake") {
+				lines.push(teamWakeLines(entryDetails as Record<string, unknown>, theme));
+			} else if (customType === "torus.monitor-fired") {
+				lines.push(monitorLine(entryDetails as Record<string, unknown>, theme));
+			}
+		}
+		if (lines.length === 0) {
+			lines.push(
+				delegationLine(
+					"☾",
+					"warning",
+					"wake batch",
+					sanitizeRender(
+						flattenPreview(
+							textOf(message as { content: Array<{ type: string; text?: string }> }),
+							90,
+						),
+					),
+					theme,
+				),
+			);
+		}
+		return new Text(lines.join("\n"), 0, 0);
 	});
 }
 

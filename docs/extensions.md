@@ -406,7 +406,7 @@ Periodic command watcher: runs a shell command on an interval, hashes its output
 - **Hooks:** `session_shutdown`: stop all
 - **Env:** `TORUS_MONITOR=0` disables
 
-Stops on `stopOn: change` (output hash changed) or `stopOn: fail` (command failed). History lands in `$TORUS_STATE_DIR/monitors/<name>.log`; at most 5 concurrent monitors (oldest evicted). When a monitor fires, a `torus.monitor-fired` transcript notification also lands in the session (name, reason, exit code, output tail; rendered like the fleet markers) and wakes the model: an idle session starts a turn, a streaming one gets it queued as a follow-up.
+Stops on `stopOn: change` (output hash changed) or `stopOn: fail` (command failed). History lands in `$TORUS_STATE_DIR/monitors/<name>.log`; at most 5 concurrent monitors (oldest evicted). When a monitor fires, a `torus.monitor-fired` transcript notification also lands in the session (name, reason, exit code, output tail; rendered like the fleet markers) and wakes the model through the wake gate: an idle session gets the marker straight away, a mid-run one holds it so the fire joins the single settle flush instead of trickling out of the follow-up queue one turn apiece.
 
 ### `fleet`
 
@@ -469,7 +469,7 @@ All delegation/team markers are sent with `triggerTurn: false` (the engine's fla
 
 Wake-ups are per member. When a member goes idle (or stops non-deliberately) while holding an unread outbox report (bootstrap "ready" handshakes don't count), its episode queues. All pending episodes flush as ONE combined `torus.team-wake` marker per team after a 10s coalescing window, rendered like the fleet markers; a member back to working before the flush defers to its next episode. The marker quotes each member's newest outbox tail and starts a run in an idle session: a queued user follow-up alone would strand pending episodes when the prior turn was interrupted. `TORUS_TEAM_NOTIFY=0` disables it.
 
-Why the window: members finishing within minutes would otherwise queue one follow-up each, draining one turn boundary apart, every one a wasted model turn.
+Why the window: members finishing close together flush as one team marker instead of one each. Delivery is guarded by the wake gate: pi's follow-up queue drains one run per queued marker, so a wake flushed while the lead is mid-run is held in torus and the whole backlog (team wakes and monitor fires alike) leaves as one `torus.wake-batch` marker when the run settles, single-entry flushes keeping their own marker type. Markers already handed to pi cannot be un-queued, which is what let a deleted team keep waking a session one stale notification at a time; `team_delete` now drops held wakes before they are ever delivered.
 
 #### Member task self-claim (opt-in, default off)
 

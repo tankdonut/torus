@@ -15,7 +15,7 @@ import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { projectStateDir } from "../fsutil.js";
 import { notifyMonitor } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
-import { emitTorusCustom } from "../registry.js";
+import { queueWakeEntry } from "../wake-gate.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin"],
@@ -85,23 +85,14 @@ function emitMonitorFired(
 ): void {
 	const tail = output.trim().replace(/\s+/g, " ").slice(0, 200);
 	const what = reason === "fail" ? "failed" : "output changed";
-	emitTorusCustom(
-		{
-			customType: "torus.monitor-fired",
-			content: [
-				{
-					type: "text",
-					text: `monitor "${entry.name}" ${what}${exit !== null ? ` (exit ${exit})` : ""}${tail.length > 0 ? `: ${tail}` : ""} — monitor stopped itself, no torus_monitor_stop needed`,
-				},
-			],
-			display: true,
-			details: { name: entry.name, reason, exit, tail },
-		},
-		// Wake the model so it reacts to the fired monitor: an idle session starts
-		// a turn; a streaming one gets the marker queued as a follow-up instead of
-		// steering mid-generation.
-		{ triggerTurn: true, deliverAs: "followUp" },
-	);
+	// Delivery goes through the wake gate: held while the agent runs so the
+	// fire joins the next settle flush instead of trickling out of pi's
+	// one-at-a-time follow-up queue turns later.
+	queueWakeEntry({
+		customType: "torus.monitor-fired",
+		text: `monitor "${entry.name}" ${what}${exit !== null ? ` (exit ${exit})` : ""}${tail.length > 0 ? `: ${tail}` : ""} — monitor stopped itself, no torus_monitor_stop needed`,
+		details: { name: entry.name, reason, exit, tail },
+	});
 }
 
 /**

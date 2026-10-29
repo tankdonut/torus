@@ -65,6 +65,7 @@ import {
 	updateDelegation,
 } from "../registry.js";
 import { RpcChild } from "../rpc.js";
+import { wakeGateAgentSettled, wakeGateAgentStart } from "../wake-gate.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin", "win32"],
@@ -1484,6 +1485,13 @@ export function registerRoster(pi: ExtensionAPI): void {
 	setCustomSender((message, options) => {
 		pi.sendMessage({ ...message, display: message.display ?? true }, options);
 	});
+
+	// Wake-gate wiring: run boundaries decide whether wake markers are held
+	// (mid-run) or flushed straight through (idle). Between a settle and the
+	// next start the session is idle, so a flush's triggerTurn marker starts
+	// its own run and lands in one turn.
+	pi.on("agent_start", () => wakeGateAgentStart());
+	pi.on("agent_settled", () => wakeGateAgentSettled());
 
 	pi.on("session_start", (_event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();

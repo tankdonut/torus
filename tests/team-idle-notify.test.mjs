@@ -27,6 +27,7 @@ delete process.env.TORUS_TEAM_NOTIFY;
 
 const registry = await import("../extensions/registry.ts");
 const team = await import("../extensions/team/index.ts");
+const gate = await import("../extensions/wake-gate.ts");
 
 const wakes = [];
 registry.setCustomSender((message, options) => {
@@ -82,6 +83,7 @@ function seedOutbox(name, text) {
 after(() => {
 	team.setMemberSpawnerForTesting(null);
 	registry.setCustomSender(() => {});
+	gate._resetWakeGateForTesting();
 	registry.resetRegistryForTesting();
 	rmSync(HOME, { recursive: true, force: true });
 });
@@ -266,6 +268,52 @@ test("wake tail quotes the newest outbox entry regardless of heading format", as
 	const text = wakeText(wakes[0]);
 	assert.match(text, /NEWEST-FINDING-XYZ/, "tail must quote the newest entry");
 	assert.doesNotMatch(text, /first entry/, "tail must not quote the oldest entry");
+});
+
+test("a busy session holds the flushed wake; agent settle delivers it once", async () => {
+	registry.resetRegistryForTesting();
+	gate._resetWakeGateForTesting();
+	wakes.length = 0;
+	gate._setWakeGateActiveForTesting(true);
+	await createTeam("kilo", [{ name: "held", agent: "builder" }]);
+
+	member("held").onState({ status: "working", sessionId: "s" });
+	member("held").onReport("done waiting", false);
+	seedOutbox("held", "done waiting");
+	member("held").onState({ status: "idle", sessionId: "s" });
+	team.flushTeamWakesForTesting();
+	assert.equal(wakes.length, 0, "the coalesced wake must not reach pi while the agent runs");
+
+	gate.wakeGateAgentSettled();
+	assert.equal(wakes.length, 1, "settle flushes the held wake exactly once");
+	assert.match(wakeText(wakes[0]), /@held/);
+	gate._setWakeGateActiveForTesting(false);
+});
+
+test("team_delete drops a wake already held for a busy session (the post-delete churn)", async () => {
+	registry.resetRegistryForTesting();
+	gate._resetWakeGateForTesting();
+	wakes.length = 0;
+	gate._setWakeGateActiveForTesting(true);
+	const teamId = await createTeam("lima", [{ name: "ghost", agent: "builder" }]);
+
+	member("ghost").onState({ status: "working", sessionId: "s" });
+	member("ghost").onReport("final report", false);
+	seedOutbox("ghost", "final report");
+	member("ghost").onState({ status: "idle", sessionId: "s" });
+	team.flushTeamWakesForTesting();
+	assert.equal(wakes.length, 0, "held while the lead is mid-run");
+
+	const tools = [];
+	team.registerTeam({ registerTool: (tool) => tools.push(tool) });
+	await tools.find((t) => t.name === "team_delete").execute("call", { team: teamId });
+	gate.wakeGateAgentSettled();
+	assert.equal(
+		wakes.length,
+		0,
+		"a wake held for a deleted team must never reach the session, not even at settle",
+	);
+	gate._setWakeGateActiveForTesting(false);
 });
 
 test("TORUS_TEAM_NOTIFY=0 suppresses the wake-up", async () => {

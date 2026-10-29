@@ -14,12 +14,14 @@ process.env.TORUS_NOTIFY = "0";
 
 const registry = await import("../extensions/registry.ts");
 const monitor = await import("../extensions/monitor/index.ts");
+const gate = await import("../extensions/wake-gate.ts");
 // canonical project key (linked worktrees key on the main checkout) — the
 // same derivation production uses, never a raw-cwd reimplementation
 const { projectKeyFor: projectKey } = await import("../extensions/fsutil.ts");
 
 after(() => {
 	registry.setCustomSender(() => {});
+	gate._resetWakeGateForTesting();
 	rmSync(HOME, { recursive: true, force: true });
 });
 
@@ -104,6 +106,25 @@ test("torus_monitor tool fires the transcript marker on its immediate first chec
 		exit: 9,
 		tail: "bad",
 	});
+});
+
+test("a busy session holds the monitor fire; agent settle delivers it once", async () => {
+	gate._resetWakeGateForTesting();
+	gate._setWakeGateActiveForTesting(true);
+	const customs = captureCustoms();
+	const entry = fakeEntry({ name: "busy-probe" });
+
+	await monitor.runMonitorCheck(entry);
+	assert.equal(customs.length, 0, "first check only records the baseline hash");
+	entry.command = "echo two";
+	await monitor.runMonitorCheck(entry);
+	assert.equal(customs.length, 0, "the fire must not queue as a pi follow-up while the agent runs");
+
+	gate.wakeGateAgentSettled();
+	assert.equal(customs.length, 1, "settle delivers the held fire exactly once");
+	assert.equal(customs[0].message.customType, "torus.monitor-fired");
+	assert.equal(customs[0].message.details.name, "busy-probe");
+	gate._setWakeGateActiveForTesting(false);
 });
 
 test("monitor history lands under TORUS_HOME/state/--<project>--/monitors/", async () => {

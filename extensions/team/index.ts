@@ -52,6 +52,7 @@ import {
 	updateTasksFile,
 	writeTeamSpec,
 } from "../team-runtime.js";
+import { dropWakeEntries, queueWakeEntry } from "../wake-gate.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin", "win32"],
@@ -592,32 +593,22 @@ function flushTeamWake(teamId: string): void {
 	// interrupted turn strands it pending until the next user input.
 	// triggerTurn forces a run when the session is idle, and that run also
 	// drains any follow-ups orphaned before it (verified against pi 1.0.2).
-	const delivered = emitTorusCustom(
-		{
-			customType: "torus.team-wake",
-			content: [{ type: "text", text }],
-			display: true,
-			details: {
-				team: record.name,
-				members: episodes,
-				...(episodes.length === 1 && first
-					? { member: first.member, agent: first.agent, status: first.status, reason: first.reason }
-					: {}),
-			},
+	// Delivery goes through the wake gate: an idle session flushes straight
+	// through (same triggerTurn marker as before); a busy one holds the entry
+	// so the backlog lands as one marker when the run settles, and team_delete
+	// can still drop it before it ever reaches pi's one-at-a-time follow-up
+	// queue.
+	queueWakeEntry({
+		customType: "torus.team-wake",
+		text,
+		details: {
+			team: record.name,
+			members: episodes,
+			...(episodes.length === 1 && first
+				? { member: first.member, agent: first.agent, status: first.status, reason: first.reason }
+				: {}),
 		},
-		{ triggerTurn: true, deliverAs: "followUp" },
-	);
-	if (!delivered) {
-		try {
-			appendFileSync(
-				path.join(teamDir(teamId), "team.log"),
-				`[${new Date().toISOString()}] wake-up for ${episodes.map((e) => `@${e.member}`).join(", ")} not delivered (no session sender)\n`,
-				"utf8",
-			);
-		} catch {
-			// team dir gone — best-effort log
-		}
-	}
+	});
 }
 
 export type MemberSpawner = typeof spawnMember;
@@ -1455,6 +1446,12 @@ const teamDeleteTool = defineTool({
 			clearTimeout(pendingWakeTimer);
 			pendingWakeTimers.delete(record.id);
 		}
+		// Wakes already handed to the wake gate (lead mid-run) are still
+		// cancellable here — unlike markers pi already queued, which drain one
+		// turn apiece and read as stale churn from a deleted team.
+		dropWakeEntries(
+			(entry) => entry.customType === "torus.team-wake" && entry.details?.team === record.name,
+		);
 		for (const member of record.members) {
 			memberControls.delete(member.id);
 			// Safety pass: a member whose supervisor never delivered its stopped
