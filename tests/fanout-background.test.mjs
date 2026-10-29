@@ -178,6 +178,7 @@ test(
 		assert.match(result.content[0].text, /torus_results/);
 
 		await waitForSettled();
+		await waitFor(() => backgroundEntries().length === 3, "fanout wake entries");
 		const entries = backgroundEntries();
 		assert.equal(entries.length, 3, "exactly one wake entry per completed run");
 		assert.deepEqual(
@@ -225,6 +226,7 @@ test(
 		assert.equal(result.details.background, true);
 
 		await waitForSettled();
+		await waitFor(() => backgroundEntries().length === 2, "mixed-outcome wake entries");
 		const entries = backgroundEntries();
 		assert.equal(entries.length, 2, "both runs still deliver exactly one entry each");
 		const failed = entries.find((e) => e.message.details.handle === "dead2");

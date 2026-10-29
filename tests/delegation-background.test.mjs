@@ -105,6 +105,16 @@ async function waitForSettled(deadlineMs = 5000) {
 	assert.fail("background run did not settle within the deadline");
 }
 
+/** Bounded wait for a condition (wake entries land a microtask after the registry settles). */
+async function waitFor(predicate, what, deadlineMs = 5000) {
+	const deadline = Date.now() + deadlineMs;
+	while (Date.now() < deadline) {
+		if (predicate()) return;
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+	assert.fail(`${what} did not arrive within the deadline`);
+}
+
 test("fireDelegationsBackground queues one wake entry per completed run, no direct emit", async () => {
 	registry.resetRegistryForTesting();
 	gate._resetWakeGateForTesting();
@@ -192,6 +202,7 @@ test("torus_delegate background:true returns immediately and delivers via the wa
 		);
 
 		await waitForSettled();
+		await waitFor(() => backgroundEntries().length === 1, "background wake entry");
 		const entries = backgroundEntries();
 		assert.equal(entries.length, 1, "exactly one wake entry for the completed run");
 		assert.equal(entries[0].message.details.handle, "bg-run");
