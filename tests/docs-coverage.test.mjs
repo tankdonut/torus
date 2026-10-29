@@ -198,6 +198,7 @@ test("configuration.md covers every registered config section and knob", () => {
 		"TORUS_APPROVAL/approval.enabled",
 		"TORUS_BANNER/ui.banner",
 		"TORUS_COMMENT_CHECKER/commentChecker.enabled",
+		"TORUS_DELEGATE_BACKGROUND/roster.delegateBackground",
 		"TORUS_DREAMING/reflection.dreaming",
 		"TORUS_FMT_CMD/hashline.fmtCmd",
 		"TORUS_GUARDS/guards.enabled",

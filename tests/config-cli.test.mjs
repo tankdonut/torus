@@ -107,6 +107,7 @@ test("empty home: status reports all defaults", async () => {
 				"serve: default",
 				"keywords: default",
 				"permissionMode: default",
+				"roster: default",
 				`project: none (${path.join(process.cwd(), ".torus", "config.json")})`,
 				"",
 			].join("\n"),

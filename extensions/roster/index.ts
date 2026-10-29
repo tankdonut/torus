@@ -24,6 +24,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, loadSkills } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { type AcpAgentSpec, acpAgents, runAcpAgent } from "../acp/index.js";
+import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import {
 	childExtensionArgs,
 	type EngineTally,
@@ -65,7 +66,7 @@ import {
 	updateDelegation,
 } from "../registry.js";
 import { RpcChild } from "../rpc.js";
-import { wakeGateAgentSettled, wakeGateAgentStart } from "../wake-gate.js";
+import { queueWakeEntry, wakeGateAgentSettled, wakeGateAgentStart } from "../wake-gate.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin", "win32"],
@@ -756,6 +757,68 @@ export interface DelegationOutcome {
 	delegationId: string | null;
 }
 
+/** One background run: enough context to label and time its completion wake. */
+export interface BackgroundRunDescriptor {
+	agent: string;
+	handle: string | null;
+	/** Starts the run; MUST invoke runDelegation with emitResult=false — the wake gate is the only delivery path for background results. */
+	start: () => Promise<DelegationOutcome>;
+}
+
+/** Summary cap for a completion wake: the marker is context, torus_results carries the full tail. */
+const BACKGROUND_SUMMARY_CAP = 4000;
+
+/**
+ * Fire delegation runs without awaiting them; each completion queues ONE
+ * wake-gate entry (customType torus.delegation-result carrying the result
+ * summary): an idle session gets it immediately, a busy one gets every
+ * pending completion batched into a single turn at settle. Returns each
+ * run's settled promise so tests may await them; callers in the tool path
+ * must not.
+ */
+export function fireDelegationsBackground(
+	runs: BackgroundRunDescriptor[],
+): Array<Promise<DelegationOutcome>> {
+	return runs.map((run) => {
+		const startedAt = Date.now();
+		const settled = run.start().catch(
+			(error): DelegationOutcome => ({
+				ok: false,
+				text: `background delegation crashed: ${String(error).slice(0, 300)}`,
+				details: { error: "background-crash", agent: run.agent },
+				delegationId: null,
+			}),
+		);
+		return settled.then((outcome) => {
+			try {
+				const record = outcome.delegationId
+					? listDelegations().find((r) => r.id === outcome.delegationId)
+					: undefined;
+				const summary =
+					outcome.text.length > BACKGROUND_SUMMARY_CAP
+						? `${outcome.text.slice(0, BACKGROUND_SUMMARY_CAP)}…`
+						: outcome.text;
+				const label = run.handle ? `@${run.handle} (${run.agent})` : run.agent;
+				queueWakeEntry({
+					customType: "torus.delegation-result",
+					text: `[torus] ${label} background delegation ${outcome.ok ? "finished" : "FAILED"}. Full result:\n\n${summary}\n\nFull output: run torus_results${outcome.delegationId ? ` with id ${outcome.delegationId}` : " and pick this run"}.${record ? ` Log: ${record.logFile}` : ""}`,
+					details: {
+						agent: run.agent,
+						handle: run.handle,
+						ok: outcome.ok,
+						background: true,
+						...(outcome.delegationId ? { delegationId: outcome.delegationId } : {}),
+						durationMs: Date.now() - startedAt,
+					},
+				});
+			} catch {
+				// Delivery is best-effort; the registry record and log keep the result.
+			}
+			return outcome;
+		});
+	});
+}
+
 /**
  * Content for a delegation's start marker: null suppresses it, true previews
  * the task text, and a caller-supplied string is used verbatim so background
@@ -1294,6 +1357,12 @@ const delegateTool = defineTool({
 					"Model for this run: 'primary' or 'fast' (chain shorthands) or an exact id like zai/glm-5.3 — starts the chain walk there, falls back down the agent's chain on no-work failures",
 			}),
 		),
+		background: Type.Optional(
+			Type.Boolean({
+				description:
+					"Return immediately instead of blocking: the result arrives later as a torus.delegation-result wake marker (batched with other pending wakes when busy); read the full output with torus_results",
+			}),
+		),
 	}),
 	// Machine-readable shape of successful results (codemode scripts receive
 	// this instead of the text content). Every field optional; failures and
@@ -1304,6 +1373,7 @@ const delegateTool = defineTool({
 		delegationId: Type.Optional(Type.String()),
 		model: Type.Optional(Type.String()),
 		turns: Type.Optional(Type.Number()),
+		background: Type.Optional(Type.Boolean()),
 		usage: Type.Optional(
 			Type.Object({
 				input: Type.Optional(Type.Number()),
@@ -1401,6 +1471,68 @@ const delegateTool = defineTool({
 			onUpdate({ content: [{ type: "text", text: `▶ ${label} · running` }], details: {} });
 		}
 		const capWarning = concurrencyWarning([plannedRunModel(params.agent, params.model)]);
+		let backgroundNote = "";
+		if (params.background === true) {
+			if (
+				!knobBoolean(
+					"TORUS_DELEGATE_BACKGROUND",
+					"roster",
+					"delegateBackground",
+					true,
+					parseZeroDisables,
+				)
+			) {
+				backgroundNote =
+					"(background requested but disabled via TORUS_DELEGATE_BACKGROUND=0 — ran blocking)\n\n";
+			} else {
+				fireDelegationsBackground([
+					{
+						agent: params.agent,
+						handle,
+						start: () =>
+							runDelegation(
+								params.agent,
+								params.task,
+								params.cwd,
+								undefined,
+								ctx.sessionManager.getSessionId(),
+								handle,
+								params.skills ?? null,
+								false,
+								false,
+								{ model: params.model ?? null },
+							),
+					},
+				]);
+				// One settle so startDelegation's registry record exists for the id
+				// echo; the run itself is fire-and-forget.
+				await sleep(100);
+				const record = handle ? listDelegations().find((r) => r.handle === handle) : undefined;
+				ctx.ui.setStatus(statusKey, undefined);
+				return {
+					content: [
+						{
+							type: "text",
+							text: withWarning(
+								`background delegation started — ${label} (${params.agent})${record ? ` · id ${record.id}` : ""}. Completion arrives as a torus.delegation-result marker (batched with other pending wakes when busy); read the full output with torus_results.`,
+								capWarning,
+							),
+						},
+					],
+					details: {
+						background: true,
+						agent: params.agent,
+						handle,
+						...(record ? { delegationId: record.id } : {}),
+					},
+					structuredContent: {
+						background: true,
+						ok: true,
+						...(record ? { delegationId: record.id } : {}),
+					},
+				};
+			}
+		}
 		let outcome: DelegationOutcome;
 		try {
 			outcome = await runDelegation(
@@ -1450,7 +1582,7 @@ const delegateTool = defineTool({
 			// their tool block red while the text keeps the partial work.
 			const failedCleanExit = outcome.details.exitCode === 0;
 			return {
-				content: [{ type: "text", text: withWarning(outcome.text, capWarning) }],
+				content: [{ type: "text", text: withWarning(backgroundNote + outcome.text, capWarning) }],
 				details: outcome.details,
 				...(failedCleanExit ? { isError: true } : {}),
 			};
@@ -1458,7 +1590,7 @@ const delegateTool = defineTool({
 		const usage = (outcome.details.usage ?? {}) as Record<string, unknown>;
 		const num = (v: unknown): number => (typeof v === "number" ? v : 0);
 		return {
-			content: [{ type: "text", text: withWarning(outcome.text, capWarning) }],
+			content: [{ type: "text", text: withWarning(backgroundNote + outcome.text, capWarning) }],
 			details: outcome.details,
 			structuredContent: {
 				ok: true,
