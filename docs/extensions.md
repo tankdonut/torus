@@ -118,22 +118,33 @@ The delegation core: parses `agents/*.md` into the roster and spawns the pinned 
 | Tool | Purpose |
 | --- | --- |
 | `torus_roster` | List agents, chains, credentialed providers, and per-model concurrency caps |
-| `torus_delegate` | Run one self-contained task on a roster agent; accepts `agent`, `task`, `handle`, `skills`, `cwd`, `model`; live `renderCall`/`renderResult` |
+| `torus_delegate` | Run one self-contained task on a roster agent; accepts `agent`, `task`, `handle`, `skills`, `cwd`, `model`, `background`; live `renderCall`/`renderResult` |
+| `torus_results` | Read a delegation record's stored output tail by `id` (status, turns, cost, duration), or list recent records |
 
 - **Commands:** `/roster`; one command per agent file. Session-mode `/leader` toggles the persona. Child agents (`/builder`, `/dreamer`, `/explorer`, `/librarian` + alias `/research`, `/looker`, `/reviewer`) delegate the argument text, wait for that session's running delegations to quiesce (10-min cap), and inject the result as a follow-up user message
 - **Hooks:** `session_start`: record session id; rehydrate past delegations from the project state dir's logs
-- **Env:** none directly
+- **Env:** `TORUS_DELEGATE_BACKGROUND=0` forces blocking even when a call passes `background: true` (config: `roster.delegateBackground`)
 - **Interactions:** heavy consumer of the shared registry; memory's dream/reflect and team's fanout/chain call `runDelegation()`; prompts, ui, notify, browser, and fleet all consume its state
 
 #### Delegation mechanics
 
 Frontmatter is the agent definition. Each delegation spawns the pinned engine as a child (RPC mode with JSON-mode fallback), walking the agent's model chain on no-work failures. Emits `torus.delegation-start` / `torus.delegation-result` transcript messages, streams per-turn snapshots into the shared registry, and supports mid-run stop (`x`) and steer (`s`).
 
-Start markers reach the parent model's context (custom messages convert to user messages), so background runs pass neutral `announce` text instead of the task preview: a dreamer-directed task ("You are reflecting…") would read there as an instruction. `torus_delegate` passes `announce: false`: the tool block is that call's transcript surface (live `onUpdate` + statusline chip, and call/result lines are mouse regions opening the fleet), so no deferred start marker lands next to the result at completion. Its result details carry `turns`, `usage`, and `delegationId` for the renderer.
+Start markers reach the parent model's context (custom messages convert to user messages), so memory's background delegations pass neutral `announce` text instead of the task preview: a dreamer-directed task ("You are reflecting…") would read there as an instruction. `torus_delegate` passes `announce: false`: the tool block is that call's transcript surface (live `onUpdate` + statusline chip, and call/result lines are mouse regions opening the fleet), so no deferred start marker lands next to the result at completion. Its result details carry `turns`, `usage`, and `delegationId` for the renderer.
 
 `model` takes `primary`/`fast` (chain shorthands, resolved to the chain's first credentialed candidate) or an exact available id. It is validated pre-flight: invalid values reject naming the valid candidates, with no spawn. The walk falls back down the agent's own chain on no-work failures.
 
 `skills` resolves names and paths against the same set the main window loaded: pi's auto-discovered skills plus the **torus payload package's `pi.skills`** (the `repoRoot()`/`TORUS_ROOT` manifest; the launcher loads it via `--extension <payload-root>`, and delegation children get manifest skills only through this resolver since they spawn with bare extension files). Delegation-cwd manifests are deliberately ignored. Everything under those roots passes path containment; everything else is rejected.
+
+#### Background delegations
+
+`torus_delegate` accepts `background: true`: the run fires and the tool returns at once, so the lead keeps working in the same turn. The result echoes the run's registry id when the call passes a `handle`. Completion arrives as a `torus.delegation-result` wake marker carrying a summary capped at 4000 characters and the log path for the full output.
+
+Delivery rides the wake gate and nothing else: background runs pass `emitResult: false`, so no direct result marker queues as a pi follow-up. An idle session gets the marker straight away; a busy one gets every pending completion batched into one turn at settle. The registry still tracks the run, so the fleet strip and browser show it live; see the wake gate under [Transcript markers and wake-ups](#transcript-markers-and-wake-ups).
+
+`torus_results` is the read-only pickup: with an `id` it returns that record's stored output tail plus status, turns, cost, and duration; without one it lists recent records. The list is the pickup path when a start result carried no id.
+
+`TORUS_DELEGATE_BACKGROUND=0` (config `roster.delegateBackground`, default on) forces every delegation tool back to blocking even when called with `background: true`. The tool result carries a visible note that the run went blocking, ahead of the usual outcome text.
 
 ### `acp`
 
@@ -426,8 +437,8 @@ Multi-agent orchestration: parallel fan-out, sequential chains, and persistent t
 
 | Tool | Purpose |
 | --- | --- |
-| `torus_fanout` | 2–8 parallel delegations (per-run `model` override accepted) |
-| `torus_chain` | 2–6 sequential steps, each fed the prior output, bounded to 4k chars (per-step `model` override accepted) |
+| `torus_fanout` | 2–8 parallel delegations (per-run `model` override, `background` accepted) |
+| `torus_chain` | 2–6 sequential steps, each fed the prior output, bounded to 4k chars (per-step `model` override, `background` accepted) |
 | `team_create` | Create a persistent team (1–8 members); accepts `selfClaim` |
 | `team_status` | Team state, orphaned tasks, stale tasks |
 | `team_msg` | Message a member or `*` |
@@ -445,6 +456,8 @@ Multi-agent orchestration: parallel fan-out, sequential chains, and persistent t
 `torus_fanout` and `torus_chain` are thin wrappers over roster's `runDelegation`. Fan-out combines its start markers into one for the batch, and coalesces result markers: completions within a 5s window merge into one combined `torus.delegation-result` listing every run id, flushing early once the whole batch settles.
 
 Before spawning, fan-out resolves each run's start model and prepends a concurrency warning to the result when running delegations plus the batch would exceed a model's cap (see the providers extension's concurrency caps); the live status line carries a short `⚠ concurrency cap exceeded` tag. Chains are sequential and skip the check.
+
+Both tools also take `background: true`, under the same `TORUS_DELEGATE_BACKGROUND=0` switch and wake-gate delivery as `torus_delegate`. A background fan-out fires every run and queues one wake entry per completion, skipping the combined-marker coalescing above. A background chain wraps the whole sequential walk in one entry that lands on the final outcome, not one per step.
 
 #### Persistent teams
 
@@ -469,7 +482,7 @@ All delegation/team markers are sent with `triggerTurn: false` (the engine's fla
 
 Wake-ups are per member. When a member goes idle (or stops non-deliberately) while holding an unread outbox report (bootstrap "ready" handshakes don't count), its episode queues. All pending episodes flush as ONE combined `torus.team-wake` marker per team after a 10s coalescing window, rendered like the fleet markers; a member back to working before the flush defers to its next episode. The marker quotes each member's newest outbox tail and starts a run in an idle session: a queued user follow-up alone would strand pending episodes when the prior turn was interrupted. `TORUS_TEAM_NOTIFY=0` disables it.
 
-Why the window: members finishing close together flush as one team marker instead of one each. Delivery is guarded by the wake gate: pi's follow-up queue drains one run per queued marker, so a wake flushed while the lead is mid-run is held in torus and the whole backlog (team wakes and monitor fires alike) leaves as one `torus.wake-batch` marker when the run settles, single-entry flushes keeping their own marker type. Markers already handed to pi cannot be un-queued, which is what let a deleted team keep waking a session one stale notification at a time; `team_delete` now drops held wakes before they are ever delivered.
+Why the window: members finishing close together flush as one team marker instead of one each. Delivery is guarded by the wake gate: pi's follow-up queue drains one run per queued marker, so a wake flushed while the lead is mid-run is held in torus and the whole backlog (team wakes, monitor fires, and background delegation completions alike) leaves as one `torus.wake-batch` marker when the run settles, single-entry flushes keeping their own marker type. Markers already handed to pi cannot be un-queued, which is what let a deleted team keep waking a session one stale notification at a time; `team_delete` now drops held wakes before they are ever delivered.
 
 #### Member task self-claim (opt-in, default off)
 
