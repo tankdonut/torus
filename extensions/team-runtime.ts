@@ -187,7 +187,7 @@ export function deliverMail(teamId: string, member: string, from: string, text: 
 	return path.join(dir, "inbox.md");
 }
 
-/** Test-only counter: bytes readDelta has actually read — poll deltas plus shrink re-reads. */
+/** Test-only counter: bytes readDelta has actually read — poll deltas only. */
 let deltaBytesRead = 0;
 
 export function _deltaBytesReadForTesting(): number {
@@ -202,30 +202,48 @@ export function _resetDeltaBytesReadForTesting(): void {
  * Read only what a mailbox poll needs: stat first, so an unchanged size costs
  * no read at all. A grown file is read exactly over [cursor, size) — mailboxes
  * are append-only, so the delta is the whole read cost. A file that shrank
- * underneath the cursor (replaced, truncated) falls back to a full re-read
- * with the cursor reset. Cursors are byte offsets; persistence writes are
- * unchanged.
+ * underneath the cursor (replaced, truncated) delivers nothing: the vanished
+ * window is gone, the surviving prefix was already consumed, and re-reading it
+ * would re-deliver that consumed mail — so the cursor jumps to the new size
+ * (persisted) and onShrink, when given, reports the skipped byte count.
+ * Cursors are byte offsets; persistence writes are unchanged.
  */
-export function readDelta(file: string, cursorRef: { value: number }, cursorFile?: string): string {
+export function readDelta(
+	file: string,
+	cursorRef: { value: number },
+	cursorFile?: string,
+	onShrink?: (skipped: number) => void,
+): string {
 	try {
 		const size = statSync(file).size;
 		if (size === cursorRef.value) return "";
-		let delta: string;
+		let delta = "";
 		if (size < cursorRef.value) {
-			delta = readFileSync(file, "utf8");
-			deltaBytesRead += Buffer.byteLength(delta);
+			// The file was rewritten or truncated underneath us: the vanished
+			// window is gone and the surviving prefix was already consumed, so
+			// re-reading it would re-deliver old mail as NEW MAIL. Skip the
+			// vanished bytes, pin the cursor to the new size, and deliver
+			// nothing — only appends after the rewrite arrive. onShrink keeps
+			// the rewrite visible in the caller's log.
+			const skipped = cursorRef.value - size;
 			cursorRef.value = size;
-		} else {
-			const fd = openSync(file, "r");
-			try {
-				const tail = Buffer.alloc(size - cursorRef.value);
-				const read = readSync(fd, tail, 0, tail.length, cursorRef.value);
-				deltaBytesRead += read;
-				cursorRef.value += read;
-				delta = tail.subarray(0, read).toString("utf8");
-			} finally {
-				closeSync(fd);
+			if (cursorFile) {
+				try {
+					writeFileSync(cursorFile, String(size), "utf8");
+				} catch {}
 			}
+			onShrink?.(skipped);
+			return "";
+		}
+		const fd = openSync(file, "r");
+		try {
+			const tail = Buffer.alloc(size - cursorRef.value);
+			const read = readSync(fd, tail, 0, tail.length, cursorRef.value);
+			deltaBytesRead += read;
+			cursorRef.value += read;
+			delta = tail.subarray(0, read).toString("utf8");
+		} finally {
+			closeSync(fd);
 		}
 		if (delta.length <= 0) return "";
 		if (cursorFile) {
@@ -748,8 +766,25 @@ export function spawnMember(
 			drainOutbox();
 
 			while (!stopped) {
-				const mail = readDelta(inboxFile, inboxCursorRef, inboxCursorFile);
+				// A rewritten or truncated inbox is not mail: readDelta skips the
+				// vanished bytes, pins the cursor, and delivers nothing, so consumed
+				// mail can never come back as NEW MAIL; the warning keeps the rewrite
+				// visible when debugging.
+				const mail = readDelta(inboxFile, inboxCursorRef, inboxCursorFile, (skipped) =>
+					appendLog(
+						`inbox shrank unexpectedly: skipped ${skipped} bytes — mailbox was rewritten or truncated`,
+					),
+				);
 				if (mail) {
+					// Receipt for the member log: sender and size only, never the
+					// content — member-to-member mail is otherwise invisible.
+					const firstLine = mail.trimStart().split("\n", 1)[0] ?? "";
+					const from = /FROM ([^:]+):/.exec(firstLine)?.[1];
+					appendLog(
+						from !== undefined
+							? `mail from ${from}: ${mail.length} bytes`
+							: `mail from unattributed: ${mail.length} bytes`,
+					);
 					// Set before the mail run: reports drained mid-turn (waitSettled
 					// polls) must already count as work, not handshake.
 					sawMail = true;
