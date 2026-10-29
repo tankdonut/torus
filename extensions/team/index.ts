@@ -43,6 +43,7 @@ import {
 	listTeamIds,
 	type MemberHandle,
 	markTeamStatus,
+	notifyUnblocked,
 	readTasksFile,
 	readTeamSpec,
 	spawnMember,
@@ -50,6 +51,7 @@ import {
 	tasksFile,
 	teamDir,
 	teamMatchesProject,
+	unblockedDependents,
 	updateTasksFile,
 	writeTeamSpec,
 } from "../team-runtime.js";
@@ -1520,7 +1522,12 @@ const teamTaskUpdateTool = defineTool({
 		let updated: { id: string; subject: string; assignee: string | null; status: string } | null =
 			null;
 		let refusal: string | null = null;
-		await updateTasksFile(record.id, (file) => {
+		let beforeSnapshot: Task[] = [];
+		const next = await updateTasksFile(record.id, (file) => {
+			// Read-only pre-mutation copy (re-assigned each CAS re-run): the
+			// in-place status writes below must not leak into the "before" view
+			// the unblock diff compares against. Mail sends after the lock opens.
+			beforeSnapshot = file.tasks.map((t) => ({ ...t }));
 			const task = file.tasks.find((t) => t.id === params.task);
 			if (!task) return;
 			if (params.status === "in_progress") {
@@ -1554,6 +1561,8 @@ const teamTaskUpdateTool = defineTool({
 		});
 		if (refusal !== null)
 			return { content: [{ type: "text", text: refusal }], details: {}, isError: true };
+		const unblocked = unblockedDependents(beforeSnapshot, next.tasks);
+		if (unblocked.length > 0) notifyUnblocked(record.id, unblocked);
 		if (updated === null) return { content: [{ type: "text", text: outcome }], details: {} };
 		return {
 			content: [{ type: "text", text: outcome }],

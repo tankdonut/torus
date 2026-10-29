@@ -363,6 +363,40 @@ export function blockedTasks(tasks: Task[]): Map<string, string[]> {
 }
 
 /**
+ * Tasks that stopped being blocked between two snapshots of the tasklist:
+ * blocked before, unblocked after, and carrying an assignee to notify.
+ * Still-blocked tasks and unassigned ones are excluded — only a woken
+ * assignee can act on the news. Pure: no I/O.
+ */
+export function unblockedDependents(before: Task[], after: Task[]): Task[] {
+	if (before.length === 0 || after.length === 0) return [];
+	const blockedBefore = blockedTasks(before);
+	if (blockedBefore.size === 0) return [];
+	const blockedAfter = blockedTasks(after);
+	return after.filter(
+		(task) => blockedBefore.has(task.id) && !blockedAfter.has(task.id) && task.assignee !== null,
+	);
+}
+
+/**
+ * Tell each newly unblocked task's assignee that their dependency finished.
+ * "tasklist" is a reserved system sender name. Callers invoke this only
+ * after updateTasksFile resolves: deliverMail is a plain appendFileSync and
+ * must never run inside the tasklist lock window.
+ */
+export function notifyUnblocked(teamId: string, unblocked: Task[]): void {
+	for (const task of unblocked) {
+		if (task.assignee === null) continue;
+		deliverMail(
+			teamId,
+			task.assignee,
+			"tasklist",
+			`task ${task.id} (${task.subject}) is unblocked — its dependency completed. Claim it if it is yours.`,
+		);
+	}
+}
+
+/**
  * Find a dependency cycle: walk dependsOn edges depth-first from every
  * task; the first revisit of a node on the current walk yields the chain
  * (e.g. ["t2", "t4", "t2"]). Unknown ids are leaves — they cannot form a

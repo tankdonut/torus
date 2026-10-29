@@ -64,7 +64,14 @@ registerHooks({
 });
 
 const runtime = await import(new URL("../../extensions/team-runtime.ts", import.meta.url).href);
-const { blockedTasks, readTasksFile, teamDir, updateTasksFile } = runtime;
+const {
+	blockedTasks,
+	notifyUnblocked,
+	readTasksFile,
+	teamDir,
+	unblockedDependents,
+	updateTasksFile,
+} = runtime;
 
 const argv = process.argv.slice(2);
 const [subcommand, teamId, taskId] = argv;
@@ -167,7 +174,12 @@ async function complete(teamId0, taskId0) {
 	if (!member) refuse("complete requires --as <memberName>");
 	const force = argv.includes("--force");
 	let refusal = null;
+	// Read-only pre-mutation copy (re-assigned each CAS re-run): the in-place
+	// status write below must not leak into the "before" view the unblock
+	// diff compares against. Mail sends after the lock opens.
+	let beforeSnapshot = [];
 	const result = await updateTasksFile(teamId0, (file) => {
+		beforeSnapshot = file.tasks.map((t) => ({ ...t }));
 		refusal = null;
 		const task = file.tasks.find((t) => t.id === taskId0);
 		if (!task) {
@@ -182,6 +194,8 @@ async function complete(teamId0, taskId0) {
 		task.updatedAt = new Date().toISOString();
 	});
 	if (refusal !== null) refuse(refusal);
+	const unblocked = unblockedDependents(beforeSnapshot, result.tasks);
+	if (unblocked.length > 0) notifyUnblocked(teamId0, unblocked);
 	const task = result.tasks.find((t) => t.id === taskId0);
 	emit({ ok: true, action: "complete", task });
 }

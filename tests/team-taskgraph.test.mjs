@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -71,10 +71,14 @@ function tool(registered, name) {
 	return found;
 }
 
-async function newTeam(registered, slug) {
+async function newTeam(registered, slug, members) {
 	const created = await tool(registered, "team_create").execute(
 		"call",
-		{ name: slug, objective: `${slug} objective`, members: [{ name: "solo", agent: "builder" }] },
+		{
+			name: slug,
+			objective: `${slug} objective`,
+			members: members ?? [{ name: "solo", agent: "builder" }],
+		},
 		undefined,
 		undefined,
 		{ sessionManager: { getSessionId: () => `sess-${slug}` } },
@@ -83,12 +87,25 @@ async function newTeam(registered, slug) {
 	return created.details.teamId;
 }
 
-async function createTask(registered, teamId, subject, dependsOn) {
+async function createTask(registered, teamId, subject, dependsOn, assignee) {
 	return tool(registered, "team_task_create").execute("call", {
 		team: teamId,
 		subject,
 		...(dependsOn ? { dependsOn } : {}),
+		...(assignee ? { assignee } : {}),
 	});
+}
+
+function inboxPath(teamId, member) {
+	return path.join(runtime.teamDir(teamId), "mailboxes", member, "inbox.md");
+}
+
+function inboxSize(teamId, member) {
+	try {
+		return statSync(inboxPath(teamId, member)).size;
+	} catch {
+		return -1; // absent inbox: untouched means still absent
+	}
 }
 
 after(() => {
@@ -188,6 +205,125 @@ test("claims are gated on dependencies: refused naming blockers until they compl
 	});
 	assert.equal(still.isError, true, "the next link stays gated");
 	assert.match(still.content[0].text, /blocked by t2/);
+});
+
+test("unblockedDependents: only blocked-before, free-after, assigned tasks are returned", () => {
+	const task = (id, subject, assignee, dependsOn) => ({
+		id,
+		subject,
+		assignee,
+		status: "pending",
+		updatedAt: "x",
+		...(dependsOn ? { dependsOn } : {}),
+	});
+	const t1 = task("t1", "foundation", "alice");
+	const t2 = task("t2", "walls", "bob", ["t1"]);
+	const t3 = task("t3", "roof", "carol", ["t2"]);
+	const t4 = task("t4", "paint", null, ["t1"]);
+	const before = [t1, t2, t3, t4];
+	assert.deepEqual(runtime.unblockedDependents(before, before), [], "no change: nothing unblocks");
+
+	const after = [{ ...t1, status: "completed" }, t2, t3, t4];
+	const freed = runtime.unblockedDependents(before, after);
+	assert.deepEqual(
+		freed.map((t) => t.id),
+		["t2"],
+		"t4 is freed but unassigned and t3 stays blocked on t2 — only t2 qualifies",
+	);
+	assert.equal(freed[0].assignee, "bob");
+});
+
+test("completing a blocker notifies the dependent's assignee via team_task_update", async () => {
+	const registered = tools();
+	const teamId = await newTeam(registered, "unblock-tool", [
+		{ name: "alice", agent: "builder" },
+		{ name: "bob", agent: "builder" },
+	]);
+	await createTask(registered, teamId, "foundation", undefined, "alice");
+	await createTask(registered, teamId, "walls", ["t1"], "bob");
+	await tool(registered, "team_task_update").execute("call", {
+		team: teamId,
+		task: "t1",
+		status: "in_progress",
+	});
+	const aliceBefore = inboxSize(teamId, "alice");
+
+	const done = await tool(registered, "team_task_update").execute("call", {
+		team: teamId,
+		task: "t1",
+		status: "completed",
+	});
+	assert.ok(!done.isError, "the blocker must complete");
+	assert.equal(done.content[0].text, "task t1 -> completed");
+
+	const inbox = readFileSync(inboxPath(teamId, "bob"), "utf8");
+	assert.match(inbox, /FROM tasklist:/);
+	assert.match(inbox, /task t2 \(walls\) is unblocked/);
+	assert.equal(inbox.match(/FROM tasklist:/g).length, 1, "exactly one notification block");
+	assert.equal(inboxSize(teamId, "alice"), aliceBefore, "the completer gets no mail");
+});
+
+test("CLI complete delivers the same unblock notification", async () => {
+	const teamId = `cli-unblock-${Date.now().toString(36)}`;
+	runtime.writeTasksFile(teamId, {
+		nextId: 3,
+		tasks: [
+			{ id: "t1", subject: "foundation", assignee: "alice", status: "in_progress", updatedAt: "x" },
+			{
+				id: "t2",
+				subject: "walls",
+				assignee: "bob",
+				status: "pending",
+				updatedAt: "x",
+				dependsOn: ["t1"],
+			},
+		],
+	});
+	const done = await teamTask(["complete", teamId, "t1", "--as", "alice"]);
+	assert.equal(done.code, 0);
+	assert.equal(firstJsonLine(done.stdout).task.status, "completed");
+	const inbox = readFileSync(inboxPath(teamId, "bob"), "utf8");
+	assert.match(inbox, /FROM tasklist:/);
+	assert.match(inbox, /task t2 \(walls\) is unblocked/);
+});
+
+test("completing a task with no dependents writes no inbox bytes", async () => {
+	const registered = tools();
+	const teamId = await newTeam(registered, "unblock-silent", [
+		{ name: "alice", agent: "builder" },
+		{ name: "bob", agent: "builder" },
+	]);
+	await createTask(registered, teamId, "lone work", undefined, "alice");
+	const before = { alice: inboxSize(teamId, "alice"), bob: inboxSize(teamId, "bob") };
+
+	const done = await tool(registered, "team_task_update").execute("call", {
+		team: teamId,
+		task: "t1",
+		status: "completed",
+	});
+	assert.ok(!done.isError);
+	assert.deepEqual(
+		{ alice: inboxSize(teamId, "alice"), bob: inboxSize(teamId, "bob") },
+		before,
+		"no member inbox gains a byte",
+	);
+});
+
+test("an unassigned dependent unblocks silently", async () => {
+	const registered = tools();
+	const teamId = await newTeam(registered, "unblock-orphan");
+	await createTask(registered, teamId, "foundation", undefined, "solo");
+	await createTask(registered, teamId, "walls", ["t1"]);
+	const before = inboxSize(teamId, "solo");
+
+	const done = await tool(registered, "team_task_update").execute("call", {
+		team: teamId,
+		task: "t1",
+		status: "completed",
+	});
+	assert.ok(!done.isError);
+	assert.equal(inboxSize(teamId, "solo"), before, "assignee-only contract: nobody to notify");
+	assert.equal(runtime.readTasksFile(teamId).tasks.find((t) => t.id === "t2").status, "pending");
 });
 
 test("create rejects self-references, cycles, and unknown dependency ids", async () => {
