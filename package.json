@@ -95,7 +95,7 @@
   },
   "overrides": {
     "katex": "0.19.0",
-    "re2js": "2.8.7",
+    "re2js": "2.9.0",
     "@earendil-works/pi-coding-agent": {
       "undici": "^8.12.2"
     },
