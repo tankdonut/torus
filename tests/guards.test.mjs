@@ -9,6 +9,8 @@ const {
 	hasSymlinkInPath,
 	isBareFileDump,
 	isMemoryStoreMutation,
+	isTeamMailboxMutation,
+	mailboxMutationBlockReason,
 	recoveryGuidance,
 	rewriteSimilarity,
 	truncateText,
@@ -58,6 +60,131 @@ test("isMemoryStoreMutation: mutating git on the store blocked, read-only and fo
 		isMemoryStoreMutation("cat ~/.torus/memory/entries/e.md", store),
 		false,
 		"reads are not mutations",
+	);
+});
+
+test("isTeamMailboxMutation: truncating or destructive writes to team mailboxes blocked; appends and reads stay open", () => {
+	const root = "/home/u/.torus/state";
+	const inbox = `${root}/--k--/teams/t1/mailboxes/alice/inbox.md`;
+	const outbox = `${root}/--k--/teams/t1/mailboxes/alice/outbox.md`;
+	assert.equal(
+		isTeamMailboxMutation(`echo x > ${inbox}`, root),
+		true,
+		"single > truncates the inbox",
+	);
+	assert.equal(isTeamMailboxMutation(`rm ${inbox}`, root), true);
+	assert.equal(isTeamMailboxMutation(`sed -i s/a/b/ ${outbox}`, root), true);
+	assert.equal(isTeamMailboxMutation(`truncate -s 0 ${inbox}`, root), true);
+	assert.equal(isTeamMailboxMutation(`mv ${inbox} /tmp/old.md`, root), true);
+	assert.equal(
+		isTeamMailboxMutation(`echo x >> ${inbox}`, root),
+		false,
+		">> is how mail is delivered",
+	);
+	assert.equal(isTeamMailboxMutation(`cat ${inbox}`, root), false, "reads are open");
+	assert.equal(
+		isTeamMailboxMutation("echo x > src/index.ts", root),
+		false,
+		"redirect target outside the teams root",
+	);
+	assert.equal(isTeamMailboxMutation("node script.sh > out.log", root), false);
+	assert.equal(
+		isTeamMailboxMutation(`cmd 2> ${inbox}`, root),
+		false,
+		"fd redirects are not the truncating form",
+	);
+	assert.equal(isTeamMailboxMutation(`cmd &> ${inbox}`, root), false);
+	assert.equal(isTeamMailboxMutation("cmd 2> err.txt", root), false);
+	assert.equal(
+		isTeamMailboxMutation(`mkdir -p ${root}/--k--/teams/t1/mailboxes/bob`, root),
+		false,
+		"creating a mailbox directory touches no mail",
+	);
+	assert.equal(
+		isTeamMailboxMutation(
+			"echo x > /elsewhere/state/--k--/teams/t1/mailboxes/alice/inbox.md",
+			root,
+		),
+		false,
+		"foreign state root",
+	);
+	const reason = mailboxMutationBlockReason(`echo x > ${inbox}`, root);
+	assert.ok(reason?.includes(inbox), "block reason names the mailbox path");
+});
+
+test("isTeamMailboxMutation: literal $TORUS_STATE_DIR and $TORUS_HOME/state prefixes match before the shell expands them", () => {
+	const root = "/home/u/.torus/state";
+	const stateDirForm = "$TORUS_STATE_DIR/--k--/teams/t1/mailboxes/alice/inbox.md";
+	const homeForm = "$TORUS_HOME/state/--k--/teams/t1/mailboxes/alice/inbox.md";
+	assert.equal(
+		isTeamMailboxMutation(`echo x > ${stateDirForm}`, root),
+		true,
+		"single > through the unexpanded $TORUS_STATE_DIR form truncates",
+	);
+	assert.equal(
+		isTeamMailboxMutation(`echo x >> ${stateDirForm}`, root),
+		false,
+		">> delivery through the same form stays open",
+	);
+	assert.equal(
+		isTeamMailboxMutation(`echo x > ${homeForm}`, root),
+		true,
+		"single > through the unexpanded $TORUS_HOME/state form truncates",
+	);
+	assert.equal(
+		isTeamMailboxMutation(`echo x >> ${homeForm}`, root),
+		false,
+		">> delivery through the $TORUS_HOME/state form stays open",
+	);
+	assert.equal(
+		isTeamMailboxMutation(`rm ${stateDirForm}`, root),
+		true,
+		"verb detection fires through the env-var form too",
+	);
+});
+
+test("isTeamMailboxMutation: dd of= and sed --in-place truncate; appending tee delivers like >>", () => {
+	const root = "/home/u/.torus/state";
+	const inbox = `${root}/--k--/teams/t1/mailboxes/alice/inbox.md`;
+	assert.equal(
+		isTeamMailboxMutation(`dd if=/dev/null of=${inbox}`, root),
+		true,
+		"dd with of= aimed at the mailbox truncates it",
+	);
+	assert.equal(
+		isTeamMailboxMutation(`dd if=${inbox} of=/tmp/copy.md`, root),
+		false,
+		"dd reading the mailbox (of= elsewhere) stays open",
+	);
+	assert.equal(
+		isTeamMailboxMutation(`sed --in-place s/a/b/ ${inbox}`, root),
+		true,
+		"sed --in-place rewrites the mailbox in place",
+	);
+	assert.equal(
+		isTeamMailboxMutation(`sed s/a/b/ ${inbox}`, root),
+		false,
+		"plain sed streams the mailbox to stdout",
+	);
+	assert.equal(
+		isTeamMailboxMutation(`echo hi | tee -a ${inbox}`, root),
+		false,
+		"tee -a has the same append semantics as >>",
+	);
+	assert.equal(
+		isTeamMailboxMutation(`echo hi | tee --append ${inbox}`, root),
+		false,
+		"tee --append has the same append semantics as >>",
+	);
+	assert.equal(
+		isTeamMailboxMutation(`echo hi | tee ${inbox}`, root),
+		true,
+		"plain tee truncates the mailbox",
+	);
+	assert.equal(
+		isTeamMailboxMutation(`echo hi | tee -a ${inbox} && rm ${inbox}`, root),
+		true,
+		"an appending tee does not mask other mutating verbs",
 	);
 });
 

@@ -1,9 +1,11 @@
 /**
  * torus — context guards + error recovery.
  *
- * Five behaviors that keep context lean and failures recoverable:
+ * Six behaviors that keep context lean and failures recoverable:
  *   - tool-output truncation (giant results capped before they eat context)
  *   - bash file-read guard (cat/head/tail of files -> use the read tool)
+ *   - team-mailbox guard (truncating or deleting bash writes against team
+ *     mailboxes -> blocked; >> delivery, appending tee, and reads stay open)
  *   - write-overwrite guard (near-identical full rewrites -> edit/hashline)
  *   - symlink-escape guard (writes/dumps through a symbolic link -> blocked)
  *   - error-recovery guidance (structured retry advice appended to failed
@@ -79,6 +81,58 @@ export function isMemoryStoreMutation(command: string, storeDir: string): boolea
 
 function memoryStoreDir(): string {
 	return path.join(torusHome(), "memory");
+}
+
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Path of a team mailbox file referenced by the command, or null when none is. */
+function teamMailboxTarget(command: string, teamsRoot: string): string | null {
+	const cmd = command.trim();
+	if (cmd.length === 0) return null;
+	// The root also arrives as the literal unexpanded $TORUS_STATE_DIR or
+	// $TORUS_HOME/state (the forms fsutil's displayPath renders and agents copy
+	// into commands); only the shell expands them, at run time.
+	const prefixes = [teamsRoot, "$TORUS_STATE_DIR", "$TORUS_HOME/state"].map(escapeRegExp);
+	const mailbox = new RegExp(
+		`(?:${prefixes.join("|")})[^|;&>]*mailboxes/[^|;&>\\s]*/(inbox|outbox)\\.md`,
+	);
+	return cmd.match(mailbox)?.[0] ?? null;
+}
+
+/**
+ * True when a bash command truncates or deletes a team mailbox file: a
+ * file-mutating verb or a single-`>` redirect aimed at a mailbox path under
+ * the teams state root. Appends (`>>`), fd redirects (`2>`, `&>`), appending
+ * tee (`tee -a`, `tee --append`), and reads stay open — mail delivery is a
+ * plain append and must survive a slip. `dd of=<mailbox>` and `sed
+ * --in-place` count as mutations here only: `dd` needs `of=` adjacency to the
+ * target path (a bare verb would fire on reads), so neither joins
+ * FILE_MUTATING, which the memory-store guard shares.
+ */
+export function isTeamMailboxMutation(command: string, teamsRoot: string): boolean {
+	const target = teamMailboxTarget(command, teamsRoot);
+	if (target === null) return false;
+	const escaped = escapeRegExp(target);
+	if (new RegExp(`\\bdd\\b[^|;&]*\\bof=\\s*${escaped}`).test(command)) return true;
+	// Appending tee delivers mail like `>>`; strip those invocations before
+	// verb matching so they stay open. Plain `tee` truncates and stays caught.
+	const verbs = command.replace(/\btee\b\s+(?:-a|--append)\b/g, "");
+	if (FILE_MUTATING.test(verbs)) return true;
+	if (/\bsed\b[^|;&]*\s--in-place\b/.test(verbs)) return true;
+	return new RegExp(`(?<![>0-9&])>(?![>&])\\s*[^|;&>]*${escaped}`).test(command);
+}
+
+/** Block reason for a truncating or deleting bash write against a mailbox, or null. */
+export function mailboxMutationBlockReason(command: string, teamsRoot: string): string | null {
+	const target = teamMailboxTarget(command, teamsRoot);
+	if (target === null || !isTeamMailboxMutation(command, teamsRoot)) return null;
+	return `refusing to truncate or delete a team mailbox (${target}): mailboxes are append-only — use >> to deliver mail`;
+}
+
+function teamsStateDir(): string {
+	return path.join(torusHome(), "state");
 }
 
 /**
@@ -206,6 +260,13 @@ export function registerGuards(pi: ExtensionAPI): void {
 					block: true,
 					reason:
 						"the torus memory store is tool-mediated and versioned in-process — add/update with torus_remember (force to update in place), delete with torus_forget, bulk-consolidate via /reflect; direct git or file writes to the store are blocked",
+				};
+			}
+			const mailboxReason = command ? mailboxMutationBlockReason(command, teamsStateDir()) : null;
+			if (mailboxReason !== null) {
+				return {
+					block: true,
+					reason: mailboxReason,
 				};
 			}
 		}
