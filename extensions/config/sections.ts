@@ -66,4 +66,8 @@ export const CONFIG_SECTIONS: readonly SectionSpec[] = [
 		name: "permissionMode",
 		description: "Default permission mode for sessions (top-level key, not an object)",
 	},
+	{
+		name: "roster",
+		description: "Delegation background execution override",
+	},
 ];
