@@ -252,3 +252,41 @@ test("TORUS_DELEGATE_BACKGROUND=0 forces blocking with a visible note", async ()
 		else process.env.TORUS_ENGINE_BIN = PREV_ENGINE_BIN;
 	}
 });
+
+test("torus_results reads a finished record by id, lists recent runs, and fails clean on unknown ids", async () => {
+	registry.resetRegistryForTesting();
+	gate._resetWakeGateForTesting();
+	sent.length = 0;
+
+	const resultsTool = tools.find((t) => t.name === "torus_results");
+	assert.ok(resultsTool, "torus_results not registered");
+
+	await registry.startDelegation("seed-run-42", "builder", "m", null, "seed-handle");
+	await registry.finishDelegation("seed-run-42", true, "full output tail", null);
+
+	const single = await resultsTool.execute("c3", { id: "seed-run-42" }, undefined, undefined, ctx);
+	assert.equal(single.isError, undefined);
+	assert.match(single.content[0].text, /status: done/);
+	assert.match(single.content[0].text, /agent: builder/);
+	assert.match(single.content[0].text, /handle: @seed-handle/);
+	assert.ok(
+		single.content[0].text.includes("full output tail"),
+		"stored text rides the result verbatim",
+	);
+	assert.equal(single.structuredContent.id, "seed-run-42");
+	assert.equal(typeof single.structuredContent.turns, "number");
+	assert.equal(typeof single.structuredContent.cost, "number");
+
+	const listed = await resultsTool.execute("c4", {}, undefined, undefined, ctx);
+	const line = listed.content[0].text.split("\n").find((l) => l.includes("seed-run…"));
+	assert.ok(line, "seeded record missing from the list");
+	assert.match(line, /@seed-handle · builder · done · \d+s · seed-run…/);
+
+	const prefixed = await resultsTool.execute("c5", { id: "seed-run" }, undefined, undefined, ctx);
+	assert.equal(prefixed.isError, undefined, "the 8-char id preview from the list must resolve");
+	assert.ok(prefixed.content[0].text.includes("full output tail"));
+
+	const missing = await resultsTool.execute("c6", { id: "nope" }, undefined, undefined, ctx);
+	assert.equal(missing.isError, true);
+	assert.match(missing.content[0].text, /no delegation record with id nope/);
+});

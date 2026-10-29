@@ -103,6 +103,10 @@ const TORUS_TOOL_DEFINITIONS: Record<string, ToolDefinitionLike> = {
 		(args) => `chain ${Array.isArray(args["steps"]) ? args["steps"].length : "?"} steps`,
 	),
 	torus_roster: torusToolDefinition("torus_roster", () => "roster"),
+	torus_results: torusToolDefinition(
+		"torus_results",
+		(args) => `results ${String(args["id"] ?? "(list)")}`,
+	),
 	hashline_edit: torusToolDefinition("hashline_edit", (args) => {
 		const file =
 			String(args["path"] ?? "?")

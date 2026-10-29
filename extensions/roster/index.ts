@@ -6,7 +6,7 @@
  * the JSONL event stream on stdout.
  *
  * Three levers surface the roster:
- *   - torus_roster / torus_delegate tools (model-driven)
+ *   - torus_roster / torus_delegate / torus_results tools (model-driven)
  *   - /roster, /leader, /explorer, /builder, /reviewer commands (user-driven;
  *     they inject a user message so results land in the conversation)
  *   - system-prompt roster section (prompts.ts) telling the model when to
@@ -34,7 +34,7 @@ import {
 	resolveEngineBin,
 	sessionIdFromState,
 } from "../engine-child.js";
-import { flattenPreview, shortModel } from "../fleet/theme-kit.js";
+import { flattenPreview, formatDuration, shortModel } from "../fleet/theme-kit.js";
 import { parseFrontmatter, stripFrontmatter } from "../frontmatter.js";
 import { formatCost, sleep, splitList } from "../fsutil.js";
 import { clickable } from "../notify/index.js";
@@ -50,6 +50,7 @@ import {
 	appendAction,
 	attachControl,
 	attachSessionId,
+	type DelegationRecord,
 	delegationStopRequested,
 	emitTorusCustom,
 	finishDelegation,
@@ -1610,9 +1611,102 @@ const delegateTool = defineTool({
 	},
 });
 
+const RESULTS_LIST_CAP = 15;
+
+/** Resolve an id to its record: exact match, else a unique prefix (the list renders 8-char id previews). */
+function findRecordById(records: DelegationRecord[], id: string): DelegationRecord | undefined {
+	const exact = records.find((r) => r.id === id);
+	if (exact) return exact;
+	const prefixed = records.filter((r) => r.id.startsWith(id));
+	return prefixed.length === 1 ? prefixed[0] : undefined;
+}
+
+const resultsTool = defineTool({
+	name: "torus_results",
+	label: "Torus Results",
+	description:
+		"Read back delegation results (read-only): with id, one run's stored output — status, duration, turns, cost, log path, and the full text tail; without id, the most recent delegations",
+	parameters: Type.Object({
+		id: Type.Optional(
+			Type.String({
+				description:
+					"Delegation id from a torus_delegate/torus_fanout/torus_chain echo or wake marker (exact id or a unique prefix); omit to list recent runs",
+			}),
+		),
+	}),
+	// Machine-readable shape of the single-record path; list and unknown-id
+	// results set no structuredContent (same contract as torus_delegate).
+	outputSchema: Type.Object({
+		id: Type.Optional(Type.String()),
+		status: Type.Optional(Type.String()),
+		agent: Type.Optional(Type.String()),
+		handle: Type.Optional(Type.String()),
+		text: Type.Optional(Type.String()),
+		turns: Type.Optional(Type.Number()),
+		cost: Type.Optional(Type.Number()),
+		logFile: Type.Optional(Type.String()),
+		durationMs: Type.Optional(Type.Number()),
+	}),
+	async execute(_toolCallId, params) {
+		const records = listDelegations();
+		if (params.id === undefined) {
+			if (records.length === 0) {
+				return { content: [{ type: "text", text: "no delegation records yet" }], details: {} };
+			}
+			const lines = records.slice(0, RESULTS_LIST_CAP).map((record) => {
+				const who = record.handle ? `@${record.handle}` : record.agent;
+				const age = formatDuration((record.finishedAt ?? Date.now()) - record.startedAt);
+				return `${who} · ${record.agent} · ${record.status} · ${age} · ${record.id.slice(0, 8)}…`;
+			});
+			const listDetails: Record<string, unknown> = { listed: lines.length };
+			return {
+				content: [{ type: "text", text: lines.join("\n") }],
+				details: listDetails,
+			};
+		}
+		const record = findRecordById(records, params.id);
+		if (!record) {
+			return {
+				isError: true,
+				content: [{ type: "text", text: `no delegation record with id ${params.id}` }],
+				details: {},
+			};
+		}
+		// The registry already caps record.text (RECORD_TEXT_CAP); return it verbatim.
+		const durationMs = (record.finishedAt ?? Date.now()) - record.startedAt;
+		const cost = formatCost(record.cost, record.tokensIn + record.tokensOut > 0);
+		const header = [
+			`status: ${record.status}`,
+			`agent: ${record.agent}`,
+			`handle: ${record.handle ? `@${record.handle}` : "(none)"}`,
+			`duration: ${formatDuration(durationMs)}`,
+			`turns: ${record.turns}`,
+			`cost: ${cost || "(none)"}`,
+			`log: ${record.logFile}`,
+		].join("\n");
+		const recordDetails: Record<string, unknown> = { delegationId: record.id };
+		return {
+			content: [{ type: "text", text: `${header}\n\ntext:\n${record.text || "(no text stored)"}` }],
+			details: recordDetails,
+			structuredContent: {
+				id: record.id,
+				status: record.status,
+				agent: record.agent,
+				handle: record.handle ?? "",
+				text: record.text,
+				turns: record.turns,
+				cost: record.cost,
+				logFile: record.logFile,
+				durationMs,
+			},
+		};
+	},
+});
+
 export function registerRoster(pi: ExtensionAPI): void {
 	pi.registerTool(rosterTool);
 	pi.registerTool(delegateTool);
+	pi.registerTool(resultsTool);
 
 	setCustomSender((message, options) => {
 		pi.sendMessage({ ...message, display: message.display ?? true }, options);

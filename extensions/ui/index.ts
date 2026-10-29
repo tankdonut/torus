@@ -35,7 +35,12 @@ type AppTheme = ExtensionContext["ui"]["theme"];
 export type StatusPainter = Pick<AppTheme, "fg" | "bold">;
 
 /** Delegation tool executions that count toward the in-flight statusline chip. */
-const DELEGATION_TOOLS = new Set(["torus_delegate", "torus_fanout", "torus_chain"]);
+const DELEGATION_TOOLS = new Set([
+	"torus_delegate",
+	"torus_fanout",
+	"torus_chain",
+	"torus_results",
+]);
 
 /** In-flight delegation tool executions; parallel fanouts must not wipe each other's indicator. */
 let delegateInFlight = 0;
