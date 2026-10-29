@@ -25,20 +25,22 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import {
+	delegationIcon,
 	entityColor,
+	externalRunIcon,
 	flattenPreview,
-	formatDuration,
-	formatTokens,
+	fleetStats,
 	rule,
 	SPINNER,
 	shortModel,
-	statusIcon,
 	type Theme,
+	teamBadgeText,
 } from "../fleet/theme-kit.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	type DelegationRecord,
 	type ExternalRun,
+	externalRunAgeSeconds,
 	FLEET_OPENER,
 	listDelegations,
 	listExternalRuns,
@@ -173,24 +175,40 @@ type FleetItem =
 	| { kind: "delegation"; record: DelegationRecord }
 	| { kind: "external"; run: ExternalRun };
 
-function headerLine(record: DelegationRecord, theme: Theme, tick: number, width: number): string {
+function headerLine(
+	record: DelegationRecord,
+	theme: Theme,
+	tick: number,
+	width: number,
+	run?: ExternalRun,
+): string {
 	const color = entityColor(record.handle ?? record.agent);
-	const icon = statusIcon(theme, record.status, tick);
+	const icon = delegationIcon(theme, record.status, run, tick);
 	const who = record.handle
 		? `@${sanitizeRender(record.handle)} (${sanitizeRender(record.agent)})`
 		: sanitizeRender(record.agent);
 	const name = theme.fg(color, theme.bold(who));
 	const model = theme.fg("dim", sanitizeRender(shortModel(record.model)));
-	const age = Math.round((Date.now() - record.startedAt) / 1000);
-	const ran =
-		record.status !== "running" && record.finishedAt !== undefined
-			? ` · ${formatDuration(record.finishedAt - record.startedAt)}`
-			: "";
-	const stats =
-		record.status === "running"
-			? `turn ${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} tok · ${age}s`
-			: `${record.turns} turns · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} tok${ran}`;
-	return truncateToWidth(`${icon} ${name} ${model} — ${stats}`, width);
+	const badgeText = run === undefined ? "" : teamBadgeText(run.source);
+	const badge = badgeText === "" ? "" : ` ${theme.fg("dim", sanitizeRender(badgeText))}`;
+	const running = record.status === "running";
+	const stats = theme.fg(
+		"dim",
+		fleetStats({
+			turns: record.turns,
+			tokensIn: record.tokensIn,
+			tokensOut: record.tokensOut,
+			cost: record.cost,
+			idle: running && run?.memberStatus === "idle",
+			finished: !running,
+			durationMs: running
+				? Date.now() - record.startedAt
+				: record.finishedAt !== undefined
+					? record.finishedAt - record.startedAt
+					: undefined,
+		}),
+	);
+	return truncateToWidth(`${icon} ${name}${badge} ${model} ${stats}`, width);
 }
 
 export function splitMouseBuffer(
@@ -272,6 +290,9 @@ class FleetBrowser implements Component {
 	/** True once the list view has actually been shown: esc from detail goes back
 	 * to the list only when the user came through it, otherwise it closes. */
 	private listSeen = false;
+	/** External runs by id, rebuilt each render: delegation rows read team
+	 * badge and memberStatus from them without a beacon scan per row. */
+	private externalById = new Map<string, ExternalRun>();
 
 	constructor(
 		tui: TUI,
@@ -540,6 +561,7 @@ class FleetBrowser implements Component {
 	render(width: number): string[] {
 		const theme = this.theme;
 		const records = listDelegations();
+		this.externalById = new Map(listExternalRuns().map((r) => [r.id, r] as const));
 		const runningExternals = listExternalRunsExcludingDelegations().filter(
 			(r) => r.state === "running",
 		);
@@ -594,7 +616,7 @@ class FleetBrowser implements Component {
 		for (const [index, record] of records.entries()) {
 			const pointer = index === this.cursor ? theme.fg("accent", "❯ ") : "  ";
 			itemRow.set(index, lines.length);
-			const row = `${pointer}${headerLine(record, theme, this.tick, width)}`;
+			const row = `${pointer}${headerLine(record, theme, this.tick, width, this.externalById.get(record.id))}`;
 			lines.push(index === this.hoverRow ? theme.bold(row) : row);
 		}
 
@@ -602,17 +624,26 @@ class FleetBrowser implements Component {
 			lines.push(bar, theme.fg("dim", `team members / external runs (${externals.length}):`));
 			for (const [index, run] of externals.entries()) {
 				const pointer = this.cursor === records.length + index ? theme.fg("accent", "❯ ") : "  ";
-				const age = Math.round((Date.now() - run.startedAt) / 1000);
-				const icon = theme.fg("warning", SPINNER[this.tick % SPINNER.length] ?? "•");
+				const icon = externalRunIcon(theme, run, this.tick);
 				const who = theme.fg(
 					entityColor(run.handle ?? run.label),
 					`@${sanitizeRender(run.handle ?? run.label)}`,
 				);
 				const model = theme.fg("dim", run.model ? sanitizeRender(shortModel(run.model)) : "");
-				const body = `${icon} ${who} ${model} — turn ${run.turns ?? 0} · ${formatTokens(run.tokensIn ?? 0)}→${formatTokens(run.tokensOut ?? 0)} tok`;
-				const tail = theme.fg("dim", ` · [${run.source}] ${age}s`);
+				const badgeText = teamBadgeText(run.source);
+				const badge = badgeText === "" ? "" : ` ${theme.fg("dim", sanitizeRender(badgeText))}`;
+				const stats = theme.fg(
+					"dim",
+					fleetStats({
+						turns: run.turns ?? 0,
+						tokensIn: run.tokensIn ?? 0,
+						tokensOut: run.tokensOut ?? 0,
+						cost: run.cost,
+						durationMs: externalRunAgeSeconds(run) * 1000,
+					}),
+				);
 				itemRow.set(records.length + index, lines.length);
-				const row = `  ${pointer}${truncateToWidth(body + tail, width - 4)}`;
+				const row = `  ${pointer}${truncateToWidth(`${icon} ${who}${badge} ${model} ${stats}`, width - 4)}`;
 				lines.push(this.hoverRow === records.length + index ? theme.bold(row) : row);
 			}
 		}
@@ -646,8 +677,8 @@ class FleetBrowser implements Component {
 			const who =
 				selected?.kind === "delegation"
 					? selected.record.handle
-						? `@${selected.record.handle}`
-						: selected.record.agent
+						? `@${sanitizeRender(selected.record.handle)}`
+						: sanitizeRender(selected.record.agent)
 					: "?";
 			out.push(` ${theme.fg("error", theme.bold(`stop ${who}? y/n`))}`);
 		}
@@ -775,7 +806,9 @@ class FleetBrowser implements Component {
 			const input = ` ${theme.fg(steerColor, `steer> ${this.steerText}█`)}`;
 			footer = [frameRule, input, frameRule, ...header];
 		} else if (stopPrompt && item.kind === "delegation") {
-			const who = item.record.handle ? `@${item.record.handle}` : item.record.agent;
+			const who = item.record.handle
+				? `@${sanitizeRender(item.record.handle)}`
+				: sanitizeRender(item.record.agent);
 			footer = [` ${theme.fg("error", theme.bold(`stop ${who}? y/n`))}`, frameRule, ...header];
 		} else {
 			footer = [frameRule, ...header];
@@ -875,19 +908,39 @@ class FleetBrowser implements Component {
 		width: number,
 		buttons: boolean,
 	): string[] {
-		const statusIcon =
-			record.status === "running"
+		const run = this.externalById.get(record.id);
+		const idle = record.status === "running" && run?.memberStatus === "idle";
+		const statusIcon = idle
+			? theme.fg("dim", "· idle")
+			: record.status === "running"
 				? theme.fg("warning", `${SPINNER[this.tick % SPINNER.length] ?? "•"} live`)
 				: record.status === "done"
 					? theme.fg("success", "✓ done")
 					: theme.fg("error", "✗ failed");
-		const stats = `turn ${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)} tok${
-			record.status !== "running" && record.finishedAt !== undefined
-				? ` · ${formatDuration(record.finishedAt - record.startedAt)}`
-				: ""
-		}`;
-		const who = record.handle ? `@${record.handle} (${record.agent})` : record.agent;
-		const head = `${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(record.handle ?? record.agent), who)} ${theme.fg("dim", record.model)} ${statusIcon} ${stats}${theme.fg("dim", " · j/k scroll · g/G ends")}`;
+		const badgeText = run === undefined ? "" : teamBadgeText(run.source);
+		const badge = badgeText === "" ? "" : ` ${theme.fg("dim", sanitizeRender(badgeText))}`;
+		const stats = theme.fg(
+			"dim",
+			fleetStats({
+				turns: record.turns,
+				tokensIn: record.tokensIn,
+				tokensOut: record.tokensOut,
+				cost: record.cost,
+				finished: record.status !== "running",
+				durationMs:
+					record.status === "running"
+						? run !== undefined
+							? externalRunAgeSeconds(run) * 1000
+							: Date.now() - record.startedAt
+						: record.finishedAt !== undefined
+							? record.finishedAt - record.startedAt
+							: undefined,
+			}),
+		);
+		const who = record.handle
+			? `@${sanitizeRender(record.handle)} (${sanitizeRender(record.agent)})`
+			: sanitizeRender(record.agent);
+		const head = `${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(record.handle ?? record.agent), who)}${badge} ${theme.fg("dim", sanitizeRender(shortModel(record.model)))} ${statusIcon} ${stats}${theme.fg("dim", " · j/k scroll · g/G ends")}`;
 		return this.statusHeader(head, theme, width, buttons, record.sessionId ?? "no session");
 	}
 
@@ -895,13 +948,26 @@ class FleetBrowser implements Component {
 		// External runs have no steer/stop controls, but the back chip below
 		// still gets its colored render and click zone.
 		const statusIcon =
-			run.state === "running"
-				? theme.fg("warning", `${SPINNER[this.tick % SPINNER.length] ?? "•"} live`)
-				: run.state === "done"
-					? theme.fg("success", "✓ done")
-					: theme.fg("error", "✗ failed");
-		const stats = `turn ${run.turns ?? 0} · ${formatTokens(run.tokensIn ?? 0)}→${formatTokens(run.tokensOut ?? 0)} tok`;
-		const head = `${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(run.handle ?? run.label), `@${sanitizeRender(run.handle ?? run.label)}`)} ${theme.fg("dim", `[${sanitizeRender(run.source)}]`)} ${run.model ? theme.fg("dim", sanitizeRender(run.model)) : ""} ${statusIcon} ${stats}${theme.fg("dim", " · j/k scroll · g/G ends")}`;
+			run.memberStatus === "idle" && run.state === "running"
+				? theme.fg("dim", "· idle")
+				: run.state === "running"
+					? theme.fg("warning", `${SPINNER[this.tick % SPINNER.length] ?? "•"} live`)
+					: run.state === "done"
+						? theme.fg("success", "✓ done")
+						: theme.fg("error", "✗ failed");
+		const badgeText = teamBadgeText(run.source);
+		const badge = badgeText === "" ? "" : ` ${theme.fg("dim", sanitizeRender(badgeText))}`;
+		const stats = theme.fg(
+			"dim",
+			fleetStats({
+				turns: run.turns ?? 0,
+				tokensIn: run.tokensIn ?? 0,
+				tokensOut: run.tokensOut ?? 0,
+				cost: run.cost,
+				durationMs: externalRunAgeSeconds(run) * 1000,
+			}),
+		);
+		const head = `${theme.bold("torus fleet")} ${theme.fg("dim", "·")} ${theme.fg(entityColor(run.handle ?? run.label), `@${sanitizeRender(run.handle ?? run.label)}`)}${badge} ${run.model ? theme.fg("dim", sanitizeRender(shortModel(run.model))) : ""} ${statusIcon} ${stats}${theme.fg("dim", " · j/k scroll · g/G ends")}`;
 		return this.statusHeader(
 			head,
 			theme,

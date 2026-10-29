@@ -799,6 +799,73 @@ test("list: windows past ten rows, arrow keys drive the cursor, clicks track the
 	}
 });
 
+test("browser list matches the strip for team members: badge, idle state, frozen age", () => {
+	registry.resetRegistryForTesting();
+	const tui = { mode: "fullscreen", requestRender: () => {} };
+	const theme = { fg: (_c, t) => t, bold: (t) => `*${t}*` };
+	let factory = null;
+	fleet.registerFleetWidget({
+		on: (event, handler) => {
+			if (event === "session_start") handler({}, { ui: { setWidget: (_key, f) => (factory = f) } });
+		},
+		registerShortcut: () => {},
+	});
+	assert.ok(factory, "widget factory captured");
+
+	const memberId = "team-consist/scout";
+	registry.startDelegation(memberId, "builder", "zai/glm-5.3-flash", "sess", "scout");
+	registry.updateDelegation(memberId, {
+		text: "waiting",
+		turns: 4,
+		usage: { input: 900, output: 80 },
+	});
+	registry.publishExternalRun({
+		id: memberId,
+		source: "torus-team:myteam-consist",
+		label: "scout",
+		handle: "scout",
+		model: "zai/glm-5.3-flash",
+		state: "running",
+		memberStatus: "idle",
+		activeSeconds: 5000,
+		activeUpdatedAt: Date.now(),
+	});
+
+	const strip = factory(tui, theme);
+	let stripRow;
+	try {
+		stripRow = strip.render(200).find((l) => l.includes("@scout"));
+	} finally {
+		strip.dispose();
+	}
+	assert.ok(stripRow, "strip row rendered");
+	assert.match(stripRow, /⧉myteam/, "strip shows the short team badge");
+	assert.match(stripRow, /· idle\b/, "strip marks the member idle");
+
+	const { shortcuts } = registerExtension();
+	const driver = makeCtx("fullscreen", theme);
+	shortcuts.get("alt+t").handler(driver.ctx);
+	const component = driver.component();
+	try {
+		const listRow = component.render(200).find((l) => l.includes("@scout ("));
+		assert.ok(listRow, "browser list row rendered");
+		assert.match(listRow, /⧉myteam/, "browser list shows the same short team badge");
+		assert.doesNotMatch(listRow, /torus-team:/, "no raw team source in the list");
+		assert.match(listRow, /· idle\b/, "browser list marks the member idle");
+		assert.match(listRow, /glm-5\.3-flash/, "browser list shortens the model");
+
+		component.handleInput(ENTER);
+		const header = component.render(200).find((l) => l.includes("torus fleet"));
+		assert.ok(header, "detail header rendered");
+		assert.match(header, /⧉myteam/, "detail header shows the same team badge");
+		assert.match(header, /· idle/, "idle member rests instead of spinning live");
+		assert.doesNotMatch(header, /live/, "idle member is not live");
+		assert.doesNotMatch(header, /torus-team:/, "no raw team source in the detail header");
+	} finally {
+		component.dispose();
+	}
+});
+
 test("list and detail show the run duration once complete", () => {
 	registry.resetRegistryForTesting();
 	registry.startDelegation("dur-1", "builder", "zai/glm-5.3", null, "timing");
@@ -815,12 +882,20 @@ test("list and detail show the run duration once complete", () => {
 	try {
 		const row = component.render(200).find((l) => l.includes("@timing ("));
 		assert.ok(row, "finished delegation row rendered");
-		assert.match(row, /2 turns · 100→200 tok · \d+s/, "list row shows the run duration");
+		assert.match(
+			row,
+			/2t · 100→200( · \$[\d.]+)? · \d+s/,
+			"list row uses the fleet stat grammar with duration",
+		);
 
 		component.handleInput(ENTER);
 		const footer = component.render(200).find((l) => l.includes("torus fleet"));
 		assert.ok(footer, "detail footer rendered");
-		assert.match(footer, /turn 2 · 100→200 tok · \d+s/, "detail footer shows the run duration");
+		assert.match(
+			footer,
+			/2t · 100→200( · \$[\d.]+)? · \d+s/,
+			"detail footer shows the same stats as the list row",
+		);
 	} finally {
 		component.dispose();
 	}

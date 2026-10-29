@@ -7,7 +7,8 @@
  */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { stableColorIndex } from "../registry.js";
+import { formatCost } from "../fsutil.js";
+import { type ExternalRun, stableColorIndex } from "../registry.js";
 
 export type Theme = ExtensionContext["ui"]["theme"];
 export type ThemeColor = Parameters<Theme["fg"]>[0];
@@ -60,6 +61,58 @@ export function statusIcon(
 	if (status === "running") return theme.fg("warning", SPINNER[tick % SPINNER.length] ?? "•");
 	if (status === "done") return theme.fg("success", "✓");
 	return theme.fg("error", "✗");
+}
+
+/** "torus-team:build-a1b2c3" → "build" (id suffix stripped); "" for other or missing sources. */
+export function teamName(source: string | undefined): string {
+	if (source === undefined || !source.startsWith("torus-team:")) return "";
+	return source.slice("torus-team:".length).replace(/-[a-z0-9]+$/, "");
+}
+
+/** Badge text for an external-run source: "⧉build" for team members, "" otherwise. */
+export function teamBadgeText(source: string | undefined): string {
+	const name = teamName(source);
+	return name === "" ? "" : `⧉${name}`;
+}
+
+/** External-run icon: idle members rest on a dim dot, everything else spins. */
+export function externalRunIcon(theme: Theme, run: ExternalRun, tick: number): string {
+	return run.memberStatus === "idle"
+		? theme.fg("dim", "·")
+		: theme.fg("warning", SPINNER[tick % SPINNER.length] ?? "•");
+}
+
+/** Delegation icon: a running delegation that is an idle team member rests
+ * on the dim dot; every other status keeps its spinner/check/cross. */
+export function delegationIcon(
+	theme: Theme,
+	status: "running" | "done" | "failed",
+	run: ExternalRun | undefined,
+	tick: number,
+): string {
+	return status === "running" && run?.memberStatus === "idle"
+		? theme.fg("dim", "·")
+		: statusIcon(theme, status, tick);
+}
+
+/** The fleet stat grammar shared by the strip and the fleet browser:
+ * "t3 · 1.2k→4.5k · $0.01 · 1m 02s". Idle runs stop at "t3 · idle"; finished
+ * runs swap the turn prefix for a suffix ("3t"); `durationMs` omitted drops
+ * the trailing duration segment. */
+export function fleetStats(stats: {
+	turns: number;
+	tokensIn: number;
+	tokensOut: number;
+	cost?: number;
+	durationMs?: number;
+	idle?: boolean;
+	finished?: boolean;
+}): string {
+	if (stats.idle === true) return `t${stats.turns} · idle`;
+	const turns = stats.finished === true ? `${stats.turns}t` : `t${stats.turns}`;
+	const cost = formatCost(stats.cost, stats.tokensIn + stats.tokensOut > 0);
+	const head = `${turns} · ${formatTokens(stats.tokensIn)}→${formatTokens(stats.tokensOut)}${cost === "" ? "" : ` · ${cost}`}`;
+	return stats.durationMs === undefined ? head : `${head} · ${formatDuration(stats.durationMs)}`;
 }
 
 /** Full-width dim horizontal rule. */

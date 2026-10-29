@@ -6,7 +6,6 @@ import {
 	type TuiMouseEventResult,
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
-import { formatCost } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	type DelegationRecord,
@@ -19,14 +18,14 @@ import {
 	sanitizeRender,
 } from "../registry.js";
 import {
+	delegationIcon,
 	entityColor,
-	formatDuration,
-	formatTokens,
+	externalRunIcon,
+	fleetStats,
 	rule,
-	SPINNER,
 	shortModel,
-	statusIcon,
 	type Theme,
+	teamBadgeText,
 } from "./theme-kit.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
@@ -66,11 +65,6 @@ function stableRunning(): DelegationRecord[] {
 		.sort((a, b) => a.startedAt - b.startedAt);
 }
 
-function shortTeamName(source: string): string {
-	const teamId = source.slice("torus-team:".length);
-	return teamId.replace(/-[a-z0-9]+$/, "");
-}
-
 function formatRow(
 	record: DelegationRecord,
 	theme: Theme,
@@ -86,32 +80,27 @@ function formatRow(
 		record.handle ? `@${sanitizeRender(record.handle)}` : sanitizeRender(record.agent),
 	);
 	const model = theme.fg("dim", sanitizeRender(shortModel(record.model)));
-	const badge =
-		run?.source.startsWith("torus-team:") === true
-			? ` ${theme.fg("dim", `⧉${sanitizeRender(shortTeamName(run.source))}`)}`
-			: "";
-	const icon =
-		record.status === "running" && run?.memberStatus === "idle"
-			? theme.fg("dim", "·")
-			: statusIcon(theme, record.status, tick);
-	const cost = formatCost(record.cost, record.tokensIn + record.tokensOut > 0);
-	const costSeg = cost ? ` · ${cost}` : "";
-
-	if (record.status === "running") {
-		const stats =
-			run?.memberStatus === "idle"
-				? theme.fg("dim", `t${record.turns} · idle`)
-				: theme.fg(
-						"dim",
-						`t${record.turns} · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)}${costSeg} · ${formatDuration(Date.now() - record.startedAt)}`,
-					);
-		return truncateToWidth(`${prefix} ${icon} ${name} ${badge} ${model} ${stats}`, width);
-	}
+	const badgeText = run === undefined ? "" : teamBadgeText(run.source);
+	const badge = badgeText === "" ? "" : ` ${theme.fg("dim", sanitizeRender(badgeText))}`;
+	const icon = delegationIcon(theme, record.status, run, tick);
+	const running = record.status === "running";
 	const stats = theme.fg(
 		"dim",
-		`${record.turns}t · ${formatTokens(record.tokensIn)}→${formatTokens(record.tokensOut)}${costSeg}`,
+		fleetStats({
+			turns: record.turns,
+			tokensIn: record.tokensIn,
+			tokensOut: record.tokensOut,
+			cost: record.cost,
+			idle: running && run?.memberStatus === "idle",
+			finished: !running,
+			durationMs: running
+				? Date.now() - record.startedAt
+				: record.finishedAt !== undefined
+					? record.finishedAt - record.startedAt
+					: undefined,
+		}),
 	);
-	return truncateToWidth(`${prefix} ${icon} ${name} ${badge} ${model} ${stats}`, width);
+	return truncateToWidth(`${prefix} ${icon} ${name}${badge} ${model} ${stats}`, width);
 }
 
 class FleetStrip implements Component {
@@ -182,22 +171,25 @@ class FleetStrip implements Component {
 		}
 		const shownExternal = external.slice(0, Math.max(0, MAX_ROWS - shownRunning));
 		for (const run of shownExternal) {
-			const age = externalRunAgeSeconds(run);
-			const runCost = formatCost(run.cost, (run.tokensIn ?? 0) + (run.tokensOut ?? 0) > 0);
 			const stats = this.theme.fg(
 				"dim",
-				`t${run.turns ?? 0} · ${formatTokens(run.tokensIn ?? 0)}→${formatTokens(run.tokensOut ?? 0)}${runCost ? ` · ${runCost}` : ""} · ${formatDuration(age * 1000)}`,
+				fleetStats({
+					turns: run.turns ?? 0,
+					tokensIn: run.tokensIn ?? 0,
+					tokensOut: run.tokensOut ?? 0,
+					cost: run.cost,
+					durationMs: externalRunAgeSeconds(run) * 1000,
+				}),
 			);
 			const who = this.theme.fg(
 				entityColor(run.handle ?? run.label),
 				`@${sanitizeRender(run.handle ?? run.label)}`,
 			);
 			const model = run.model ? this.theme.fg("dim", sanitizeRender(shortModel(run.model))) : "";
-			const icon =
-				run.memberStatus === "idle"
-					? this.theme.fg("dim", "·")
-					: this.theme.fg("warning", SPINNER[this.tick % SPINNER.length] ?? "•");
-			rows.push(truncateToWidth(`${icon} ${who} ${model} ${stats}`, width));
+			const icon = externalRunIcon(this.theme, run, this.tick);
+			const badgeText = teamBadgeText(run.source);
+			const badge = badgeText === "" ? "" : ` ${this.theme.fg("dim", sanitizeRender(badgeText))}`;
+			rows.push(truncateToWidth(`${icon} ${who}${badge} ${model} ${stats}`, width));
 			targets.push(null);
 		}
 		const hidden = running.length + external.length - shownRunning - shownExternal.length;
