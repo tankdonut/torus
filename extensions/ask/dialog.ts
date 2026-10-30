@@ -22,6 +22,7 @@ import {
 	type KeyId,
 	matchesKey,
 	parseKey,
+	renderFakeCursor,
 	type TUI,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
@@ -376,8 +377,10 @@ export class AskDialog implements Component {
 			const target =
 				this.input.field === "note" ? (rows[this.state.highlight]?.label ?? "") : undefined;
 			const prompt = target ? `note for “${target}”` : field;
-			const text = `${prompt}: ${this.input.text}▌`;
-			lines.push(truncateToWidth(t.style(text, { fg: "accent", bold: true }), Math.max(1, width)));
+			// Same full-width fake-cursor cell the editor draws (not a thin “▌” glyph);
+			// one column is reserved so truncation cannot drop the cursor’s end marker.
+			const styled = t.style(`${prompt}: ${this.input.text}`, { fg: "accent", bold: true });
+			lines.push(truncateToWidth(styled, Math.max(1, width - 1)) + renderFakeCursor(" "));
 		}
 		lines.push(t.fg("dim", footer(this.input !== null, multi)));
 		lines.push("");
