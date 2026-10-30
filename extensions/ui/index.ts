@@ -17,7 +17,7 @@ import {
 	type TerminalColorMode,
 } from "@earendil-works/pi-tui";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
-import { focusEventListener, installCursorBlink } from "../cursor-blink.js";
+import { installCursorBlink } from "../cursor-blink.js";
 import { type EngineTally, reduceEngineEvent } from "../engine-child.js";
 import { formatCost } from "../fsutil.js";
 import { connectedServerCount, mcpStatusText } from "../mcp/index.js";
@@ -435,8 +435,6 @@ function installStartupBanner(pi: ExtensionAPI, ctx: ExtensionContext): void {
 
 const CURSOR_BLINK_WIDGET_KEY = "torus:cursor-blink";
 
-let focusListenerInstalled = false;
-
 /**
  * Blink active input cursors (editor, dialogs) from a zero-line widget whose
  * factory is the reliable spot to capture the live TUI. Dialog-opening code
@@ -444,11 +442,6 @@ let focusListenerInstalled = false;
  */
 function installCursorBlinkWidget(ctx: ExtensionContext): void {
 	if (ctx.mode !== "tui") return;
-	if (!focusListenerInstalled) {
-		focusListenerInstalled = true;
-		// runs before key dispatch: focus events are stripped, real keys pass
-		ctx.ui.onTerminalInput(focusEventListener);
-	}
 	ctx.ui.setWidget(CURSOR_BLINK_WIDGET_KEY, (tui) => {
 		installCursorBlink(tui);
 		return {

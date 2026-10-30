@@ -80,14 +80,16 @@ export function isWindowFocused(): boolean {
 }
 
 /**
- * onTerminalInput listener: gates the blink on DECSET 1004 focus events and
- * strips them from the input stream; every other chunk passes through as-is.
+ * Focus observer for the TUI input pipeline: the engine's own input listener
+ * consumes DECSET 1004 focus events before any extension listener can see
+ * them, so the blink patches handleTerminalInput to read them in passing.
+ * The chunk is delegated untouched — the engine keeps its blur cleanup, and
+ * only the blink's focus state changes.
  */
-export function focusEventListener(data: string): { consume?: boolean; data?: string } | undefined {
-	if (!data.includes(FOCUS_IN) && !data.includes(FOCUS_OUT)) return undefined;
-	const { focused, data: rest } = consumeFocusEvents(data);
+function observeFocusEvents(data: string): void {
+	if (!data.includes(FOCUS_IN) && !data.includes(FOCUS_OUT)) return;
+	const { focused } = consumeFocusEvents(data);
 	if (focused !== undefined) setWindowFocused(focused);
-	return rest.length === 0 ? { consume: true } : { data: rest };
 }
 
 /**
@@ -176,6 +178,17 @@ export function installCursorBlink(tui: TUI, intervalMs: number = BLINK_INTERVAL
 
 	const blink = new CursorBlink();
 	target.resolveFakeCursors = (lines: string[]) => original(blink.resolve(lines));
+
+	// See observeFocusEvents: focus events must be observed before the engine's
+	// own listener consumes them.
+	const input = tui as unknown as { handleTerminalInput?: (data: string) => void };
+	const originalInput = input.handleTerminalInput?.bind(tui);
+	if (originalInput) {
+		input.handleTerminalInput = (data: string) => {
+			observeFocusEvents(data);
+			return originalInput(data);
+		};
+	}
 
 	// Ask the terminal for focus events (the same direct private-mode write the
 	// TUI itself uses); restored on stop so exit never leaves reporting on.

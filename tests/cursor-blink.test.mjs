@@ -5,7 +5,6 @@ import { CURSOR_MARKER, renderFakeCursor } from "@earendil-works/pi-tui";
 const {
 	CursorBlink,
 	consumeFocusEvents,
-	focusEventListener,
 	installCursorBlink,
 	isWindowFocused,
 	setWindowFocused,
@@ -126,19 +125,26 @@ test("CursorBlink: a blurred window holds the cursor solid, refocus resumes blin
 	assert.equal(blink.cursorVisible, false);
 });
 
-test("focusEventListener: blur and refocus events gate the window focus state", () => {
+test("installCursorBlink: focus events are observed in handleTerminalInput and delegated", () => {
 	setWindowFocused(true);
-	// plain keys pass through untouched
-	assert.equal(focusEventListener("x"), undefined);
-	// the exact terminal sequences, including focus-out
-	assert.deepEqual(focusEventListener("\x1b[O"), { consume: true });
+	const seen = [];
+	const tui = {
+		terminal: { write: () => {} },
+		resolveFakeCursors: (lines) => lines,
+		handleTerminalInput: (data) => {
+			seen.push(data);
+		},
+		requestRender() {},
+	};
+	installCursorBlink(tui, 1e9);
+	tui.handleTerminalInput("x");
+	assert.deepEqual(seen, ["x"], "chunks delegate untouched");
+	assert.equal(isWindowFocused(), true);
+	tui.handleTerminalInput("\x1b[O");
+	assert.deepEqual(seen, ["x", "\x1b[O"], "focus chunk still reaches the engine");
 	assert.equal(isWindowFocused(), false, "ESC[O blurs");
-	assert.deepEqual(focusEventListener("\x1b[I"), { consume: true });
+	tui.handleTerminalInput("\x1b[I");
 	assert.equal(isWindowFocused(), true, "ESC[I refocuses");
-	// riding along with real keys
-	assert.deepEqual(focusEventListener("\x1b[Ok"), { data: "k" });
-	assert.equal(isWindowFocused(), false);
-	setWindowFocused(true);
 });
 
 test("installCursorBlink: enables focus reporting and disables it on stop", () => {
