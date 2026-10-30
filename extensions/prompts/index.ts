@@ -105,6 +105,8 @@ ${agents}
 
 Delegate when: the subtask is single-goal, context-heavy (large searches, file sweeps), or parallelizable (torus_fanout), or a pipeline (torus_chain). Keep orchestration, ambiguous decisions, and anything requiring user interaction here. Task text must be self-contained — the subagent sees nothing of this conversation. Call torus_roster to check model availability. Watch live delegations with alt+t.
 
+torus_delegate, torus_fanout, and torus_chain also accept background: true: the tool returns at once and completions arrive later as wake markers, batched per turn (read full outputs with torus_results). Use background when nothing further in this turn depends on the result — fire the run and keep working here; block when the next step needs the outcome.
+
 Concurrency caps: models limit provider-account concurrent sessions (torus_roster reports each model's cap; a primary model may allow only ~5 parallel runs while flash tiers allow far more). Keep parallel runs per model within its cap: spread wide fan-outs across models/tiers instead of stacking them on one. If runs fail with HTTP 429 / code 1302, a cap was hit, so re-dispatch with fewer parallel runs on that model.
 `;
 }

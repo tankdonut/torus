@@ -1363,7 +1363,7 @@ const delegateTool = defineTool({
 		background: Type.Optional(
 			Type.Boolean({
 				description:
-					"Return immediately instead of blocking: the result arrives later as a torus.delegation-result wake marker (batched with other pending wakes when busy); read the full output with torus_results",
+					"Return immediately instead of blocking: the result arrives later as a torus.delegation-result wake marker (batched with other pending wakes when busy); read the full output with torus_results. Use it when nothing further in this turn depends on the result — fire the run and keep working; block when the next step does.",
 			}),
 		),
 	}),

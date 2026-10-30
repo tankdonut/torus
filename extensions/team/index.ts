@@ -134,7 +134,7 @@ const fanoutTool = defineTool({
 		background: Type.Optional(
 			Type.Boolean({
 				description:
-					"Return immediately instead of blocking: each run's result arrives later as its own torus.delegation-result wake marker (batched with other pending wakes when busy); read the full output with torus_results",
+					"Return immediately instead of blocking: each run's result arrives later as its own torus.delegation-result wake marker (batched with other pending wakes when busy); read the full output with torus_results. Use it to fire independent runs and keep working; block when the next step needs their results.",
 			}),
 		),
 	}),
@@ -482,7 +482,7 @@ const chainTool = defineTool({
 		background: Type.Optional(
 			Type.Boolean({
 				description:
-					"Return immediately instead of blocking: the whole chain runs to its final outcome and arrives as one torus.delegation-result wake marker (batched with other pending wakes when busy); read the full output with torus_results",
+					"Return immediately instead of blocking: the whole chain runs to its final outcome and arrives as one torus.delegation-result wake marker (batched with other pending wakes when busy); read the full output with torus_results. Use it to run the pipeline unattended and keep working; block when the next step needs the final outcome.",
 			}),
 		),
 	}),
