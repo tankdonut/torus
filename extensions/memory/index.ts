@@ -219,9 +219,60 @@ interface WriteOptions {
 	session?: string;
 }
 
+const REDACTED = "[REDACTED]";
+const SECRET_NAME_SEGMENTS = new Set(["KEY", "SECRET", "TOKEN", "PASSWORD", "AUTH"]);
+
+/*
+ * Credential-shape redaction at the write boundary: everything this store
+ * persists is model output distilled from transcripts, and transcripts carry
+ * pasted tokens. The patterns below match well-known credential SHAPES —
+ * vendor prefixes, fixed-width AWS access-key ids, three-segment JWTs,
+ * secret-named env assignments — not a secret database, so unknown formats
+ * land verbatim by design. Each family is one linear regex pass; nothing is
+ * escape-decoded, and the replacement matches no shape itself, so repeated
+ * passes are idempotent no-ops.
+ *
+ * Prefix boundary rule: the prefix must sit at a word start (the lookbehind
+ * rejects a preceding [A-Za-z0-9_-]), which keeps the "sk-" inside
+ * "task-management" inert; the tail then runs over the token alphabet
+ * [A-Za-z0-9_-] until any other character; and the whole match must exceed 8
+ * chars — exactly 8 is what ordinary hyphenated prose like "sk-learn"
+ * measures, while real tokens (ghp_+36, AIza+35, sk-+48) clear the floor by
+ * a wide margin.
+ */
+const PREFIXED_TOKEN_RE =
+	/(?<![A-Za-z0-9_-])(?:github_pat_|sk_live_|sk-|rk_|gsk_|xox[baprs]-|ghp_|gho_|ghu_|ghs_|ghr_|hf_|AIza)[A-Za-z0-9_-]+/g;
+// AWS access-key ids: AKIA/ASIA plus exactly 16 base64-ish chars — the fixed
+// 20-char width is the shape, no length floor needed
+const AWS_KEY_ID_RE = /(?<![A-Za-z0-9+/=])(?:AKIA|ASIA)[A-Za-z0-9+/=]{16}(?![A-Za-z0-9+/=])/g;
+// JWTs: eyJ-led base64url header with three dot-separated segments; the 40+
+// floor lives in the callback so a stray eyJ fragment stays visible
+const JWT_RE = /(?<![A-Za-z0-9_.-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
+// env-style NAME=value: the value is a non-whitespace run (quoted values mask
+// whole) and is replaced only when NAME carries one of the secret words as a
+// whole segment — OPENAI_API_KEY yes, MONKEY no; NAME itself always stays
+const SECRET_ENV_RE = /(?<![A-Za-z0-9_-])([A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*)=\S*/g;
+
+function redactCredentialShapes(text: string): string {
+	// env assignments first: a secret-named NAME masks its whole value in one
+	// step, covering opaque values (AUTH_TOKEN=xyz) and tokens merely sitting
+	// inside a value that the prefix pass below would only catch piecemeal
+	let masked = text.replace(SECRET_ENV_RE, (match, name: string) => {
+		const segments = name.toUpperCase().split(/[-_]+/);
+		return segments.some((segment) => SECRET_NAME_SEGMENTS.has(segment))
+			? `${name}=${REDACTED}`
+			: match;
+	});
+	masked = masked.replace(PREFIXED_TOKEN_RE, (match) => (match.length > 8 ? REDACTED : match));
+	masked = masked.replace(AWS_KEY_ID_RE, REDACTED);
+	masked = masked.replace(JWT_RE, (match) => (match.length >= 40 ? REDACTED : match));
+	return masked;
+}
+
 /**
  * Write (or update in place) one entry through the git-versioned store. Tags
- * are sanitized and the body capped so no write can corrupt the store format.
+ * are sanitized, credential shapes masked, and the body capped so no write
+ * can corrupt the store format or persist a pasted token.
  */
 function writeEntry(
 	topic: string,
@@ -231,9 +282,11 @@ function writeEntry(
 	options: WriteOptions = {},
 ): string {
 	ensureStore();
-	const cleanTopic = topic.replace(/\n/g, " ").trim();
-	const cleanTags = sanitizeTags(tags);
-	const boundedBody = body.trim().slice(0, CONTENT_CHAR_LIMIT);
+	// boundary redaction: topic, each tag, and the body are masked before the
+	// clean steps, the filename slug, or the commit message can touch them
+	const cleanTopic = redactCredentialShapes(topic).replace(/\n/g, " ").trim();
+	const cleanTags = sanitizeTags(tags.map(redactCredentialShapes));
+	const boundedBody = redactCredentialShapes(body).trim().slice(0, CONTENT_CHAR_LIMIT);
 	const file =
 		options.existingFile ??
 		path.join(
@@ -466,9 +519,18 @@ export function applyDreamProposal(
 	session?: string,
 ): DreamApplied {
 	const counts = emptyApplied();
+	// mask up front so the dedup guard below scores exactly what writeEntry
+	// persists: a re-proposed secret compares equal to its stored masked copy
+	// instead of missing it in raw form
+	const entries = proposal.entries.map((entry) => ({
+		...entry,
+		topic: redactCredentialShapes(entry.topic),
+		tags: entry.tags.map(redactCredentialShapes),
+		body: redactCredentialShapes(entry.body),
+	}));
 	// one store scan per proposal: every dedup lookup below shares this snapshot
 	const existing = listEntries();
-	for (const entry of proposal.entries.slice(0, cap)) {
+	for (const entry of entries.slice(0, cap)) {
 		// unscoped on purpose (unlike the remember tool): dreamer proposals may be
 		// global, and cross-project near-duplicates dilute the same injection slots
 		const duplicate = scoreEntries(entry.topic, existing).find(
@@ -640,12 +702,15 @@ export function memoryPolicyPointer(): string {
 
 function writeProfile(content: string): void {
 	ensureStore();
+	// boundary redaction runs before the line-bound trim so the char budget
+	// sees masked text and [REDACTED] can never land half-cut
+	const masked = redactCredentialShapes(content);
 	/*
 	 * The hard bound drops the OLDEST whole lines: a character tail-slice
 	 * amputated the opening line mid-sentence once the profile outgrew the
 	 * limit, corrupting the user model's earliest observations.
 	 */
-	let lines = content.split(/\n+/).filter((line) => line.trim().length > 0);
+	let lines = masked.split(/\n+/).filter((line) => line.trim().length > 0);
 	let joined = lines.join("\n\n");
 	while (lines.length > 1 && joined.length > PROFILE_CHAR_LIMIT) {
 		lines = lines.slice(1);
@@ -734,25 +799,29 @@ export const rememberTool = defineTool({
 		pinned: Type.Optional(Type.Boolean({ description: "Pin the entry — always injected first" })),
 	}),
 	async execute(_toolCallId, params) {
-		const topic = params.topic.replace(/\n/g, " ").trim();
+		// redact once at the top of the write path: the dedup guard, the stored
+		// file, the commit message, and this result's own echo all see masked
+		// text from here down
+		const topic = redactCredentialShapes(params.topic).replace(/\n/g, " ").trim();
+		const content = redactCredentialShapes(params.content);
 		if (topic.length === 0)
 			return {
 				content: [{ type: "text", text: "topic required — nothing written" }],
 				details: { error: "empty-topic" } as MemoryToolDetails,
 				isError: true,
 			};
-		if (params.content.trim().length === 0)
+		if (content.trim().length === 0)
 			return {
 				content: [{ type: "text", text: "content required — nothing written" }],
 				details: { error: "empty-content" } as MemoryToolDetails,
 				isError: true,
 			};
-		if (params.content.length > CONTENT_CHAR_LIMIT)
+		if (content.length > CONTENT_CHAR_LIMIT)
 			return {
 				content: [
 					{
 						type: "text",
-						text: `content too large (${params.content.length} chars > ${CONTENT_CHAR_LIMIT}) — condense it and retry`,
+						text: `content too large (${content.length} chars > ${CONTENT_CHAR_LIMIT}) — condense it and retry`,
 					},
 				],
 				details: { error: "content-too-large" } as MemoryToolDetails,
@@ -763,7 +832,7 @@ export const rememberTool = defineTool({
 			// the tool is reachable from ordinary prompt injection, so a planted
 			// "user fact" must survive the same null-word/stub filters and rewrite
 			// a near-duplicate instead of accreting a second line.
-			const facts = params.content
+			const facts = content
 				.split("\n")
 				.map((line) => cleanProfileFact(line))
 				.filter((line): line is string => line !== null);
@@ -811,7 +880,7 @@ export const rememberTool = defineTool({
 			};
 		}
 		const pinned = params.pinned === true || (duplicate?.entry.pinned ?? false);
-		const file = writeEntry(topic, params.content, splitList(params.tags), scope, {
+		const file = writeEntry(topic, content, splitList(params.tags), scope, {
 			pinned,
 			existingFile: duplicate ? duplicate.entry.file : undefined,
 			session: currentSessionId() ?? undefined,
