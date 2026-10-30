@@ -94,7 +94,7 @@
     "pi-web-access": "^0.44.0"
   },
   "overrides": {
-    "katex": "0.19.0",
+    "katex": "0.19.1",
     "re2js": "2.9.0",
     "@earendil-works/pi-coding-agent": {
       "undici": "^8.12.2"
