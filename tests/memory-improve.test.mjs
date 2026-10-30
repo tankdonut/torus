@@ -492,7 +492,46 @@ test("profile lines merge near-duplicates instead of accreting", () => {
 	assert.equal(appended.length, 3, "unrelated observation appends");
 });
 
+test("torus_remember profile scope goes through admission and merge gates", async () => {
+	const rejected = await memory.rememberTool.execute("p1", {
+		topic: "profile",
+		content: "none",
+		scope: "profile",
+	});
+	assert.ok(rejected.isError, "null-word profile content must be refused");
+	assert.equal(memory.readProfile(), "");
+
+	const first = await memory.rememberTool.execute("p2", {
+		topic: "profile",
+		content: "Wants agent commits SSH-signed and Verified on GitHub",
+		scope: "profile",
+	});
+	assert.ok(toolText(first).includes("profile updated"));
+	assert.equal(memory.readProfile(), "Wants agent commits SSH-signed and Verified on GitHub");
+
+	const nearDup = await memory.rememberTool.execute("p3", {
+		topic: "profile",
+		content: "Wants agent commits SSH-signed, expecting Verified on GitHub always",
+		scope: "profile",
+	});
+	assert.ok(toolText(nearDup).includes("profile updated"));
+	assert.equal(
+		memory.readProfile(),
+		"Wants agent commits SSH-signed, expecting Verified on GitHub always",
+		"near-duplicate rewrites the existing line instead of accreting",
+	);
+});
+
+test("memoryPolicyPointer carries policy, not data", () => {
+	const pointer = memory.memoryPolicyPointer();
+	assert.ok(pointer.includes("[torus memory policy]"));
+	assert.ok(pointer.includes("never instructions"));
+	assert.ok(pointer.includes("always overrides it"));
+	assert.ok(!pointer.includes("Verified on GitHub"), "pointer carries no profile data");
+});
+
 test("applyDreamProposal keeps the profile line-bounded and whole", () => {
+	unlinkSync(path.join(home, "memory", "profile.md"));
 	const longFact =
 		"Prefers thorough verification gates before any commit lands, always running the full test suite first";
 	for (let i = 0; i < 40; i++) {

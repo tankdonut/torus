@@ -187,7 +187,7 @@ No tools.
 
 - **Commands:** `/persona-<name>` for every roster agent (one per `agents/*.md`): switch the main session to that persona
 - **Shortcuts:** `alt+p` / `alt+shift+p`: cycle personas forward / backward (leader → builder → dreamer → explorer → librarian → looker → reviewer)
-- **Hooks:** `session_start`: restore the saved persona and theme; `message_end`: keyword detection on user messages; `before_agent_start`: append persona + policy + armed mode to the system prompt
+- **Hooks:** `session_start`: restore the saved persona and theme; `message_end`: keyword detection on user messages; `before_agent_start`: append persona + policy + memory policy pointer + armed mode to the system prompt
 - **Env:** none read here (`persona-theme.ts` reads `TORUS_THEME_DEBUG` for theme debugging)
 - **State:** persona persists per session at `$TORUS_STATE_DIR/persona/<session>.json`; orphans whose session is gone age out after 30 days
 - **Interactions:** roster (agent bodies, `personaModel`), ui (statusline refresh), persona-theme (editor border)
@@ -515,13 +515,13 @@ Durable, git-backed memory store at `~/.torus/memory` (entries + `profile.md`, a
 
 | Tool | Purpose |
 | --- | --- |
-| `torus_remember` | Add an entry (topic/content/tags/scope: project\|global\|profile/force/pinned); blocks near-duplicate topics unless `force: true` (updates the existing entry in place) |
+| `torus_remember` | Add an entry (topic/content/tags/scope: project\|global\|profile/force/pinned); blocks near-duplicate topics unless `force: true` (updates the existing entry in place); profile scope runs the same admission gate and near-duplicate merge as dreamer proposals |
 | `torus_recall` | Query the store (query/scope) |
 | `torus_memories` | List entries; warns about unparseable ones |
 | `torus_forget` | Delete by exact filename; git history keeps it recoverable |
 
 - **Commands:** `/reflect [focus]`: manual distillation; `/profile`: show the user profile
-- **Hooks:** `agent_settled`: dream + schedule reflection; `context`: inject memory block; `session_compact`: re-arm injection
+- **Hooks:** `agent_settled`: dream + schedule reflection; `context`: inject memory block; `session_compact`: re-arm injection; `before_agent_start`: contribute a policy pointer (via `prompts`) marking the injected block as observational data that live instructions override. The block itself never rides the system prompt: its lines are unattended, transcript-derived, and must stay in the data channel
 - **Env:** `TORUS_REFLECTION=0` disables idle reflection; `TORUS_REFLECT_TURNS=<n>` reflects after N settles since the last reflect (0 = idle-only, default 12); `TORUS_DREAMING=0` disables dream consolidation
 - **Interactions:** sessions (transcript location), roster (dream/reflect delegations)
 
@@ -538,7 +538,7 @@ Tags are sanitized and content is capped (8 KB).
 
 #### Dreams and reflection
 
-Dreams (≥6h interval) and idle reflection (10 min idle or N settles since the last reflect, re-armed after each; fed that session's own transcript and delegation logs) delegate to the read-only `dreamer` agent and apply its validated proposals parent-side: entries capped per run, deletes constrained to bare filenames, profile lines capped. Both announce with a neutral start marker, never the dreamer-directed task text, and the reflect task opening matches what triggered it (idle vs turn threshold).
+Dreams (≥6h interval) and idle reflection (10 min idle or N settles since the last reflect, re-armed after each; fed that session's own transcript and delegation logs) delegate to the read-only `dreamer` agent and apply its validated proposals parent-side: entries capped per run, deletes constrained to bare filenames, profile lines admitted through a null-word/stub gate and merged against near-duplicates instead of appended, and the profile bounded by whole lines. Failed dreamer delegations are logged to `reflection-error.log`. Both announce with a neutral start marker, never the dreamer-directed task text, and the reflect task opening matches what triggered it (idle vs turn threshold).
 
 Every applied dream/reflect run emits a `torus.memory-applied` transcript line (✿ per-kind counts with entry topics and deleted filenames) so the session sees what changed. Dream scheduling ignores the dreamer's own delegation logs, so dreams cannot self-trigger.
 

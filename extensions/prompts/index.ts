@@ -11,6 +11,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { readSection } from "../config/loader.js";
 import { stripFrontmatter } from "../frontmatter.js";
 import { projectStateDir, pruneOrphanSessionFiles, readJson, writeJson } from "../fsutil.js";
+import { memoryPolicyPointer } from "../memory/index.js";
 import { applyPersonaTheme } from "../persona-theme.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { repoRoot, sessionPersona, setSessionPersona } from "../registry.js";
@@ -230,7 +231,10 @@ export function registerPrompts(pi: ExtensionAPI): void {
 			? `\n\n[torus mode: ${pendingKeyword.word}]\n${pendingKeyword.text}\n`
 			: "";
 		pendingKeyword = null;
-		return { systemPrompt: event.systemPrompt + persona + delegationPolicy() + mode };
+		return {
+			systemPrompt:
+				event.systemPrompt + persona + delegationPolicy() + memoryPolicyPointer() + mode,
+		};
 	});
 }
 
