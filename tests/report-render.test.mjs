@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const { parseMarkdown, renderDocument, slugifyGithub, contrastRatio } = await import(
+const { parseMarkdown, renderDocument, runSlug, slugifyGithub, contrastRatio } = await import(
 	"../skills/torus-research/bin/render-report.mjs"
 );
 
@@ -109,6 +109,36 @@ test("[S<n>] becomes a cite span outside links, stays literal inside them", () =
 	const anchor = /<a [^>]*>[\s\S]*?<\/a>/.exec(mainOf(html))?.[0] ?? "";
 	assert.ok(anchor.includes("[S3]"));
 	assert.ok(!anchor.includes("cite"));
+
+	const multi = render(
+		"# T\n\nmeta\n\nMulti [S42, S86, S92]; range [S113–S116]; group [S1–S14, S81–S85]; pointer [S←n] plain.",
+	);
+	assert.ok(multi.includes('<span class="cite">[S42, S86, S92]</span>'));
+	assert.ok(multi.includes('<span class="cite">[S113–S116]</span>'));
+	assert.ok(multi.includes('<span class="cite">[S1–S14, S81–S85]</span>'));
+	assert.ok(!multi.includes('class="cite">[S←n]'));
+
+	// Strict chip policy: a bracket chips only when EVERY member is a plain
+	// S<n> ref; authored annotation sticks to prose.
+	const annotated = render(
+		"# T\n\nmeta\n\nKept prose: [S84, S81/child-surface] and [S85/sandbox-confinement] and [S81/child-surface].",
+	);
+	assert.ok(annotated.includes("[S84, S81/child-surface]"));
+	assert.ok(annotated.includes("[S85/sandbox-confinement]"));
+	assert.ok(!annotated.includes('class="cite">[S8'));
+	assert.ok(!annotated.includes('class="cite">[S1'));
+
+	const rail = render("# T\n\nmeta\n\n## 2.1 Open source (stars live 2026-10-30)\n\ntext");
+	const nav = /<nav class="toc"[\s\S]*?<\/nav>/.exec(rail)?.[0] ?? "";
+	assert.ok(nav.includes('<span class="nobr">2026-10-30</span>'));
+	assert.ok(mainOf(rail).includes("(stars live 2026-10-30)"));
+	assert.ok(!mainOf(rail).includes('class="nobr"'));
+
+	const glued = render("# T\n\nAlpha · Beta · Gamma\n\n## S\n\nBody keeps plain dots: X · Y.");
+	const metaRow = /<p class="meta">([\s\S]*?)<\/p>/.exec(glued)?.[1] ?? "";
+	assert.ok(metaRow.includes("Alpha\u00a0· Beta\u00a0· Gamma"));
+	assert.ok(!metaRow.includes(" \u00b7"));
+	assert.ok(mainOf(glued).includes("X · Y"), "body middots are untouched");
 });
 
 test("output is standalone and carries the theme machinery", () => {
@@ -130,8 +160,23 @@ test("output is standalone and carries the theme machinery", () => {
 	assert.ok(style.includes(":focus-visible"));
 	assert.ok(style.includes("prefers-reduced-motion"));
 	assert.ok(style.includes("@media print"));
-	assert.ok(html.includes(">2026-10-06</p>"));
-	assert.ok(html.includes("/journal/2026-10-06-scan/REPORT.md"));
+	assert.ok(html.includes('<span class="date">2026-10-06</span>'));
+	assert.ok(html.replace(/<[^>]+>/g, "").includes("2026-10-06-scan/REPORT.md"));
+	assert.ok(
+		html.includes('"slug-seg">2026-10-06-scan/</span><wbr><span class="slug-seg">REPORT.md</span>'),
+	);
+	assert.ok(!html.includes("/journal/"));
+});
+
+test("rendered output carries the run slug only, never the source path", () => {
+	assert.equal(runSlug("/journal/2026-10-06-scan/REPORT.md"), "2026-10-06-scan/REPORT.md");
+	const html = render("# T\n\nmeta\n\n## S\n\nbody", {
+		sourcePath: "/home/u/.torus/state/x/research/2026-10-30-run/REPORT.md",
+	});
+	const text = html.replace(/<[^>]+>/g, "");
+	assert.ok(text.includes("2026-10-30-run/REPORT.md"));
+	assert.ok(!html.includes("/home/u"));
+	assert.ok(!html.includes(".torus/state"));
 });
 
 test("theme token pairs clear 4.5:1 in both themes", () => {
@@ -183,9 +228,9 @@ test("evidence and citation selectors match the emitted markup", () => {
 	const markdown = [
 		"# Fixture report",
 		"",
-		"**Owner**: scout",
+		"**Owner**: scout · scan 2026-10-06",
 		"",
-		"## Findings",
+		"## 1. Findings (scan 2026-10-06)",
 		"",
 		"| Key | Says |",
 		"|---|---|",

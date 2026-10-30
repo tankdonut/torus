@@ -11,7 +11,7 @@ import { parseArgs } from "node:util";
 const TEMPLATE_URL = new URL("../assets/report.html", import.meta.url);
 const STYLES_URL = new URL("../assets/report.css", import.meta.url);
 
-const SLOT_NAMES = ["CSS", "PREPAINT", "TITLE", "DATE", "MASTHEAD", "TOC", "CONTENT", "FOOTER"];
+const SLOT_NAMES = ["CSS", "PREPAINT", "TITLE", "MASTHEAD", "TOC", "CONTENT", "FOOTER"];
 const LINK_PATTERN = /\[((?:[^[\]\n]|\[[^[\]\n]*\])+)\]\(((?:[^()\s]|\([^()\n]*\))*)\)/g;
 const ORDERED_ITEM = /^ {0,3}\d{1,9}[.)]\s+(.*)$/;
 const UNORDERED_ITEM = /^ {0,3}[-*+]\s+(.*)$/;
@@ -22,6 +22,12 @@ export function slugifyGithub(text) {
 		.toLowerCase()
 		.replace(/[^\w- ]/g, "")
 		.replace(/ /g, "-");
+}
+
+// Rendered output must be shareable: it carries the run's slug (run dir +
+// file name), never the absolute path with home or state dirs.
+export function runSlug(sourcePath) {
+	return `${basename(dirname(sourcePath))}/${basename(sourcePath)}`;
 }
 
 export function contrastRatio(a, b) {
@@ -130,7 +136,10 @@ function renderInline(raw) {
 		return stash(state, "L", `<a href="${escapeAttribute(href)}">${applyEmphasis(linkText)}</a>`);
 	});
 	text = typographicNormalize(text);
-	text = text.replace(/\[S(\d+)\]/g, '<span class="cite">[S$1]</span>');
+	text = text.replace(
+		/\[S\d+(?:\s*[,;–—-]\s*S\d+)*\]/g,
+		(match) => `<span class="cite">${match}</span>`,
+	);
 	text = applyEmphasis(text);
 	return unstash(text, state);
 }
@@ -318,10 +327,8 @@ function renderBlocks(blocks, ctx) {
 
 function renderBlock(block, ctx) {
 	switch (block.type) {
-		case "heading": {
-			const id = headingId(block, ctx);
-			return `<h${block.level} id="${id}">${renderInline(block.text)}</h${block.level}>`;
-		}
+		case "heading":
+			return renderHeading(block, ctx);
 		case "code": {
 			const cls = block.lang ? ` class="language-${escapeAttribute(block.lang)}"` : "";
 			return `<pre><code${cls}>${escapeHtml(block.text)}</code></pre>`;
@@ -343,6 +350,23 @@ function renderBlock(block, ctx) {
 		default:
 			return "";
 	}
+}
+
+// h2/h3 open with a mono kicker carrying the authored section number; the
+// number stays in the heading text for copy and assistive tech.
+const SECTION_NUMBER = /^(\d{1,3}(?:\.\d{1,3})*)\.?\s+(.+)$/;
+
+function renderHeading(block, ctx) {
+	const id = headingId(block, ctx);
+	const tag = `h${block.level}`;
+	if (block.level > 3) {
+		return `<${tag} id="${id}">${renderInline(block.text)}</${tag}>`;
+	}
+	const numbered = SECTION_NUMBER.exec(block.text);
+	if (!numbered) {
+		return `<${tag} id="${id}">${renderInline(block.text)}</${tag}>`;
+	}
+	return `<${tag} id="${id}"><span class="sec-no">${plainText(numbered[1])}</span> ${renderInline(numbered[2])}</${tag}>`;
 }
 
 function headingId(block, ctx) {
@@ -397,6 +421,11 @@ function renderTable(block) {
 	].join("\n");
 }
 
+// Rail entries are narrow: ISO dates must not break across lines.
+function nobrDates(label) {
+	return label.replace(/(\d{4}-\d{2}-\d{2})/g, '<span class="nobr">$1</span>');
+}
+
 function renderToc(headings) {
 	const entries = headings.filter((h) => h.level === 2 || h.level === 3);
 	if (entries.length === 0) {
@@ -405,7 +434,7 @@ function renderToc(headings) {
 	const parts = [];
 	let subs = null;
 	for (const entry of entries) {
-		const label = plainText(stripInlineMarkers(entry.text));
+		const label = nobrDates(plainText(stripInlineMarkers(entry.text)));
 		if (entry.level === 2) {
 			if (subs !== null) {
 				parts.push(`<ul>${subs.join("")}</ul></li>`);
@@ -435,8 +464,44 @@ function renderToc(headings) {
 function renderFooter({ sourcePath = null, renderedAt }) {
 	const at = renderedAt instanceof Date ? renderedAt : new Date();
 	const stamp = at.toISOString().replace(/\.\d+Z$/, "Z");
-	const source = sourcePath ? ` from <code>${escapeHtml(sourcePath)}</code>` : "";
-	return `<p>Rendered <time datetime="${stamp}">${stamp}</time>${source}.</p>`;
+	const source = sourcePath ? ` from <code>${breakableSlug(runSlug(sourcePath))}</code>` : "";
+	return `<p class="colophon-line">Rendered <time datetime="${stamp}">${stamp}</time>${source}.</p>`;
+}
+
+// Slug values stay whole and may only break after their slash: each
+// slash-terminated segment renders as an unbreakable run.
+function breakableSlug(slug) {
+	const parts = slug.split("/");
+	return parts
+		.map(
+			(part, i) =>
+				`<span class="slug-seg">${escapeHtml(part)}${i < parts.length - 1 ? "/" : ""}</span>`,
+		)
+		.join("<wbr>");
+}
+
+// Hero metadata: machine values (date, run slug) as labeled rows, then the
+// authored meta line as labeled text — prose is rendered, never extracted.
+function renderMasthead(title, meta, options) {
+	const rows = [`<h1 class="report-title">${renderInline(title)}</h1>`, '<div class="hero-meta">'];
+	if (options.date) {
+		rows.push(
+			`<span class="meta-label">Date</span><span class="date">${escapeHtml(options.date)}</span>`,
+		);
+	}
+	if (options.sourcePath) {
+		rows.push(
+			`<span class="meta-label">Run</span><span class="kicker-run">${breakableSlug(runSlug(options.sourcePath))}</span>`,
+		);
+	}
+	if (meta) {
+		// Glue authored middot separators to the preceding word so a wrapped
+		// meta line never opens with an orphaned dot.
+		const metaHtml = renderInline(meta).replace(/ ·/g, "\u00a0·");
+		rows.push(`<span class="meta-label">Meta</span><p class="meta">${metaHtml}</p>`);
+	}
+	rows.push("</div>");
+	return rows.join("\n");
 }
 
 export function renderDocument(markdown, options = {}) {
@@ -446,16 +511,12 @@ export function renderDocument(markdown, options = {}) {
 	const ctx = { used: new Map(), headings: [] };
 	const content = renderBlocks(parsed.blocks, ctx);
 	const title = options.title ?? parsed.title ?? "Report";
-	const masthead = [`<h1 class="report-title">${renderInline(title)}</h1>`];
-	if (parsed.meta) {
-		masthead.push(`<p class="meta">${renderInline(parsed.meta)}</p>`);
-	}
+	const masthead = renderMasthead(title, parsed.meta, options);
 	return fillSlots(template, {
 		CSS: `<style>\n${css.trimEnd()}\n</style>`,
 		PREPAINT: "",
 		TITLE: plainText(title),
-		DATE: options.date === null || options.date === undefined ? "" : escapeHtml(options.date),
-		MASTHEAD: masthead.join("\n"),
+		MASTHEAD: masthead,
 		TOC: renderToc(ctx.headings),
 		CONTENT: content,
 		FOOTER: renderFooter(options),

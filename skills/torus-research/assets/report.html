@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><!--SLOT:TITLE--></title>
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F5F7F3">
-<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111714">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#121815">
 <script>
 (() => {
 	"use strict";
@@ -30,15 +30,25 @@
 </head>
 <body>
 <a class="skip-link" href="#report-content">Skip to content</a>
-<button class="theme-toggle" type="button" id="theme-toggle" aria-pressed="false" aria-label="Switch to dark theme">Theme</button>
-<header class="masthead">
+<div class="progress" aria-hidden="true"></div>
+<header class="band">
+<div class="band-inner">
+<p class="kicker"><span class="kicker-label">Torus research dossier</span></p>
 <!--SLOT:MASTHEAD-->
-<p class="date"><!--SLOT:DATE--></p>
+</div>
+<button class="theme-toggle" type="button" id="theme-toggle" aria-pressed="false" aria-label="Switch to dark theme">Theme</button>
 </header>
+<div class="sheet">
+<aside class="rail">
+<details class="toc-shell" open>
+<summary class="toc-summary">Contents</summary>
 <!--SLOT:TOC-->
-<main id="report-content">
+</details>
+</aside>
+<main id="report-content" class="content">
 <!--SLOT:CONTENT-->
 </main>
+</div>
 <footer class="colophon">
 <!--SLOT:FOOTER-->
 </footer>
@@ -67,6 +77,85 @@
 		sync();
 	});
 	sync();
+})();
+</script>
+<script>
+(() => {
+	"use strict";
+	const shell = document.querySelector(".toc-shell");
+	if (shell && window.matchMedia?.("(max-width: 1023px)")?.matches) {
+		shell.removeAttribute("open");
+	}
+	const links = [...document.querySelectorAll(".toc a[href^='#']")];
+	if (links.length === 0 || typeof IntersectionObserver !== "function") {
+		return;
+	}
+	const byId = new Map();
+	for (const link of links) {
+		byId.set(link.hash.slice(1), link);
+	}
+	const targets = [...byId.keys()]
+		.map((id) => document.getElementById(id))
+		.filter(Boolean);
+	if (targets.length === 0) {
+		return;
+	}
+	let current = null;
+	const mark = (id) => {
+		if (current === id) {
+			return;
+		}
+		current = id;
+		for (const [key, link] of byId) {
+			if (key === id) {
+				link.setAttribute("aria-current", "true");
+			} else {
+				link.removeAttribute("aria-current");
+			}
+		}
+	};
+	const visible = new Set();
+	const observer = new IntersectionObserver(
+		(entries) => {
+			for (const entry of entries) {
+				if (entry.isIntersecting) {
+					visible.add(entry.target.id);
+				} else {
+					visible.delete(entry.target.id);
+				}
+			}
+			let top = null;
+			for (const id of visible) {
+				const el = document.getElementById(id);
+				if (el && (top === null || el.getBoundingClientRect().top < top.getBoundingClientRect().top)) {
+					top = el;
+				}
+			}
+			if (top) {
+				mark(top.id);
+			}
+		},
+		{ rootMargin: "-10% 0px -70% 0px" },
+	);
+	for (const target of targets) {
+		observer.observe(target);
+	}
+})();
+</script>
+<script>
+(() => {
+	"use strict";
+	const bar = document.querySelector(".progress");
+	if (!bar || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+		return;
+	}
+	const update = () => {
+		const max = document.documentElement.scrollHeight - window.innerHeight;
+		bar.style.transform = `scaleX(${max > 0 ? Math.min(window.scrollY / max, 1) : 0})`;
+	};
+	addEventListener("scroll", update, { passive: true });
+	addEventListener("resize", update);
+	update();
 })();
 </script>
 </body>

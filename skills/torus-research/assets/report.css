@@ -1,11 +1,12 @@
 /*
-	Registry-dossier stylesheet for rendered research reports.
-	Theme tokens live on html[data-theme="..."]; the template's pre-paint
-	script sets the attribute before first paint. Monospace is reserved for
-	genuine data tokens: code, citation keys, dates, paths. The accent color
-	belongs to the evidence apparatus alone: the bordered evidence groups,
-	the ledger rule under table headers, links, and focus; every other
-	surface stays ink on paper with hairline rules.
+	Dossier stylesheet for rendered research reports.
+
+	A torus-research report is an operations dossier: a full-bleed mission band,
+	a sticky contents rail, a wide reading column. Structure comes from tone
+	steps (band, rail, evidence field) with hard edges; the accent is budgeted
+	to the apparatus alone: band kicker, section numbers, cite keys, evidence
+	edge, links, focus ring. No shadows, no radius kit, and a motion budget of
+	one moment: the rail's scroll-spy sync.
 */
 
 html[data-theme="light"] {
@@ -16,18 +17,29 @@ html[data-theme="light"] {
 	--rule: #D9DED5;
 	--accent: #16544D;
 	--accent-ink: #F5F7F3;
+	--band: #E9EEE9;
+	--rail: #EFF2ED;
 	--evidence-bg: rgba(22, 84, 77, 0.06);
 }
 
 html[data-theme="dark"] {
 	color-scheme: dark;
-	--paper: #111714;
-	--ink: #E3E8E2;
-	--muted: #97A39C;
-	--rule: #2B342F;
-	--accent: #63BFAF;
-	--accent-ink: #0E1512;
-	--evidence-bg: rgba(99, 191, 175, 0.08);
+	--paper: #121815;
+	--ink: #E4E9E3;
+	--muted: #9AA79F;
+	--rule: #2C362F;
+	--accent: #6FC0AF;
+	--accent-ink: #0F1613;
+	--band: #1B241F;
+	--rail: #17201B;
+	--evidence-bg: rgba(111, 192, 175, 0.08);
+}
+
+:root {
+	--pad: clamp(1.25rem, 4vw, 2.5rem);
+	--gap: clamp(1.75rem, 3vw, 3rem);
+	--measure: 70ch;
+	--mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
 *,
@@ -38,19 +50,25 @@ html[data-theme="dark"] {
 
 html {
 	background: var(--paper);
+	color: var(--ink);
+	scroll-behavior: smooth;
+	scrollbar-color: var(--muted) transparent;
+	caret-color: var(--accent);
+}
+
+::selection {
+	background: var(--accent);
+	color: var(--accent-ink);
 }
 
 body {
-	margin: 0 auto;
-	max-width: 52rem;
-	padding: 3rem 1.25rem 4rem;
+	margin: 0;
 	background: var(--paper);
 	color: var(--ink);
 	font-family:
 		Charter, "Bitstream Charter", "Iowan Old Style", Georgia, "Times New Roman", serif;
 	font-size: 1.125rem;
-	line-height: 1.65;
-	transition: background-color 0.2s ease, color 0.2s ease;
+	line-height: 1.62;
 }
 
 h1,
@@ -58,24 +76,47 @@ h2,
 h3,
 h4 {
 	margin: 2.2em 0 0.55em;
-	line-height: 1.25;
+	line-height: 1.22;
 	font-weight: 700;
 	text-wrap: balance;
-	scroll-margin-top: 4.5rem;
+	scroll-margin-top: 1.25rem;
 }
 
 h2 {
-	font-size: 1.45rem;
+	position: relative;
+	font-size: 1.5rem;
 	border-bottom: 1px solid var(--rule);
-	padding-bottom: 0.25em;
+	padding-bottom: 0.3em;
 }
 
 h3 {
-	font-size: 1.18rem;
+	font-size: 1.2rem;
 }
 
 h4 {
-	font-size: 1.02rem;
+	font-size: 1.05rem;
+}
+
+/*
+	Section numbers: a hanging mono kicker on h2, an inline one on h3.
+	The number itself stays in the heading text (see the renderer).
+*/
+.sec-no {
+	font-family: var(--mono);
+	font-weight: 600;
+	color: var(--accent);
+	letter-spacing: 0.06em;
+}
+
+.content h2 .sec-no {
+	position: absolute;
+	top: 0.45em;
+	right: calc(100% + 1ch);
+	font-size: 0.8rem;
+}
+
+.content h3 .sec-no {
+	font-size: 0.8em;
 }
 
 p {
@@ -98,21 +139,19 @@ a:focus-visible {
 }
 
 code,
-pre,
-.cite,
-.date {
-	font-family: ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+pre {
+	font-family: var(--mono);
 }
 
 code {
-	font-size: 0.88em;
+	font-size: 0.86em;
 }
 
 pre {
 	padding: 0.9em 1em;
 	border: 1px solid var(--rule);
 	overflow-x: auto;
-	font-size: 0.88rem;
+	font-size: 0.85rem;
 	line-height: 1.55;
 }
 
@@ -120,38 +159,216 @@ pre code {
 	font-size: inherit;
 }
 
+/*
+	Cite keys are data tokens, not errors: mono, slightly small, accent,
+	no box.
+*/
 .cite {
-	font-size: 0.8em;
-	color: var(--muted);
+	font-family: var(--mono);
+	font-size: 0.74em;
+	letter-spacing: 0.02em;
+	color: var(--accent);
 	white-space: nowrap;
 }
 
-.masthead {
-	margin-bottom: 2.25rem;
+/*
+	Mission band: kicker line (dossier label, date, run slug), display title,
+	telemetry meta. Full bleed; the toggle rides the top edge.
+*/
+.band {
+	position: relative;
+	background: var(--band);
+	border-bottom: 1px solid var(--rule);
+}
+
+.band-inner {
+	max-width: calc(var(--pad) * 2 + var(--rail-w) + var(--gap) + var(--measure) + 1rem);
+	margin-inline: auto;
+	padding: clamp(2.2rem, 5vw, 3.5rem) var(--pad) clamp(1.7rem, 3vw, 2.4rem);
+}
+
+.kicker {
+	margin: 0;
+	font-family: var(--mono);
+	font-size: 0.78rem;
+}
+
+.kicker-label {
+	color: var(--accent);
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.18em;
 }
 
 .report-title {
-	margin: 0 0 0.35em;
-	font-size: 2.05rem;
-	line-height: 1.18;
-	letter-spacing: -0.012em;
+	margin: 1.5rem 0 0;
+	max-width: 18em;
+	font-size: clamp(2.25rem, 5.2vw, 4.2rem);
+	font-weight: 600;
+	line-height: 1.05;
+	letter-spacing: -0.02em;
+}
+
+/*
+	Hero metadata: machine rows (date, run slug) in mono, then the authored
+	meta line as labeled serif text. Never parsed, never summarized.
+*/
+.hero-meta {
+	margin: 1.4rem 0 0;
+	display: grid;
+	grid-template-columns: minmax(4.5em, max-content) 1fr;
+	column-gap: 1.2em;
+	row-gap: 0.5em;
+	max-width: var(--measure);
+}
+
+.hero-meta > * {
+	min-width: 0;
+}
+
+.meta-label {
+	font-family: var(--mono);
+	font-size: 0.72rem;
+	font-weight: 600;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--muted);
+	padding-block-start: 0.3em;
+}
+
+.date,
+.kicker-run {
+	font-family: var(--mono);
+	font-size: 0.8rem;
+	letter-spacing: 0.02em;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: break-word;
+}
+
+/* Slug values break whole, only after their slash. */
+.slug-seg {
+	white-space: nowrap;
 }
 
 .meta {
 	margin: 0;
+	font-size: 0.75rem;
+	line-height: 1.7;
 	color: var(--muted);
-	font-size: 0.95rem;
+	overflow-wrap: break-word;
 }
 
-.date {
-	margin: 0.45em 0 0;
-	color: var(--muted);
-	font-size: 0.85rem;
-	font-variant-numeric: tabular-nums;
+/*
+	Sheet: contents rail beside the reading column. The rail's tone step is
+	painted as a hard-edged strip that runs the full height of the sheet.
+*/
+.sheet {
+	--rail-w: 15rem;
+	max-width: calc(var(--pad) * 2 + var(--rail-w) + var(--gap) + var(--measure) + 1rem);
+	margin-inline: auto;
+	padding: 0 var(--pad) 4rem;
+	display: grid;
+	grid-template-columns: var(--rail-w) minmax(0, 1fr);
+	gap: var(--gap);
+	align-items: start;
+	background: linear-gradient(to right, var(--rail) calc(var(--pad) + var(--rail-w)), var(--paper) 0);
 }
 
-.date:empty {
+.rail {
+	position: sticky;
+	top: 0;
+	max-height: 100vh;
+	overflow-y: auto;
+	scrollbar-width: thin;
+	padding: 2.3rem 1.25rem 2rem 0;
+	border-inline-end: 1px solid var(--rule);
+}
+
+.toc-shell:not(:has(nav)) {
 	display: none;
+}
+
+.toc-summary {
+	margin: 0;
+	padding: 0.15rem 0;
+	list-style: none;
+	cursor: pointer;
+	font-family: var(--mono);
+	font-size: 0.72rem;
+	font-weight: 600;
+	letter-spacing: 0.22em;
+	text-transform: uppercase;
+	color: var(--accent);
+}
+
+.toc-summary::after {
+	content: "+";
+	margin-inline-start: 0.6em;
+	letter-spacing: 0;
+}
+
+.toc-shell[open] .toc-summary::after {
+	content: "−";
+}
+
+.toc-summary::-webkit-details-marker {
+	display: none;
+}
+
+.toc {
+	font-size: 0.88rem;
+	line-height: 1.5;
+}
+
+.toc ul {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.toc ul ul {
+	padding-left: 1.1em;
+	font-size: 0.94em;
+}
+
+.toc li {
+	margin: 0.32em 0;
+}
+
+.toc a {
+	display: block;
+	padding-inline-start: 0.7em;
+	border-inline-start: 2px solid transparent;
+	color: inherit;
+	text-decoration: none;
+}
+
+.toc ul ul a {
+	color: var(--muted);
+}
+
+.nobr {
+	white-space: nowrap;
+}
+
+.toc a:hover,
+.toc a:focus-visible {
+	color: var(--accent);
+	text-decoration: underline;
+}
+
+.toc a[aria-current] {
+	color: var(--accent);
+	font-weight: 600;
+	text-decoration: none;
+	border-inline-start-color: var(--accent);
+}
+
+.content {
+	max-width: var(--measure);
+	min-width: 0;
+	padding-top: 2.3rem;
 }
 
 ul,
@@ -185,57 +402,37 @@ hr {
 	border-top: 1px solid var(--rule);
 }
 
-.toc {
-	margin: 0 0 2.5rem;
-	padding: 0.8rem 0;
-	border-block: 1px solid var(--rule);
-	font-size: 0.95rem;
-}
-
-.toc ul {
-	margin: 0;
-	padding: 0;
-	list-style: none;
-}
-
-.toc ul ul {
-	padding-left: 1.3em;
-}
-
-.toc li {
-	margin: 0.18em 0;
-}
-
-.toc a {
-	color: inherit;
-	text-decoration: none;
-}
-
-.toc a:hover,
-.toc a:focus-visible {
-	color: var(--accent);
-	text-decoration: underline;
-}
-
 /*
 	Evidence apparatus: a list whose bullets open with a bold run-in label
-	(Claim:, Evidence:, …) renders as one bordered group: accent edge, faint
-	accent field, no markers. The label itself is plain bold serif; no caps,
-	no numbering. Each item is kept whole when the page breaks.
+	renders as the one boxed surface on the page: accent edge, faint accent
+	field, labels as small caps mono. Items stay whole across page breaks.
 */
 ul:has(> li > strong:first-child) {
 	margin: 1.7rem 0;
-	padding: 0.2rem 1.2rem 0.4rem 1.3rem;
+	padding: 0.85rem 1.2rem 0.85rem 1.15rem;
 	background: var(--evidence-bg);
 	border-left: 3px solid var(--accent);
 	list-style: none;
 }
 
 ul:has(> li > strong:first-child) > li {
-	margin: 0.6em 0;
+	margin: 0.55em 0;
 	break-inside: avoid;
 }
 
+ul:has(> li > strong:first-child) > li > strong {
+	font-family: var(--mono);
+	font-size: 0.72em;
+	font-weight: 600;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--accent);
+}
+
+/*
+	Ledger tables: hairline rows, accent rule under a mono caps header,
+	tabular numerals.
+*/
 .table-wrap {
 	margin: 1.6rem 0;
 	overflow-x: auto;
@@ -256,7 +453,6 @@ td {
 	text-align: left;
 	vertical-align: top;
 	overflow-wrap: break-word;
-	transition: border-color 0.2s ease;
 }
 
 th + th,
@@ -266,50 +462,68 @@ td + td {
 
 thead th {
 	border-bottom: 2px solid var(--accent);
-	font-weight: 700;
+	font-family: var(--mono);
+	font-size: 0.74em;
+	font-weight: 600;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--muted);
 }
 
 .colophon {
-	margin-top: 3rem;
-	padding-top: 0.8rem;
 	border-top: 1px solid var(--rule);
-	color: var(--muted);
-	font-size: 0.85rem;
 }
 
-.colophon p {
-	margin: 0;
+.colophon-line {
+	max-width: calc(var(--pad) * 2 + var(--rail-w) + var(--gap) + var(--measure) + 1rem);
+	margin-inline: auto;
+	padding: 1.1rem var(--pad) 3.5rem;
+	font-family: var(--mono);
+	font-size: 0.78rem;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
 }
 
 .colophon code {
-	font-size: 0.9em;
-	overflow-wrap: anywhere;
+	color: var(--accent);
 }
 
 .theme-toggle {
-	position: fixed;
-	top: 0.8rem;
-	inset-inline-end: 1rem;
-	z-index: 10;
-	padding: 0.3rem 0.7rem;
+	position: absolute;
+	top: 1.1rem;
+	inset-inline-end: var(--pad);
+	padding: 0.34rem 0.7rem;
 	border: 1px solid var(--rule);
-	border-radius: 3px;
 	background: var(--paper);
 	color: var(--ink);
-	font: inherit;
-	font-size: 0.85rem;
+	font-family: var(--mono);
+	font-size: 0.72rem;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
 	cursor: pointer;
-	transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
 }
 
 .theme-toggle:hover {
 	border-color: var(--accent);
+	color: var(--accent);
 }
 
 .skip-link {
 	position: fixed;
 	top: 0.8rem;
 	left: -999px;
+}
+
+.progress {
+	position: fixed;
+	inset-block-start: 0;
+	inset-inline: 0;
+	z-index: 30;
+	height: 2px;
+	background: var(--accent);
+	transform: scaleX(0);
+	transform-origin: 0 50%;
+	pointer-events: none;
 }
 
 .skip-link:focus-visible {
@@ -327,13 +541,65 @@ thead th {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	body,
-	th,
-	td,
-	.toc,
-	hr,
-	.theme-toggle {
-		transition-duration: 0s;
+	html {
+		scroll-behavior: auto;
+	}
+
+	.progress {
+		display: none;
+	}
+}
+
+/*
+	Below the rail's useful width the sheet folds to a single column and the
+	contents rail becomes a collapsible block above the text.
+*/
+/*
+	Below the rail's useful width the sheet folds to a single column and the
+	contents rail becomes a collapsible block above the text.
+*/
+@media (max-width: 1023px) {
+	.band-inner {
+		padding-top: 3.6rem;
+	}
+
+	.sheet {
+		display: block;
+		background: none;
+		padding-bottom: 3rem;
+	}
+
+	.rail {
+		position: static;
+		max-height: none;
+		overflow: visible;
+		padding: 1.3rem 0 1.1rem;
+		border-inline-end: 0;
+		border-bottom: 1px solid var(--rule);
+	}
+
+	.content {
+		padding-top: 1.7rem;
+	}
+
+	.content h2 .sec-no {
+		position: static;
+		font-size: 0.82rem;
+		margin-inline-end: 0.75ch;
+	}
+}
+
+/*
+	Narrow phones: hero metadata stacks label over value so values get the
+	full band width; slug segments may fall back to hyphen-point breaking.
+*/
+@media (max-width: 479px) {
+	.hero-meta {
+		grid-template-columns: 1fr;
+	}
+
+	.slug-seg {
+		white-space: normal;
 	}
 }
 
@@ -343,14 +609,46 @@ thead th {
 	}
 
 	body {
-		max-width: none;
-		padding: 0;
 		font-size: 11pt;
 	}
 
 	.theme-toggle,
-	.skip-link {
+	.skip-link,
+	.rail,
+	.progress {
 		display: none;
+	}
+
+	.band {
+		background: none;
+		border-bottom: 0;
+	}
+
+	.band-inner {
+		max-width: none;
+		padding: 0;
+	}
+
+	.report-title {
+		font-size: 22pt;
+	}
+
+	.sheet {
+		display: block;
+		background: none;
+		padding: 0;
+		max-width: none;
+	}
+
+	.content {
+		max-width: none;
+		padding-top: 0;
+	}
+
+	.content h2 .sec-no {
+		position: static;
+		font-size: 9pt;
+		margin-inline-end: 0.75ch;
 	}
 
 	h2,
@@ -392,4 +690,10 @@ thead th {
 		margin-inline: 0;
 		overflow: visible;
 	}
+
+	.colophon-line {
+		max-width: none;
+		padding: 0.4rem 0 0;
+	}
 }
+
