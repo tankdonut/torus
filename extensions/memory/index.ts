@@ -269,6 +269,38 @@ export interface DreamProposal {
 
 const DREAM_DELETE_RE = /^[\w-]+\.md$/;
 
+/*
+ * Profile admission: the dreamer says "prefer none", and models take that
+ * literally — `PROFILE: none` has landed verbatim in the profile more than
+ * once. Null-words and stub-short facts are rejected here so a no-op stays a
+ * no-op. A leading "PROFILE:" inside the payload is a historical emission
+ * artifact and is stripped.
+ */
+const PROFILE_NULL_WORDS = new Set([
+	"none",
+	"n/a",
+	"na",
+	"nil",
+	"null",
+	"no",
+	"nothing",
+	"no change",
+	"no changes",
+	"-",
+	"—",
+]);
+
+export function cleanProfileFact(rawFact: string): string | null {
+	let fact = rawFact.trim();
+	while (fact.toUpperCase().startsWith("PROFILE:")) {
+		fact = fact.slice("PROFILE:".length).trim();
+	}
+	const bare = fact.replace(/[.!\s]+$/g, "").toLowerCase();
+	if (bare.length === 0 || PROFILE_NULL_WORDS.has(bare)) return null;
+	if (fact.length < 16) return null;
+	return fact;
+}
+
 /**
  * Parse a dreamer agent's structured proposal. The child is read-only and its
  * output is untrusted: entry frontmatter is validated field by field, delete
@@ -305,7 +337,7 @@ export function parseDreamOutput(text: string): DreamProposal {
 		} else if (/^PROFILE:/.test(line)) {
 			closeBlock();
 			capturing = false;
-			const fact = line.slice("PROFILE:".length).trim();
+			const fact = cleanProfileFact(line.slice("PROFILE:".length));
 			if (fact && proposal.profiles.length < 2) proposal.profiles.push(fact);
 		} else if (capturing) {
 			block.push(line);
@@ -385,6 +417,49 @@ function removeEntry(name: string): boolean {
 	return true;
 }
 
+/*
+ * Profile consolidation without embeddings: a new fact whose significant
+ * words overlap an existing line heavily is a rewrite of that line, not a
+ * new fact — append-only profiles accrete supersession notes instead of
+ * staying a model of the user. Overlap is Jaccard over words > 3 chars;
+ * the threshold 0.5 keeps "prefers 7-day renovate minimum release age"
+ * replacing its older wording while unrelated lines never collide.
+ */
+function profileTokens(line: string): Set<string> {
+	return new Set(
+		line
+			.toLowerCase()
+			.split(/[^a-z0-9']+/)
+			.filter((word) => word.length > 3),
+	);
+}
+
+export function mergeProfileLine(existingLines: string[], addition: string): string[] {
+	const lines = [...existingLines];
+	const addTokens = profileTokens(addition);
+	let bestIndex = -1;
+	let bestScore = 0;
+	for (let i = 0; i < lines.length; i++) {
+		const current = lines[i];
+		if (current === undefined) continue;
+		const tokens = profileTokens(current);
+		let shared = 0;
+		for (const word of tokens) if (addTokens.has(word)) shared += 1;
+		const union = new Set([...tokens, ...addTokens]).size;
+		const score = union === 0 ? 0 : shared / union;
+		if (score > bestScore) {
+			bestScore = score;
+			bestIndex = i;
+		}
+	}
+	if (bestIndex >= 0 && bestScore >= 0.5) {
+		lines[bestIndex] = addition;
+		return lines;
+	}
+	lines.push(addition);
+	return lines;
+}
+
 export function applyDreamProposal(
 	proposal: DreamProposal,
 	cap = 4,
@@ -421,9 +496,11 @@ export function applyDreamProposal(
 	}
 	const profiles = proposal.profiles.slice(0, 2);
 	if (profiles.length > 0) {
-		const existing = readProfile();
-		const addition = profiles.join("\n");
-		writeProfile(existing.length > 0 ? `${existing}\n\n${addition}` : addition);
+		const existingLines = readProfile()
+			.split(/\n+/)
+			.filter((line) => line.trim().length > 0);
+		const merged = profiles.reduce((acc, fact) => mergeProfileLine(acc, fact), existingLines);
+		writeProfile(merged.join("\n\n"));
 		counts.profile = profiles.length;
 	}
 	return counts;
@@ -544,11 +621,18 @@ export function readProfile(): string {
 
 function writeProfile(content: string): void {
 	ensureStore();
-	const bounded =
-		content.length > PROFILE_CHAR_LIMIT
-			? content.slice(content.length - PROFILE_CHAR_LIMIT)
-			: content;
-	writeFileSync(PROFILE_FILE, `${bounded.trim()}\n`, "utf8");
+	/*
+	 * The hard bound drops the OLDEST whole lines: a character tail-slice
+	 * amputated the opening line mid-sentence once the profile outgrew the
+	 * limit, corrupting the user model's earliest observations.
+	 */
+	let lines = content.split(/\n+/).filter((line) => line.trim().length > 0);
+	let joined = lines.join("\n\n");
+	while (lines.length > 1 && joined.length > PROFILE_CHAR_LIMIT) {
+		lines = lines.slice(1);
+		joined = lines.join("\n\n");
+	}
+	writeFileSync(PROFILE_FILE, `${joined.trim()}\n`, "utf8");
 	gitAdd(PROFILE_FILE);
 	commit("memory: profile update");
 }
@@ -880,6 +964,28 @@ export const REFLECT_ANNOUNCE =
 export const DREAM_ANNOUNCE = "background dream started — dreamer handles it, no action needed";
 
 /** Opening line of the reflection task, accurate to how it was triggered. */
+/*
+ * Dreamer delegation failures were invisible: `!outcome.ok` produced no log
+ * line, so a crashed reflect run left reflection-error.log silent. Both
+ * flows record the failure with trigger and reason for later diagnosis.
+ */
+function logDreamerFailure(
+	source: "dream" | "reflect",
+	trigger: string,
+	outcome: {
+		ok: boolean;
+		text: string;
+	},
+): void {
+	try {
+		appendFileSync(
+			path.join(MEMORY_ROOT, "reflection-error.log"),
+			`[${new Date().toISOString()}] ${source} (${trigger}) failed: ${outcome.text.slice(0, 400).replace(/\s+/g, " ")}\n`,
+			"utf8",
+		);
+	} catch {}
+}
+
 export function reflectOpening(trigger: "idle" | "turns"): string {
 	return trigger === "turns"
 		? "You are reflecting on a torus session that just crossed its turn threshold: distill its activity into durable memory."
@@ -979,7 +1085,7 @@ async function runIdleReflection(
 		const task = [
 			reflectOpening(trigger),
 			`Store: ${MEMORY_ROOT} (entries/*.md with frontmatter: topic, tags, project: ${projectSlug(process.cwd())} or global, created) — read existing entries first. Profile file: ${PROFILE_FILE}.`,
-			"Use PROFILE: lines for stable facts about the USER, not the work; entries for durable lessons/decisions/facts. Prefer proposing nothing over noise.",
+			"Use PROFILE: lines only for durable USER behaviors, patterns, preferences, or desires observed in the user's OWN messages this session — never repo/tool configuration, project stances, one-off events, or anything about the work itself (see the Profile lines section of your role prompt). When you have no user observation, emit no PROFILE line at all. Entries are for durable lessons/decisions/facts; prefer proposing nothing over noise.",
 			transcript
 				? `Session transcript: ${transcript} (JSONL, one record per line — read the END for the latest turns; user messages and final assistant text matter, tool chatter does not)`
 				: "",
@@ -1009,6 +1115,8 @@ async function runIdleReflection(
 				lastReflectSettles: settleCount,
 				lastReflectAt: Date.now(),
 			});
+		} else {
+			logDreamerFailure("reflect", trigger, outcome);
 		}
 	} finally {
 		reflectInFlight = false;
@@ -1079,6 +1187,8 @@ async function dream(_pi: ExtensionAPI): Promise<void> {
 	if (outcome.ok) {
 		markDreamed();
 		emitMemoryApplied(counts, "dream");
+	} else {
+		logDreamerFailure("dream", "interval", outcome);
 	}
 	if (totalApplied(counts) > 0) {
 		const detail = [

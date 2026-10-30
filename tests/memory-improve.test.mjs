@@ -452,3 +452,62 @@ test("ensureStore runs its setup once per process; later writes spend no setup s
 		"second write spawns only the git round (add + commit), zero setup spawns",
 	);
 });
+
+test("profile admission: null-words, stubs, and PREFIX: artifacts never land", () => {
+	assert.equal(memory.cleanProfileFact("none"), null);
+	assert.equal(memory.cleanProfileFact(" None. "), null);
+	assert.equal(memory.cleanProfileFact("n/a"), null);
+	assert.equal(memory.cleanProfileFact("nothing"), null);
+	assert.equal(memory.cleanProfileFact("—"), null);
+	assert.equal(memory.cleanProfileFact("prefers serif"), null);
+	assert.equal(
+		memory.cleanProfileFact("PROFILE: Terse imperative directing style, verified twice"),
+		"Terse imperative directing style, verified twice",
+	);
+
+	const proposal = memory.parseDreamOutput(
+		"PROFILE: none\nPROFILE: Wants agent commits SSH-signed with Verified badges",
+	);
+	assert.deepEqual(proposal.profiles, ["Wants agent commits SSH-signed with Verified badges"]);
+});
+
+test("profile lines merge near-duplicates instead of accreting", () => {
+	const existing = [
+		"Wants agent commits SSH-signed and Verified on GitHub",
+		"Daily-drives torus under the fullscreen TUI on Linux",
+	];
+
+	const replaced = memory.mergeProfileLine(
+		existing,
+		"Wants agent commits SSH-signed, expecting Verified on GitHub always",
+	);
+	assert.equal(replaced.length, 2, "near-duplicate rewrites the line it matches");
+	assert.ok(replaced[0]?.includes("always"));
+	assert.ok(replaced[1]?.includes("fullscreen TUI"));
+
+	const appended = memory.mergeProfileLine(
+		existing,
+		"Reviews rendered output visually before accepting it",
+	);
+	assert.equal(appended.length, 3, "unrelated observation appends");
+});
+
+test("applyDreamProposal keeps the profile line-bounded and whole", () => {
+	const longFact =
+		"Prefers thorough verification gates before any commit lands, always running the full test suite first";
+	for (let i = 0; i < 40; i++) {
+		memory.applyDreamProposal({
+			entries: [],
+			deletes: [],
+			profiles: [`${longFact} (observation ${i})`],
+		});
+	}
+	const stored = memory.readProfile();
+	assert.ok(stored.length < 2600, `profile stays bounded (got ${stored.length})`);
+	for (const line of stored.split("\n\n")) {
+		assert.ok(
+			line.trim().startsWith("Prefers"),
+			`no line amputated mid-sentence: ${line.slice(0, 40)}`,
+		);
+	}
+});
