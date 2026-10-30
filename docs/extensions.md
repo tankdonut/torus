@@ -439,7 +439,7 @@ Multi-agent orchestration: parallel fan-out, sequential chains, and persistent t
 | --- | --- |
 | `torus_fanout` | 2–8 parallel delegations (per-run `model` override, `background` accepted) |
 | `torus_chain` | 2–6 sequential steps, each fed the prior output, bounded to 4k chars (per-step `model` override, `background` accepted) |
-| `team_create` | Create a persistent team (1–8 members); accepts `selfClaim` |
+| `team_create` | Create a persistent team (1–8 members); accepts `selfClaim`, `memberMail` |
 | `team_status` | Team state, orphaned tasks, stale tasks |
 | `team_msg` | Message a member or `*` |
 | `team_task_create` | Add a task (optional `dependsOn`) |
@@ -489,6 +489,14 @@ Why the window: members finishing close together flush as one team marker instea
 `team_create` accepts `selfClaim` (persisted on the team spec). When on, each member's objective gains exactly one sentence teaching the claim protocol: members run `node runtime/bin/team-task.mjs <subcommand>` from the torus checkout root. Subcommands: `list <teamId>`, `claim <teamId> --as <name>`, `complete <teamId> <taskId> --as <name> [--force]`, `release <teamId> <taskId> --as <name>`; JSON-line output, exit 0 success / 1 refusal.
 
 Members load no team tools, so that CLI, invoked via their bash, is their only structured path to the tasklist. The CLI is a second writer family over `tasks.json` and routes every write through the same directory-lock + mtime-CAS `updateTasksFile` as the lead's tools, so simultaneous claims cannot both win (the first pending, unassigned, unblocked task by id order is claimed, conditions re-checked inside the lock). `complete`/`release` verify the caller is the assignee (`--force` overrides `complete`). Default-off teams are unchanged: no sentence, byte-identical team spec.
+
+#### Member mail (opt-in, default off)
+
+`team_create` accepts `memberMail` (persisted on the team spec). When on, each member's objective gains one sentence teaching the send subcommand. The sentence lands after any self-claim sentence and names the checkout-root invocation.
+
+Subcommands: `send <teamId> --as <name> --to <member> <text>` and `members <teamId>`; JSON-line output, exit 0 success / 1 refusal. Members name themselves with `--as`, so mail arrives attributed.
+
+`send` routes through `deliverMemberMail`, which refuses reserved senders (`lead`, `tasklist`), unknown members, self-sends, and empty text. The `members` subcommand emits one line per member with name and agent; an unknown team refuses. Default-off teams are unchanged: no sentence, byte-identical team spec.
 
 ### `notify`
 

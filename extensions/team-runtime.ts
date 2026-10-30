@@ -105,6 +105,8 @@ export interface TeamSpec {
 	parentSession?: string | null;
 	/** Opt-in: members are taught the atomic self-claim CLI protocol in their objective. Default off — absent behaves as false. */
 	selfClaim?: boolean;
+	/** Opt-in: members get the mail CLI sentence in their objective. Default off — absent behaves as false. */
+	memberMail?: boolean;
 	/** Project key that pins the team's state dir (state/--<key>--/teams/<id>/); writeTeamSpec stamps it on every write. */
 	project?: string;
 }
@@ -185,6 +187,35 @@ export function deliverMail(teamId: string, member: string, from: string, text: 
 		"utf8",
 	);
 	return path.join(dir, "inbox.md");
+}
+
+/** Sender names reserved for torus itself: member mail must never arrive as them. */
+const RESERVED_SENDERS = new Set(["lead", "tasklist"]);
+
+/**
+ * Validated member-to-member mail: every refusal is checked here so the
+ * member CLI can never forge the reserved senders or write into a team it
+ * does not belong to. Success delegates to deliverMail, which owns the
+ * mailbox format and stamps the FROM header.
+ */
+export function deliverMemberMail(
+	teamId: string,
+	from: string,
+	to: string,
+	text: string,
+): { ok: true } | { ok: false; reason: string } {
+	const spec = readTeamSpec(teamId);
+	if (!spec) return { ok: false, reason: `team "${teamId}" not found` };
+	if (RESERVED_SENDERS.has(from))
+		return { ok: false, reason: `sender "${from}" is reserved — member mail cannot arrive as it` };
+	if (!spec.members.some((m) => m.name === from))
+		return { ok: false, reason: `sender "${from}" is not a member of team "${teamId}"` };
+	if (!spec.members.some((m) => m.name === to))
+		return { ok: false, reason: `recipient "${to}" is not a member of team "${teamId}"` };
+	if (from === to) return { ok: false, reason: "cannot send mail to yourself" };
+	if (text.trim().length === 0) return { ok: false, reason: "mail text is empty" };
+	deliverMail(teamId, to, from, text);
+	return { ok: true };
 }
 
 /** Test-only counter: bytes readDelta has actually read — poll deltas only. */

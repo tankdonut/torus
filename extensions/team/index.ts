@@ -73,9 +73,22 @@ function selfClaimSentence(teamId: string): string {
 	return `Claim work atomically with \`node runtime/bin/team-task.mjs claim ${teamId} --as <your-name>\`; only pending unassigned unblocked tasks are claimable; release with the release subcommand if you cannot finish.`;
 }
 
-/** Objective as members receive it: unchanged unless the team opted into self-claim. */
-function memberObjective(objective: string, teamId: string, selfClaim?: boolean): string {
-	return selfClaim ? `${objective} ${selfClaimSentence(teamId)}` : objective;
+/** The member-facing mail protocol sentence (one sentence, appended after any self-claim sentence when memberMail is on). */
+function memberMailSentence(teamId: string): string {
+	return `Send attributed teammate mail with \`node runtime/bin/team-mail.mjs send ${teamId} --as <your-name> --to <member> "<text>"\`; list members with the members subcommand.`;
+}
+
+/** Objective as members receive it: unchanged unless the team opted into self-claim or member mail. */
+function memberObjective(
+	objective: string,
+	teamId: string,
+	selfClaim?: boolean,
+	memberMail?: boolean,
+): string {
+	let out = objective;
+	if (selfClaim) out = `${out} ${selfClaimSentence(teamId)}`;
+	if (memberMail) out = `${out} ${memberMailSentence(teamId)}`;
+	return out;
 }
 
 /** Fan-out result coalescing window (see flushBatch); module-level for test overriding. */
@@ -1059,6 +1072,11 @@ const teamCreateTool = defineTool({
 					"Teach members the atomic task self-claim CLI in their objective (default false)",
 			}),
 		),
+		memberMail: Type.Optional(
+			Type.Boolean({
+				description: "Teach members the attributed mail CLI in their objective (default false)",
+			}),
+		),
 	}),
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 		const invalidMember = params.members.find((member) => !AGENT_NAME_RE.test(member.name));
@@ -1114,8 +1132,15 @@ const teamCreateTool = defineTool({
 			project: projectKey(process.cwd()),
 			// Written only when opted in: an off/default team's team.json is byte-identical to pre-flag teams.
 			...(params.selfClaim === true ? { selfClaim: true } : {}),
+			// Written only when opted in: same byte-identity contract as selfClaim.
+			...(params.memberMail === true ? { memberMail: true } : {}),
 		});
-		const spawnObjective = memberObjective(params.objective, teamId, params.selfClaim === true);
+		const spawnObjective = memberObjective(
+			params.objective,
+			teamId,
+			params.selfClaim === true,
+			params.memberMail === true,
+		);
 		for (const spec of params.members) {
 			const memberId = `${teamId}/${spec.name}`;
 			const memberRecord = {
@@ -1719,7 +1744,7 @@ const teamRespawnTool = defineTool({
 				record.id,
 				memberId,
 				member,
-				memberObjective(spec.objective, record.id, spec.selfClaim),
+				memberObjective(spec.objective, record.id, spec.selfClaim, spec.memberMail),
 				true,
 				spec.parentSession ?? null,
 			);
