@@ -326,7 +326,7 @@ export async function performMerge(
 		subject?: string;
 		strategy?: "squash" | "ff";
 		keep?: boolean;
-		mainBranch?: string;
+		integrationBranch?: string;
 		teardownCommand?: string;
 		signal?: AbortSignal;
 	},
@@ -334,7 +334,7 @@ export async function performMerge(
 	const invalid = validateBranch(branch);
 	if (invalid) return { ok: false, error: invalid };
 	const strategy = opts?.strategy ?? "squash";
-	const mainBranch = opts?.mainBranch ?? "main";
+	const integrationBranch = opts?.integrationBranch ?? "main";
 	const signal = opts?.signal;
 	const wtPath = worktreePath(repoRoot, branch);
 
@@ -348,8 +348,8 @@ export async function performMerge(
 			error: `worktree at ${wtPath} is on '${wtBranch}', not '${branch}'`,
 		};
 	}
-	if ((await currentBranch(repoRoot)) !== mainBranch) {
-		return { ok: false, error: `main checkout is not on branch ${mainBranch}` };
+	if ((await currentBranch(repoRoot)) !== integrationBranch) {
+		return { ok: false, error: `primary checkout is not on branch ${integrationBranch}` };
 	}
 	if (!(await isClean(wtPath)))
 		return { ok: false, error: "worktree has uncommitted changes — commit or stash them first" };
@@ -361,20 +361,20 @@ export async function performMerge(
 		};
 	}
 	const commitCount = Number.parseInt(
-		(await runGit(repoRoot, ["rev-list", "--count", `${mainBranch}..${branch}`])).stdout,
+		(await runGit(repoRoot, ["rev-list", "--count", `${integrationBranch}..${branch}`])).stdout,
 		10,
 	);
 	if (!(commitCount > 0)) {
-		return { ok: false, error: `${branch} has no commits beyond ${mainBranch}` };
+		return { ok: false, error: `${branch} has no commits beyond ${integrationBranch}` };
 	}
 
-	const rebase = await runGit(wtPath, ["rebase", mainBranch], signal);
+	const rebase = await runGit(wtPath, ["rebase", integrationBranch], signal);
 	if (!rebase.ok) {
 		const files = await conflictsIn(wtPath);
 		await runGit(wtPath, ["rebase", "--abort"]); // branch untouched; never leave a mid-flight rebase
 		return {
 			ok: false,
-			error: `rebase onto ${mainBranch} hit conflicts (${files.join(", ") || "see git output"}) — aborted cleanly, branch '${branch}' untouched. Resolve the divergence manually in the worktree (git -C ${wtPath} rebase ${mainBranch}), then re-call worktree_merge. Underlying git error: ${rebase.stderr.split("\n").slice(-3).join(" ")}`,
+			error: `rebase onto ${integrationBranch} hit conflicts (${files.join(", ") || "see git output"}) — aborted cleanly, branch '${branch}' untouched. Resolve the divergence manually in the worktree (git -C ${wtPath} rebase ${integrationBranch}), then re-call worktree_merge. Underlying git error: ${rebase.stderr.split("\n").slice(-3).join(" ")}`,
 		};
 	}
 
@@ -383,7 +383,7 @@ export async function performMerge(
 		if (!ff.ok) {
 			return {
 				ok: false,
-				error: `fast-forward refused (${mainBranch} is not an ancestor — it moved during the rebase) — re-call worktree_merge to re-rebase`,
+				error: `fast-forward refused (${integrationBranch} is not an ancestor — it moved during the rebase) — re-call worktree_merge to re-rebase`,
 			};
 		}
 	} else {
@@ -398,10 +398,10 @@ export async function performMerge(
 			await runGit(repoRoot, ["reset", "--hard", "HEAD"]);
 			return {
 				ok: false,
-				error: `squash merge conflicted (${mainBranch} moved during the rebase) — aborted cleanly, re-call worktree_merge`,
+				error: `squash merge conflicted (${integrationBranch} moved during the rebase) — aborted cleanly, re-call worktree_merge`,
 			};
 		}
-		const series = (await runGit(repoRoot, ["log", "--oneline", `${mainBranch}..${branch}`]))
+		const series = (await runGit(repoRoot, ["log", "--oneline", `${integrationBranch}..${branch}`]))
 			.stdout;
 		const commit = await runGit(
 			repoRoot,
@@ -421,17 +421,17 @@ export async function performMerge(
 	}
 
 	// Tree-identity proof: the branch provably exists verbatim on main.
-	if ((await runGit(repoRoot, ["diff", mainBranch, branch])).stdout.length > 0) {
+	if ((await runGit(repoRoot, ["diff", integrationBranch, branch])).stdout.length > 0) {
 		return {
 			ok: false,
-			error: `tree differs from ${branch} after merge — keeping worktree and branch; inspect: git -C ${repoRoot} diff ${mainBranch} ${branch}`,
+			error: `tree differs from ${branch} after merge — keeping worktree and branch; inspect: git -C ${repoRoot} diff ${integrationBranch} ${branch}`,
 		};
 	}
 
 	if (opts?.keep) {
 		return {
 			ok: true,
-			message: `merged ${branch} into ${mainBranch} (${strategy}); worktree and branch kept (keep=true)`,
+			message: `merged ${branch} into ${integrationBranch} (${strategy}); worktree and branch kept (keep=true)`,
 		};
 	}
 
@@ -442,7 +442,7 @@ export async function performMerge(
 	if (!remove.ok) {
 		return {
 			ok: false,
-			error: `merge landed on ${mainBranch} and the tree proof passed, but teardown failed: ${remove.error}. Finish with worktree_remove (force) then git branch -D ${branch}`,
+			error: `merge landed on ${integrationBranch} and the tree proof passed, but teardown failed: ${remove.error}. Finish with worktree_remove (force) then git branch -D ${branch}`,
 		};
 	}
 	const del = await runGit(repoRoot, ["branch", "-D", branch], signal);
@@ -450,7 +450,7 @@ export async function performMerge(
 		return { ok: false, error: `branch delete failed after successful merge: ${del.stderr}` };
 	return {
 		ok: true,
-		message: `merged ${branch} into ${mainBranch} (${strategy}); worktree and branch removed`,
+		message: `merged ${branch} into ${integrationBranch} (${strategy}); worktree and branch removed`,
 	};
 }
 
@@ -509,7 +509,7 @@ export default function worktreesExtension(pi: ExtensionAPI): void {
 				keep: Type.Optional(
 					Type.Boolean({ description: "Keep worktree and branch after merging (default: false)" }),
 				),
-				mainBranch: Type.Optional(
+				integrationBranch: Type.Optional(
 					Type.String({ description: "Integration branch (default: main)" }),
 				),
 				teardownCommand: Type.Optional(
