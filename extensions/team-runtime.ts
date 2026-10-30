@@ -559,7 +559,7 @@ YOUR CHANNELS (plain files — use read/write via your tools):
 - Inbox (work arrives here): ${path.join(mailRoot, spec.name, "inbox.md")}
 - Outbox (your reports go here — append, never overwrite): ${path.join(mailRoot, spec.name, "outbox.md")}
 - Shared tasklist (JSON; claim/complete your tasks by updating it via bash/read+write): ${tasksFile(teamId)} — when editing it, serialize with: flock ${tasksFile(teamId)} bash -c '<your read-edit-write>'
-- Other members' inboxes: ${mailRoot}/<member>/inbox.md — message them by appending there.
+- Other members' inboxes: ${mailRoot}/<member>/inbox.md — message them by appending a \`[FROM ${spec.name}] <iso-ts>\` header line followed by your text.
 
 PROTOCOL each cycle: finish current instruction, then read your inbox for new messages. Act on each message in order. Report outcomes by appending to your outbox (one block per report, with a timestamp line). Update the tasklist when you claim or complete work. Do not ask for permission to act within the objective — surface blockers in your outbox instead.
 </team-protocol>`;

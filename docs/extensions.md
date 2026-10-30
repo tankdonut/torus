@@ -461,7 +461,7 @@ Both tools also take `background: true`, under the same `TORUS_DELEGATE_BACKGROU
 
 #### Persistent teams
 
-Persistent teams spawn long-lived RPC-mode engine members with per-member file mailboxes (inbox/outbox), a shared locked tasklist (`tasks.json`), and a team spec on disk under the project store (`state/--<project>--/teams/<id>/team.json`, stamped with the creating project). A global id→project index (`$TORUS_HOME/teams.json`) lets member children and explicit ids resolve teams from any cwd; default team resolution stays project-scoped.
+Persistent teams spawn long-lived RPC-mode engine members with per-member file mailboxes (inbox/outbox), a shared locked tasklist (`tasks.json`), and a team spec on disk under the project store (`state/--<project>--/teams/<id>/team.json`, stamped with the creating project). A global id→project index (`$TORUS_HOME/teams.json`) lets member children and explicit ids resolve teams from any cwd; default team resolution stays project-scoped. Members sign hand-written inbox appends with a `[FROM <name>]` header line. The supervisor logs a one-line receipt for every delivered message, naming the sender and byte count, never the content. An inbox that shrinks logs one warning and delivers no stale bytes.
 
 A supervisor loop drives mail-driven cycles, model-chain fallback, and outbox delta logging. A member turn slower than 10 minutes keeps waiting: timeout is never treated as engine death. Teams rehydrate from disk on parent restart, and rehydrated log-only records defer to live run beacons, so a resume never shows a running member as a duplicate ✗ failed row.
 
