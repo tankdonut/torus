@@ -17,6 +17,7 @@ import {
 	type TerminalColorMode,
 } from "@earendil-works/pi-tui";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
+import { installCursorBlink } from "../cursor-blink.js";
 import { type EngineTally, reduceEngineEvent } from "../engine-child.js";
 import { formatCost } from "../fsutil.js";
 import { connectedServerCount, mcpStatusText } from "../mcp/index.js";
@@ -432,6 +433,24 @@ function installStartupBanner(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	});
 }
 
+const CURSOR_BLINK_WIDGET_KEY = "torus:cursor-blink";
+
+/**
+ * Blink active input cursors (editor, dialogs) from a zero-line widget whose
+ * factory is the reliable spot to capture the live TUI. Dialog-opening code
+ * re-installs on mode switches, which hand extensions a fresh TUI.
+ */
+function installCursorBlinkWidget(ctx: ExtensionContext): void {
+	if (ctx.mode !== "tui") return;
+	ctx.ui.setWidget(CURSOR_BLINK_WIDGET_KEY, (tui) => {
+		installCursorBlink(tui);
+		return {
+			render: (_width: number): string[] => [],
+			invalidate: () => {},
+		};
+	});
+}
+
 export function registerUi(pi: ExtensionAPI): void {
 	const refreshMcp = () => {
 		const registered = pi.getMcpServers().map((server) => server.name);
@@ -473,6 +492,7 @@ export function registerUi(pi: ExtensionAPI): void {
 		// a fresh session has spent nothing yet — drop any chip from the prior one
 		paintSessionCost(ctx);
 		installStartupBanner(pi, ctx);
+		installCursorBlinkWidget(ctx);
 	});
 
 	pi.on("turn_start", (_event, ctx: ExtensionContext) => {

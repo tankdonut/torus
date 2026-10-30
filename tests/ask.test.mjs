@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { CURSOR_MARKER, renderFakeCursor } from "@earendil-works/pi-tui";
 
 const { registerAsk } = await import("../extensions/ask/index.ts");
 const { AskDialog, CHAT_LABEL, CUSTOM_LABEL } = await import("../extensions/ask/dialog.ts");
@@ -70,6 +71,22 @@ function makeDialog(spec) {
 	const theme = { fg: (_t, s) => s, style: (s) => s, colors: {} };
 	return new AskDialog(tui, theme, () => {}, { questions: spec.questions ?? [spec] });
 }
+
+test("AskDialog: input mode draws an active full-width cursor block", () => {
+	const dialog = makeDialog({
+		header: "db",
+		question: "Which DB?",
+		options: [{ label: "postgres" }],
+	});
+	dialog.handleInput("\t");
+	dialog.handleInput("h");
+	const line = dialog.render(60).find((l) => l.includes("custom answer"));
+	assert.ok(line, "input line is rendered");
+	assert.ok(
+		line.endsWith(CURSOR_MARKER + renderFakeCursor(" ")),
+		"cursor is the marked, full-width block the TUI blinks",
+	);
+});
 
 function dialogWith(spec) {
 	let result;

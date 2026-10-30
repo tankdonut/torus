@@ -119,6 +119,7 @@ function harness(overrides = {}) {
 		ui: {
 			setStatus: () => {},
 			setHeader: (factory) => setHeaderCalls.push(factory),
+			setWidget: () => {},
 			theme: painter,
 		},
 	};

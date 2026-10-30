@@ -215,6 +215,7 @@ function registeredUiEvents() {
 				calls.setHeader += 1;
 			},
 			setStatus: () => {},
+			setWidget: () => {},
 		},
 	};
 	const startSession = () => handlers.get("session_start")({}, ctx);

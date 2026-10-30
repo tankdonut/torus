@@ -18,6 +18,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
+	CURSOR_MARKER,
 	isKeyRelease,
 	type KeyId,
 	matchesKey,
@@ -378,9 +379,13 @@ export class AskDialog implements Component {
 				this.input.field === "note" ? (rows[this.state.highlight]?.label ?? "") : undefined;
 			const prompt = target ? `note for “${target}”` : field;
 			// Same full-width fake-cursor cell the editor draws (not a thin “▌” glyph);
-			// one column is reserved so truncation cannot drop the cursor’s end marker.
+			// the marker marks it as the active input so it blinks and the hardware
+			// cursor can sit on it. One column is reserved so truncation cannot drop
+			// the cursor’s end marker.
 			const styled = t.style(`${prompt}: ${this.input.text}`, { fg: "accent", bold: true });
-			lines.push(truncateToWidth(styled, Math.max(1, width - 1)) + renderFakeCursor(" "));
+			lines.push(
+				truncateToWidth(styled, Math.max(1, width - 1)) + CURSOR_MARKER + renderFakeCursor(" "),
+			);
 		}
 		lines.push(t.fg("dim", footer(this.input !== null, multi)));
 		lines.push("");

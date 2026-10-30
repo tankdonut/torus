@@ -14,6 +14,7 @@
 
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { installCursorBlink } from "../cursor-blink.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { AskDialog, type AskDialogResult, CHAT_LABEL, CUSTOM_LABEL } from "./dialog.js";
 
@@ -71,10 +72,11 @@ const askTool = defineTool({
 		const outcomes: QuestionOutcome[] = [];
 
 		if (ctx.mode === "tui") {
-			const result = await ctx.ui.custom<AskDialogResult>(
-				(tui, theme, _keybindings, done) =>
-					new AskDialog(tui, theme, done, { questions: params.questions }),
-			);
+			const result = await ctx.ui.custom<AskDialogResult>((tui, theme, _keybindings, done) => {
+				// mode switches hand extensions a fresh TUI; dialogs re-patch it
+				installCursorBlink(tui);
+				return new AskDialog(tui, theme, done, { questions: params.questions });
+			});
 			outcomes.push(...outcomesFromDialog(params.questions, result));
 			return finish(outcomes);
 		}
