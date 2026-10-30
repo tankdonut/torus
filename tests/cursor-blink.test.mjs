@@ -2,9 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CURSOR_MARKER, renderFakeCursor } from "@earendil-works/pi-tui";
 
-const { CursorBlink, consumeFocusEvents, installCursorBlink, stripActiveCursorLine } = await import(
-	"../extensions/cursor-blink.ts"
-);
+const {
+	CursorBlink,
+	consumeFocusEvents,
+	focusEventListener,
+	installCursorBlink,
+	isWindowFocused,
+	setWindowFocused,
+	stripActiveCursorLine,
+} = await import("../extensions/cursor-blink.ts");
 
 const START = renderFakeCursor("\u0000").split("\u0000")[0];
 const END = renderFakeCursor("\u0000").split("\u0000")[1];
@@ -118,6 +124,21 @@ test("CursorBlink: a blurred window holds the cursor solid, refocus resumes blin
 	focused = true;
 	assert.equal(blink.tick(), true, "refocus resumes blinking");
 	assert.equal(blink.cursorVisible, false);
+});
+
+test("focusEventListener: blur and refocus events gate the window focus state", () => {
+	setWindowFocused(true);
+	// plain keys pass through untouched
+	assert.equal(focusEventListener("x"), undefined);
+	// the exact terminal sequences, including focus-out
+	assert.deepEqual(focusEventListener("\x1b[O"), { consume: true });
+	assert.equal(isWindowFocused(), false, "ESC[O blurs");
+	assert.deepEqual(focusEventListener("\x1b[I"), { consume: true });
+	assert.equal(isWindowFocused(), true, "ESC[I refocuses");
+	// riding along with real keys
+	assert.deepEqual(focusEventListener("\x1b[Ok"), { data: "k" });
+	assert.equal(isWindowFocused(), false);
+	setWindowFocused(true);
 });
 
 test("installCursorBlink: enables focus reporting and disables it on stop", () => {

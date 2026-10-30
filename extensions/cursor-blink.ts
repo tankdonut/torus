@@ -74,8 +74,20 @@ export function setWindowFocused(focused: boolean): void {
 	if (!focused && current?.reveal()) activeTui?.requestRender();
 }
 
+/** Window focus state as set by focus events; blurred terminals hold a steady cursor. */
 export function isWindowFocused(): boolean {
 	return windowFocused;
+}
+
+/**
+ * onTerminalInput listener: gates the blink on DECSET 1004 focus events and
+ * strips them from the input stream; every other chunk passes through as-is.
+ */
+export function focusEventListener(data: string): { consume?: boolean; data?: string } | undefined {
+	if (!data.includes(FOCUS_IN) && !data.includes(FOCUS_OUT)) return undefined;
+	const { focused, data: rest } = consumeFocusEvents(data);
+	if (focused !== undefined) setWindowFocused(focused);
+	return rest.length === 0 ? { consume: true } : { data: rest };
 }
 
 /**
