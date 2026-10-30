@@ -12,12 +12,24 @@
  * Terminal-window focus gates the blink (DECSET 1004 focus reporting:
  * blurred window — steady cursor, focused window — blinking). Terminals
  * without focus reporting never send the events, so the default stays
- * blinking.
+ * blinking. Typing holds the cursor solid too: every keystroke shows the
+ * block immediately and pauses the blink, resuming after a short idle so
+ * the cursor is steady exactly while the user's hands are on the keys.
  */
 import { CURSOR_MARKER, renderFakeCursor, type TUI } from "@earendil-works/pi-tui";
 
 /** Classic terminal cursor blink period. */
 export const BLINK_INTERVAL_MS = 530;
+
+/** How long after the last keystroke the cursor holds solid before blinking resumes. */
+export const TYPING_HOLD_MS = 800;
+
+let lastKeyAt = 0;
+
+/** True while the user typed recently enough that the cursor should hold solid. */
+export function isTypingNow(now: number = Date.now()): boolean {
+	return now - lastKeyAt < TYPING_HOLD_MS;
+}
 
 // Fake-cursor markers are not exported; derive them from the public wrapper.
 // If the wrapper ever changes shape these become bogus strings that simply
@@ -80,6 +92,19 @@ export function isWindowFocused(): boolean {
 }
 
 /**
+ * True when a raw input chunk carries user typing: focus events and mouse
+ * sequences ride the same stream, and a widget click or a scroll must not pin
+ * the cursor solid.
+ */
+const SGR_MOUSE = /\x1b\[<[0-9;]*[Mm]/g;
+const X10_MOUSE = /\x1b\[M[\s\S]{3}/g;
+
+export function carriesTyping(data: string): boolean {
+	const { data: keys } = consumeFocusEvents(data);
+	return keys.replace(SGR_MOUSE, "").replace(X10_MOUSE, "").length > 0;
+}
+
+/**
  * Focus observer for the TUI input pipeline: the engine's own input listener
  * consumes DECSET 1004 focus events before any extension listener can see
  * them, so the blink patches handleTerminalInput to read them in passing.
@@ -116,9 +141,14 @@ export class CursorBlink {
 	private visible = true;
 	private seenActive = false;
 	private readonly isFocused: () => boolean;
+	private readonly isTyping: () => boolean;
 
-	constructor(isFocused: () => boolean = () => windowFocused) {
+	constructor(
+		isFocused: () => boolean = () => windowFocused,
+		isTyping: () => boolean = () => false,
+	) {
 		this.isFocused = isFocused;
+		this.isTyping = isTyping;
 	}
 
 	/** Resolver hook: record active cursors, hide their blocks on the dark phase. */
@@ -129,8 +159,9 @@ export class CursorBlink {
 
 	/** Timer hook: returns true when the phase flipped and a re-render is due. */
 	tick(): boolean {
-		if (!this.isFocused()) {
-			// blurred: hold the cursor solid; keep seenActive so refocus resumes
+		// blurred or typing: hold the cursor solid; keep seenActive so blinking
+		// resumes the moment the window refocuses or the keys pause
+		if (!this.isFocused() || this.isTyping()) {
 			if (!this.visible) {
 				this.visible = true;
 				return true;
@@ -176,7 +207,7 @@ export function installCursorBlink(tui: TUI, intervalMs: number = BLINK_INTERVAL
 	if (!original || installed.has(tui)) return;
 	installed.add(tui);
 
-	const blink = new CursorBlink();
+	const blink = new CursorBlink(() => windowFocused, isTypingNow);
 	target.resolveFakeCursors = (lines: string[]) => original(blink.resolve(lines));
 
 	// See observeFocusEvents: focus events must be observed before the engine's
@@ -186,6 +217,12 @@ export function installCursorBlink(tui: TUI, intervalMs: number = BLINK_INTERVAL
 	if (originalInput) {
 		input.handleTerminalInput = (data: string) => {
 			observeFocusEvents(data);
+			if (carriesTyping(data)) {
+				// a keystroke lands: show the block at once instead of waiting out
+				// the dark phase, then hold it solid while the typing continues
+				lastKeyAt = Date.now();
+				if (current?.reveal()) activeTui?.requestRender();
+			}
 			return originalInput(data);
 		};
 	}

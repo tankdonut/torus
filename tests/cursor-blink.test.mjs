@@ -4,8 +4,10 @@ import { CURSOR_MARKER, renderFakeCursor } from "@earendil-works/pi-tui";
 
 const {
 	CursorBlink,
+	carriesTyping,
 	consumeFocusEvents,
 	installCursorBlink,
+	isTypingNow,
 	isWindowFocused,
 	setWindowFocused,
 	stripActiveCursorLine,
@@ -93,6 +95,53 @@ test("installCursorBlink: TUIs without the resolver are left alone", () => {
 	const tui = { requestRender() {} };
 	installCursorBlink(tui, 1e9);
 	assert.equal("resolveFakeCursors" in tui, false);
+});
+
+test("carriesTyping: keys count, focus-only and mouse chunks do not", () => {
+	assert.equal(carriesTyping("abc"), true);
+	assert.equal(carriesTyping("\x1b[I"), false, "focus-only chunk is not typing");
+	assert.equal(carriesTyping("\x1b[<0;12;34M"), false, "SGR mouse click is not typing");
+	assert.equal(carriesTyping("\x1b[<64;12;34m"), false, "SGR scroll is not typing");
+	assert.equal(carriesTyping("\x1b[M !!"), false, "X10 mouse is not typing");
+	assert.equal(carriesTyping("\x1b[Ix"), true, "focus riding with a key still counts");
+});
+
+test("CursorBlink: typing holds the cursor solid and pauses the blink", () => {
+	let typing = false;
+	const blink = new CursorBlink(
+		() => true,
+		() => typing,
+	);
+	const lines = [`hi ${active(" ")}`];
+	blink.resolve(lines);
+	assert.equal(blink.tick(), true);
+	typing = true;
+	assert.equal(blink.tick(), true, "typing immediately restores the block");
+	assert.equal(blink.cursorVisible, true);
+	blink.resolve(lines);
+	assert.equal(blink.tick(), false, "typing ticks stay quiet");
+	assert.equal(blink.cursorVisible, true, "typing never hides the cursor");
+	typing = false;
+	assert.equal(blink.tick(), true, "keys paused: blinking resumes");
+	assert.equal(blink.cursorVisible, false);
+});
+
+test("installCursorBlink: keystrokes reveal the block and arm the typing hold", () => {
+	setWindowFocused(true);
+	const seen = [];
+	const tui = {
+		requestRender() {},
+		resolveFakeCursors(lines) {
+			return lines;
+		},
+		handleTerminalInput(data) {
+			seen.push(data);
+		},
+	};
+	installCursorBlink(tui, 1e9);
+	tui.handleTerminalInput("a");
+	assert.deepEqual(seen, ["a"], "input delegated untouched");
+	assert.equal(isTypingNow(), true, "keystroke armed the typing hold");
 });
 
 test("consumeFocusEvents: strips focus in/out and keeps trailing keys", () => {
