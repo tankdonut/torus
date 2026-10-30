@@ -527,7 +527,7 @@ Durable, git-backed memory store at `~/.torus/memory` (entries + `profile.md`, a
 
 #### Injection order
 
-Injects profile + up to 6 scoped entries into context once per session (re-armed after compaction), in this order:
+Injects profile + up to 6 scoped entries into context at each new user prompt (re-evaluated when the latest user message changes; an entry already surfaced this session is never repeated; entries the session itself wrote stay silent until compaction re-arms), in this order:
 
 1. Pinned entries, always first
 2. The current session's own entries (marked `[session]`, restored when injection re-arms after compaction)
