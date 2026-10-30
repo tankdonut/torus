@@ -465,7 +465,7 @@ Persistent teams spawn long-lived RPC-mode engine members with per-member file m
 
 A supervisor loop drives mail-driven cycles, model-chain fallback, and outbox delta logging. A member turn slower than 10 minutes keeps waiting: timeout is never treated as engine death. Teams rehydrate from disk on parent restart, and rehydrated log-only records defer to live run beacons, so a resume never shows a running member as a duplicate ✗ failed row.
 
-Task dependencies: tasks may declare `dependsOn` (prerequisite task ids). Create rejects unknown ids, self-references, and cycles naming the chain. A task with an unmet existing dependency is blocked: `team_status` lists what it waits on, and claiming it is refused naming the blockers. Unknown dependency ids never block (they cannot complete, so create-time validation is the gate).
+Task dependencies: tasks may declare `dependsOn` (prerequisite task ids). Create rejects unknown ids, self-references, and cycles naming the chain. A task with an unmet existing dependency is blocked: `team_status` lists what it waits on, and claiming it is refused naming the blockers. Unknown dependency ids never block (they cannot complete, so create-time validation is the gate). Completing a task delivers a note to each newly unblocked, assigned dependent's inbox, from the reserved sender `tasklist`.
 
 `team_status` surfaces two problem states (read-only; no timers, no auto-reap):
 
