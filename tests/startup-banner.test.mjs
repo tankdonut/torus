@@ -120,6 +120,7 @@ function harness(overrides = {}) {
 			setStatus: () => {},
 			setHeader: (factory) => setHeaderCalls.push(factory),
 			setWidget: () => {},
+			onTerminalInput: () => () => {},
 			theme: painter,
 		},
 	};

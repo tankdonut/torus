@@ -216,6 +216,7 @@ function registeredUiEvents() {
 			},
 			setStatus: () => {},
 			setWidget: () => {},
+			onTerminalInput: () => () => {},
 		},
 	};
 	const startSession = () => handlers.get("session_start")({}, ctx);

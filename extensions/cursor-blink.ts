@@ -7,9 +7,12 @@
  * "this input is active" signal: installCursorBlink patches the TUI's cursor
  * resolver so marked cursors blink in lockstep while an active input is on
  * screen, and unmarked ones (an unfocused editor, for instance) stay steady.
- * Toggling happens by re-rendering, so the blink stops on its own the moment
- * no active cursor is rendered — a closed dialog or blurred editor never
  * flickers.
+ *
+ * Terminal-window focus gates the blink (DECSET 1004 focus reporting:
+ * blurred window — steady cursor, focused window — blinking). Terminals
+ * without focus reporting never send the events, so the default stays
+ * blinking.
  */
 import { CURSOR_MARKER, renderFakeCursor, type TUI } from "@earendil-works/pi-tui";
 
@@ -24,9 +27,55 @@ const [CURSOR_START, CURSOR_END] = renderFakeCursor("\u0000").split("\u0000") as
 /** A focused input's cursor: the hardware-position marker glued to its block. */
 const ACTIVE_CURSOR = `${CURSOR_MARKER}${CURSOR_START}`;
 
+/** DECSET 1004 focus events: the terminal window gained / lost focus. */
+const FOCUS_IN = "\x1b[I";
+const FOCUS_OUT = "\x1b[O";
+
+let windowFocused = true;
+let activeTui: TUI | null = null;
+
 /** True where a line carries a cursor of an input that currently has focus. */
 function hasActiveCursor(line: string): boolean {
 	return line.includes(ACTIVE_CURSOR);
+}
+
+/**
+ * Strip DECSET 1004 focus sequences from a raw input chunk and report the
+ * focus state it carries (undefined when it carries none). Remaining keys in
+ * the chunk are returned for pass-through, so focus events riding along with
+ * real input never swallow keystrokes.
+ */
+export function consumeFocusEvents(data: string): { focused: boolean | undefined; data: string } {
+	let focused: boolean | undefined;
+	let rest = data;
+	for (;;) {
+		const at = [FOCUS_IN, FOCUS_OUT]
+			.map((seq) => rest.indexOf(seq))
+			.reduce((a, b) => (a === -1 ? b : b === -1 ? a : Math.min(a, b)));
+
+		if (at === -1) break;
+
+		focused = rest.startsWith(FOCUS_IN, at);
+
+		rest = rest.slice(0, at) + rest.slice(at + FOCUS_IN.length);
+	}
+
+	return { focused, data: rest };
+}
+
+/**
+ * Window focus gate: a blurred terminal shows a steady cursor, a focused one
+ * blinks. Restores the cursor block immediately when the window blurs mid-
+ * dark-phase so it never lingers hidden.
+ */
+export function setWindowFocused(focused: boolean): void {
+	if (windowFocused === focused) return;
+	windowFocused = focused;
+	if (!focused && current?.reveal()) activeTui?.requestRender();
+}
+
+export function isWindowFocused(): boolean {
+	return windowFocused;
 }
 
 /**
@@ -52,6 +101,11 @@ export function stripActiveCursorLine(line: string): string {
 export class CursorBlink {
 	private visible = true;
 	private seenActive = false;
+	private readonly isFocused: () => boolean;
+
+	constructor(isFocused: () => boolean = () => windowFocused) {
+		this.isFocused = isFocused;
+	}
 
 	/** Resolver hook: record active cursors, hide their blocks on the dark phase. */
 	resolve(lines: string[]): string[] {
@@ -61,12 +115,27 @@ export class CursorBlink {
 
 	/** Timer hook: returns true when the phase flipped and a re-render is due. */
 	tick(): boolean {
+		if (!this.isFocused()) {
+			// blurred: hold the cursor solid; keep seenActive so refocus resumes
+			if (!this.visible) {
+				this.visible = true;
+				return true;
+			}
+			return false;
+		}
 		if (!this.seenActive) {
 			this.visible = true;
 			return false;
 		}
 		this.seenActive = false;
 		this.visible = !this.visible;
+		return true;
+	}
+
+	/** Force the cursor block visible; true when this changed the phase. */
+	reveal(): boolean {
+		if (this.visible) return false;
+		this.visible = true;
 		return true;
 	}
 
@@ -96,8 +165,23 @@ export function installCursorBlink(tui: TUI, intervalMs: number = BLINK_INTERVAL
 	const blink = new CursorBlink();
 	target.resolveFakeCursors = (lines: string[]) => original(blink.resolve(lines));
 
+	// Ask the terminal for focus events (the same direct private-mode write the
+	// TUI itself uses); restored on stop so exit never leaves reporting on.
+	const write = tui.terminal?.write?.bind(tui.terminal);
+	if (write) {
+		write("\x1b[?1004h");
+		const stop = tui.stop?.bind(tui);
+		if (stop) {
+			tui.stop = (options) => {
+				write("\x1b[?1004l");
+				return stop(options);
+			};
+		}
+	}
+
 	if (timer) clearInterval(timer);
 	current = blink;
+	activeTui = tui;
 	timer = setInterval(() => {
 		if (current?.tick()) tui.requestRender();
 	}, intervalMs);
