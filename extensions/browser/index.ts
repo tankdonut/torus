@@ -169,6 +169,14 @@ const CTRL_C = "\x03";
 const ENABLE_WHEEL = "\x1b[?1000h\x1b[?1006h";
 const DISABLE_WHEEL = "\x1b[?1006l\x1b[?1000l";
 const SGR_MOUSE = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
+
+/** Detail-transcript guard, not a tail: real sessions sit far below this, so
+ * scrolling reaches the first item (the task prompt); only a runaway
+ * multi-thousand-item session renders bounded. */
+const TRANSCRIPT_RENDER_ITEM_CAP = 5000;
+/** Detail action-log lines to render: everything liveTail's byte window can
+ * hold for any real log, so the log's beginning stays reachable. */
+const ACTION_LOG_RENDER_LINES = 10000;
 // Wheel sequences can arrive split across reads; hold a strict prefix until it completes.
 const PARTIAL_SGR_MOUSE = /^\x1b\[<\d*(?:;\d*){0,2}$/;
 const WHEEL_UP = 64;
@@ -983,7 +991,7 @@ class FleetBrowser implements Component {
 
 	private actionLogLines(logFile: string, theme: Theme, width: number): string[] {
 		const body: string[] = [];
-		for (const line of liveTail(logFile, 400)) {
+		for (const line of liveTail(logFile, ACTION_LOG_RENDER_LINES)) {
 			if (line.startsWith("→ ")) {
 				body.push(
 					`  ${theme.fg("toolTitle", line.slice(0, 2))}${theme.fg("accent", line.slice(2))}`,
@@ -1007,7 +1015,7 @@ class FleetBrowser implements Component {
 
 	private sessionTranscriptLines(sessionId: string, _theme: Theme, width: number): string[] {
 		const body: string[] = [];
-		for (const item of transcriptItems(sessionId, 60)) {
+		for (const item of transcriptItems(sessionId, TRANSCRIPT_RENDER_ITEM_CAP)) {
 			const component = this.componentForItem(sessionId, item);
 			// No separator: components carry their own leading spacers, matching the
 			// main session's back-to-back chat stacking; tool-only assistant items

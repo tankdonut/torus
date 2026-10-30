@@ -1018,3 +1018,100 @@ test("detail transcript: appended lines reuse cached components for unchanged it
 		component.dispose();
 	}
 });
+
+test("detail transcript: g scrolls to the task prompt of a long session", () => {
+	registry.resetRegistryForTesting();
+	const sid = "aabbccdd-1111-4222-8333-555566667788";
+	mkdirSync(path.join(SESSIONS, "proj"), { recursive: true });
+	const lines = [
+		JSON.stringify({ type: "session", id: sid, timestamp: Date.now(), cwd: "/tmp" }),
+		JSON.stringify({
+			type: "message",
+			message: {
+				role: "user",
+				content: [
+					{ type: "text", text: "INITIAL TASK PROMPT SENTINEL — do the whole job from here" },
+				],
+			},
+		}),
+	];
+	for (let i = 1; i <= 70; i += 1) {
+		lines.push(
+			JSON.stringify({
+				type: "message",
+				message: {
+					role: "assistant",
+					stopReason: "stop",
+					content: [{ type: "text", text: `turn ${i} findings and analysis text` }],
+				},
+			}),
+		);
+	}
+	writeFileSync(
+		path.join(SESSIONS, "proj", `2026-10-11T00-00-00-000Z_${sid}.jsonl`),
+		`${lines.join("\n")}\n`,
+		"utf8",
+	);
+	registry.startDelegation("w-fullscr", "builder", "zai/glm-5.3", null, "fullscr");
+	registry.finishDelegation("w-fullscr", true, "done", sid, { toast: false });
+
+	const { hooks } = registerExtension();
+	const driver = makeCtx("fullscreen", { fg: (_c, t) => t, bold: (t) => t });
+	hooks.get("session_start")(undefined, driver.ctx);
+	globalThis[registry.FLEET_OPENER]("w-fullscr");
+	const component = driver.component();
+	const rowsDesc = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+	Object.defineProperty(process.stdout, "rows", { value: 30, configurable: true });
+	try {
+		component.render(160);
+		component.handleInput("g");
+		const page = component
+			.render(160)
+			.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
+			.join("\n");
+		assert.ok(
+			page.includes("INITIAL TASK PROMPT SENTINEL"),
+			"the initial prompt must be reachable by scrolling to the top",
+		);
+	} finally {
+		if (rowsDesc) Object.defineProperty(process.stdout, "rows", rowsDesc);
+		else delete process.stdout.rows;
+		component.dispose();
+	}
+});
+
+test("detail action log: g reaches the beginning of a long delegation log", async () => {
+	registry.resetRegistryForTesting();
+	const record = await registry.startDelegation(
+		"w-actlog",
+		"builder",
+		"zai/glm-5.3",
+		null,
+		"actlog",
+	);
+	const logLines = [];
+	for (let i = 0; i < 450; i += 1) logLines.push(`action line ${String(i).padStart(4, "0")} done`);
+	appendFileSync(record.logFile, `${logLines.join("\n")}\n`, "utf8");
+	await registry.finishDelegation("w-actlog", true, "done", null, { toast: false });
+
+	const { hooks } = registerExtension();
+	const driver = makeCtx("fullscreen", { fg: (_c, t) => t, bold: (t) => t });
+	hooks.get("session_start")(undefined, driver.ctx);
+	globalThis[registry.FLEET_OPENER]("w-actlog");
+	const component = driver.component();
+	const rowsDesc = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+	Object.defineProperty(process.stdout, "rows", { value: 30, configurable: true });
+	try {
+		component.render(160);
+		component.handleInput("g");
+		const page = component
+			.render(160)
+			.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
+			.join("\n");
+		assert.ok(page.includes("action line 0000"), "the first log line must be reachable");
+	} finally {
+		if (rowsDesc) Object.defineProperty(process.stdout, "rows", rowsDesc);
+		else delete process.stdout.rows;
+		component.dispose();
+	}
+});
