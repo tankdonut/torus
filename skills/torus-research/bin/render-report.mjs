@@ -148,6 +148,78 @@ function plainText(raw) {
 	return typographicNormalize(escapeHtml(raw));
 }
 
+const LEDGER_LINE = /^\[(S\d+)\]\s+(.+)$/;
+
+export function parseSourcesLedger(text) {
+	const entries = [];
+	for (const line of String(text).split("\n")) {
+		const match = LEDGER_LINE.exec(line.trim());
+		if (!match) {
+			continue;
+		}
+		const split = match[2].split(/\s+—\s+/);
+		entries.push({
+			id: match[1],
+			locator: split[0] ?? "",
+			description: split.slice(1).join(" — "),
+		});
+	}
+	return entries;
+}
+
+function linkifyLedgerToken(token) {
+	const text = escapeHtml(token);
+	if (/^https?:\/\//i.test(token)) {
+		return `<a href="${escapeAttribute(token)}">${text}</a>`;
+	}
+	const arxiv = /^arxiv:(\d{4}\.\d{4,5}(?:v\d+)?)$/i.exec(token);
+	if (arxiv) {
+		return `<a href="https://arxiv.org/abs/${arxiv[1]}">${text}</a>`;
+	}
+	if (/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}[a-z0-9./_-]*$/i.test(token)) {
+		return `<a href="https://${escapeAttribute(token)}">${text}</a>`;
+	}
+	if (token.startsWith("/")) {
+		const parts = token.split("/").filter(Boolean);
+		return escapeHtml(parts.slice(-2).join("/"));
+	}
+	return text;
+}
+
+function renderSourcesAppendix(entries) {
+	const items = entries
+		.map((entry) => {
+			const locator = entry.locator
+				.split(/,\s+|\s+\+\s+/)
+				.filter(Boolean)
+				.map(linkifyLedgerToken)
+				.join(", ");
+			const description = entry.description ? ` — ${plainText(entry.description)}` : "";
+			return `<li id="${entry.id}"><span class="src-id">[${entry.id}]</span> ${locator}${description}</li>`;
+		})
+		.join("\n");
+	return [
+		'<section class="sources" aria-label="Sources">',
+		'<h2 id="sources">Sources</h2>',
+		'<ul class="src-list">',
+		items,
+		"</ul>",
+		"</section>",
+	].join("\n");
+}
+
+function linkCiteSpans(content, knownIds) {
+	if (knownIds.size === 0) {
+		return content;
+	}
+	return content.replace(/<span class="cite">(\[[^<]*\])<\/span>/g, (_match, bracketed) => {
+		const linked = bracketed.replace(/(?<![\w])S(\d+)(?![\w])/g, (ref, num) =>
+			knownIds.has(`S${num}`) ? `<a class="cite" href="#S${num}">${ref}</a>` : ref,
+		);
+		return `<span class="cite">${linked}</span>`;
+	});
+}
+
 function stripInlineMarkers(text) {
 	return text
 		.replace(/`([^`]*)`/g, "$1")
@@ -509,7 +581,18 @@ export function renderDocument(markdown, options = {}) {
 	const css = options.css ?? readFileSync(STYLES_URL, "utf8");
 	const parsed = parseMarkdown(markdown);
 	const ctx = { used: new Map(), headings: [] };
-	const content = renderBlocks(parsed.blocks, ctx);
+	let content = renderBlocks(parsed.blocks, ctx);
+	if (options.sourcesLedger) {
+		const entries = parseSourcesLedger(options.sourcesLedger);
+		if (entries.length > 0) {
+			const ids = new Set(entries.map((entry) => entry.id));
+			content = `${linkCiteSpans(content, ids)}\n${renderSourcesAppendix(entries)}`;
+			if (!ctx.used.has("sources")) {
+				ctx.used.set("sources", 1);
+				ctx.headings.push({ level: 2, text: "Sources", id: "sources" });
+			}
+		}
+	}
 	const title = options.title ?? parsed.title ?? "Report";
 	const masthead = renderMasthead(title, parsed.meta, options);
 	return fillSlots(template, {
@@ -612,10 +695,12 @@ function cli(argv) {
 	const outPath =
 		args.values.output ?? join(dirname(mdPath), `${basename(mdPath).replace(/\.[^.]+$/, "")}.html`);
 	const date = flagDate ?? dateFromDirname(mdPath) ?? dateFromMtime(mdPath);
+	const ledgerPath = join(dirname(mdPath), "sources-ledger.md");
+	const sourcesLedger = existsSync(ledgerPath) ? readFileSync(ledgerPath, "utf8") : undefined;
 
 	let html;
 	try {
-		html = renderDocument(markdown, { date, sourcePath: resolve(mdPath) });
+		html = renderDocument(markdown, { date, sourcePath: resolve(mdPath), sourcesLedger });
 	} catch (error) {
 		fail(`render failed: ${error.message}`);
 		return;

@@ -38,7 +38,8 @@ html[data-theme="dark"] {
 :root {
 	--pad: clamp(1.25rem, 4vw, 2.5rem);
 	--gap: clamp(1.75rem, 3vw, 3rem);
-	--measure: 70ch;
+	--measure: 90ch;
+	--rail-w: clamp(16rem, 17vw, 19.5rem);
 	--mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
@@ -67,7 +68,7 @@ body {
 	color: var(--ink);
 	font-family:
 		Charter, "Bitstream Charter", "Iowan Old Style", Georgia, "Times New Roman", serif;
-	font-size: 1.125rem;
+	font-size: clamp(1.125rem, 0.25vw + 1.05rem, 1.375rem);
 	line-height: 1.62;
 }
 
@@ -182,22 +183,20 @@ pre code {
 }
 
 .band-inner {
-	max-width: calc(var(--pad) * 2 + var(--rail-w) + var(--gap) + var(--measure) + 1rem);
-	margin-inline: auto;
-	padding: clamp(2.2rem, 5vw, 3.5rem) var(--pad) clamp(1.7rem, 3vw, 2.4rem);
+	padding: clamp(2.2rem, 5vw, 3.5rem) var(--pad) clamp(1.7rem, 3vw, 2.4rem) clamp(1.25rem, 2vw, 2rem);
 }
 
 .kicker {
 	margin: 0;
 	font-family: var(--mono);
-	font-size: 0.78rem;
+	font-size: 0.95rem;
 }
 
 .kicker-label {
 	color: var(--accent);
 	font-weight: 600;
 	text-transform: uppercase;
-	letter-spacing: 0.18em;
+	letter-spacing: 0.12em;
 }
 
 .report-title {
@@ -228,7 +227,7 @@ pre code {
 
 .meta-label {
 	font-family: var(--mono);
-	font-size: 0.72rem;
+	font-size: 0.78rem;
 	font-weight: 600;
 	letter-spacing: 0.16em;
 	text-transform: uppercase;
@@ -239,7 +238,7 @@ pre code {
 .date,
 .kicker-run {
 	font-family: var(--mono);
-	font-size: 0.8rem;
+	font-size: 0.95rem;
 	letter-spacing: 0.02em;
 	color: var(--muted);
 	font-variant-numeric: tabular-nums;
@@ -253,8 +252,8 @@ pre code {
 
 .meta {
 	margin: 0;
-	font-size: 0.75rem;
-	line-height: 1.7;
+	font-size: 0.95rem;
+	line-height: 1.65;
 	color: var(--muted);
 	overflow-wrap: break-word;
 }
@@ -264,15 +263,12 @@ pre code {
 	painted as a hard-edged strip that runs the full height of the sheet.
 */
 .sheet {
-	--rail-w: 15rem;
-	max-width: calc(var(--pad) * 2 + var(--rail-w) + var(--gap) + var(--measure) + 1rem);
-	margin-inline: auto;
-	padding: 0 var(--pad) 4rem;
+	padding: 0 0 4rem;
 	display: grid;
 	grid-template-columns: var(--rail-w) minmax(0, 1fr);
 	gap: var(--gap);
 	align-items: start;
-	background: linear-gradient(to right, var(--rail) calc(var(--pad) + var(--rail-w)), var(--paper) 0);
+	background: linear-gradient(to right, var(--rail) var(--rail-w), var(--paper) 0);
 }
 
 .rail {
@@ -281,7 +277,7 @@ pre code {
 	max-height: 100vh;
 	overflow-y: auto;
 	scrollbar-width: thin;
-	padding: 2.3rem 1.25rem 2rem 0;
+	padding: 2.3rem 1.25rem 2rem clamp(1.25rem, 2vw, 2rem);
 	border-inline-end: 1px solid var(--rule);
 }
 
@@ -295,7 +291,7 @@ pre code {
 	list-style: none;
 	cursor: pointer;
 	font-family: var(--mono);
-	font-size: 0.72rem;
+	font-size: 0.8rem;
 	font-weight: 600;
 	letter-spacing: 0.22em;
 	text-transform: uppercase;
@@ -317,7 +313,7 @@ pre code {
 }
 
 .toc {
-	font-size: 0.88rem;
+	font-size: 1rem;
 	line-height: 1.5;
 }
 
@@ -365,10 +361,52 @@ pre code {
 	border-inline-start-color: var(--accent);
 }
 
+a.cite {
+	color: var(--accent);
+	text-decoration-line: underline;
+	text-decoration-style: dotted;
+	text-decoration-color: color-mix(in srgb, var(--accent) 55%, var(--paper));
+	text-underline-offset: 0.2em;
+}
+
+a.cite:hover,
+a.cite:focus-visible {
+	text-decoration-style: solid;
+	text-decoration-color: currentColor;
+}
+
+.sources {
+	margin-top: 3.5rem;
+}
+
+.src-list {
+	margin: 1rem 0 0;
+	padding: 0;
+	list-style: none;
+	font-size: 0.88rem;
+	line-height: 1.55;
+}
+
+.src-list li {
+	margin: 0.45em 0;
+	padding-inline-start: 4.5em;
+	text-indent: -4.5em;
+	overflow-wrap: anywhere;
+	break-inside: avoid;
+}
+
+.src-id {
+	font-family: var(--mono);
+	font-size: 0.85em;
+	color: var(--accent);
+	font-variant-numeric: tabular-nums;
+}
+
 .content {
 	max-width: var(--measure);
 	min-width: 0;
-	padding-top: 2.3rem;
+	margin-inline: auto;
+	padding: 2.3rem var(--pad) 0;
 }
 
 ul,
@@ -472,10 +510,14 @@ thead th {
 
 .colophon {
 	border-top: 1px solid var(--rule);
+	display: grid;
+	grid-template-columns: var(--rail-w) minmax(0, 1fr);
+	gap: var(--gap);
 }
 
 .colophon-line {
-	max-width: calc(var(--pad) * 2 + var(--rail-w) + var(--gap) + var(--measure) + 1rem);
+	grid-column: 2;
+	max-width: var(--measure);
 	margin-inline: auto;
 	padding: 1.1rem var(--pad) 3.5rem;
 	font-family: var(--mono);
@@ -582,6 +624,15 @@ thead th {
 		padding-top: 1.7rem;
 	}
 
+	.colophon {
+		display: block;
+	}
+
+	.colophon-line {
+		grid-column: auto;
+		padding-inline: var(--pad);
+	}
+
 	.content h2 .sec-no {
 		position: static;
 		font-size: 0.82rem;
@@ -637,7 +688,10 @@ thead th {
 		display: block;
 		background: none;
 		padding: 0;
-		max-width: none;
+	}
+
+	.colophon {
+		display: block;
 	}
 
 	.content {

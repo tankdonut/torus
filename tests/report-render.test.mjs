@@ -243,6 +243,11 @@ test("evidence and citation selectors match the emitted markup", () => {
 		"Plain bullet without a label stays out of the group when alone.",
 	].join("\n");
 	const html = render(markdown, { date: "2026-10-06", sourcePath: "/j/REPORT.md" });
+	const withLedger = render(markdown, {
+		date: "2026-10-06",
+		sourcePath: "/j/REPORT.md",
+		sourcesLedger: "[S3] github.com/example/repo — the main repo\n",
+	});
 
 	assert.ok(cssText.includes("ul:has(> li > strong:first-child)"));
 	assert.ok(/<ul>\s*<li><strong>Claim<\/strong>: the pin holds\.<\/li>/.test(html));
@@ -250,6 +255,8 @@ test("evidence and citation selectors match the emitted markup", () => {
 
 	assert.ok(cssText.includes(".cite"));
 	assert.ok(html.includes('<span class="cite">[S3]</span>'));
+	assert.ok(withLedger.includes('<a class="cite" href="#S3">S3</a>'));
+	assert.ok(withLedger.includes('<section class="sources"'));
 
 	assert.ok(cssText.includes("thead"));
 	assert.ok(html.includes("<thead>"));
@@ -260,7 +267,7 @@ test("evidence and citation selectors match the emitted markup", () => {
 	assert.ok(styledClasses.length >= 8, styledClasses.join(" "));
 	for (const cls of styledClasses) {
 		assert.ok(
-			new RegExp(`class="[^"]*\\b${cls}\\b`).test(html),
+			new RegExp(`class="[^"]*\\b${cls}\\b`).test(withLedger),
 			`css class .${cls} matches nothing in the rendered output`,
 		);
 	}
@@ -303,6 +310,46 @@ test("full fixture: 6-col table, bold-label bullets, anchor round-trip", () => {
 	assert.ok(html.includes('<h1 class="report-title">Harness landscape</h1>'));
 	assert.ok(html.includes('class="meta"'));
 	assert.ok(!main.includes("<h1"));
+});
+
+test("sources ledger: chips anchor to an inlined appendix, local paths stay redacted", () => {
+	const ledger = [
+		"# Sources ledger",
+		"",
+		"[S3] github.com/example/repo — the main repo",
+		"[S7] /home/u/secret/state/research/x/docs/extensions.md — internal catalog",
+		"[S9] arXiv:2504.06017 — framework paper",
+		"[S12] https://example.com/page — a full url",
+	].join("\n");
+	const html = render(
+		"# T\n\nmeta\n\nKnown [S3, S9] and single [S12] and range [S3–S9] and unknown [S400].",
+		{
+			sourcePath: "/journal/2026-10-06-scan/REPORT.md",
+			sourcesLedger: ledger,
+		},
+	);
+	const main = mainOf(html);
+
+	assert.ok(html.includes('<a class="cite" href="#S3">S3</a>, <a class="cite" href="#S9">S9</a>'));
+	assert.ok(html.includes('<a class="cite" href="#S12">S12</a>'));
+	assert.ok(html.includes('<a class="cite" href="#S3">S3</a>–<a class="cite" href="#S9">S9</a>'));
+	assert.ok(!html.includes('href="#S400"'));
+	assert.ok(html.includes('<span class="cite">[S400]</span>'));
+
+	assert.ok(main.includes('<section class="sources" aria-label="Sources">'));
+	assert.ok(
+		main.includes(
+			'<li id="S3"><span class="src-id">[S3]</span> <a href="https://github.com/example/repo">github.com/example/repo</a> — the main repo</li>',
+		),
+	);
+	assert.ok(main.includes('<a href="https://arxiv.org/abs/2504.06017">arXiv:2504.06017</a>'));
+	assert.ok(main.includes('<a href="https://example.com/page">https://example.com/page</a>'));
+	assert.ok(main.includes("docs/extensions.md — internal catalog"));
+	assert.ok(!html.includes("/home/u"));
+
+	const nav = /<nav class="toc"[\s\S]*?<\/nav>/.exec(html)?.[0] ?? "";
+	assert.ok(nav.includes('href="#sources"'));
+	assert.ok(mainOf(html).includes('id="sources"'));
 });
 
 test("cli: date falls out of the journal dirname", () => {
