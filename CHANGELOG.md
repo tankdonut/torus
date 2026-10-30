@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.18.0](https://github.com/tankdonut/torus/compare/v0.17.0...v0.18.0) (2026-10-30)
+
+
+### Features
+
+* add opt-in member mail CLI for team members ([f29429f](https://github.com/tankdonut/torus/commit/f29429f51ae2fa68175dd287b16f972c795ca44b))
+* **extensions/roster:** add background mode to torus_delegate ([e74cdba](https://github.com/tankdonut/torus/commit/e74cdba7f9d4340ac990707f9dceabb2d70a5fcb))
+* **extensions/team:** add background mode to fanout and chain ([005ba53](https://github.com/tankdonut/torus/commit/005ba533a16933a83f80c479e71419ecabcf484c))
+* **extensions/team:** surface mailbox rewrites and log mail receipts ([d07fb12](https://github.com/tankdonut/torus/commit/d07fb12ba845c969e2e3c60ea9ebf6ade2f2a5ae))
+* **extensions/team:** teach members to sign hand-written mailbox appends ([68304e1](https://github.com/tankdonut/torus/commit/68304e17b2bb2d8b728d05c97b312b315d9083cc))
+* **extensions:** add roster.delegateBackground knob ([56a540f](https://github.com/tankdonut/torus/commit/56a540fa5ba56d187cac6424651be3ebf8283859))
+* **extensions:** add torus_results to read finished delegation outputs ([740874d](https://github.com/tankdonut/torus/commit/740874d692234dea5bc474f1f2bb3f1ff5884102))
+* **extensions:** advise when to use background delegations ([450194d](https://github.com/tankdonut/torus/commit/450194d49622c4bc2a48c3ed3d591655985dbe40))
+* **extensions:** blink active input cursors ([e682b3f](https://github.com/tankdonut/torus/commit/e682b3fcb1a56e843d1ec563fa14a94cdb3f87ae))
+* **extensions:** hold the cursor solid while typing ([e7cb95e](https://github.com/tankdonut/torus/commit/e7cb95e4405527600084ae97f22bcc008d2ee74b))
+* **extensions:** stop cursor blinking while the terminal window is unfocused ([aae7be2](https://github.com/tankdonut/torus/commit/aae7be20a485becdc13af16e0d376a974921fb4c))
+* notify dependent assignees when a task unblocks ([516a2ae](https://github.com/tankdonut/torus/commit/516a2aed698982c8f9b9c2600f5266f2fc8284bb))
+* **skills/torus-research:** link citations to an inlined sources appendix ([ccdd417](https://github.com/tankdonut/torus/commit/ccdd417d3b78c5c6be9a36d703809d5cc0973e50))
+* **skills/torus-research:** redesign the report dossier and redact internal paths ([8c16f97](https://github.com/tankdonut/torus/commit/8c16f97f4e6259253ce921fc021585d5894b0ec3))
+
+
+### Bug Fixes
+
+* **deps:** clear vulnerable transitive deps, prune stale overrides ([1a0ed5c](https://github.com/tankdonut/torus/commit/1a0ed5c8696853dd30dd09f84c28863d987b33a3))
+* **extensions/ask:** draw dialog input cursor as a full-width block ([d740acd](https://github.com/tankdonut/torus/commit/d740acdb6c4f381b3083f1d1ade57421b6764b37))
+* **extensions/browser:** let fleet detail pages scroll to the transcript start ([f881cf7](https://github.com/tankdonut/torus/commit/f881cf7bf17b8637f35978cfe6fe0e2f76d370a6))
+* **extensions/guards:** block truncating and destructive writes to team mailboxes ([1d0e2fa](https://github.com/tankdonut/torus/commit/1d0e2fa79154ba867ec2f1d10b9297cff1d07b80))
+* **extensions:** flush pending wake markers as one batch when a run settles ([d2527a6](https://github.com/tankdonut/torus/commit/d2527a640f7aca4c3d244b2d871e2841f770e82d))
+* **extensions:** match the focus-out sequence so blur actually stops the blink ([e8ff3ab](https://github.com/tankdonut/torus/commit/e8ff3ab6ec0fd572a22c733482b1b190bec11a54))
+* **extensions:** observe focus events where the engine can't hide them ([669ab7f](https://github.com/tankdonut/torus/commit/669ab7fcfd73455629dcecfd11428874ad55a337))
+* **extensions:** read delegation results back in full from the log ([157d964](https://github.com/tankdonut/torus/commit/157d96495318e277a3bddda1c276af7c195b4a2e))
+* **extensions:** render fleet rows identically in strip and alt+t browser ([3d68d1d](https://github.com/tankdonut/torus/commit/3d68d1d57544a635a6d5f856c44b58cf18eb04b3))
+* **memory:** gate profile tool writes and label the injected block ([a4eb345](https://github.com/tankdonut/torus/commit/a4eb345a0c9de580e45d5566180275f747f6b733))
+* **memory:** keep the user profile a model of the user ([b60ad3a](https://github.com/tankdonut/torus/commit/b60ad3a84ab649a60c244da846beb2fb2711f528))
+* **site:** give dot separators side margin ([36fd7fe](https://github.com/tankdonut/torus/commit/36fd7fe109255244ce182eb05d8822a0dda425df))
+* **site:** space hero and footer note separators ([e7e0f9a](https://github.com/tankdonut/torus/commit/e7e0f9aa7546a43def8d701b21af16fce51e61de))
+
 ## [0.17.0](https://github.com/tankdonut/torus/compare/v0.16.0...v0.17.0) (2026-10-26)
 
 
