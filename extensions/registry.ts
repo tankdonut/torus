@@ -44,6 +44,8 @@ export interface DelegationRecord {
 	/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
 	cost: number;
 	text: string;
+	/** True when text is a head slice of a longer final text; the complete text lives in the delegation log. */
+	textTruncated?: boolean;
 	logFile: string;
 	sessionId: string | null;
 	parentSession: string | null;
@@ -867,14 +869,15 @@ export function updateDelegation(
 }
 
 /**
- * Child-produced text is indented in delegation logs so no line can start at
- * column 0 and impersonate a structural <torus:*> marker that
- * rehydrateFromLogs parses.
+ * Child-produced text is shifted right two spaces in delegation logs so no
+ * line can start at column 0 and impersonate a structural <torus:*> marker
+ * that rehydrateFromLogs parses. The shift is exactly two spaces and nothing
+ * else is altered, so parseLastTurnText can undo it byte-exactly.
  */
 function indentChildText(text: string): string {
 	return text
 		.split("\n")
-		.map((line) => (line.length === 0 ? "" : `  ${line.replace(/^\s+/, "")}`))
+		.map((line) => (line.length === 0 ? "" : `  ${line}`))
 		.join("\n");
 }
 
@@ -894,9 +897,11 @@ export async function finishDelegation(
 	if (!record) return undefined;
 	record.status = ok ? "done" : "failed";
 	record.finishedAt = Date.now();
-	// Finished records keep a bounded tail — rehydrate applies the same cap,
-	// and an unbounded final pins memory for the life of the session.
+	// Finished records keep a bounded head of the final text — rehydrate applies
+	// the same cap, and an unbounded final pins memory for the life of the
+	// session. readFullRecordText recovers the complete text from the log.
 	record.text = finalText.slice(0, RECORD_TEXT_CAP);
+	record.textTruncated = finalText.length > RECORD_TEXT_CAP;
 	record.sessionId = sessionId;
 	controls.delete(id);
 	writeRunBeaconThrottled({
@@ -941,14 +946,53 @@ function finiteOrZero(value: number | undefined): number {
 }
 
 const REHYDRATE_LIMIT = 50;
-/** Bounded text tail kept on finished and rehydrated records (chars). */
-const RECORD_TEXT_CAP = 4000;
+/** Bounded head of the final text kept on finished and rehydrated records (chars). */
+export const RECORD_TEXT_CAP = 4000;
 /** Finished records retained in the registry; older ones evict (logs restore them). */
 const FINISHED_RECORDS_LIMIT = 50;
 /** Head bytes probed per candidate log before any full-file read. */
 const REHYDRATE_HEAD_BYTES = 4096;
 const TURN_RE =
 	/--- turn (\d+) \((\d+)\/(\d+) tok(?: · (\$[0-9.]+))?\) ---\n([\s\S]*?)(?=\n--- turn |\n\[|$)/g;
+
+/** A structural marker that finishDelegation or a stop request appends after the final turn block. */
+const TRAILING_MARKER_RE = /\n*<torus:(?:done|failed|stop-requested)\b[^>]*\/>[ \t]*\n?$/;
+
+/**
+ * The complete final-turn text from a raw log: the last `--- turn N ---`
+ * block with the writer's two-space shift undone and trailing structural
+ * markers stripped. Only column-0 markers match, and indented child text can
+ * never land at column 0, so genuine structure is removed while a child's
+ * marker-shaped prose survives verbatim. Null when the log holds no turn
+ * blocks. Logs written before the shift preserved leading whitespace lose
+ * that indentation; their content still round-trips.
+ */
+export function parseLastTurnText(raw: string): string | null {
+	let captured: string | null = null;
+	for (const turn of raw.matchAll(TURN_RE)) captured = turn[5] ?? "";
+	if (captured === null) return null;
+	let text = captured;
+	for (let stripped = text.replace(TRAILING_MARKER_RE, ""); stripped !== text; ) {
+		text = stripped;
+		stripped = text.replace(TRAILING_MARKER_RE, "");
+	}
+	return text
+		.split("\n")
+		.map((line) => (line.startsWith("  ") ? line.slice(2) : line))
+		.join("\n")
+		.trim();
+}
+
+/** A record's complete final text read back from its delegation log; null when the log is unreadable or turn-free. */
+export function readFullRecordText(record: DelegationRecord): string | null {
+	let raw: string;
+	try {
+		raw = readFileSync(record.logFile, "utf8");
+	} catch {
+		return null;
+	}
+	return parseLastTurnText(raw);
+}
 
 /**
  * The registry lives in process memory; a resumed session starts a fresh
@@ -999,15 +1043,14 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 		let tokensIn = 0;
 		let tokensOut = 0;
 		let cost = 0;
-		let text = "";
 		for (const turn of raw.matchAll(TURN_RE)) {
 			turns = Number(turn[1] ?? 0);
 			tokensIn = Number(turn[2] ?? 0);
 			tokensOut = Number(turn[3] ?? 0);
 			const loggedCost = Number.parseFloat((turn[4] ?? "").replace("$", ""));
 			cost = Number.isFinite(loggedCost) ? loggedCost : 0;
-			text = (turn[5] ?? "").trim();
 		}
+		const fullText = parseLastTurnText(raw);
 		let startedAt = Date.parse(start.groups.ts);
 		if (!Number.isFinite(startedAt)) {
 			try {
@@ -1036,7 +1079,8 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 			cacheRead: 0,
 			cacheWrite: 0,
 			cost,
-			text: text.slice(0, RECORD_TEXT_CAP),
+			text: (fullText ?? "").slice(0, RECORD_TEXT_CAP),
+			textTruncated: fullText !== null && fullText.length > RECORD_TEXT_CAP,
 			logFile,
 			sessionId: end?.groups.session ?? null,
 			parentSession,

@@ -225,6 +225,44 @@ test("stopped run rehydrates with its stop flag from the log marker", () => {
 	}
 });
 
+test("log round-trip: capped preview plus full marker-free text with indentation intact", async () => {
+	registry.resetRegistryForTesting();
+	const id = `fulltext-${STAMP}`;
+	const parent = `parent-${STAMP}`;
+	const finalText = `# report\n\n    - nested bullet keeps    inner spacing\n${"x".repeat(4100)}`;
+	await registry.startDelegation(id, "explore", "zai/glm-5.3-flash", parent);
+	registry.updateDelegation(id, { text: finalText, turns: 1, usage: { input: 1, output: 2 } });
+	await registry.finishDelegation(id, true, finalText, null, { toast: false });
+
+	const live = registry.listDelegations().find((r) => r.id === id);
+	assert.ok(live, "live record missing");
+	const logFile = live.logFile;
+	assert.equal(live.text.length, 4000, "registry preview must stay bounded");
+	assert.equal(live.text, finalText.slice(0, 4000));
+	assert.equal(live.textTruncated, true, "live record must flag the capped preview");
+
+	const full = registry.readFullRecordText(live);
+	assert.ok(full !== null, "full text unreadable from its own log");
+	assert.equal(full, finalText, "full text must round-trip byte-exact");
+	assert.ok(!full.includes("<torus:"), "structural marker leaked into full text");
+	assert.ok(
+		full.includes("    - nested bullet keeps    inner spacing"),
+		`indentation flattened: ${full.slice(0, 80)}`,
+	);
+
+	registry.resetRegistryForTesting();
+	registry.rehydrateFromLogs(parent);
+	const rehydrated = registry.listDelegations().find((r) => r.logFile === logFile);
+	assert.ok(rehydrated, "rehydrated record missing");
+	assert.ok(!rehydrated.text.includes("<torus:"), "end marker leaked into rehydrated preview");
+	assert.equal(rehydrated.text, finalText.slice(0, 4000), "rehydrated preview must be the head");
+	assert.equal(rehydrated.textTruncated, true, "rehydrated record must flag the capped preview");
+	assert.equal(registry.readFullRecordText(rehydrated), finalText, "rehydrated full text mismatch");
+
+	rmSync(rehydrated.logFile, { force: true });
+	registry.resetRegistryForTesting();
+});
+
 test("cleanup: fixtures removed and registry reset for other suites", () => {
 	for (const suffix of ["a", "b", "c", "d"]) {
 		rmSync(path.join(PROJECT_LOGS, `rehy-${STAMP}-${suffix}.log`), { force: true });

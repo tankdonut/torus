@@ -253,6 +253,43 @@ test("TORUS_DELEGATE_BACKGROUND=0 forces blocking with a visible note", async ()
 	}
 });
 
+test("torus_results returns the full final text when the stored tail is capped", async () => {
+	registry.resetRegistryForTesting();
+	gate._resetWakeGateForTesting();
+
+	const resultsTool = tools.find((t) => t.name === "torus_results");
+	assert.ok(resultsTool, "torus_results not registered");
+	const id = "long-run-1";
+	const sentinel = "END-OF-REPORT-SENTINEL";
+	const finalText = `${"report body\n".repeat(450)}${sentinel}`;
+	await registry.startDelegation(id, "builder", "m", null, null);
+	registry.updateDelegation(id, { text: finalText, turns: 3, usage: { input: 1, output: 2 } });
+	await registry.finishDelegation(id, true, finalText, null);
+
+	const single = await resultsTool.execute("c7", { id }, undefined, undefined, ctx);
+	assert.equal(single.isError, undefined);
+	assert.ok(
+		single.content[0].text.includes(sentinel),
+		"text beyond the 4000-char registry cap must be read back from the log",
+	);
+	assert.equal(
+		single.structuredContent.text,
+		finalText,
+		"structured text must be the full final text",
+	);
+
+	// Log gone: the bounded preview must carry an explicit truncation notice.
+	rmSync(registry.listDelegations().find((r) => r.id === id).logFile);
+	const degraded = await resultsTool.execute("c8", { id }, undefined, undefined, ctx);
+	assert.ok(degraded.content[0].text.includes("report body"), "preview text lost");
+	assert.match(degraded.content[0].text, /truncated/, "missing truncation notice");
+	assert.ok(
+		!degraded.content[0].text.includes(sentinel),
+		"sentinel beyond the cap must not appear in the degraded preview",
+	);
+	registry.resetRegistryForTesting();
+});
+
 test("torus_results reads a finished record by id, lists recent runs, and fails clean on unknown ids", async () => {
 	registry.resetRegistryForTesting();
 	gate._resetWakeGateForTesting();

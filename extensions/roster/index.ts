@@ -55,6 +55,8 @@ import {
 	emitTorusCustom,
 	finishDelegation,
 	listDelegations,
+	RECORD_TEXT_CAP,
+	readFullRecordText,
 	redactSecrets,
 	registryShutdown,
 	rehydrateFromLogs,
@@ -1672,7 +1674,17 @@ const resultsTool = defineTool({
 				details: {},
 			};
 		}
-		// The registry already caps record.text (RECORD_TEXT_CAP); return it verbatim.
+		// The registry keeps only a bounded head of the final text; the complete
+		// text is read back from the delegation log. The in-memory copy wins when
+		// it is known complete (live runs, short finals); when only the capped
+		// slice survives, its loss is called out instead of ending mid-report.
+		const text =
+			record.status === "running" || record.textTruncated === false
+				? record.text
+				: (readFullRecordText(record) ??
+					(record.textTruncated
+						? `${record.text}\n\n[torus] stored text truncated at ${RECORD_TEXT_CAP} chars; the rest lives only in the log above`
+						: record.text));
 		const durationMs = (record.finishedAt ?? Date.now()) - record.startedAt;
 		const cost = formatCost(record.cost, record.tokensIn + record.tokensOut > 0);
 		const header = [
@@ -1686,14 +1698,14 @@ const resultsTool = defineTool({
 		].join("\n");
 		const recordDetails: Record<string, unknown> = { delegationId: record.id };
 		return {
-			content: [{ type: "text", text: `${header}\n\ntext:\n${record.text || "(no text stored)"}` }],
+			content: [{ type: "text", text: `${header}\n\ntext:\n${text || "(no text stored)"}` }],
 			details: recordDetails,
 			structuredContent: {
 				id: record.id,
 				status: record.status,
 				agent: record.agent,
 				handle: record.handle ?? "",
-				text: record.text,
+				text,
 				turns: record.turns,
 				cost: record.cost,
 				logFile: record.logFile,

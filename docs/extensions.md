@@ -119,7 +119,7 @@ The delegation core: parses `agents/*.md` into the roster and spawns the pinned 
 | --- | --- |
 | `torus_roster` | List agents, chains, credentialed providers, and per-model concurrency caps |
 | `torus_delegate` | Run one self-contained task on a roster agent; accepts `agent`, `task`, `handle`, `skills`, `cwd`, `model`, `background`; live `renderCall`/`renderResult` |
-| `torus_results` | Read a delegation record's stored output tail by `id` (status, turns, cost, duration), or list recent records |
+| `torus_results` | Read a delegation record's full final output by `id` (status, turns, cost, duration), or list recent records |
 
 - **Commands:** `/roster`; one command per agent file. Session-mode `/leader` toggles the persona. Child agents (`/builder`, `/dreamer`, `/explorer`, `/librarian` + alias `/research`, `/looker`, `/reviewer`) delegate the argument text, wait for that session's running delegations to quiesce (10-min cap), and inject the result as a follow-up user message
 - **Hooks:** `session_start`: record session id; rehydrate past delegations from the project state dir's logs
@@ -142,7 +142,7 @@ Start markers reach the parent model's context (custom messages convert to user 
 
 Delivery rides the wake gate and nothing else: background runs pass `emitResult: false`, so no direct result marker queues as a pi follow-up. An idle session gets the marker straight away; a busy one gets every pending completion batched into one turn at settle. The registry still tracks the run, so the fleet strip and browser show it live; see the wake gate under [Transcript markers and wake-ups](#transcript-markers-and-wake-ups).
 
-`torus_results` is the read-only pickup: with an `id` it returns that record's stored output tail plus status, turns, cost, and duration; without one it lists recent records. The list is the pickup path when a start result carried no id.
+`torus_results` is the read-only pickup: with an `id` it returns that record's complete final text plus status, turns, cost, and duration; without one it lists recent records. The registry keeps only a bounded preview in memory, so the tool reads the full text back from the run's delegation log: a long report arrives whole instead of cut mid-sentence. The list is the pickup path when a start result carried no id.
 
 `TORUS_DELEGATE_BACKGROUND=0` (config `roster.delegateBackground`, default on) forces every delegation tool back to blocking even when called with `background: true`. The tool result carries a visible note that the run went blocking, ahead of the usual outcome text.
 
