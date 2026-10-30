@@ -50,4 +50,5 @@ Done means every wave is done or has an explicit, journaled blocker:
 1. Final ledger pass: every task's checkbox ticked or explicitly blocked with evidence; every verified verdict carries its verifiedBy (lead or reviewer).
 2. Call `work_complete` with the summary: it refuses while any checkbox is unticked (the machine gate); fix or journal what it names, then complete.
 3. Report: waves shipped (commit hashes), verification summary, residual risks and blockers.
-4. One `torus_remember` for the durable lesson from this execution; mark the session goal complete.
+4. If the executed plan's Destination carries a `Roadmap:` stamp, offer the user a `torus-roadmap` sync (status roll-up + drift check) before closing the session.
+5. One `torus_remember` for the durable lesson from this execution; mark the session goal complete.

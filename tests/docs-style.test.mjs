@@ -16,7 +16,13 @@ const EMDASH = /—/;
 const GENERATED = new Set(["CHANGELOG.md"]);
 
 // Lines whose em dash is an output-format grammar token rather than prose.
-const EMDASH_ALLOWLIST = [{ file: path.join("agents", "dreamer.md"), pattern: /^DELETE: </ }];
+const EMDASH_ALLOWLIST = [
+	{ file: path.join("agents", "dreamer.md"), pattern: /^DELETE: </ },
+	{
+		file: path.join("skills", "torus-roadmap", "assets", "ROADMAP.example.md"),
+		pattern: /^(# Roadmap |- R\d+\. )/,
+	},
+];
 
 // Quoted phrases are data (someone else's voice, counterexamples, marketing being
 // criticized), not author voice; the rubric exempts them from the filler ban.
