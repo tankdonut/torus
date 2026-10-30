@@ -63,7 +63,8 @@ const SECTION_HEADING = /^##\s+(.+?)\s*$/;
 const ITEM_ROW_PREFIX = /^- R(\d+)\. (.+)$/;
 const ITEM_ROW = new RegExp(`^- R(\\d+)\\. .+ — (${ITEM_STATUSES.join("|")})$`);
 const DETAIL_ROW = /^ {2}(Plan|Evidence|Depends|Note|Decision): (.*)$/;
-const DECISION_ROW_PREFIX = /^- D(\d+) \(/;
+const DECISION_ROW = /^- D(\d+) \((\d{4}-\d{2}-\d{2})\): /;
+const DECISION_ROW_PREFIX = /^- D\d+ /;
 const LANE_ROW = /^- (Now|Next|Later): (.*)$/;
 const ITEM_REF = /^R\d+$/;
 const DECISION_REF = /^D\d+$/;
@@ -95,12 +96,16 @@ function lintLines(lines, add) {
 
 	const sections = parseSections(lines);
 	const itemsSections = sections.filter((section) => section.title === "Items");
-	const laneSection = sections.find((section) => section.title === "Now / Next / Later") ?? null;
+	const laneSections = sections.filter((section) => section.title === "Now / Next / Later");
+	const laneSection = laneSections[0] ?? null;
 	const logSections = sections.filter((section) => section.title === "Decision log");
 
 	if (itemsSections.length === 0) add(1, 'missing "## Items" section');
 	if (!laneSection) add(1, 'missing "## Now / Next / Later" section');
 	if (logSections.length === 0) add(1, 'missing "## Decision log" section');
+	for (const extra of laneSections.slice(1)) {
+		add(extra.headingLine, 'duplicate "## Now / Next / Later" section');
+	}
 
 	const { items, sawItemRow } = parseItems(itemsSections, add);
 	if (itemsSections.length > 0 && !sawItemRow) {
@@ -109,7 +114,7 @@ function lintLines(lines, add) {
 	checkUniqueItemIds(items, add);
 	checkRequiredDetails(items, add);
 	checkDependsRefs(items, add);
-	checkDecisionRefs(items, collectDecisionIds(logSections), add);
+	checkDecisionRefs(items, collectDecisionIds(logSections, add), add);
 	checkLanes(laneSection, items, add);
 }
 
@@ -271,12 +276,19 @@ function checkDecisionRefs(items, decisionIds, add) {
 	}
 }
 
-function collectDecisionIds(logSections) {
+function collectDecisionIds(logSections, add) {
 	const ids = new Set();
 	for (const section of logSections) {
-		for (const { text } of section.body) {
-			const row = DECISION_ROW_PREFIX.exec(text);
-			if (row) ids.add(`D${row[1]}`);
+		for (const { text, line } of section.body) {
+			const row = DECISION_ROW.exec(text);
+			if (row) {
+				if (!isIsoDate(row[2])) {
+					add(line, `decision D${row[1]} date must be a yyyy-mm-dd date`);
+				}
+				ids.add(`D${row[1]}`);
+			} else if (DECISION_ROW_PREFIX.test(text)) {
+				add(line, 'decision row must be "- D<n> (<yyyy-mm-dd>): <text>"');
+			}
 		}
 	}
 	return ids;

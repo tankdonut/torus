@@ -173,6 +173,14 @@ test("Depends reference to a missing item is rejected", () => {
 	);
 });
 
+test("Depends line with only spaces is rejected", () => {
+	expectViolation(
+		"depends-only-spaces",
+		[["  Depends: R2", "  Depends:    "]],
+		["Depends must list at least one item reference"],
+	);
+});
+
 test("Decision reference to a missing log row is rejected", () => {
 	expectViolation(
 		"dangling-decision-ref",
@@ -205,11 +213,103 @@ test("item listed in two lanes is rejected", () => {
 	);
 });
 
+test("a second row for the same lane is rejected", () => {
+	expectViolation(
+		"duplicate-lane-row",
+		[["- Later: none", "- Later: none\n- Later: R1"]],
+		['duplicate "Later:" row in Now / Next / Later'],
+	);
+});
+
+test("lane section missing its Next row is rejected", () => {
+	// R1 leaves the lanes, so it is also reported absent — the cascade is
+	// intended, the assertion targets the missing row.
+	expectViolation(
+		"missing-next-row",
+		[["- Next: R1\n", ""]],
+		['Now / Next / Later must have a "Next:" row'],
+	);
+});
+
+test("lane row referencing a missing item is rejected", () => {
+	// R2 leaves the lanes, so it is also reported absent — the cascade is
+	// intended, the assertion targets the unknown reference.
+	expectViolation(
+		"unknown-item-in-lane",
+		[["- Now: R2", "- Now: R9"]],
+		["Now list references unknown item R9"],
+	);
+});
+
+test("space-separated references in a lane row are rejected", () => {
+	expectViolation(
+		"lane-space-separated-refs",
+		[["- Now: R2", "- Now: R1 R2"]],
+		['Now list has invalid item reference "R1 R2"'],
+	);
+});
+
+test("missing Now / Next / Later section is rejected", () => {
+	expectViolation(
+		"missing-lane-section",
+		[["## Now / Next / Later\n", ""]],
+		['missing "## Now / Next / Later" section'],
+	);
+});
+
+test("a second Now / Next / Later section is rejected", () => {
+	// The extra section's lanes contradict the first (R3 is done); only the
+	// first section is linted, the duplicate itself is the violation.
+	expectViolation(
+		"duplicate-lane-section",
+		[["## Decision log", "## Now / Next / Later\n\n- Now: R3\n\n## Decision log"]],
+		['duplicate "## Now / Next / Later" section'],
+	);
+});
+
+test("missing Items section is rejected", () => {
+	// The item rows move nowhere: they fall into the header block, so the
+	// lane rows below report unknown items in the cascade.
+	expectViolation("missing-items-section", [["## Items\n", ""]], ['missing "## Items" section']);
+});
+
 test("header without a Created line is rejected", () => {
 	expectViolation(
 		"missing-created",
 		[["Created: 2026-10-30\n", ""]],
 		['header block must contain a "Created: <yyyy-mm-dd>" line'],
+	);
+});
+
+test("title without the em-dash suffix is rejected", () => {
+	expectViolation(
+		"missing-title-suffix",
+		[["# Roadmap — canonical fixture", "# Roadmap"]],
+		['first line must be an H1 starting with "# Roadmap —"'],
+	);
+});
+
+test("header without a Status line is rejected", () => {
+	expectViolation(
+		"missing-status",
+		[["Status: active\n", ""]],
+		['header block must contain a "Status: active|completed|parked" line'],
+	);
+});
+
+test("Status value outside the grammar is rejected", () => {
+	expectViolation(
+		"invalid-status-value",
+		[["Status: active", "Status: wip"]],
+		['Status must be one of active|completed|parked, got "wip"'],
+	);
+});
+
+test("Created value that is not a calendar date is rejected", () => {
+	expectViolation(
+		"invalid-created",
+		[["Created: 2026-10-30", "Created: Oct 30"]],
+		['Created must be a yyyy-mm-dd date, got "Oct 30"'],
 	);
 });
 
@@ -221,11 +321,40 @@ test("Items section present but with zero item rows is rejected", () => {
 	);
 });
 
+test("empty file is rejected at line 1", () => {
+	const file = path.join(dir, "empty-file.md");
+	writeFileSync(file, "", "utf8");
+	const run = runLint([file]);
+	assert.equal(run.status, 1, `expected exit 1, got ${run.status}\nstdout:\n${run.stdout}`);
+	assert.ok(
+		run.stdout.includes(`${file}:1: file is empty`),
+		`expected "${file}:1: file is empty", got:\n${run.stdout}`,
+	);
+});
+
 test("missing Decision log section is rejected", () => {
 	expectViolation(
 		"missing-decision-log",
 		[["## Decision log\n", ""]],
 		['missing "## Decision log" section'],
+	);
+});
+
+test("decision row without a yyyy-mm-dd date is rejected", () => {
+	// D1 never registers, so R2's Decision detail also reports an unknown
+	// decision — the cascade is intended, the assertion targets the shape.
+	expectViolation(
+		"decision-row-bad-shape",
+		[["- D1 (2026-10-30)", "- D1 (garbage)"]],
+		['decision row must be "- D<n> (<yyyy-mm-dd>): <text>"'],
+	);
+});
+
+test("decision row with an impossible calendar date is rejected", () => {
+	expectViolation(
+		"decision-row-bad-date",
+		[["- D1 (2026-10-30)", "- D1 (2026-02-30)"]],
+		["decision D1 date must be a yyyy-mm-dd date"],
 	);
 });
 
@@ -247,5 +376,50 @@ test("nonexistent file: exit 1 with file not found at line 0", () => {
 	assert.ok(
 		run.stdout.includes(`${missing}:0: file not found`),
 		`expected "<path>:0: file not found", got:\n${run.stdout}`,
+	);
+});
+
+test("violations print as full file:line: message lines", () => {
+	const name = "line-numbered-violation";
+	const file = path.join(dir, `${name}.md`);
+	const duplicateLine = ROADMAP.split("\n").indexOf("- R4. Diagram every extension — deferred") + 1;
+	expectViolation(
+		name,
+		[["- R4. Diagram every extension", "- R1. Diagram every extension"]],
+		[`${file}:${duplicateLine}: duplicate item id R1`],
+	);
+});
+
+test("multiple files: clean files still get their ok line", () => {
+	const content = ROADMAP.replace("Status: active", "Status: wip");
+	assert.ok(
+		content !== ROADMAP,
+		'corrupt anchor "Status: active" is missing from the canonical roadmap template',
+	);
+	const clean = path.join(dir, "multi-clean.md");
+	const corrupt = path.join(dir, "multi-corrupt.md");
+	writeFileSync(clean, ROADMAP, "utf8");
+	writeFileSync(corrupt, content, "utf8");
+	const run = runLint([clean, corrupt]);
+	assert.equal(run.status, 1, `expected exit 1, got ${run.status}\nstdout:\n${run.stdout}`);
+	assert.ok(
+		run.stdout.includes(`ok ${clean}`),
+		`expected an ok line for the clean file, got:\n${run.stdout}`,
+	);
+	assert.ok(
+		run.stdout.includes('Status must be one of active|completed|parked, got "wip"'),
+		`expected the corrupt file's violation, got:\n${run.stdout}`,
+	);
+});
+
+test("a UTF-8 BOM and CRLF line endings are normalized away", () => {
+	const file = path.join(dir, "bom-crlf.md");
+	writeFileSync(file, `\uFEFF${ROADMAP.replaceAll("\n", "\r\n")}`, "utf8");
+	const run = runLint([file]);
+	assert.equal(run.status, 0, `expected exit 0, got ${run.status}\nstdout:\n${run.stdout}`);
+	assert.equal(
+		run.stdout.trim(),
+		`ok ${file}`,
+		"a normalized file must still print exactly one ok line",
 	);
 });
