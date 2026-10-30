@@ -584,7 +584,7 @@ Plan-execution state: binds a torus-plan plan file to a session so execution sur
 - **Hooks:** `context`: inject work block for the newest active binding of the session
 - **Interactions:** delegated child engines load the extension but get only `work_note`: `work_start`/`work_complete` skip registration when `TORUS_ENGINE_CHILD=1`, so children can journal into a plan's ledger but never rebind or complete work
 
-State at `$TORUS_STATE_DIR/work/<slug>.json` (plan↔session binding, status, elapsed); evidence in an append-only `$TORUS_STATE_DIR/work/<slug>.ledger.jsonl`. Progress is never cached: it is parsed live from the plan's column-zero checkbox rows (`- [ ]` / `- [x]`), so the plan file stays the single source of truth. While active, every turn injects a work block (plan path, done/total, next unchecked task, ledger tail).
+State at `$TORUS_STATE_DIR/work/<slug>.json` (plan↔session binding, status, elapsed); evidence in an append-only `$TORUS_STATE_DIR/work/<slug>.ledger.jsonl`. Progress is never cached: it is parsed live from the plan's column-zero checkbox rows (`- [ ]` / `- [x]` / `- [~]`), so the plan file stays the single source of truth; closed-with-gap rows (`- [~]`) count as done for the gate, are skipped by next-task selection, and are named in the completion report. While active, every turn injects a work block (plan path, done/total, next unchecked task, ledger tail).
 
 Companion skill: `torus-execute` (writes checkboxes in the plan, journals via `work_note`, ends via `work_complete`). Plan coordinates (waves, tasks, slugs) stay in the plan and ledger; landed commits and code comments never carry them.
 

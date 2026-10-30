@@ -113,11 +113,13 @@ export interface ParsedTask {
 	/** 1-based line number of the checkbox row. */
 	line: number;
 	checked: boolean;
+	/** Closed with a recorded gap (`- [~]`): counts as done for the gate, never picked as next. */
+	blocked: boolean;
 	title: string;
 }
 
 /** Column-zero checkbox rows only — indented rows are detail, not tasks. */
-const TASK_RE = /^- \[( |x|X)\] (.*)$/;
+const TASK_RE = /^- \[( |x|X|~)\] (.*)$/;
 
 /**
  * Column-zero approval marker: plain text by design, so it can never be
@@ -134,9 +136,17 @@ export function parsePlanTasks(markdown: string): { tasks: ParsedTask[]; done: n
 		if (!match) continue;
 		const title = (match[2] ?? "").trim();
 		if (title.length === 0) continue;
-		tasks.push({ line: i + 1, checked: match[1] !== " ", title });
+		const marker = match[1] ?? " ";
+		// `~` closes a task with a recorded gap: it satisfies the gate and the
+		// progress totals, but it is never the next task.
+		tasks.push({
+			line: i + 1,
+			checked: marker === "x" || marker === "X",
+			blocked: marker === "~",
+			title,
+		});
 	}
-	return { tasks, done: tasks.filter((t) => t.checked).length };
+	return { tasks, done: tasks.filter((t) => t.checked || t.blocked).length };
 }
 
 /**
@@ -384,15 +394,16 @@ function formatElapsed(ms: number): string {
 }
 
 /**
- * Gate for work_complete: null when every task row is checked, otherwise the
- * blocking-message string naming what remains.
+ * Gate for work_complete: null when every task row is closed (checked, or
+ * closed with a recorded gap), otherwise the blocking-message string naming
+ * what remains.
  */
 export function completionBlocker(markdown: string): string | null {
 	const { tasks, done } = parsePlanTasks(markdown);
 	if (tasks.length === 0) return "plan has no column-zero checkbox tasks to verify";
 	if (done < tasks.length) {
 		const remaining = tasks
-			.filter((t) => !t.checked)
+			.filter((t) => !t.checked && !t.blocked)
 			.slice(0, 10)
 			.map((t) => `- L${t.line}: ${t.title.slice(0, 80)}`);
 		const more = tasks.length - done - remaining.length;
@@ -474,20 +485,25 @@ export function workContextBlock(sessionId: string | null): string {
 		return `[torus work — active plan execution]\nPlan MISSING at ${displayPath(state.planPath)} — surface this to the user before doing anything else.`;
 	}
 	const { tasks, done } = parsePlanTasks(markdown);
-	const next = tasks.find((t) => !t.checked);
+	const gaps = tasks.filter((t) => t.blocked).length;
+	const next = tasks.find((t) => !t.checked && !t.blocked);
 	const tail = readLedger(state.slug, 2);
 	const tailLines =
 		tail.length > 0
 			? `\nLedger tail:\n${tail.map((e) => `- [${e.event}] ${e.text.slice(0, 120)}`).join("\n")}`
 			: "";
 	const elapsed = formatElapsed(Date.now() - state.startedAt);
+	const progress =
+		gaps > 0
+			? `${done}/${tasks.length} tasks checked (${gaps} closed with gaps, ${elapsed})`
+			: `${done}/${tasks.length} tasks checked (${elapsed})`;
 	const nextLine = next
 		? `Next: L${next.line} ${next.title.slice(0, 100)}`
 		: "All tasks checked — run the plan's final verification wave, then work_complete";
 	return `[torus work — active plan execution; the plan file is the contract, resume from it and the ledger, never from memory]
-Plan: ${displayPath(state.planPath)} — ${done}/${tasks.length} tasks checked (${elapsed})
+Plan: ${displayPath(state.planPath)} — ${progress}
 ${nextLine}${tailLines}
-Record evidence with work_note; only work_complete (which refuses while any task is unchecked) ends execution.`;
+Record evidence with work_note; only work_complete (which refuses while any task is open) ends execution.`;
 }
 
 function refreshLastActive(state: WorkState): WorkState {
@@ -520,7 +536,7 @@ export function registerWork(pi: ExtensionAPI): void {
 				name: "work_start",
 				label: "Work Start",
 				description:
-					'Bind a torus-plan plan file to this session as active work. Approval gate: refuses unless the plan carries a column-zero "Approval: <user/date>" line (or the recorded escape "Approval: skipped (--yes)"); assumeApproved binds without one and is journaled. Parses the plan\'s column-zero checkboxes, reports progress and the next task, and injects an active-work context block into every turn until work_complete. Rebinding an existing plan resumes it (elapsed time spans runs). Use with the torus-execute skill. Parent sessions only — delegated children never rebind work.',
+					'Bind a torus-plan plan file to this session as active work. Approval gate: refuses unless the plan carries a column-zero "Approval: <user/date>" line (or the recorded escape "Approval: skipped (--yes)"); assumeApproved binds without one and is journaled. Parses the plan\'s column-zero checkboxes (`- [ ]`, `- [x]`, or `- [~]` closing a task with a recorded gap), reports progress and the next task, and injects an active-work context block into every turn until work_complete. Rebinding an existing plan resumes it (elapsed time spans runs). Use with the torus-execute skill. Parent sessions only — delegated children never rebind work.',
 				parameters: Type.Object({
 					plan: Type.String({
 						description:
@@ -568,7 +584,7 @@ export function registerWork(pi: ExtensionAPI): void {
 							content: [
 								{
 									type: "text",
-									text: "plan has no column-zero checkbox tasks (`- [ ] N. title`) — nothing to execute",
+									text: "plan has no column-zero checkbox tasks (`- [ ]` / `- [x]` / `- [~]` N. title) — nothing to execute",
 								},
 							],
 							details: {},
@@ -606,7 +622,7 @@ export function registerWork(pi: ExtensionAPI): void {
 						text: prior ? "work rebound to a new session (resume)" : "work started",
 						approval,
 					});
-					const next = tasks.find((t) => !t.checked);
+					const next = tasks.find((t) => !t.checked && !t.blocked);
 					const body = [
 						`${prior ? "Resumed" : "Started"}: ${displayPath(resolved.planPath)}`,
 						`Progress: ${done}/${tasks.length} tasks checked (${formatElapsed(now - state.startedAt)} elapsed)`,
@@ -712,7 +728,7 @@ export function registerWork(pi: ExtensionAPI): void {
 				name: "work_complete",
 				label: "Work Complete",
 				description:
-					"Parent sessions only. Mark the session's active plan execution complete. Machine gate: refuses while ANY column-zero checkbox in the plan is unchecked (or the plan is missing), listing what remains. On success records elapsed time, appends the complete ledger row, and stops the per-turn work block.",
+					"Parent sessions only. Mark the session's active plan execution complete. Machine gate: refuses while ANY column-zero checkbox in the plan is open (`- [ ]`; `- [x]` and `- [~]` both close a task, `~` with a recorded gap) or the plan is missing, listing what remains. On success records elapsed time, appends the complete ledger row, lists gap-closed tasks, and stops the per-turn work block.",
 				parameters: Type.Object({
 					summary: Type.String({
 						description:
@@ -767,12 +783,17 @@ export function registerWork(pi: ExtensionAPI): void {
 						event: "complete",
 						text: params.summary.slice(0, 500),
 					});
+					// gap-closed rows satisfy the gate; the report names them so a completion never silently swallows skipped work
+					const gapRows = tasks.filter((t) => t.blocked);
 					const body = [
 						"WORK COMPLETE",
 						`PLAN: ${state.planPath}`,
 						`TASKS: ${tasks.length}/${tasks.length}`,
 						`ELAPSED: ${formatElapsed(now - state.startedAt)}`,
 						`LEDGER ROWS: ${ledgerRows}`,
+						...(gapRows.length > 0
+							? ["GAPS:", ...gapRows.map((t) => `- L${t.line}: ${t.title.slice(0, 80)}`)]
+							: []),
 					].join("\n");
 					return { content: [{ type: "text", text: body }], details: { complete: true } };
 				},

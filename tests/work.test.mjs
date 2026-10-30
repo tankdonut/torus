@@ -96,6 +96,20 @@ test("parsePlanTasks on a plan with no rows yields zero tasks", () => {
 	assert.deepEqual(parsePlanTasks("# nothing\nbody\n"), { tasks: [], done: 0 });
 });
 
+test("parsePlanTasks marks `- [~]` rows blocked, not checked, and counts them in done", () => {
+	const md = ["# plan", "", "- [x] 1. One", "- [~] 2. Two", "- [ ] 3. Three"].join("\n");
+	const { tasks, done } = parsePlanTasks(md);
+	assert.equal(done, 2);
+	assert.deepEqual(
+		tasks.map((t) => [t.line, t.checked, t.blocked, t.title]),
+		[
+			[3, true, false, "1. One"],
+			[4, false, true, "2. Two"],
+			[5, false, false, "3. Three"],
+		],
+	);
+});
+
 test("completionBlocker: null when all checked, lists remainder otherwise, errors on no tasks", () => {
 	assert.equal(completionBlocker("- [x] 1. A\n- [x] F1. Final\n"), null);
 	const blocker = completionBlocker("- [x] 1. A\n- [ ] 2. B\n- [ ] 3. C\n");
@@ -103,6 +117,14 @@ test("completionBlocker: null when all checked, lists remainder otherwise, error
 	assert.match(blocker, /2\. B/);
 	assert.match(blocker, /3\. C/);
 	assert.match(completionBlocker("# empty\n"), /no column-zero checkbox tasks/);
+});
+
+test("completionBlocker: gap-closed rows never block; a mixed plan lists only the open row", () => {
+	assert.equal(completionBlocker("- [x] 1. A\n- [~] F1. Final\n"), null);
+	const blocker = completionBlocker("- [x] 1. A\n- [~] 2. B\n- [ ] 3. C\n");
+	assert.match(blocker, /1 unchecked/);
+	assert.match(blocker, /3\. C/);
+	assert.ok(!blocker.includes("2. B"), "a gap-closed row is closed, never a blocker");
 });
 
 test("approvalBlocker: null on marker or recorded escape, blocker otherwise; checkbox-shaped fakes never count", () => {
@@ -297,6 +319,15 @@ test("workContextBlock: injects plan path, progress, next task; missing plan sur
 	assert.equal(workContextBlock("ses-c"), "");
 });
 
+test("workContextBlock: gap-closed rows count as done, are skipped for next, and are noted in progress", () => {
+	const file = plantPlan("ctx-gap", "- [~] 1. A\n- [x] 2. B\n- [ ] 3. C\n- [ ] 4. D\n");
+	plantState({ slug: "ctx-gap", planPath: file, sessionId: "ses-gap", lastActiveAt: 3000 });
+	const block = workContextBlock("ses-gap");
+	assert.match(block, /2\/4 tasks checked \(1 closed with gaps/);
+	assert.match(block, /Next: L3 3\. C/);
+	assert.ok(!block.includes("Next: L1"), "a gap-closed row is never the next task");
+});
+
 test("workContextBlock caches the active-work lookup: the no-work case skips disk on repeat; writes invalidate", () => {
 	plantState({ slug: "stale-a", sessionId: "ses-other-a", lastActiveAt: 10 });
 	plantState({ slug: "stale-b", sessionId: "ses-other-b", lastActiveAt: 20 });
@@ -371,6 +402,16 @@ test("work_start binds approved plans: marker text, skipped escape, and assumeAp
 	assert.equal(assumed.isError, undefined);
 	assert.ok(readWorkState("gate-assume"), "escape hatch still binds state");
 	assert.equal(readLedger("gate-assume", 1).at(-1)?.approval, "assumed");
+});
+
+test("work_start skips gap-closed rows when reporting the next task", async () => {
+	setCurrentSessionId("ses-start-gap");
+	const { work_start } = workTools();
+	plantPlan("start-gap", "Approval: tankdonut 2026-10-07\n- [~] 1. A\n- [ ] 2. B\n");
+	const out = await work_start.execute("t", { plan: "start-gap" });
+	assert.equal(out.isError, undefined);
+	assert.match(out.content[0].text, /1\/2 tasks checked/);
+	assert.match(out.content[0].text, /Next: L3 2\. B/);
 });
 
 test("work_note admits converge rows: append via the tool, tail keeps the event intact", async () => {
@@ -571,4 +612,36 @@ test("an explicit cross-project slug stays addressable via work_note slug resolu
 	} finally {
 		process.chdir(realCwd);
 	}
+});
+
+test("work_complete passes a gap-closed plan and lists the gaps in the report", async () => {
+	setCurrentSessionId("ses-complete");
+	const longTitle = `3. ${"gap ".repeat(30)}`;
+	const file = plantPlan(
+		"done-gaps",
+		[
+			"# plan",
+			"",
+			"Approval: tankdonut 2026-10-07",
+			"",
+			"- [x] 1. A",
+			"- [~] 2. B",
+			`- [~] ${longTitle}`,
+		].join("\n"),
+	);
+	plantState({ slug: "done-gaps", planPath: file, sessionId: "ses-complete" });
+	const { work_complete } = workTools();
+	const out = await work_complete.execute("t", { summary: "everything closed, two with gaps" });
+	assert.equal(out.isError, undefined, "gap-closed rows satisfy the gate");
+	const text = out.content[0].text;
+	assert.match(text, /WORK COMPLETE/);
+	assert.match(text, /GAPS:/);
+	assert.match(text, /- L6: 2\. B/);
+	assert.ok(
+		text.includes(`- L7: ${longTitle.slice(0, 80)}`),
+		"titles slice to 80 like blocker messages",
+	);
+	assert.ok(!text.includes("- L5:"), "checked rows are not listed as gaps");
+	assert.equal(readWorkState("done-gaps")?.status, "complete");
+	assert.equal(readLedger("done-gaps", 1).at(-1)?.event, "complete");
 });
