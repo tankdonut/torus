@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.19.0](https://github.com/tankdonut/torus/compare/v0.18.0...v0.19.0) (2026-10-31)
+
+
+### Features
+
+* **extensions/memory:** re-evaluate memory injection at prompt boundaries ([303afc5](https://github.com/tankdonut/torus/commit/303afc53dfe339db8f04b168b038cbc921edb7b6))
+* **extensions/memory:** redact credential shapes before writing memories ([2d51a5d](https://github.com/tankdonut/torus/commit/2d51a5df19290ac6000ecb0b00b26d27445f6834))
+* **extensions/work:** accept closed-with-gap checkbox rows in the work gate ([a799f48](https://github.com/tankdonut/torus/commit/a799f4816dd5c7ed07b50b515ae4282db6bc77ef))
+* **skills/torus-plan:** verdict line, interview override, incremental draft ([3a7c0e8](https://github.com/tankdonut/torus/commit/3a7c0e8bd07c0b947cd1bea6050a4a0efe40b357))
+* **skills/torus-roadmap:** add long-horizon roadmap skill with grammar linter ([ac693d4](https://github.com/tankdonut/torus/commit/ac693d4dddb06a2a2f9502287073464e754566bc))
+* **skills:** teach torus-execute blocked-task closure and verification probes ([4d149eb](https://github.com/tankdonut/torus/commit/4d149eb1f143e0704be0f78a15f76c5cc146aaae))
+
+
+### Bug Fixes
+
+* **extensions/memory:** skip dream and reflection in one-shot sessions ([3c4459c](https://github.com/tankdonut/torus/commit/3c4459cfa95610ddecbccd5819ff18992a6182fe))
+* **extensions/notify:** render wake-batch delegation completions like result markers ([76c8302](https://github.com/tankdonut/torus/commit/76c83022cf0ac289da44115c6aa49c7b2d71c87a))
+* **extensions/registry:** drop markers when the session ctx is stale ([be8210a](https://github.com/tankdonut/torus/commit/be8210a407a673ede4af1d359d07ba0671983c46))
+* **extensions/worktrees:** rename worktree_merge mainBranch to integrationBranch ([565e0ed](https://github.com/tankdonut/torus/commit/565e0eddef9a97693bbc3a59f6916c86157c00e1))
+* **skills/torus-roadmap:** enforce lane-section and decision-row grammar, pin linter checks ([c67093f](https://github.com/tankdonut/torus/commit/c67093f7b91f981d20a9c3f2b415677ac8d695ce))
+
 ## [0.18.0](https://github.com/tankdonut/torus/compare/v0.17.0...v0.18.0) (2026-10-30)
 
 
