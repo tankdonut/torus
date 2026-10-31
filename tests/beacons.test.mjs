@@ -221,3 +221,35 @@ test("foreign beacons are scoped to the current session", async () => {
 		foreign.kill();
 	}
 });
+
+test("emitTorusCustom drops the marker when the session sender ctx is stale", () => {
+	// Session replacement (fork/resume/new, or print-mode teardown) invalidates
+	// the registration-time ctx captured by roster's sender closure while
+	// dream/reflection delegations are still in flight; the engine throws this
+	// exact stale-ctx error from the dead ctx. Emission is best-effort by
+	// contract (false = no marker), so the marker drops instead of killing the
+	// background run that emitted it.
+	const stale = new Error(
+		"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().",
+	);
+	registry.setCustomSender(() => {
+		throw stale;
+	});
+	assert.equal(
+		registry.emitTorusCustom({
+			customType: "torus.delegation-start",
+			content: [{ type: "text", text: "x" }],
+		}),
+		false,
+		"a stale sender must report no marker, not throw",
+	);
+
+	// Unrelated sender failures are real bugs and keep throwing.
+	registry.setCustomSender(() => {
+		throw new Error("boom");
+	});
+	assert.throws(() =>
+		registry.emitTorusCustom({ customType: "torus.delegation-start", content: [] }),
+	);
+	registry.setCustomSender(() => {});
+});

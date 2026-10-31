@@ -217,15 +217,30 @@ export function setCustomSender(sender: TorusCustomSender): void {
 /**
  * Emit a torus custom message into the live session (transcript marker +
  * model context). Returns false when no session sender is registered (tests
- * without one, or engine-child sessions).
+ * without one, or engine-child sessions) or when the registered sender's ctx
+ * went stale: the sender closure captures the registration-time extension
+ * ctx, and a session replacement (fork/resume/new, or print-mode teardown)
+ * invalidates it while background runs (dream, reflection, wake-gate
+ * flushes) are still in flight — the engine throws its stale-ctx error from
+ * the dead ctx at exactly that moment. Markers are best-effort, and the
+ * replacement session's own registration re-arms the sender, so the marker
+ * drops instead of killing the run that emitted it. Any other failure is a
+ * real bug and keeps throwing.
  */
 export function emitTorusCustom(
 	message: TorusCustomMessage,
 	options?: TorusCustomOptions,
 ): boolean {
 	if (!senderState.sender) return false;
-	senderState.sender(message, options);
-	return true;
+	try {
+		senderState.sender(message, options);
+		return true;
+	} catch (error) {
+		if (error instanceof Error && error.message.includes("stale after session replacement")) {
+			return false;
+		}
+		throw error;
+	}
 }
 
 export function currentSessionId(): string | null {
