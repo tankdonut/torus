@@ -66,6 +66,25 @@ export function clickable(lines: Component[], delegationId: string | undefined):
 	});
 }
 
+/** Shared by the standalone marker and its wake-batch entry so both surfaces render identically. */
+function delegationResultLine(details: Record<string, unknown>, theme: Theme): string {
+	const agent = typeof details["agent"] === "string" ? details["agent"] : "?";
+	const ok = details["ok"] !== false;
+	const stopped = details["stopped"] === true;
+	const durationMs = typeof details["durationMs"] === "number" ? details["durationMs"] : null;
+	const took = durationMs !== null ? `${formatDuration(durationMs)} · ` : "";
+	const runs = typeof details["runs"] === "number" ? details["runs"] : 1;
+	const combined = Array.isArray(details["delegationIds"]) && runs > 1;
+	const hint = `${took}${combined ? `${runs} runs · ` : ""}alt+t for the ${ok ? "transcript" : "log"}`;
+	return delegationLine(
+		stopped ? "■" : ok ? "✓" : "✗",
+		stopped ? "warning" : ok ? "success" : "error",
+		`${runLabel(details, agent)} ${stopped ? "stopped" : ok ? "finished" : "failed"}`,
+		hint,
+		theme,
+	);
+}
+
 function textOf(message: { content: Array<{ type: string; text?: string }> }): string {
 	for (const block of message.content) {
 		if (block.type === "text" && typeof block.text === "string") return block.text;
@@ -99,28 +118,8 @@ export function registerNotify(pi: ExtensionAPI): void {
 
 	pi.registerMessageRenderer("torus.delegation-result", (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
-		const agent = typeof details["agent"] === "string" ? details["agent"] : "?";
-		const ok = details["ok"] !== false;
-		const stopped = details["stopped"] === true;
-		const durationMs = typeof details["durationMs"] === "number" ? details["durationMs"] : null;
-		const took = durationMs !== null ? `${formatDuration(durationMs)} · ` : "";
-		const runs = typeof details["runs"] === "number" ? details["runs"] : 1;
-		const combined = Array.isArray(details["delegationIds"]) && runs > 1;
-		const hint = `${took}${combined ? `${runs} runs · ` : ""}alt+t for the ${ok ? "transcript" : "log"}`;
 		return clickable(
-			[
-				new Text(
-					delegationLine(
-						stopped ? "■" : ok ? "✓" : "✗",
-						stopped ? "warning" : ok ? "success" : "error",
-						`${runLabel(details, agent)} ${stopped ? "stopped" : ok ? "finished" : "failed"}`,
-						hint,
-						theme,
-					),
-					0,
-					0,
-				),
-			],
+			[new Text(delegationResultLine(details, theme), 0, 0)],
 			typeof details["delegationId"] === "string" ? details["delegationId"] : undefined,
 		);
 	});
@@ -183,10 +182,13 @@ export function registerNotify(pi: ExtensionAPI): void {
 	});
 
 	// One batch marker per wake-gate flush; each entry renders with the same
-	// lines its standalone marker would have shown.
+	// lines its standalone marker would have shown (delegation completions keep
+	// their fleet click target too: one run opens it, several open the list).
 	pi.registerMessageRenderer("torus.wake-batch", (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		const lines: string[] = [];
+		let delegationCount = 0;
+		let lastDelegationId: string | undefined;
 		const entries = Array.isArray(details["entries"]) ? details["entries"] : [];
 		for (const entry of entries) {
 			if (typeof entry !== "object" || entry === null) continue;
@@ -197,6 +199,11 @@ export function registerNotify(pi: ExtensionAPI): void {
 				lines.push(teamWakeLines(entryDetails as Record<string, unknown>, theme));
 			} else if (customType === "torus.monitor-fired") {
 				lines.push(monitorLine(entryDetails as Record<string, unknown>, theme));
+			} else if (customType === "torus.delegation-result") {
+				const record = entryDetails as Record<string, unknown>;
+				lines.push(delegationResultLine(record, theme));
+				delegationCount += 1;
+				if (typeof record["delegationId"] === "string") lastDelegationId = record["delegationId"];
 			}
 		}
 		if (lines.length === 0) {
@@ -215,7 +222,9 @@ export function registerNotify(pi: ExtensionAPI): void {
 				),
 			);
 		}
-		return new Text(lines.join("\n"), 0, 0);
+		const text = new Text(lines.join("\n"), 0, 0);
+		if (delegationCount === 0) return text;
+		return clickable([text], delegationCount === 1 ? lastDelegationId : undefined);
 	});
 }
 
