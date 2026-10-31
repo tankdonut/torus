@@ -278,3 +278,53 @@ test("applyDreamProposal scans the store once per proposal, not per entry", () =
 		"two proposed entries share one store scan",
 	);
 });
+
+test("oneshotRun mirrors the engine's mode resolution", () => {
+	// launchers pass their own flags alongside (--extension <root> here); the
+	// probe must be unaffected by unrelated argv tokens
+	const launcher = ["--extension", "/somewhere/torus"];
+	const ttys = [true, true];
+
+	// terminal UI stays eligible in every shape that opens it
+	assert.equal(memory.oneshotRun([], ...ttys), false, "plain TUI run");
+	assert.equal(memory.oneshotRun([...launcher], ...ttys), false, "launcher TUI run");
+	assert.equal(
+		memory.oneshotRun(["--mode", "text", ...launcher], ...ttys),
+		false,
+		"--mode text with terminals opens the TUI",
+	);
+	assert.equal(
+		memory.oneshotRun(["--mode", "rpc"], false, false),
+		false,
+		"rpc runs until shutdown",
+	);
+
+	// print-shaped one-shots: explicit, json, or implicit via redirected stdio
+	assert.equal(memory.oneshotRun(["-p", "hi"], true, true), true, "-p is one-shot");
+	assert.equal(memory.oneshotRun(["--print", "hi"], true, true), true, "--print is one-shot");
+	assert.equal(
+		memory.oneshotRun(["--mode", "json", "hi"], true, true),
+		true,
+		"--mode json is one-shot",
+	);
+	assert.equal(memory.oneshotRun(["hi"], false, true), true, "redirected stdin forces print mode");
+	assert.equal(memory.oneshotRun(["hi"], true, false), true, "redirected stdout forces print mode");
+	assert.equal(
+		memory.oneshotRun(["--mode", "text"], false, true),
+		true,
+		"--mode text still prints when redirected",
+	);
+
+	// the engine reads --mode only in separate-token form: --mode=json is an
+	// unknown flag there (interactive or print by stdio), never json mode
+	assert.equal(
+		memory.oneshotRun(["--mode=json"], true, true),
+		false,
+		"equals form is not json mode to the engine either",
+	);
+	assert.equal(
+		memory.oneshotRun(["--mode"], true, true),
+		false,
+		"missing value falls through like the engine's diagnostics",
+	);
+});

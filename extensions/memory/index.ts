@@ -1171,6 +1171,45 @@ export function reflectDecision(input: {
 	return { reflect: input.settlesSinceLastReflect >= 1 };
 }
 
+/**
+ * Mirror of the engine's own mode resolution for background memory work: RPC
+ * sessions run until shutdown and the terminal UI runs until quit, while
+ * every print-shaped run (explicit `--print`/`-p`, `--mode json`, or implicit
+ * print mode when either stdio stream is redirected) exits once the event
+ * loop drains. A dreamer spawned from a one-shot either holds the drained
+ * process open for a run nobody watches or dies torn with the interval
+ * already marked, so both dream and reflection skip those sessions. `--mode`
+ * only counts in the engine's separate-token form: `--mode=json` is an
+ * unknown flag there, not json mode, and must not read as one-shot here.
+ */
+export function oneshotRun(
+	argv: readonly string[],
+	stdinTty: boolean,
+	stdoutTty: boolean,
+): boolean {
+	const mode = modeFlag(argv);
+	if (mode === "rpc") return false;
+	if (mode === "json") return true;
+	return argv.includes("-p") || argv.includes("--print") || !stdinTty || !stdoutTty;
+}
+
+function modeFlag(argv: readonly string[]): "text" | "json" | "rpc" | undefined {
+	const index = argv.indexOf("--mode");
+	const value = index === -1 ? undefined : argv[index + 1];
+	return value === "text" || value === "json" || value === "rpc" ? value : undefined;
+}
+
+let cachedOneshot: boolean | undefined;
+
+function isOneshotRun(): boolean {
+	cachedOneshot ??= oneshotRun(
+		process.argv.slice(2),
+		process.stdin.isTTY === true,
+		process.stdout.isTTY === true,
+	);
+	return cachedOneshot;
+}
+
 function scheduleIdleReflection(pi: ExtensionAPI, sessionId: string | null): void {
 	if (!knobBoolean("TORUS_REFLECTION", "reflection", "enabled", true, parseZeroDisables)) return;
 	if (reflectTimer) clearTimeout(reflectTimer);
@@ -1218,7 +1257,7 @@ async function runIdleReflection(
 	sessionId: string | null,
 	trigger: "idle" | "turns",
 ): Promise<void> {
-	if (!sessionId || reflectInFlight) return;
+	if (!sessionId || reflectInFlight || isOneshotRun()) return;
 	reflectInFlight = true;
 	try {
 		const settlesSinceLastReflect = settleCount - readReflectState(sessionId).lastReflectSettles;
@@ -1314,6 +1353,7 @@ export function undreamedActivity(): boolean {
 
 async function dream(_pi: ExtensionAPI): Promise<void> {
 	if (!knobBoolean("TORUS_DREAMING", "reflection", "dreaming", true, parseZeroDisables)) return;
+	if (isOneshotRun()) return;
 	if (Date.now() - lastDreamAt() < DREAM_INTERVAL_MS) return;
 	if (!undreamedActivity()) return;
 	markDreamed();
