@@ -418,7 +418,7 @@ Periodic command watcher: runs a shell command on an interval, hashes its output
 - **Hooks:** `session_shutdown`: stop all
 - **Env:** `TORUS_MONITOR=0` disables
 
-Stops on `stopOn: change` (output hash changed) or `stopOn: fail` (command failed). History lands in `$TORUS_STATE_DIR/monitors/<name>.log`; at most 5 concurrent monitors (oldest evicted). When a monitor fires, a `torus.monitor-fired` transcript notification also lands in the session (name, reason, exit code, output tail; rendered like the fleet markers) and wakes the model through the wake gate: an idle session gets the marker straight away, a mid-run one holds it so the fire joins the single settle flush instead of trickling out of the follow-up queue one turn apiece.
+Stops on `stopOn: change` (output hash changed) or `stopOn: fail` (command failed). History lands in `$TORUS_STATE_DIR/monitors/<name>.log`; at most 5 concurrent monitors (oldest evicted). When a monitor fires, a `torus.monitor-fired` transcript notification also lands in the session (name, reason, exit code, output tail; rendered like the fleet markers) and wakes the model through the wake gate: an idle session gets the marker straight away, a mid-run one holds it so the fire joins the single settle flush instead of trickling out of the follow-up queue one turn apiece. Waiting on a monitor therefore means ending the turn rather than waiting in it: the gate holds the marker while a run is active, so in-turn sleeping or re-polling can never observe the fire. The arm-time tool result and the tool description both steer the model there.
 
 ### `fleet`
 

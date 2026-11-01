@@ -192,7 +192,7 @@ const monitorTool = defineTool({
 	name: "torus_monitor",
 	label: "Torus Monitor",
 	description:
-		"Watch a shell command on an interval; desktop-notifies and stops when its output changes (stopOn: change) or it exits non-zero (stopOn: fail). History lands in $TORUS_STATE_DIR/monitors/<name>.log. Use for CI tails, file watches, long builds.",
+		"Watch a shell command on an interval; desktop-notifies and stops when its output changes (stopOn: change) or it exits non-zero (stopOn: fail). History lands in $TORUS_STATE_DIR/monitors/<name>.log. Use for CI tails, file watches, long builds. To wait on the outcome, end the turn rather than sleeping or re-polling in-turn: the fire marker wakes the session, and the wake gate holds delivery while a run is active.",
 	parameters: Type.Object({
 		name: Type.String({ description: "Short monitor name ([a-z0-9-])" }),
 		command: Type.String({ description: "Shell command whose output is watched" }),
@@ -247,7 +247,7 @@ const monitorTool = defineTool({
 			content: [
 				{
 					type: "text",
-					text: `monitor "${params.name}" running every ${intervalSec}s (${entry.stopOn}) — first check logged; auto-stops itself when it fires; torus_monitor_stop only to cancel before that`,
+					text: `monitor "${params.name}" running every ${intervalSec}s (${entry.stopOn}) — first check logged; auto-stops itself when it fires; torus_monitor_stop only to cancel before that; to wait on it, end the turn rather than sleeping or re-polling: the fire marker wakes the session, and the wake gate holds delivery while a run is active, so in-turn polling never sees it`,
 				},
 			],
 			details: toolDetails({ name: params.name, intervalSec, active: monitors().size }),
