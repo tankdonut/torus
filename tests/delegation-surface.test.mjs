@@ -622,6 +622,59 @@ test("session_start docks chips, then the fleet strip, then a blank-row gap", ()
 	assert.deepEqual(gap.render(140), [""], "the gap paints exactly one blank row");
 });
 
+test("pi-lsp footer status is absorbed into the main segment, right after mcp", () => {
+	const handlers = {};
+	const fakePi = {
+		on: (event, handler) => {
+			handlers[event] = handler;
+		},
+		getMcpServers: () => [],
+		getActiveTools: () => [],
+		getSettings: () => ({ quietStartup: true }),
+	};
+	ui.registerUi(fakePi);
+	ui.torusChips().delete("torus");
+	const forwarded = [];
+	const uiSurface = {
+		setStatus: (key, text) => forwarded.push([key, text]),
+		setWidget: () => {},
+		theme: { fg: (_color, text) => text, bold: (text) => `*${text}*` },
+	};
+	const ctx = { mode: "tui", ui: uiSurface };
+	handlers["session_start"]({ type: "session_start", reason: "startup" }, ctx);
+	assert.notEqual(uiSurface.setStatus, forwarded.push.bind(forwarded));
+
+	uiSurface.setStatus("pi-lsp", "\u001b[32mLSP 2\u001b[0m");
+	const main = ui.torusChips().get("torus") ?? "";
+	assert.ok(main.includes("lsp:2"), "the wrap repaints the main segment through the captured ctx");
+	assert.ok(
+		main.replaceAll("\u001b", "").includes("[32mlsp:2[0m"),
+		"the count is restyled in place, SGR colors survive verbatim",
+	);
+	assert.deepEqual(forwarded.at(-1), ["pi-lsp", undefined], "the footer slot stays clear");
+
+	ui.setStatusExtras({ connected: 2, registered: 2 }, null);
+	uiSurface.setStatus("pi-lsp", "LSP 2 init 1");
+	const order = ui.buildStatus();
+	assert.ok(
+		order.indexOf("mcp:2") < order.indexOf("lsp:2 init 1"),
+		"lsp renders inside the main segment right after the mcp count",
+	);
+	assert.ok(!order.includes("LSP "), "transient parts keep their wording, the count does not");
+
+	uiSurface.setStatus("other", "git main");
+	assert.deepEqual(forwarded.at(-1), ["other", "git main"], "foreign keys pass through untouched");
+
+	uiSurface.setStatus("pi-lsp", undefined);
+	assert.ok(!ui.buildStatus().includes("lsp:"), "clearing the status clears the segment");
+	ui.setStatusExtras(null, null);
+
+	handlers["session_start"]({ type: "session_start", reason: "resume" }, ctx);
+	forwarded.length = 0;
+	uiSurface.setStatus("other", "x");
+	assert.equal(forwarded.length, 1, "a re-fired session_start does not stack wrappers");
+});
+
 function registeredTools() {
 	const tools = [];
 	team.registerTeam({

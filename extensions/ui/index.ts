@@ -35,6 +35,16 @@ export const STATUS_KEY = "torus";
 const STATUSLINE_WIDGET_KEY = "torus-statusline";
 const DOCK_GAP_WIDGET_KEY = "torus-dock-gap";
 
+/** pi-lsp-client's ctx.ui.setStatus key (sha-pinned upstream; a rename degrades to the footer chip). */
+const LSP_STATUS_KEY = "pi-lsp";
+/** The absorbed lsp display text: on the Symbol.for global, not module state, so every ui module instance renders it. */
+const LSP_TEXT_KEY = Symbol.for("torus.statusline.lsp.v1");
+const STATUS_WRAP_MARK = Symbol.for("torus.status-absorb.v1");
+
+function lspText(): string | undefined {
+	return (globalThis as Record<symbol, unknown>)[LSP_TEXT_KEY] as string | undefined;
+}
+
 /** Persistent session-cost chip key; `torus:`-prefixed like the delegation markers. */
 export const COST_STATUS_KEY = "torus:cost";
 
@@ -71,6 +81,38 @@ export function setTorusChip(key: string, text: string | undefined): void {
 		| (() => void)
 		| undefined;
 	repaint?.();
+}
+
+let ctxForStatusRefresh: ExtensionContext | null = null;
+
+/**
+ * Absorb pi-lsp-client's footer status into the main statusline segment. The
+ * engine hands every extension in a session one shared ui context, so wrapping
+ * its setStatus once per session_start intercepts pi-lsp's calls too: "LSP 2"
+ * becomes an lsp:2 segment right after the mcp count (SGR colors arrive baked
+ * in and survive verbatim) and the footer slot stays clear. Other keys pass
+ * through untouched; a marker keeps re-fired session starts from stacking
+ * wrappers on the same object.
+ */
+function installLspStatusAbsorb(ui: ExtensionContext["ui"]): void {
+	const setStatus = ui.setStatus;
+	const mark = setStatus as unknown as Record<symbol, boolean>;
+	if (typeof setStatus !== "function" || mark[STATUS_WRAP_MARK]) {
+		return;
+	}
+	const forward: (key: string, text: string | undefined) => void = setStatus.bind(ui);
+	const wrapped = (key: string, text: string | undefined): void => {
+		if (key === LSP_STATUS_KEY) {
+			(globalThis as Record<symbol, unknown>)[LSP_TEXT_KEY] =
+				text === undefined ? undefined : text.replaceAll("LSP ", "lsp:");
+			if (ctxForStatusRefresh) refreshToruStatus(ctxForStatusRefresh);
+			forward(key, undefined);
+			return;
+		}
+		forward(key, text);
+	};
+	(wrapped as unknown as Record<symbol, boolean>)[STATUS_WRAP_MARK] = true;
+	ui.setStatus = wrapped;
 }
 
 /**
@@ -299,6 +341,10 @@ export function buildStatus(theme?: StatusPainter): string {
 		const color = mcpCounts.connected > 0 ? "success" : "warning";
 		segments.push(theme ? theme.fg(color, mcpText) : mcpText);
 	}
+	// the absorbed pi-lsp status: pre-styled (SGR baked in), rendered right after
+	// the mcp count so the two health chips read as one group
+	const lsp = lspText();
+	if (lsp) segments.push(lsp);
 	if (goalChip) {
 		// state rides the color, not an icon: warning while active, dim while paused
 		const color = goalChip.status === "active" ? "warning" : "dim";
@@ -597,6 +643,10 @@ export function registerUi(pi: ExtensionAPI): void {
 		}));
 		installStartupBanner(pi, ctx);
 		installCursorBlinkWidget(ctx);
+		if (ctx.mode === "tui") {
+			ctxForStatusRefresh = ctx;
+			installLspStatusAbsorb(ctx.ui);
+		}
 	});
 
 	pi.on("turn_start", (_event, ctx: ExtensionContext) => {
