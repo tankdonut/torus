@@ -17,7 +17,8 @@
  *
  * If the engine is missing in the resolved payload — or the embedded payload's
  * dependency manifest changed since the last run — the launcher bootstraps it
- * via `npm install` there (cooldown-safe pin).
+ * there via `npm ci` when the payload carries a lock matching its manifest,
+ * else `npm install` (cooldown-safe pin).
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -339,6 +340,7 @@ if (argv[0] === "config") {
 }
 
 if (argv[0] === "--version" || argv[0] === "-v") {
+	resolveBinary();
 	process.stdout.write(`torus ${pkg.version}${pin ? ` (pi@${pin})` : ""}\n`);
 	process.exit(0);
 }
@@ -367,6 +369,21 @@ if (error) {
 }
 if (mode !== undefined) process.env["TORUS_PERMISSION_MODE"] = mode;
 
+/**
+ * `npm ci` installs the engine only from a lock generated for this payload
+ * manifest (same root name). A repo-shaped lock does not satisfy the payload
+ * manifest, so those roots float via `npm install` instead.
+ */
+function payloadLockMatches(root) {
+	try {
+		const lock = JSON.parse(readFileSync(path.join(root, "package-lock.json"), "utf8"));
+		const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+		return typeof lock.name === "string" && lock.name === manifest.name;
+	} catch {
+		return false;
+	}
+}
+
 function resolveBinary() {
 	const envBin = process.env["TORUS_PI_BIN"];
 	if (envBin) return envBin;
@@ -375,20 +392,19 @@ function resolveBinary() {
 
 	const pkg = path.join(root, "package.json");
 	if (!existsSync(pkg)) return "pi";
+	const args = payloadLockMatches(root)
+		? ["ci", "--no-fund", "--no-audit", "--omit=dev", "--legacy-peer-deps"]
+		: ["install", "--no-fund", "--no-audit", "--omit=dev", "--legacy-peer-deps"];
 	process.stderr.write(
-		`torus: ${payloadRefreshed ? "payload changed — installing" : "engine missing — bootstrapping"} (npm install in ${root})...\n`,
+		`torus: ${payloadRefreshed ? "payload changed — installing" : "engine missing — bootstrapping"} (npm ${args[0]} in ${root})...\n`,
 	);
-	const install = spawnSync(
-		"npm",
-		["install", "--no-fund", "--no-audit", "--omit=dev", "--legacy-peer-deps"],
-		{
-			cwd: root,
-			stdio: "inherit",
-		},
-	);
+	const install = spawnSync("npm", args, {
+		cwd: root,
+		stdio: "inherit",
+	});
 	if (install.status !== 0 || !existsSync(local)) {
 		process.stderr.write(
-			`torus: bootstrap failed — run npm install in ${root} or set TORUS_PI_BIN\n`,
+			`torus: bootstrap failed — run npm ci or npm install in ${root} or set TORUS_PI_BIN\n`,
 		);
 		process.exit(1);
 	}

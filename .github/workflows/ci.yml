@@ -81,6 +81,31 @@ jobs:
         run: |
           test -x dist/torus/bin/torus
           TORUS_PI_BIN="$PWD/node_modules/.bin/pi" dist/torus/bin/torus --list-models
+      - name: Fresh-home determinism smoke (x64 Linux)
+        if: matrix.target == 'bun-linux-x64'
+        run: |
+          H=$(mktemp -d)
+          RT="$H/.torus/runtime"
+          HOME="$H" dist/torus/bin/torus --version 2>"$H/first.err"
+          grep -Eq 'torus: .*(installing|bootstrapping) \((npm ci|npm install)' "$H/first.err" \
+            || { echo "first run must bootstrap the engine"; cat "$H/first.err"; exit 1; }
+          HOME="$H" dist/torus/bin/torus --version 2>"$H/second.err"
+          ! grep -Eq 'torus: .*(installing|bootstrapping|extracting)' "$H/second.err" \
+            || { echo "second run must not reinstall"; cat "$H/second.err"; exit 1; }
+          # version source: the built payload lock once it exists, else the repo lock the payload embeds
+          LOCK=package-lock.json
+          if [ -f dist/payload-lock.json ]; then LOCK=dist/payload-lock.json; fi
+          want() { node -p "JSON.parse(require('fs').readFileSync('$LOCK','utf8')).packages['node_modules/$1']?.version ?? ''"; }
+          got() { node -p "require('$RT/node_modules/$1/package.json').version"; }
+          for dep in zod undici '@earendil-works/pi-coding-agent'; do
+            g=$(got "$dep")
+            w=$(want "$dep")
+            echo "$dep: installed $g, locked $w"
+            if [ "$g" != "$w" ]; then
+              echo "$dep must match $LOCK"
+              exit 1
+            fi
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.artifact }}

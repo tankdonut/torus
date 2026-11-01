@@ -122,6 +122,39 @@ test("release job: staging step stages, checksums, and passes a consistent versi
 	assert.ok(true, "staged binaries must be executable — artifact download strips the bit");
 });
 
+test("build job: fresh-home smoke bootstraps once and checks locked versions", () => {
+	const marker = "- name: Fresh-home determinism smoke (x64 Linux)";
+	const at = ciWorkflow.indexOf(marker);
+	assert.ok(at >= 0, "build job must contain the fresh-home determinism smoke step");
+	const end = ciWorkflow.indexOf("- uses: actions/upload-artifact", at);
+	assert.ok(end > at, "smoke step must stay inside the build job's steps");
+	const step = ciWorkflow.slice(at, end);
+	assert.ok(
+		(step.match(/dist\/torus\/bin\/torus --version/g) ?? []).length === 2,
+		"smoke must run --version twice: bootstrap once, then prove no reinstall",
+	);
+	assert.ok(
+		step.includes("grep -Eq 'torus: .*(installing|bootstrapping) \\((npm ci|npm install)'"),
+		"first run must assert the bootstrap line on stderr",
+	);
+	assert.ok(
+		step.includes("second run must not reinstall"),
+		"second run must assert the absence of a bootstrap line",
+	);
+	assert.ok(
+		step.includes("for dep in zod undici '@earendil-works/pi-coding-agent'"),
+		"smoke must compare installed zod, undici, and engine versions",
+	);
+	assert.ok(
+		step.includes("require('$RT/node_modules/$1/package.json').version"),
+		"installed versions must be read from the fresh runtime's node_modules",
+	);
+	assert.ok(
+		step.includes("dist/payload-lock.json"),
+		"version comparison must use the built payload lock when it exists",
+	);
+});
+
 test("release job: staging step fails on tag/package/binary version skew", (t) => {
 	const dir = mkdtempSync(path.join(tmpdir(), "torus-release-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
