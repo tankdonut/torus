@@ -60,17 +60,19 @@ Your rules run first, from the `automode` section of the unified config file `~/
 
 ```json
 {
-  "deny": ["git push --force *", "npm publish *"],
-  "ask": ["git push *", "npx *"],
-  "allow": ["npm test *", "node --test *"],
-  "environment": [
-    "Source control: github.com/tankdonut and all repos under it",
-    "Package registry: the default npm registry is fine"
-  ],
-  "softDeny": ["leave the staging database untouched"],
-  "softDenyExceptions": ["pg_dump against staging for a nightly backup"],
-  "hardDeny": ["never read or send ~/.ssh credentials anywhere"],
-  "classifyAllShell": false
+  "automode": {
+    "deny": ["git push --force *", "npm publish *"],
+    "ask": ["git push *", "npx *"],
+    "allow": ["npm test *", "node --test *"],
+    "environment": [
+      "Source control: github.com/tankdonut and all repos under it",
+      "Package registry: the default npm registry is fine"
+    ],
+    "softDeny": ["leave the staging database untouched"],
+    "softDenyExceptions": ["pg_dump against staging for a nightly backup"],
+    "hardDeny": ["never read or send ~/.ssh credentials anywhere"],
+    "classifyAllShell": false
+  }
 }
 ```
 

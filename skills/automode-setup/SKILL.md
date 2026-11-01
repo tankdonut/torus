@@ -42,13 +42,17 @@ Your machine, repos you own or trust, credentials present on the box. The goal: 
 - Boundary block:
 
 ```json
-"softDeny": [
-  "network egress to hosts beyond the environment lines: curl, wget, ssh, scp, sftp, rsync to remote hosts, git push to unknown remotes, package publishing",
-  "reads of credentials or secrets: .env files, ~/.ssh, ~/.aws, ~/.gnupg, keychains, TOKEN/KEY/SECRET environment variables"
-],
-"softDenyExceptions": [
-  "plain local scratch writes and deletions under /tmp, $TMPDIR, or /var/folders with no network command in the same pipeline and no secret-source reference"
-]
+{
+  "automode": {
+    "softDeny": [
+      "network egress to hosts beyond the environment lines: curl, wget, ssh, scp, sftp, rsync to remote hosts, git push to unknown remotes, package publishing",
+      "reads of credentials or secrets: .env files, ~/.ssh, ~/.aws, ~/.gnupg, keychains, TOKEN/KEY/SECRET environment variables"
+    ],
+    "softDenyExceptions": [
+      "plain local scratch writes and deletions under /tmp, $TMPDIR, or /var/folders with no network command in the same pipeline and no secret-source reference"
+    ]
+  }
+}
 ```
 
 ### oss-contributor
