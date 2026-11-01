@@ -5,6 +5,7 @@ import monoLatinExt from "@fontsource-variable/jetbrains-mono/files/jetbrains-mo
 import monoLatin from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2";
 import "../styles/global.css";
 import GitHubMark from "../components/GitHubMark.astro";
+import ThemeToggle from "../components/ThemeToggle.astro";
 import { installCopyButtons } from "../lib/copy-buttons.mjs";
 
 interface Props {
@@ -57,10 +58,10 @@ const fontFaces = [
 			<a class="wordmark" href={`${base}/`}>torus</a>
 			<span class="seg sep" aria-hidden="true">·</span>
 			<a class="seg" href={`${base}/docs/`}>docs</a>
-			<button class="theme-toggle" type="button" aria-label="color theme">theme:auto</button>
 			<a class="gh" href="https://github.com/tankdonut/torus" aria-label="torus on GitHub">
 				<GitHubMark />
 			</a>
+			<ThemeToggle />
 		</header>
 		<main class={wide ? "wide" : ""}>
 			<slot />
@@ -105,7 +106,9 @@ const fontFaces = [
 					return t === "light" || t === "dark" ? t : "auto";
 				};
 				const paint = () => {
-					button.textContent = `theme:${current()}`;
+					const t = current();
+					button.title = `theme:${t}`;
+					button.setAttribute("aria-label", `color theme: ${t}`);
 				};
 				button.addEventListener("click", () => {
 					const next = order[(order.indexOf(current()) + 1) % order.length];

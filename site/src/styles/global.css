@@ -124,30 +124,53 @@ footer a:hover {
 	text-decoration: underline;
 }
 
+img,
+svg,
+video {
+	max-width: 100%;
+	height: auto;
+}
+
 a.gh {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.4em;
 }
 
-/* The header's theme toggle is a statusline segment: mono, quiet, and only
-   offered when scripts can honor it (has-js lands before first paint). */
+/* The header's theme toggle is a glyph control, offered only when scripts
+   can honor it (has-js lands before first paint). All three icons ship in
+   the markup; these rules prune them to the one matching the html theme
+   state, which the head script sets before first paint. */
 button.theme-toggle {
 	display: none;
-	font: inherit;
 	color: var(--color-muted);
 	background: none;
 	border: none;
 	padding: 0;
 	cursor: pointer;
+	line-height: 0;
 }
 
 .has-js button.theme-toggle {
-	display: inline;
+	display: inline-flex;
+	align-items: center;
 }
 
 button.theme-toggle:hover {
 	color: var(--color-accent);
+}
+
+button.theme-toggle svg {
+	display: none;
+}
+
+html[data-theme="light"] button.theme-toggle .icon-light,
+html[data-theme="dark"] button.theme-toggle .icon-dark {
+	display: block;
+}
+
+html:not([data-theme]) button.theme-toggle .icon-auto {
+	display: block;
 }
 
 header,
@@ -332,13 +355,6 @@ pre code {
 :focus-visible {
 	outline: 2px solid var(--color-accent);
 	outline-offset: 2px;
-}
-
-img,
-svg,
-video {
-	max-width: 100%;
-	height: auto;
 }
 
 ul,

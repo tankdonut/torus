@@ -1,0 +1,57 @@
+---
+// The header's theme toggle as a glyph control: three currentColor icons
+// (half-dial for auto, sun, crescent), all rendered and pruned to one by
+// global.css reacting to the html[data-theme] state the head script keeps.
+// The cycle handler lives in the layouts; the button's tooltip carries the
+// theme:auto statusline grammar instead of its face.
+---
+<button class="theme-toggle" type="button" aria-label="color theme">
+	<svg
+		class="icon icon-auto"
+		xmlns="http://www.w3.org/2000/svg"
+		viewBox="0 0 24 24"
+		width="16"
+		height="16"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="2"
+		aria-hidden="true"
+		focusable="false"
+	>
+		<circle cx="12" cy="12" r="9"></circle>
+		<path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"></path>
+	</svg>
+	<svg
+		class="icon icon-light"
+		xmlns="http://www.w3.org/2000/svg"
+		viewBox="0 0 24 24"
+		width="16"
+		height="16"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="2"
+		stroke-linecap="round"
+		aria-hidden="true"
+		focusable="false"
+	>
+		<circle cx="12" cy="12" r="4"></circle>
+		<path
+			d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+		></path>
+	</svg>
+	<svg
+		class="icon icon-dark"
+		xmlns="http://www.w3.org/2000/svg"
+		viewBox="0 0 24 24"
+		width="16"
+		height="16"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="2"
+		stroke-linejoin="round"
+		aria-hidden="true"
+		focusable="false"
+	>
+		<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>
+	</svg>
+</button>

@@ -17,6 +17,7 @@ import Faq from "../components/Faq.astro";
 import GitHubMark from "../components/GitHubMark.astro";
 import RepoCard from "../components/RepoCard.astro";
 import Section from "../components/Section.astro";
+import ThemeToggle from "../components/ThemeToggle.astro";
 import TuiCapture from "../components/TuiCapture.astro";
 import repo from "../stats/repo.json";
 
@@ -116,10 +117,10 @@ const fontFaces = [
 			<span class="seg">v{version}</span>
 			<span class="seg sep" aria-hidden="true">·</span>
 			<a class="seg" href={docsHref}>docs</a>
-			<button class="theme-toggle" type="button" aria-label="color theme">theme:auto</button>
 			<a class="gh" href="https://github.com/tankdonut/torus" aria-label="torus on GitHub">
 				<GitHubMark />
 			</a>
+			<ThemeToggle />
 		</header>
 		<main>
 			<section class="hero">
@@ -371,7 +372,9 @@ const fontFaces = [
 					return t === "light" || t === "dark" ? t : "auto";
 				};
 				const paint = () => {
-					button.textContent = `theme:${current()}`;
+					const t = current();
+					button.title = `theme:${t}`;
+					button.setAttribute("aria-label", `color theme: ${t}`);
 				};
 				button.addEventListener("click", () => {
 					const next = order[(order.indexOf(current()) + 1) % order.length];
