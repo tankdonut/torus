@@ -490,7 +490,11 @@ td {
 	border-bottom: 1px solid var(--rule);
 	text-align: left;
 	vertical-align: top;
-	overflow-wrap: break-word;
+	/* "anywhere", not "break-word": break-word does not reduce a table's
+	   min-content width, so wide matrices force .table-wrap to scroll
+	   horizontally. "anywhere" lets cells wrap as a last resort so the
+	   table can shrink to its container. */
+	overflow-wrap: anywhere;
 }
 
 th + th,
