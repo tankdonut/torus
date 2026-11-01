@@ -30,44 +30,75 @@ function toolPin(plugin) {
 const nodePin = toolPin("nodejs");
 const astGrepPin = dockerfileArg("AST_GREP_VERSION");
 
-test("container: node/bun versions come from .tool-versions, not Dockerfile defaults", () => {
-	for (const [argName, plugin] of [
-		["NODE_VERSION", "nodejs"],
-		["BUN_VERSION", "bun"],
-	]) {
-		const pin = toolPin(plugin);
-		assert.ok(pin, `.tool-versions must contain a ${plugin} pin`);
-		assert.ok(
-			new RegExp(`^ARG ${argName}$`, "m").test(dockerfile),
-			`Dockerfile must declare bare ARG ${argName} — ${plugin} is pinned in .tool-versions, not defaulted`,
-		);
-		assert.ok(
-			makeSh.includes(`${argName}="$(awk '$1=="${plugin}"{print $2}' .tool-versions)"`),
-			`./make.sh image must resolve ${argName} from .tool-versions (${plugin})`,
-		);
-		assert.ok(
-			makeSh.includes(`--build-arg ${argName}="$${argName}"`),
-			`./make.sh image must pass ${argName} as a docker build-arg`,
-		);
-	}
+test("container: bun version comes from .tool-versions; node base is a Dockerfile literal", () => {
+	const bunPin = toolPin("bun");
+	assert.ok(bunPin, ".tool-versions must contain a bun pin");
+	assert.ok(
+		/^ARG BUN_VERSION$/m.test(dockerfile),
+		"Dockerfile must declare bare ARG BUN_VERSION — bun is pinned in .tool-versions, not defaulted",
+	);
+	assert.ok(
+		makeSh.includes(`BUN_VERSION="$(awk '$1=="bun"{print $2}' .tool-versions)"`),
+		"./make.sh image must resolve BUN_VERSION from .tool-versions (bun)",
+	);
+	assert.ok(
+		makeSh.includes(`--build-arg BUN_VERSION="$BUN_VERSION"`),
+		"./make.sh image must pass BUN_VERSION as a docker build-arg",
+	);
+	assert.ok(
+		!/^ARG NODE_VERSION/m.test(dockerfile),
+		"Dockerfile must not declare NODE_VERSION — the base is digest-pinned",
+	);
+	assert.ok(
+		!makeSh.includes("NODE_VERSION"),
+		"./make.sh must not pass NODE_VERSION — the base is digest-pinned",
+	);
 });
 
-test("container: every Dockerfile FROM pins a version (no :latest, no bare image)", () => {
+test("container: every FROM is digest-pinned at the .tool-versions nodejs version", () => {
 	const froms = [...dockerfile.matchAll(/^FROM\s+(\S+)/gm)].map((m) => m[1]);
 	assert.ok(froms.length > 0, "no FROM lines found in Dockerfile");
+	const digests = new Set();
 	for (const image of froms) {
-		const colon = image.lastIndexOf(":");
-		assert.ok(colon !== -1, `FROM ${image} must pin an explicit tag`);
-		const tag = image.slice(colon + 1);
+		const parsed = /^([^:@\s]+):([^:@\s]+)@sha256:([0-9a-f]{64})$/.exec(image);
+		assert.ok(parsed, `FROM ${image} must be <repo>:<tag>@sha256:<digest>`);
+		const [, repo, tag, digest] = parsed;
 		assert.notEqual(tag.toLowerCase(), "latest", `FROM ${image} must not float on :latest`);
-		for (const arg of [...tag.matchAll(/\$\{([A-Z_]+)\}/g)].map((m) => m[1])) {
-			if (dockerfileArg(arg) !== undefined) continue;
-			assert.ok(
-				makeSh.includes(`--build-arg ${arg}=`),
-				`FROM ${image} uses ARG ${arg} which has no default and no make.sh image --build-arg`,
-			);
-		}
+		assert.equal(
+			repo,
+			"mirror.gcr.io/library/node",
+			`FROM ${image} must keep the mirror.gcr.io host`,
+		);
+		assert.equal(
+			tag,
+			`${nodePin}-slim`,
+			`FROM tag must equal the .tool-versions nodejs pin (${nodePin}), only adding the -slim variant`,
+		);
+		digests.add(digest);
 	}
+	assert.equal(digests.size, 1, "both stages must build from the same digest");
+});
+
+test("container: ast-grep zip is checksum-verified before unzip", () => {
+	for (const [name, triple] of [
+		["AST_GREP_SHA256_X86_64", "x86_64-unknown-linux-gnu"],
+		["AST_GREP_SHA256_AARCH64", "aarch64-unknown-linux-gnu"],
+	]) {
+		const recorded = dockerfileArg(name);
+		assert.ok(recorded, `Dockerfile must record ARG ${name} — the ${triple} zip has no checksum`);
+		assert.match(recorded, /^[0-9a-f]{64}$/, `${name} must be a sha256 hex constant`);
+	}
+	const verifyAt = dockerfile.indexOf("sha256sum -c -");
+	const unzipAt = dockerfile.indexOf("unzip -j /tmp/sg.zip");
+	assert.ok(
+		verifyAt !== -1 && unzipAt !== -1 && verifyAt < unzipAt,
+		"the ast-grep zip must pass sha256sum -c before unzip",
+	);
+	assert.ok(
+		/\$\{AST_GREP_SHA256_X86_64\}/.test(dockerfile) &&
+			/\$\{AST_GREP_SHA256_AARCH64\}/.test(dockerfile),
+		"the verify step must compare against the recorded per-arch constants",
+	);
 });
 
 test("container: runtime-stage apt install ships every agent runtime dep", () => {
@@ -235,7 +266,7 @@ test("container: ci.yml builds each platform once, tests the pushed digest, merg
 		),
 		"platform builds must read both GHA cache scopes",
 	);
-	for (const arg of ["NODE_VERSION", "BUN_VERSION"]) {
+	for (const arg of ["BUN_VERSION"]) {
 		assert.ok(
 			ciWorkflow.includes(`${arg}=$(awk`),
 			`container jobs must resolve ${arg} from .tool-versions for the build args`,

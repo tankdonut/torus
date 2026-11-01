@@ -11,16 +11,20 @@
 # agent needs at runtime: tmux, bubblewrap, socat, git, ripgrep,
 # notify-send, ast-grep (sg) and a pinned typescript-language-server.
 
-# required build-args, no defaults — ./make.sh image and CI resolve them from .tool-versions
+# BUN_VERSION has no default: ./make.sh image and CI resolve it from
+# .tool-versions. Every other input is pinned in this file — the node base
+# by manifest-list digest (tag tracks the .tool-versions nodejs pin), and
+# ast-grep by release tag plus per-arch sha256.
 # Base image comes from mirror.gcr.io (Google's pull-through mirror of Docker
 # Official Images): anonymous pulls are not subject to Docker Hub's per-IP
 # rate limits, which intermittently red CI on shared runner egress IPs.
 # ./make.sh image builds against the same mirror.
-ARG NODE_VERSION
 ARG BUN_VERSION
 ARG AST_GREP_VERSION=0.45.3
+ARG AST_GREP_SHA256_X86_64=f8ac830881339d1edee6b2652f54798c0f4da5a827f2db38a08ee31117783ce8
+ARG AST_GREP_SHA256_AARCH64=b39cfbc58da4b869a88b8a4bc57bd5deb0d24541e704cf7c257da7b53ec81c8f
 
-FROM mirror.gcr.io/library/node:${NODE_VERSION}-slim AS build
+FROM mirror.gcr.io/library/node:26.12.1-slim@sha256:94816674c62774da0d099a947bf4613b9e1972a2733abd0d0cd80e795f8411d0 AS build
 
 # global ARGs only apply to FROM; re-declare to use inside the stage
 ARG BUN_VERSION
@@ -58,7 +62,7 @@ RUN set -eux; \
     npm ci --no-fund --no-audit --omit=dev --legacy-peer-deps; \
     node_modules/.bin/pi --version
 
-FROM mirror.gcr.io/library/node:${NODE_VERSION}-slim
+FROM mirror.gcr.io/library/node:26.12.1-slim@sha256:94816674c62774da0d099a947bf4613b9e1972a2733abd0d0cd80e795f8411d0
 
 # tmux bubblewrap socat git ripgrep libnotify-bin ca-certificates: agent
 # runtime deps. curl + unzip: only to fetch/extract the pinned ast-grep
@@ -71,16 +75,19 @@ RUN apt-get update \
 # ARGs do not cross stages — re-declare.
 ARG TARGETARCH
 ARG AST_GREP_VERSION
+ARG AST_GREP_SHA256_X86_64
+ARG AST_GREP_SHA256_AARCH64
 
 # ast-grep publishes rust-triple zip assets per release tag (note: tags carry
 # no "v" prefix). Resolve the exact asset URL from the GitHub API so a rename
 # cannot silently miss the pin; the zip ships both `ast-grep` and a `sg`
-# deprecation shim that execs it — install both.
+# deprecation shim that execs it — install both. The zip is verified against
+# the recorded sha256 for its triple before extraction.
 RUN set -eux; \
     arch="${TARGETARCH:-$(uname -m)}"; \
     case "$arch" in \
-        amd64|x86_64) SG_TRIPLE="x86_64-unknown-linux-gnu" ;; \
-        arm64|aarch64) SG_TRIPLE="aarch64-unknown-linux-gnu" ;; \
+        amd64|x86_64) SG_TRIPLE="x86_64-unknown-linux-gnu"; SG_SHA256="${AST_GREP_SHA256_X86_64}" ;; \
+        arm64|aarch64) SG_TRIPLE="aarch64-unknown-linux-gnu"; SG_SHA256="${AST_GREP_SHA256_AARCH64}" ;; \
         *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
     esac; \
     asset="$(curl -fsSL "https://api.github.com/repos/ast-grep/ast-grep/releases/tags/${AST_GREP_VERSION}" \
@@ -89,6 +96,7 @@ RUN set -eux; \
         | head -n 1)"; \
     [ -n "$asset" ]; \
     curl -fsSL "$asset" -o /tmp/sg.zip; \
+    echo "${SG_SHA256}  /tmp/sg.zip" | sha256sum -c -; \
     unzip -j /tmp/sg.zip sg ast-grep -d /usr/local/bin; \
     chmod 755 /usr/local/bin/sg /usr/local/bin/ast-grep; \
     rm -f /tmp/sg.zip; \

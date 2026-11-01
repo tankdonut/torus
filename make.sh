@@ -26,9 +26,8 @@ case "$cmd" in
 		./scripts/build-binary.sh "${2:-}" ${3:+--target "$3"}
 		;;
 	image)
-		NODE_VERSION="$(awk '$1=="nodejs"{print $2}' .tool-versions)"
 		BUN_VERSION="$(awk '$1=="bun"{print $2}' .tool-versions)"
-		docker build --build-arg NODE_VERSION="$NODE_VERSION" --build-arg BUN_VERSION="$BUN_VERSION" -t "${2:-torus:dev}" .
+		docker build --build-arg BUN_VERSION="$BUN_VERSION" -t "${2:-torus:dev}" .
 		;;
 	image-test)
 		TORUS_CONTAINER_TESTS=1 TORUS_IMAGE="${2:-torus:dev}" node --experimental-strip-types --import ./tests/resolve-ts-hook.mjs --test tests/container.test.mjs
