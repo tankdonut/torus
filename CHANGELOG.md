@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.19.0](https://github.com/tankdonut/torus/compare/v0.18.0...v0.19.0) (2026-11-01)
+
+
+### Features
+
+* **extensions/memory:** re-evaluate memory injection at prompt boundaries ([303afc5](https://github.com/tankdonut/torus/commit/303afc53dfe339db8f04b168b038cbc921edb7b6))
+* **extensions/memory:** redact credential shapes before writing memories ([2d51a5d](https://github.com/tankdonut/torus/commit/2d51a5df19290ac6000ecb0b00b26d27445f6834))
+* **extensions/work:** accept closed-with-gap checkbox rows in the work gate ([a799f48](https://github.com/tankdonut/torus/commit/a799f4816dd5c7ed07b50b515ae4282db6bc77ef))
+* **runtime:** boot the bundled engine offline from the embedded tree ([42b1706](https://github.com/tankdonut/torus/commit/42b1706d6fc0adffbba8006b572b021e41c65d27))
+* **scripts:** generate payload-native lock at build ([677735c](https://github.com/tankdonut/torus/commit/677735c9d487a68a0090e3d2b331978dc135c29b))
+* **scripts:** pack the payload dependency tree into the binary ([ab45f8a](https://github.com/tankdonut/torus/commit/ab45f8a68e0f409124457abce3f8aed896814157))
+* **skills/torus-plan:** verdict line, interview override, incremental draft ([3a7c0e8](https://github.com/tankdonut/torus/commit/3a7c0e8bd07c0b947cd1bea6050a4a0efe40b357))
+* **skills/torus-roadmap:** add long-horizon roadmap skill with grammar linter ([ac693d4](https://github.com/tankdonut/torus/commit/ac693d4dddb06a2a2f9502287073464e754566bc))
+* **skills:** teach torus-execute blocked-task closure and verification probes ([4d149eb](https://github.com/tankdonut/torus/commit/4d149eb1f143e0704be0f78a15f76c5cc146aaae))
+
+
+### Bug Fixes
+
+* **container:** install the baked payload from its generated lock ([25600d2](https://github.com/tankdonut/torus/commit/25600d285bc5ed7ecb201f7ebabc12a9d72245a1))
+* **container:** pin base images by digest and verify the ast-grep download ([9cfdf21](https://github.com/tankdonut/torus/commit/9cfdf217be648b1f8fb7e2bb153784391c56feed))
+* **extensions/memory:** skip dream and reflection in one-shot sessions ([3c4459c](https://github.com/tankdonut/torus/commit/3c4459cfa95610ddecbccd5819ff18992a6182fe))
+* **extensions/notify:** render wake-batch delegation completions like result markers ([76c8302](https://github.com/tankdonut/torus/commit/76c83022cf0ac289da44115c6aa49c7b2d71c87a))
+* **extensions/registry:** drop markers when the session ctx is stale ([be8210a](https://github.com/tankdonut/torus/commit/be8210a407a673ede4af1d359d07ba0671983c46))
+* **extensions/worktrees:** rename worktree_merge mainBranch to integrationBranch ([565e0ed](https://github.com/tankdonut/torus/commit/565e0eddef9a97693bbc3a59f6916c86157c00e1))
+* **extensions:** key delegation records on the canonical project dir ([69aafc1](https://github.com/tankdonut/torus/commit/69aafc1128823366fb657e199b13e119aadeb4f9))
+* keep the git-install channel working without dev dependencies ([aafcbd4](https://github.com/tankdonut/torus/commit/aafcbd479a2de3a0de625cd5617248919852acd0))
+* **runtime:** install the payload engine from its lock ([1331277](https://github.com/tankdonut/torus/commit/13312774c3402b9866412f7901822d310098e348))
+* **runtime:** verify the extracted payload at every start ([e0ce974](https://github.com/tankdonut/torus/commit/e0ce974704987a197ba070fe4fdeb0f3e75991af))
+* **skills/torus-roadmap:** enforce lane-section and decision-row grammar, pin linter checks ([c67093f](https://github.com/tankdonut/torus/commit/c67093f7b91f981d20a9c3f2b415677ac8d695ce))
+* stop shipping the cooldown-clearing payload .npmrc ([5111fd0](https://github.com/tankdonut/torus/commit/5111fd04edc38ad8b2086b779b76bb336c1909b9))
+
 ## [0.18.0](https://github.com/tankdonut/torus/compare/v0.17.0...v0.18.0) (2026-10-30)
 
 
