@@ -17,7 +17,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
@@ -26,6 +26,7 @@ const { buildSandboxConfig, parseSandboxEnv, resolveAdditionalWritableRoots } = 
 	"../extensions/sandbox/index.ts"
 );
 const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
+const { scratchDir } = await import("../extensions/fsutil.ts");
 
 const gateValue = process.env["TORUS_SANDBOX_DRIFT"] ?? "";
 const ENABLED = gateValue !== "" && gateValue !== "0" && gateValue !== "false";
@@ -230,6 +231,23 @@ test("wrapped env carries the localhost https proxy, link-local NO_PROXY, and sc
 		`TMPDIR ${wrappedTmpdir} is not under os.tmpdir()`,
 	);
 	assert.equal(wrappedTmpdir, harness.scratchDir, "TMPDIR should be the private scratch dir");
+});
+
+test("wrapped writes under the canonical scratch root succeed", async (t) => {
+	if (!gate(t)) return;
+	// srt drops allowWrite paths that do not exist; the harness skips the
+	// activation's ensureWritableRoots, so create the root host-side first —
+	// exactly what activation does before wrapping.
+	const root = scratchDir();
+	mkdirSync(root, { recursive: true });
+	const probe = path.join(root, `drift-probe-${randomBytes(4).toString("hex")}.txt`);
+	const result = await wrappedRun(`touch ${probe} && test -f ${probe}`);
+	assert.equal(result.timedOut, false);
+	assert.equal(
+		result.code,
+		0,
+		`write under the scratch root must be allowed: stderr: ${result.stderr}`,
+	);
 });
 
 test("wrapped kubectl version --client=true exits 0 (config reads stay allowed)", async (t) => {

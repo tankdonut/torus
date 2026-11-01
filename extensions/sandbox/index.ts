@@ -4,7 +4,7 @@
  * Opt-in (TORUS_SANDBOX=full; TORUS_SANDBOX_DEFAULT=full trials a default-on
  * environment without changing the shipped default) per-command isolation for agent bash calls, built on
  * @anthropic-ai/sandbox-runtime (srt): writes confined to the workspace
- * (+ tmp + extras + git/worktree plumbing), network restricted to a
+ * (+ tmp + extras + the scratch root + git/worktree plumbing), network restricted to a
  * curated allowlist plus user additions. Degrades to unsandboxed — with a one-time notice —
  * when dependencies are missing or init fails; bash is never bricked.
  *
@@ -16,6 +16,10 @@
  * to it; the git common dir (linked worktrees share refs/objects with the
  * main repo, so commits would otherwise be denied) and the torus worktrees
  * root (parent-side verification of delegated work) are added to allowWrite.
+ *
+ * The canonical scratch root (fsutil's scratchDir()) is a code-added writable
+ * root as well: durable agent scratch must stay writable under isolation, and
+ * the per-session CLAUDE_CODE_TMPDIR scratch is ephemeral, no substitute.
  *
  * Activation pre-creates non-existent writable roots (srt silently drops them
  * from allowWrite otherwise) and claims a fresh private scratch dir via
@@ -50,7 +54,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { readPersistedHosts } from "../approval/index.js";
 import { isBypassMode } from "../automode/config.js";
-import { torusHome } from "../fsutil.js";
+import { scratchDir, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	loadSandboxPolicy,
@@ -219,9 +223,9 @@ function worktreesRoot(): string | null {
 	return existsSync(root) ? root : null;
 }
 
-/** Extra writable roots required for git/worktree plumbing (see header). */
+/** Code-added writable roots beyond the policy layer: the canonical scratch root plus git/worktree plumbing (see header). */
 export function resolveAdditionalWritableRoots(cwd: string): string[] {
-	const roots = [gitCommonDir(cwd), worktreesRoot()];
+	const roots = [gitCommonDir(cwd), worktreesRoot(), scratchDir()];
 	return [...new Set(roots.filter((root): root is string => root !== null))];
 }
 

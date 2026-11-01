@@ -308,12 +308,12 @@ With `TORUS_SANDBOX` in the on family, every bash tool call is rewritten through
 
 | Boundary | Rule |
 | --- | --- |
-| Writes | Confined to the workspace + `/tmp` + `TORUS_SANDBOX_WRITABLE` extras + git plumbing (the repo's git common dir and the torus worktrees root; linked worktrees share refs/objects with the main repo) |
+| Writes | Confined to the workspace + `/tmp` + `TORUS_SANDBOX_WRITABLE` extras + the canonical scratch root + git plumbing (the repo's git common dir and the torus worktrees root; linked worktrees share refs/objects with the main repo) |
 | Network | Restricted to a curated exact-host allowlist (npm/PyPI/crates/GitHub/Golang proxy hosts; keeps installs and git-over-https working) |
 
 `interactive_bash` and user `!` commands are never wrapped. Fail-closed: a wrap failure blocks the call with an actionable reason. Missing bwrap/socat or init failure degrades to unsandboxed with a one-time stderr notice (`TORUS_SANDBOX=off` silences). `fs`-only mode is not expressible with srt (network restriction is schema-coupled), and unknown `TORUS_SANDBOX` values fall back to the effective default (`TORUS_SANDBOX_DEFAULT`, else off) with a one-time notice.
 
-Activation pre-creates a per-session private scratch dir under `/tmp` and points the wrapped `TMPDIR` at it, so concurrent sandboxes never share scratch. With `TORUS_SANDBOX_DEFAULT=full` set in the environment, new sessions start sandboxed while the shipped default stays off; an explicit `TORUS_SANDBOX=off` still wins.
+Activation pre-creates a per-session private scratch dir under `/tmp` and points the wrapped `TMPDIR` at it, so concurrent sandboxes never share scratch. The writable set also includes the canonical scratch root (`$TORUS_SCRATCH_DIR`, durable agent scratch; see the fsutil rows in [docs/configuration.md](configuration.md)), pre-created at activation so it cannot be dropped from `allowWrite`. With `TORUS_SANDBOX_DEFAULT=full` set in the environment, new sessions start sandboxed while the shipped default stays off; an explicit `TORUS_SANDBOX=off` still wins.
 
 #### srt behavior notes
 

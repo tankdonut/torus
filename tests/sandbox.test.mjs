@@ -17,6 +17,7 @@ const {
 	INSTALL_CACHE_ROOTS,
 	classifyDenial,
 } = await import("../extensions/sandbox/index.ts");
+const { scratchDir } = await import("../extensions/fsutil.ts");
 
 function fakeManager() {
 	const calls = { initialize: 0 };
@@ -191,6 +192,39 @@ test("activateSandbox: CLAUDE_CODE_TMPDIR points at a fresh private 0700 dir und
 	} finally {
 		if (previous === undefined) delete process.env.CLAUDE_CODE_TMPDIR;
 		else process.env.CLAUDE_CODE_TMPDIR = previous;
+	}
+});
+
+test("activateSandbox: scratch root joins the writable set and is pre-created, TORUS_SCRATCH_DIR override wins", async () => {
+	const previous = process.env.CLAUDE_CODE_TMPDIR;
+	const previousScratch = process.env.TORUS_SCRATCH_DIR;
+	const override = mkdtempSync(path.join(tmpdir(), "torus-sbx-scratch-"));
+	rmSync(override, { recursive: true, force: true });
+	const manager = fakeManager();
+	const notices = [];
+	try {
+		process.env.TORUS_SCRATCH_DIR = override;
+		const state = await activateSandbox(
+			{ mode: "full", requested: "full", writableExtras: [] },
+			fakeDeps(manager),
+			(m) => notices.push(m),
+			resolveAdditionalWritableRoots(process.cwd()),
+		);
+		assert.deepEqual(state, { mode: "full", active: true });
+		assert.equal(scratchDir(), override, "override spelling wins");
+		assert.ok(
+			manager.captured.config.filesystem.allowWrite.includes(override),
+			"scratch root is in allowWrite",
+		);
+		assert.ok(existsSync(override), "scratch root is pre-created at activation");
+		assert.equal(statSync(override).mode & 0o777, 0o700);
+		assert.deepEqual(notices, []);
+	} finally {
+		rmSync(override, { recursive: true, force: true });
+		if (previous === undefined) delete process.env.CLAUDE_CODE_TMPDIR;
+		else process.env.CLAUDE_CODE_TMPDIR = previous;
+		if (previousScratch === undefined) delete process.env.TORUS_SCRATCH_DIR;
+		else process.env.TORUS_SCRATCH_DIR = previousScratch;
 	}
 });
 
@@ -452,10 +486,12 @@ test("session_shutdown: reset runs once and the sandbox goes inert", async () =>
 	assert.equal(manager.calls.reset, 1);
 });
 
-test("resolveAdditionalWritableRoots: git common dir + worktrees root, absent pieces skipped", () => {
+test("resolveAdditionalWritableRoots: git common dir + worktrees root + scratch root, absent pieces skipped", () => {
 	const repo = mkdtempSync(path.join(tmpdir(), "torus-sbx-repo-"));
 	const outside = mkdtempSync(path.join(tmpdir(), "torus-sbx-out-"));
 	const previousWt = process.env.TORUS_WORKTREES_ROOT;
+	const previousScratch = process.env.TORUS_SCRATCH_DIR;
+	delete process.env.TORUS_SCRATCH_DIR;
 	process.env.TORUS_WORKTREES_ROOT = outside;
 	try {
 		const env = { ...process.env };
@@ -466,15 +502,18 @@ test("resolveAdditionalWritableRoots: git common dir + worktrees root, absent pi
 		const inRepo = resolveAdditionalWritableRoots(repo);
 		assert.ok(inRepo.includes(path.resolve(repo, ".git")));
 		assert.ok(inRepo.includes(outside));
+		assert.ok(inRepo.includes(scratchDir()), "default scratch root spelling resolves");
 		const plain = mkdtempSync(path.join(tmpdir(), "torus-sbx-plain-"));
 		const notRepo = resolveAdditionalWritableRoots(plain);
 		assert.ok(!notRepo.some((root) => root.startsWith(plain)));
 		assert.ok(notRepo.includes(outside));
 		process.env.TORUS_WORKTREES_ROOT = path.join(outside, "does-not-exist");
-		assert.deepEqual(resolveAdditionalWritableRoots(plain), []);
+		assert.deepEqual(resolveAdditionalWritableRoots(plain), [scratchDir()]);
 	} finally {
 		if (previousWt === undefined) delete process.env.TORUS_WORKTREES_ROOT;
 		else process.env.TORUS_WORKTREES_ROOT = previousWt;
+		if (previousScratch === undefined) delete process.env.TORUS_SCRATCH_DIR;
+		else process.env.TORUS_SCRATCH_DIR = previousScratch;
 	}
 });
 
