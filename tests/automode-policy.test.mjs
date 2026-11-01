@@ -7,6 +7,7 @@ const {
 	findBroadAllowEntries,
 	criticalAskFloor,
 	isReadOnlyFastPath,
+	isScratchFastPath,
 } = await import("../extensions/automode/policy.ts");
 
 test("normalizeCommand trims and collapses whitespace runs", () => {
@@ -411,4 +412,273 @@ test("ask floor: NUL truncation keeps glued tails exactly like bash", () => {
 	// bash: $'/\0etc'junk -> argv word /junk; the tail after the closing
 	// quote still concatenates, and /junk is not a root target.
 	assert.equal(criticalAskFloor("rm -rf $'/\\0etc'junk"), undefined);
+});
+
+const scratchRoot = "/home/u/.torus/state/--proj--/scratch";
+
+test("scratch fast path: allowlisted file verbs with all operands under the root allow across the spellings", () => {
+	const commands = [
+		'mkdir -p "$TORUS_SCRATCH_DIR/librarian/repo.X"',
+		'rm -rf "$TORUS_SCRATCH_DIR/librarian/repo.X"',
+		"rm -rf $TORUS_SCRATCH_DIR/*",
+		"cp $TORUS_STATE_DIR/scratch/a $TORUS_SCRATCH_DIR/b",
+		'rm -rf "$TORUS_STATE_DIR/scratch/librarian/repo.X"',
+		`rm -rf ${scratchRoot}/librarian/repo.X`,
+		"touch $TORUS_SCRATCH_DIR/marker",
+		"mv $TORUS_SCRATCH_DIR/a $TORUS_SCRATCH_DIR/b",
+		"diff $TORUS_SCRATCH_DIR/a $TORUS_SCRATCH_DIR/b",
+		"stat $TORUS_SCRATCH_DIR/payload",
+		"sha256sum $TORUS_SCRATCH_DIR/payload",
+		"du -sh $TORUS_SCRATCH_DIR/repo",
+	];
+	for (const command of commands) {
+		assert.equal(isScratchFastPath(command, scratchRoot), true, command);
+	}
+});
+
+test("scratch fast path: reviewer probes — every former ALLOW hole stays judged", () => {
+	const commands = [
+		"sh $TORUS_SCRATCH_DIR/run.sh",
+		"bash $TORUS_SCRATCH_DIR/run.sh",
+		"node $TORUS_SCRATCH_DIR/x.js",
+		"python $TORUS_SCRATCH_DIR/x.py",
+		"env rm -rf $TORUS_SCRATCH_DIR/x",
+		"rm -rf .git && touch $TORUS_SCRATCH_DIR/m",
+		"cat $TORUS_SCRATCH_DIR/list | xargs rm -rf",
+		"find $TORUS_SCRATCH_DIR -name x -exec rm -rf build \\;",
+		"git -C $TORUS_SCRATCH_DIR/repo push origin main",
+		"tar xf payload.tar -C $TORUS_SCRATCH_DIR",
+		"rm -rf '$TORUS_SCRATCH_DIR/x'",
+	];
+	for (const command of commands) {
+		assert.equal(isScratchFastPath(command, scratchRoot), false, command);
+	}
+});
+
+test("scratch fast path: verb-slot masquerade — a scratch-rooted path as the verb stays judged in every spelling", () => {
+	const commands = [
+		"$TORUS_SCRATCH_DIR/cat $TORUS_SCRATCH_DIR/x",
+		"$TORUS_SCRATCH_DIR/tools/rm -rf $TORUS_SCRATCH_DIR/x",
+		"$TORUS_STATE_DIR/scratch/cat $TORUS_SCRATCH_DIR/x",
+		"~/.torus/state/--proj--/scratch/cat $TORUS_SCRATCH_DIR/x",
+		"$TORUS_SCRATCH_DIR/cat $TORUS_SCRATCH_DIR/a | $TORUS_SCRATCH_DIR/sha256sum",
+	];
+	for (const command of commands) {
+		assert.equal(isScratchFastPath(command, scratchRoot), false, command);
+	}
+});
+
+test("scratch fast path: the verb slot must be a bare name — rooted spellings never masquerade as an allowlisted verb", () => {
+	const judged = [
+		"/bin/cat $TORUS_SCRATCH_DIR/x",
+		"./cat $TORUS_SCRATCH_DIR/x",
+		"~/bin/cat $TORUS_SCRATCH_DIR/x",
+		"tools/rm -rf $TORUS_SCRATCH_DIR/x",
+		".cat $TORUS_SCRATCH_DIR/x",
+		"$CMD $TORUS_SCRATCH_DIR/x",
+	];
+	for (const command of judged) {
+		assert.equal(isScratchFastPath(command, scratchRoot), false, command);
+	}
+	assert.equal(isScratchFastPath("cat $TORUS_SCRATCH_DIR/x", scratchRoot), true);
+	assert.equal(isScratchFastPath("head $TORUS_STATE_DIR/scratch/log", scratchRoot), true);
+});
+
+test("scratch fast path: chmod +x of a scratch file stays allowed — the chain dies at the masquerade step", () => {
+	assert.equal(isScratchFastPath("chmod +x $TORUS_SCRATCH_DIR/cat", scratchRoot), true);
+	assert.equal(
+		isScratchFastPath(
+			"chmod +x $TORUS_SCRATCH_DIR/cat && $TORUS_SCRATCH_DIR/cat $TORUS_SCRATCH_DIR/x",
+			scratchRoot,
+		),
+		false,
+	);
+});
+
+test("scratch fast path: redirect-first segments stay judged — the word after the operator is the command", () => {
+	const judged = [
+		">cat $TORUS_SCRATCH_DIR/x",
+		">cp $TORUS_SCRATCH_DIR/x",
+		"<cp $TORUS_SCRATCH_DIR/x",
+		">md5sum $TORUS_SCRATCH_DIR/x",
+		">cat $TORUS_SCRATCH_DIR/x $TORUS_SCRATCH_DIR/y",
+	];
+	for (const command of judged) {
+		assert.equal(isScratchFastPath(command, scratchRoot), false, command);
+	}
+});
+
+test("scratch fast path: redirect-trailing and chained redirects stay judged — the verb never rides a redirect", () => {
+	const judged = [
+		"cat $TORUS_SCRATCH_DIR/a >cp $TORUS_SCRATCH_DIR/b",
+		"cat $TORUS_SCRATCH_DIR/a >tee $TORUS_SCRATCH_DIR/b",
+		"cp $TORUS_SCRATCH_DIR/a $TORUS_SCRATCH_DIR/b && >cp $TORUS_SCRATCH_DIR/x",
+	];
+	for (const command of judged) {
+		assert.equal(isScratchFastPath(command, scratchRoot), false, command);
+	}
+});
+
+test("scratch fast path: a quoted redirect spelling rejects too, while pipes stay allowed", () => {
+	assert.equal(
+		isScratchFastPath('">cat" $TORUS_SCRATCH_DIR/x', scratchRoot),
+		false,
+		"raw scan, quoted or not",
+	);
+	assert.equal(
+		isScratchFastPath("cat $TORUS_SCRATCH_DIR/l | tee $TORUS_SCRATCH_DIR/o", scratchRoot),
+		true,
+		"a pipe consumes no following word, so segment scanning stands",
+	);
+});
+
+test("scratch fast path: confinement is per segment — bare-only segments fail, rooted segments chain", () => {
+	assert.equal(
+		isScratchFastPath(
+			"cp $TORUS_SCRATCH_DIR/a $TORUS_SCRATCH_DIR/b && mv $TORUS_SCRATCH_DIR/b $TORUS_SCRATCH_DIR/c",
+			scratchRoot,
+		),
+		true,
+	);
+	assert.equal(
+		isScratchFastPath(
+			"cp $TORUS_SCRATCH_DIR/a out.txt && rm -rf $TORUS_SCRATCH_DIR/b",
+			scratchRoot,
+		),
+		true,
+	);
+	assert.equal(
+		isScratchFastPath("cp $TORUS_SCRATCH_DIR/a $TORUS_SCRATCH_DIR/b && rm -rf build", scratchRoot),
+		false,
+		"second segment has no rooted operand",
+	);
+	assert.equal(isScratchFastPath("touch $TORUS_SCRATCH_DIR/m && rm -rf .git", scratchRoot), false);
+});
+
+test("scratch fast path: verb allowlist is default closed", () => {
+	const commands = [
+		"ln -s /etc $TORUS_SCRATCH_DIR/l",
+		"cargo build $TORUS_SCRATCH_DIR/x",
+		"weirdtool $TORUS_SCRATCH_DIR/x",
+		`tar -czf ${scratchRoot}/x.tgz ${scratchRoot}/src`,
+		"cat $TORUS_SCRATCH_DIR/a.log | grep error > $TORUS_SCRATCH_DIR/b.log",
+		"cd $TORUS_SCRATCH_DIR/repo && cargo build",
+	];
+	for (const command of commands) {
+		assert.equal(isScratchFastPath(command, scratchRoot), false, command);
+	}
+});
+
+test("scratch fast path: quoted or escaped $ spellings do not expand, so they stay judged", () => {
+	assert.equal(
+		isScratchFastPath('rm -rf "$TORUS_SCRATCH_DIR/x"', scratchRoot),
+		true,
+		"double quotes expand",
+	);
+	assert.equal(
+		isScratchFastPath("rm -rf '$TORUS_SCRATCH_DIR/x'", scratchRoot),
+		false,
+		"single quotes make the dollar literal",
+	);
+	assert.equal(
+		isScratchFastPath("rm -rf \\$TORUS_SCRATCH_DIR/x", scratchRoot),
+		false,
+		"escaped dollar is literal",
+	);
+	assert.equal(
+		isScratchFastPath('rm -rf "\\$TORUS_SCRATCH_DIR/x"', scratchRoot),
+		false,
+		"escaped dollar inside double quotes is literal",
+	);
+});
+
+test("scratch fast path: ~/.torus/state spellings under a default-layout root allow", () => {
+	assert.equal(
+		isScratchFastPath("rm -rf ~/.torus/state/--proj--/scratch/librarian/repo.X", scratchRoot),
+		true,
+	);
+	assert.equal(
+		isScratchFastPath(
+			'cp "$HOME/.torus/state/--proj--/scratch/a" "$TORUS_SCRATCH_DIR/b"',
+			scratchRoot,
+		),
+		true,
+	);
+	assert.equal(isScratchFastPath("chmod -R 700 $TORUS_SCRATCH_DIR/out", scratchRoot), true);
+});
+
+test("scratch fast path: any operand outside the root stays judged", () => {
+	const commands = [
+		"cp /etc/shadow $TORUS_SCRATCH_DIR/x",
+		"cp $HOME/.ssh/id_ed25519 $TORUS_SCRATCH_DIR/k",
+		"rm -rf $TORUS_STATE_DIR/work/x",
+		"rm -rf ~/.ssh",
+		"rm -rf /tmp",
+		"cp $TORUS_SCRATCH_DIR/a ../esc",
+		"rm -rf $TORUS_SCRATCH_DIR/../..",
+		"cp $TORUS_SCRATCH_DIR/a .",
+		"tar -c --file=/etc/x $TORUS_SCRATCH_DIR/src",
+	];
+	for (const command of commands) {
+		assert.equal(isScratchFastPath(command, scratchRoot), false, command);
+	}
+});
+
+test("scratch fast path: bare relative operands ride a rooted operand in the same segment", () => {
+	assert.equal(isScratchFastPath("mv $TORUS_SCRATCH_DIR/a out.txt", scratchRoot), true);
+	assert.equal(isScratchFastPath("rm -rf $TORUS_SCRATCH_DIR/stale .git", scratchRoot), true);
+	assert.equal(
+		isScratchFastPath("rm -rf .git", scratchRoot),
+		false,
+		"no rooted operand, stays judged",
+	);
+	assert.equal(isScratchFastPath("cargo build", scratchRoot), false);
+});
+
+test("scratch fast path: network, remote-pipe, and escalation tokens reject", () => {
+	const commands = [
+		"curl -o $TORUS_SCRATCH_DIR/x https://example.com/y",
+		"ssh host tar -czf $TORUS_SCRATCH_DIR/x ~/proj",
+		"rsync -a $TORUS_SCRATCH_DIR/a host:/tmp/",
+		"sudo rm -rf $TORUS_SCRATCH_DIR/x",
+	];
+	for (const command of commands) {
+		assert.equal(isScratchFastPath(command, scratchRoot), false, command);
+	}
+});
+
+test("scratch fast path: unknown or unset $VAR operands stay judged", () => {
+	assert.equal(isScratchFastPath('rm -rf "$UNSET_VAR"', scratchRoot), false);
+	assert.equal(isScratchFastPath("cp $TORUS_MISSING/x $TORUS_SCRATCH_DIR/y", scratchRoot), false);
+});
+
+test("scratch fast path: substitution and raw control characters reject", () => {
+	assert.equal(isScratchFastPath("cat $(ls $TORUS_SCRATCH_DIR)", scratchRoot), false);
+	assert.equal(isScratchFastPath("cat $TORUS_SCRATCH_DIR/a\nrm -rf /", scratchRoot), false);
+});
+
+test("scratch fast path: override roots take only the $TORUS_SCRATCH_DIR spelling", () => {
+	const override = "/var/tmp/torus-scratch";
+	assert.equal(isScratchFastPath("rm -rf $TORUS_SCRATCH_DIR/librarian/repo.X", override), true);
+	assert.equal(isScratchFastPath("rm -rf /var/tmp/torus-scratch/librarian/repo.X", override), true);
+	assert.equal(isScratchFastPath("rm -rf $TORUS_STATE_DIR/scratch/x", override), false);
+	assert.equal(isScratchFastPath("rm -rf ~/.torus/state/--proj--/scratch/x", override), false);
+});
+
+test("scratch fast path: deep scratch rm is unfloored, so only the fast path sees it", () => {
+	assert.equal(criticalAskFloor('rm -rf "$TORUS_SCRATCH_DIR/librarian/repo.X"'), undefined);
+	assert.equal(
+		isScratchFastPath('rm -rf "$TORUS_SCRATCH_DIR/librarian/repo.X"', scratchRoot),
+		true,
+	);
+	assert.ok(criticalAskFloor("rm -rf /"));
+	assert.ok(criticalAskFloor("rm -rf ~"));
+	assert.equal(isScratchFastPath("rm -rf /", scratchRoot), false);
+	assert.equal(isScratchFastPath("rm -rf ~", scratchRoot), false);
+	assert.equal(criticalAskFloor("rm -rf .git"), undefined);
+	assert.equal(
+		isScratchFastPath("rm -rf .git", scratchRoot),
+		false,
+		"no rooted operand, stays judged",
+	);
 });

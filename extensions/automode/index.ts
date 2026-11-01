@@ -12,7 +12,8 @@
  * (the four privilege/destruction classes take no allow shortcut — they
  * judge, with the class riding into the prompt as a boundary, and an
  * unreachable judge restores the ask), ask rules, allow rules, the circuit
- * breaker, the read-only fast path, the session decision cache, and finally
+ * breaker, the read-only fast path, the scratch-confined fast path, the
+ * session decision cache, and finally
  * the decision model. Each concluding step appends one row to the audit log; a decision
  * model that cannot be reached fails open with an annotation on the tool
  * result. Blocks returned here compose with first-block-wins engine
@@ -34,6 +35,7 @@ import {
 	writeSection,
 } from "../config/loader.js";
 import { PROJECT_AUTOMODE_KEYS } from "../config/sections.js";
+import { scratchDir } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { refreshToruStatus, setStatusPermission } from "../ui/index.js";
 import { DecisionCache, decide, pickChatModel, pickModel } from "./classify.js";
@@ -56,6 +58,7 @@ import {
 	type Decision,
 	findBroadAllowEntries,
 	isReadOnlyFastPath,
+	isScratchFastPath,
 	matchRules,
 } from "./policy.js";
 
@@ -675,6 +678,17 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		if (floor === undefined && isReadOnlyFastPath(command)) {
 			consecutiveDenies = 0;
 			audit(command, "fastpath", "allow", "read-only fast path");
+			return undefined;
+		}
+
+		// (d2) scratch-confined fast path: every segment runs an
+		// allowlisted file verb with all path operands under the durable
+		// scratch root, disposable by definition — no model call. The deny
+		// rules, floor, ask/allow rules, and breaker above have all had
+		// their say first.
+		if (floor === undefined && isScratchFastPath(command, scratchDir())) {
+			consecutiveDenies = 0;
+			audit(command, "fastpath", "allow", "scratch write under $TORUS_SCRATCH_DIR");
 			return undefined;
 		}
 

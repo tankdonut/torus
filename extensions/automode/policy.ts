@@ -3,8 +3,9 @@
  *
  * Pure, engine-free decision core for automode command permissions:
  * user-configured rules (deny → ask → allow, Claude-Code-style prefix
- * patterns), a hardcoded critical-operation floor, and a
- * read-only fast path. Detection works at the bash grammar level: words
+ * patterns), a hardcoded critical-operation floor, a
+ * read-only fast path, and a scratch-confined fast path. Detection works at
+ * the bash grammar level: words
  * are unfolded (POSIX quoting and backslash escapes removed) and commands
  * are split on shell separators before any token comparison. Injectable
  * into any caller: no imports beyond what normalization needs, no engine
@@ -676,4 +677,308 @@ export function isReadOnlyFastPath(command: string): boolean {
 		return !tokens.slice(1).some((token) => FIND_MUTATING_FLAGS.has(token));
 	}
 	return SIMPLE_READ_ONLY_PREFIXES.has(verb);
+}
+
+/** True when `target` equals `root` or sits directly or indirectly beneath it. */
+function underRoot(target: string, root: string): boolean {
+	return target === root || target.startsWith(`${root}/`);
+}
+
+/** Words that ship data off-box or escalate, in every path spelling. */
+const SCRATCH_EXCLUDED_VERBS = new Set([
+	"sudo",
+	"su",
+	"curl",
+	"wget",
+	"ssh",
+	"scp",
+	"sftp",
+	"rsync",
+	"nc",
+	"netcat",
+	"socat",
+	"ftp",
+	"tftp",
+	"telnet",
+]);
+
+const SCRATCH_ENV_SPELLINGS = ["$TORUS_SCRATCH_DIR", "$" + "{TORUS_SCRATCH_DIR}"];
+const STATE_ENV_SCRATCH_SPELLINGS = ["$TORUS_STATE_DIR/scratch", "$" + "{TORUS_STATE_DIR}/scratch"];
+
+/** Default scratch layout: `<torus home>/state/<project key>/scratch`. */
+const DEFAULT_SCRATCH_LAYOUT = /^(\/.*)\/state\/([^/]+)\/scratch$/;
+
+/**
+ * The file-manipulation and inspection verbs the scratch fast path may
+ * run — a positive allowlist, default closed. Every segment's verb must be
+ * on it: interpreters (`sh`, `node`, ...), operand wrappers (`xargs`,
+ * `find -exec`, `env`), `ln`, `tar`, `git`, package managers, and build
+ * tools stay judged, because operand confinement cannot bound what those
+ * verbs execute or where their effects land.
+ */
+const SCRATCH_ALLOWED_VERBS = new Set([
+	"cat",
+	"cp",
+	"mv",
+	"rm",
+	"mkdir",
+	"rmdir",
+	"touch",
+	"tee",
+	"ls",
+	"head",
+	"tail",
+	"wc",
+	"stat",
+	"file",
+	"du",
+	"diff",
+	"chmod",
+	"chown",
+	"chgrp",
+	"md5sum",
+	"sha1sum",
+	"sha256sum",
+	"sha512sum",
+]);
+
+/**
+ * Detect `$` spellings bash never expands, so the lexer's unfolded words
+ * cannot be trusted as rooted operands: `$` inside single quotes
+ * (including ANSI-C `$'...'` content, where backslash escapes like
+ * `\044`/`\x24` also produce a literal `$`) and a backslash-escaped `\$`
+ * outside single quotes (inside double quotes included).
+ * `'$TORUS_SCRATCH_DIR/x'` and `\$TORUS_SCRATCH_DIR/x` name literal files
+ * relative to the cwd, not the scratch root.
+ */
+function hasUnexpandedDollar(raw: string): boolean {
+	let inSingle = false;
+	let ansi = false;
+	let inDouble = false;
+	for (let i = 0; i < raw.length; i++) {
+		const ch = raw[i] ?? "";
+		if (inSingle) {
+			if (ch === "'") {
+				inSingle = false;
+				ansi = false;
+			} else if (ch === "$" || (ansi && ch === "\\")) {
+				return true;
+			}
+			continue;
+		}
+		if (inDouble) {
+			if (ch === '"') {
+				inDouble = false;
+			} else if (ch === "\\") {
+				if (raw[i + 1] === "$") {
+					return true;
+				}
+				i += 1;
+			}
+			continue;
+		}
+		if (ch === "'") {
+			inSingle = true;
+		} else if (ch === '"') {
+			inDouble = true;
+		} else if (ch === "$") {
+			if (raw[i + 1] === "'") {
+				inSingle = true;
+				ansi = true;
+				i += 1;
+			}
+		} else if (ch === "\\") {
+			if (raw[i + 1] === "$") {
+				return true;
+			}
+			i += 1;
+		}
+	}
+	return false;
+}
+
+/**
+ * True iff every shell segment runs an allowlisted file verb with every
+ * path operand canonicalizing under `scratchRoot` (the root itself or
+ * below) and at least one operand of each segment actually sitting there:
+ * plain file manipulation confined to the durable scratch root is
+ * disposable by definition, so it takes no judgment. The verb allowlist is
+ * positive and default closed — interpreters, `xargs`/`find -exec`
+ * wrappers, `ln`, `tar`, `git`, package managers, and unknown verbs stay
+ * judged, because operand analysis alone cannot bound what a verb executes
+ * or where its effects land (`sh $TORUS_SCRATCH_DIR/run.sh` is not a
+ * scratch write) — and the verb slot itself must hold a bare name, since a
+ * rooted spelling there (`$TORUS_SCRATCH_DIR/cat`) also classifies as a
+ * confined operand, dodging the outside-operand rejection that catches
+ * `/bin/cat`; no spelling of a path can masquerade as an allowlisted verb.
+ * Confinement holds per segment: a segment whose operands
+ * are all bare-relative, or that has no recognizable verb at all, fails
+ * the whole command, so `rm -rf .git && touch
+ * $TORUS_SCRATCH_DIR/m` cannot ride a rooted operand in another segment.
+ * Read sources count as operands too — copying a secret INTO scratch is as
+ * much a scratch leak as copying out of it. Recognized spellings: absolute
+ * paths, `$TORUS_SCRATCH_DIR/…` (always — that variable IS the root),
+ * `$TORUS_STATE_DIR/scratch/…` (only while the root itself has the default
+ * `<state dir>/scratch` layout, so an override root never re-labels the
+ * state spelling), and `~/.torus/state/…` forms (the `~` marker expands
+ * against the real home only when a default-layout root under
+ * `<home>/.torus` pins it). Operands canonicalize through the same
+ * lexer/canonicalTarget machinery as the floor, so `$HOME`, `~`, `.`/`..`,
+ * and duplicate slashes resolve before the containment check and
+ * `$TORUS_SCRATCH_DIR/../..` rejects; quoting never smuggles a spelling,
+ * because a `$` bash would not expand (single-quoted, `\$`) rejects
+ * outright. Bare relative filenames (slash-free, no `$`/`~`, not `.` or
+ * `..`) neither qualify nor reject within their segment, but a segment
+ * with no rooted operand fails the command — `rm -rf build` and
+ * `rm -rf .git` stay judged. Unknown `$VAR` operands (including unset ones
+ * that would expand to nothing) reject, as do command substitution, raw
+ * control characters, any word whose basename is an excluded verb, and any
+ * `<` or `>` anywhere in the raw command, quoted or not: bash attaches the
+ * word after a redirect operator to the redirection, not the command
+ * (`>cat $TORUS_SCRATCH_DIR/x` executes the scratch file, `cat
+ * $TORUS_SCRATCH_DIR/a >cp $TORUS_SCRATCH_DIR/b` writes `./cp` in the
+ * cwd), so the scanned verb would not be the executed one — and no allow
+ * shape needs a redirect (`tee` covers writing command output). Chained
+ * and piped commands are checked segment by segment; unlike the read-only
+ * path, pipe and list separators are fine because every segment is
+ * scanned.
+ */
+export function isScratchFastPath(command: string, scratchRoot: string): boolean {
+	if (/[\x00-\x1f\x7f]/.test(command)) {
+		return false;
+	}
+	// A redirect anywhere makes the lexer's word split diverge from bash's:
+	// the token after `<`/`>` belongs to the redirection (as its target or
+	// as the command word — `>cat $SCRATCH/x` runs `$SCRATCH/x`), so the
+	// scanned verb is not the executed verb. Quoting cannot make a redirect
+	// safe to fast-path, so the raw scan is the rule; no allow shape needs
+	// one (`tee` covers writing command output).
+	if (command.includes("<") || command.includes(">")) {
+		return false;
+	}
+	if (command.includes("$(") || command.includes("`")) {
+		return false;
+	}
+	if (hasUnexpandedDollar(command)) {
+		return false;
+	}
+	const root = canonicalTarget(scratchRoot);
+	const layout = DEFAULT_SCRATCH_LAYOUT.exec(root);
+	// The state spelling maps onto the root only while the root IS the
+	// default `<state dir>/scratch`; under any other root those operands
+	// stay judged instead of being re-labeled onto the override.
+	const stateLayout = layout !== null;
+	// `~` in bash means the real home directory; only a default-layout root
+	// under `<home>/.torus` pins it, and a TORUS_HOME sandbox or override
+	// cannot — tilde operands there stay judged.
+	const homeForm = layout?.[1];
+	const realHome =
+		homeForm?.endsWith("/.torus") === true ? homeForm.slice(0, -"/.torus".length) : undefined;
+
+	const operandState = (word: string): "rooted" | "bare" | "outside" => {
+		let operand = word;
+		for (const spelling of SCRATCH_ENV_SPELLINGS) {
+			if (operand === spelling) {
+				operand = root;
+			} else if (operand.startsWith(`${spelling}/`)) {
+				operand = root + operand.slice(spelling.length);
+			}
+		}
+		if (stateLayout) {
+			for (const spelling of STATE_ENV_SCRATCH_SPELLINGS) {
+				if (operand === spelling) {
+					operand = root;
+				} else if (operand.startsWith(`${spelling}/`)) {
+					operand = root + operand.slice(spelling.length);
+				}
+			}
+		}
+		const canonical = canonicalTarget(operand);
+		if (canonical === "~" || canonical.startsWith("~/")) {
+			if (realHome === undefined) {
+				return "outside";
+			}
+			return underRoot(canonicalTarget(realHome + canonical.slice(1)), root) ? "rooted" : "outside";
+		}
+		if (canonical.startsWith("/")) {
+			return underRoot(canonical, root) ? "rooted" : "outside";
+		}
+		if (canonical === "." || canonical === "..") {
+			return "outside";
+		}
+		if (!canonical.includes("/") && !canonical.includes("~") && !canonical.includes("$")) {
+			return "bare";
+		}
+		return "outside";
+	};
+
+	for (const segment of lexSegments(command)) {
+		// `&&`/`||` and a trailing `&` leave empty segments between their
+		// separators; they carry no verb and no operands of their own.
+		if (segment.length === 0) {
+			continue;
+		}
+		let verb: string | undefined;
+		let sawRooted = false;
+		for (const token of segment) {
+			if (SCRATCH_EXCLUDED_VERBS.has(verbOf(token))) {
+				return false;
+			}
+			if (token === "-" || token === "--") {
+				continue;
+			}
+			if (token.startsWith("--")) {
+				// An attached `--opt=value` hides its value from the operand scan;
+				// classify the value so `--file=/etc/x` cannot ride a scratch hit.
+				const eq = token.indexOf("=");
+				const value = eq === -1 ? "" : token.slice(eq + 1);
+				if (value !== "") {
+					const state = operandState(value);
+					if (state === "outside") {
+						return false;
+					}
+					sawRooted ||= state === "rooted";
+				}
+				continue;
+			}
+			if (token.startsWith("-")) {
+				// A short-flag cluster carries no parseable path; one that
+				// looks path-bearing (`-f/etc/x`) stays judged.
+				if (/[/$~]/.test(token)) {
+					return false;
+				}
+				continue;
+			}
+			if (verb === undefined) {
+				// The segment's first non-flag word is its verb, and that slot
+				// must hold a bare name (letters, digits, `-`, `_`). A rooted
+				// spelling there (`$TORUS_SCRATCH_DIR/cat`, `~/bin/cat`) doubles
+				// as a confined operand, so it would never trip the
+				// outside-operand rejection that catches `/bin/cat` — while
+				// still executing whatever the agent earlier wrote to that
+				// path. Default closed: only allowlisted file verbs fast-path;
+				// anything else is judged.
+				if (!/^[A-Za-z0-9_-]+$/.test(token)) {
+					return false;
+				}
+				verb = verbOf(token);
+				if (!SCRATCH_ALLOWED_VERBS.has(verb)) {
+					return false;
+				}
+			}
+			const state = operandState(token);
+			if (state === "outside") {
+				return false;
+			}
+			sawRooted ||= state === "rooted";
+		}
+		// Per-segment confinement: every segment independently needs a
+		// rooted operand, so a bare-operand-only segment cannot ride a
+		// rooted operand elsewhere in the command, and a segment with no
+		// recognizable verb (pure redirection) never fast-paths.
+		if (verb === undefined || !sawRooted) {
+			return false;
+		}
+	}
+	return true;
 }

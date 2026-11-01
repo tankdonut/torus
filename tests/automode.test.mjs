@@ -19,6 +19,7 @@ delete process.env.TORUS_PERMISSION_MODE;
 delete process.env.TORUS_PERMISSION_MODEL;
 
 const automode = await import("../extensions/automode/index.ts");
+const { scratchDir } = await import("../extensions/fsutil.ts");
 
 // fsutil (pulled in by the ui import chain) recomputes TORUS_STATE_DIR from
 // the cwd on every call and mirrors it into the env — still under the fake
@@ -330,6 +331,82 @@ test("fast path: read-only command passes with an audit row and no model call", 
 		auditRows().map((row) => [row.source, row.verdict, row.command]),
 		[["fastpath", "allow", "ls -la"]],
 	);
+});
+
+test("fast path: scratch-confined write passes with an audit row naming scratch, no model call", async () => {
+	resetAudit();
+	const { pi, ctx, reg } = setup({});
+	const command = `mkdir -p "${scratchDir()}/librarian/repo.X"`;
+	assert.equal(await call(pi, ctx, command), undefined);
+	assert.equal(reg.calls.complete, 0, "no chat call");
+	assert.equal(reg.calls.classify, 0, "no classifier call");
+	const rows = auditRows();
+	assert.deepEqual(
+		rows.map((row) => [row.source, row.verdict, row.command]),
+		[["fastpath", "allow", command]],
+	);
+	assert.match(rows[0].reason, /scratch/);
+});
+
+test("fast path: scratch-confined delete allows; a matching deny rule still denies", async () => {
+	resetAudit();
+	const allowed = setup({});
+	assert.equal(
+		await call(allowed.pi, allowed.ctx, 'rm -rf "$TORUS_SCRATCH_DIR/librarian/repo.X"'),
+		undefined,
+	);
+	assert.equal(allowed.reg.calls.complete, 0, "no chat call");
+	assert.deepEqual(
+		auditRows().map((row) => [row.source, row.verdict]),
+		[["fastpath", "allow"]],
+	);
+
+	resetAudit();
+	const denied = setup({ config: { automode: { deny: ["rm *"] } } });
+	const result = await call(denied.pi, denied.ctx, 'rm -rf "$TORUS_SCRATCH_DIR/librarian/repo.X"');
+	assert.equal(result.block, true, "the deny rule outranks the fast path");
+	assert.match(result.reason, /denied by rule/);
+	assert.equal(denied.reg.calls.complete, 0);
+	assert.deepEqual(
+		auditRows().map((row) => [row.source, row.verdict]),
+		[["rule", "deny"]],
+	);
+});
+
+test("scratch fast path holes route to the judge, never auto-allow", async () => {
+	resetAudit();
+	const probes = [
+		'sh "$TORUS_SCRATCH_DIR/run.sh"',
+		'node "$TORUS_SCRATCH_DIR/x.js"',
+		"rm -rf .git && touch $TORUS_SCRATCH_DIR/m",
+		"cat $TORUS_SCRATCH_DIR/list | xargs rm -rf",
+		"rm -rf '$TORUS_SCRATCH_DIR/x'",
+	];
+	const judged = setup({ replies: probes.map(() => jsonReply("ask")) });
+	for (const [index, command] of probes.entries()) {
+		const outcome = await call(judged.pi, judged.ctx, command, `hole-${index}`);
+		assert.equal(outcome.block, true, command);
+		assert.match(outcome.reason, /stub reason — no UI for approval/);
+	}
+	assert.equal(judged.reg.calls.complete, probes.length, "every hole was judged");
+	assert.ok(auditRows().every((row) => row.source !== "fastpath"));
+});
+
+test("scratch fast path never touches floor or non-scratch rm: they stay judged", async () => {
+	resetAudit();
+	const judged = setup({ replies: [jsonReply("ask"), jsonReply("ask"), jsonReply("ask")] });
+	const commands = ["rm -rf /", "rm -rf ~", "rm -rf .git"];
+	for (const command of commands) {
+		const result = await call(judged.pi, judged.ctx, command);
+		assert.equal(result.block, true, `${command}: headless ask blocks`);
+	}
+	assert.equal(judged.reg.calls.complete, 3, "every command was judged, never fast-pathed");
+	const modelRows = auditRows().filter((row) => row.source === "model");
+	assert.equal(modelRows.length, 3);
+	assert.ok(auditRows().every((row) => row.source !== "fastpath"));
+	assert.match(modelRows[0].reason, /\[floor: /, "rm -rf / rides the floor into the judge");
+	assert.match(modelRows[1].reason, /\[floor: /, "rm -rf ~ rides the floor into the judge");
+	assert.doesNotMatch(modelRows[2].reason, /\[floor: /, "rm -rf .git is judged without a floor");
 });
 
 test("failopen: both model paths fail, command runs with a notify and a result annotation", async () => {
