@@ -355,12 +355,17 @@ function availableSkillNames(cwd: string): string[] {
 	return [...names].sort();
 }
 
+const ENV_CONVENTION = [
+	"Env: $TORUS_STATE_DIR is this project's torus state root (plans/, work/ ledgers, delegation logs); children inherit it pinned to the dispatching project; never hand-derive ~/.torus/state/--…-- keys, copy the $TORUS_STATE_DIR/… spelling tool output shows.",
+	"Scratch: durable files (clones, artifacts that must survive a reboot) go under $TORUS_SCRATCH_DIR/<agent>/ (unique suffix for anything a sibling run might also create); ephemeral temp uses mktemp/$TMPDIR.",
+].join("\n");
+
 function systemPromptFor(agent: AgentDef): string {
 	const body = agent.promptBody;
 	if (!body) {
-		return `TORUS AGENT: ${agent.name}\nROLE: ${agent.description}\n`;
+		return `TORUS AGENT: ${agent.name}\nROLE: ${agent.description}\n\n${ENV_CONVENTION}`;
 	}
-	return substituteMarkers(stripFrontmatter(body));
+	return `${substituteMarkers(stripFrontmatter(body))}\n\n${ENV_CONVENTION}`;
 }
 
 function substituteMarkers(prompt: string): string {

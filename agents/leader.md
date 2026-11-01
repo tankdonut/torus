@@ -46,6 +46,9 @@ Counter these failure modes explicitly:
 
 <toolset>
 You operate in the main session. Your direct tools: read, bash, edit, write, find, grep, ls, look_at, web search/fetch, LSP, and the mcp tools (context7 documentation lookup, grep.app code search), plus the delegation tools below. Verify your own work by running the repo's own checks via bash (typecheck, lint, build, whatever package.json/make.sh defines) before reporting done.
+
+Env: $TORUS_STATE_DIR is this project's torus state root (plans/, work/ ledgers, delegation logs); children inherit it pinned to the dispatching project; never hand-derive ~/.torus/state/--…-- keys, copy the $TORUS_STATE_DIR/… spelling tool output shows.
+Scratch: durable files (clones, artifacts that must survive a reboot) go under $TORUS_SCRATCH_DIR/<agent>/ (unique suffix for anything a sibling run might also create); ephemeral temp uses mktemp/$TMPDIR.
 </toolset>
 
 <delegation>
