@@ -1,6 +1,6 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, MouseRegion, Text } from "@earendil-works/pi-tui";
-import { flattenPreview } from "../fleet/theme-kit.js";
+import { entityColor, flattenPreview } from "../fleet/theme-kit.js";
 import { formatDuration } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { FLEET_OPENER, sanitizeRender } from "../registry.js";
@@ -23,12 +23,7 @@ function delegationLine(
 	detail: string,
 	theme: Theme,
 ): string {
-	return (
-		theme.fg(iconColor, icon) +
-		" " +
-		theme.fg("customMessageText", label) +
-		theme.fg("dim", ` · ${detail}`)
-	);
+	return `${theme.fg(iconColor, icon)} ${label}${theme.fg("dim", ` · ${detail}`)}`;
 }
 
 /** Single hovered marker across the transcript: a move over one clears the last. */
@@ -79,7 +74,8 @@ function delegationResultLine(details: Record<string, unknown>, theme: Theme): s
 	return delegationLine(
 		stopped ? "■" : ok ? "✓" : "✗",
 		stopped ? "warning" : ok ? "success" : "error",
-		`${runLabel(details, agent)} ${stopped ? "stopped" : ok ? "finished" : "failed"}`,
+		styledRunLabel(details, agent, theme) +
+			theme.fg("customMessageText", ` ${stopped ? "stopped" : ok ? "finished" : "failed"}`),
 		hint,
 		theme,
 	);
@@ -92,9 +88,11 @@ function textOf(message: { content: Array<{ type: string; text?: string }> }): s
 	return "";
 }
 
-function runLabel(details: Record<string, unknown>, agent: string): string {
+/** @handle (or bare agent) in the entity's fleet color — the hue its strip and browser rows carry. */
+function styledRunLabel(details: Record<string, unknown>, agent: string, theme: Theme): string {
 	const handle = typeof details["handle"] === "string" ? details["handle"] : "";
-	return handle ? `@${sanitizeRender(handle)}` : agent;
+	if (handle !== "") return theme.fg(entityColor(handle), `@${sanitizeRender(handle)}`);
+	return theme.fg(entityColor(agent), agent);
 }
 
 export function registerNotify(pi: ExtensionAPI): void {
@@ -107,7 +105,13 @@ export function registerNotify(pi: ExtensionAPI): void {
 		return clickable(
 			[
 				new Text(
-					delegationLine("▶", "warning", `${runLabel(details, agent)} delegated`, task, theme),
+					delegationLine(
+						"▶",
+						"warning",
+						styledRunLabel(details, agent, theme) + theme.fg("customMessageText", " delegated"),
+						task,
+						theme,
+					),
 					0,
 					0,
 				),
@@ -129,7 +133,13 @@ export function registerNotify(pi: ExtensionAPI): void {
 			flattenPreview(textOf(message as { content: Array<{ type: string; text?: string }> }), 90),
 		);
 		return clickable(
-			[new Text(delegationLine("✿", "success", "memory", text, theme), 0, 0)],
+			[
+				new Text(
+					delegationLine("✿", "success", theme.fg("customMessageText", "memory"), text, theme),
+					0,
+					0,
+				),
+			],
 			undefined,
 		);
 	});
@@ -142,7 +152,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 		return delegationLine(
 			failed ? "✗" : "≈",
 			failed ? "error" : "warning",
-			`monitor ${name} ${failed ? "failed" : "output changed"}`,
+			theme.fg("customMessageText", `monitor ${name} ${failed ? "failed" : "output changed"}`),
 			[exit, tail].filter(Boolean).join(" · "),
 			theme,
 		);
@@ -162,7 +172,9 @@ export function registerNotify(pi: ExtensionAPI): void {
 			return delegationLine(
 				status === "stopped" ? "✗" : "☾",
 				status === "stopped" ? "error" : "warning",
-				`team ${team}: @${member} ${status}`,
+				theme.fg("customMessageText", `team ${team}: `) +
+					theme.fg(entityColor(member), `@${member}`) +
+					theme.fg("customMessageText", ` ${status}`),
 				reason,
 				theme,
 			);
@@ -211,7 +223,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 				delegationLine(
 					"☾",
 					"warning",
-					"wake batch",
+					theme.fg("customMessageText", "wake batch"),
 					sanitizeRender(
 						flattenPreview(
 							textOf(message as { content: Array<{ type: string; text?: string }> }),

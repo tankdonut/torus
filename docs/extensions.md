@@ -429,7 +429,7 @@ No tools or commands.
 - **Hooks:** `session_start`: install the `torus-fleet` widget
 - **Interactions:** `registry.ts` + `fleet/theme-kit.ts` (shared presentation kit also used by browser, notify, roster); opens the browser overlay via the shared `FLEET_OPENER` slot (the same path notify's clickable transcript lines use)
 
-Rows are numbered oldest-running-first (numbers stay stable while agents run) and are the primary selector. Clicking a row opens the detail view, but only under fullscreen TUI mode: pi's regular inline mode enables no mouse reporting at all, so the strip advertises clicks only when `tui.mode === "fullscreen"`. External-run rows open the plain list. Shows up to 5 running delegations.
+Rows are numbered oldest-running-first (numbers stay stable while agents run) and are the primary selector. Clicking a row opens the detail view, but only under fullscreen TUI mode: pi's regular inline mode enables no mouse reporting at all, so the strip advertises clicks only when `tui.mode === "fullscreen"`. External-run rows open the plain list. Shows up to 5 running delegations. The trailing `alt+t all` hint in the header (and on the `+N more` overflow row) renders as an accent chip in the footer-button style, hover-bolds, and clicking it opens the fleet list.
 
 ### `team`
 
@@ -507,7 +507,7 @@ No tools or commands.
 - **Hooks:** message renderers ×3 (the two delegation markers + `torus.memory-applied`)
 - **Interactions:** registry `FLEET_OPENER`, browser, theme-kit
 
-`torus.delegation-start` / `torus.delegation-result` render as one-line transcript entries ("▶ explore delegated · <preview>", "✓/✗ explore finished · alt+t …"). Both are wrapped in mouse regions that open the fleet browser focused on that delegation, and the `torus_delegate` call/result block reuses the same wrapper: result lines focus the run via the details `delegationId`; the call line opens the fleet list. Also renders `torus.memory-applied`, the ✿ dream/reflect summary line emitted by the memory extension after proposals are applied.
+`torus.delegation-start` / `torus.delegation-result` render as one-line transcript entries ("▶ explore delegated · <preview>", "✓/✗ explore finished · alt+t …"). Both are wrapped in mouse regions that open the fleet browser focused on that delegation, and the `torus_delegate` call/result block reuses the same wrapper: result lines focus the run via the details `delegationId`; the call line opens the fleet list. The handle (or bare agent name) keeps its fleet entity color in every marker line, matching its strip and browser rows; team-wake member lines color each `@member` the same way. Also renders `torus.memory-applied`, the ✿ dream/reflect summary line emitted by the memory extension after proposals are applied.
 
 ### `memory`
 

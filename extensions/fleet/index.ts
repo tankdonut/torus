@@ -5,6 +5,7 @@ import {
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 	truncateToWidth,
+	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
@@ -36,6 +37,8 @@ export const PLATFORM_SUPPORT: PlatformSupport = {
 const WIDGET_KEY = "torus-fleet";
 const SPINNER_INTERVAL_MS = 80;
 const MAX_ROWS = 5;
+/** The header's list-open affordance: accent chip, click-routed like the browser footer buttons. */
+const ALL_HINT = "alt+t all";
 const SLOT_KEYS = [
 	"alt+1",
 	"alt+2",
@@ -113,6 +116,9 @@ class FleetStrip implements Component {
 	private rowTargets: Array<string | null> = [];
 	/** Hovered row index for bold-on-hover; null when the pointer is off-row. */
 	private hoverIndex: number | null = null;
+	/** Hover state of the header's [alt+t all] chip; its hit-box lives on y=1. */
+	private hoverAll = false;
+	private allSpan: [number, number] | null = null;
 
 	constructor(tui: TUI, theme: Theme) {
 		this.tui = tui;
@@ -134,16 +140,29 @@ class FleetStrip implements Component {
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (event.type === "move") {
-			const index = event.y - 2;
-			const next = index >= 0 && index < this.rowTargets.length ? index : null;
-			if (next !== this.hoverIndex) {
+			let next: number | null = null;
+			let hoverAll = false;
+			if (this.allSpan !== null && event.y === 1 && withinSpan(event.x, this.allSpan)) {
+				hoverAll = true;
+			} else {
+				const index = event.y - 2;
+				next = index >= 0 && index < this.rowTargets.length ? index : null;
+			}
+			if (next !== this.hoverIndex || hoverAll !== this.hoverAll) {
 				this.hoverIndex = next;
+				this.hoverAll = hoverAll;
 				this.tui.requestRender();
 			}
 			return undefined;
 		}
 		if (event.type !== "click" || event.button !== "left") return undefined;
 		// Layout is [rule, header, ...rows, rule, ""] — rows start at y=2.
+		if (this.allSpan !== null && event.y === 1 && withinSpan(event.x, this.allSpan)) {
+			const open = opener();
+			if (!open) return undefined;
+			open();
+			return { handled: true };
+		}
 		const target = this.rowTargets[event.y - 2];
 		if (target === undefined) return undefined;
 		const open = opener();
@@ -158,6 +177,7 @@ class FleetStrip implements Component {
 		const external = listExternalRunsExcludingDelegations().filter((r) => r.state === "running");
 		if (running.length === 0 && external.length === 0) {
 			this.rowTargets = [];
+			this.allSpan = null;
 			return [];
 		}
 
@@ -194,7 +214,7 @@ class FleetStrip implements Component {
 		}
 		const hidden = running.length + external.length - shownRunning - shownExternal.length;
 		if (hidden > 0) {
-			rows.push(this.theme.fg("dim", `+${hidden} more · alt+t all`));
+			rows.push(this.theme.fg("dim", `+${hidden} more · `) + this.theme.fg("accent", ALL_HINT));
 			targets.push(null);
 		}
 		const hoveredRows =
@@ -208,11 +228,15 @@ class FleetStrip implements Component {
 		const access: string[] = [];
 		if (slots > 0) access.push(mouse ? `click/alt+1..${slots}` : `alt+1..${slots}`);
 		else if (mouse) access.push("click");
-		access.push("alt+t all");
-		const header = this.theme.fg(
+		const accessSeg = access.length > 0 ? `${access.join(" · ")} · ` : "";
+		const lead = this.theme.fg(
 			"dim",
-			`torus fleet — ${shownRunning} running${shownExternal.length > 0 ? ` · ${shownExternal.length} external` : ""}${hidden > 0 ? ` · +${hidden} more` : ""} · ${access.join(" · ")}`,
+			`torus fleet — ${shownRunning} running${shownExternal.length > 0 ? ` · ${shownExternal.length} external` : ""}${hidden > 0 ? ` · +${hidden} more` : ""} · ${accessSeg}`,
 		);
+		const hint = this.theme.fg("accent", this.hoverAll ? this.theme.bold(ALL_HINT) : ALL_HINT);
+		const start = visibleWidth(lead);
+		this.allSpan = start + ALL_HINT.length <= width ? [start, start + ALL_HINT.length - 1] : null;
+		const header = lead + hint;
 		const frameRule = rule(this.theme, Math.max(0, width));
 		return [frameRule, header, ...hoveredRows, frameRule, ""];
 	}
@@ -238,4 +262,8 @@ export function registerFleetWidget(pi: ExtensionAPI): void {
 export default function fleetExtension(pi: ExtensionAPI): void {
 	if (!gateExtension("fleet", PLATFORM_SUPPORT)) return;
 	registerFleetWidget(pi);
+}
+
+function withinSpan(x: number, span: readonly [number, number]): boolean {
+	return x >= span[0] && x <= span[1];
 }

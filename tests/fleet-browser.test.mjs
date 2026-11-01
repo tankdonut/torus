@@ -326,6 +326,68 @@ test("strip: team members show a badge + idle state; overflow row appears past M
 	}
 });
 
+test("strip: alt+t-all hint is an accent chip in header and overflow row, click-routed to the list", () => {
+	registry.resetRegistryForTesting();
+	const tui = { mode: "fullscreen", requestRender: () => {} };
+	const theme = { fg: (color, text) => `{${color}}${text}{/}`, bold: (text) => `*${text}*` };
+	let factory = null;
+	fleet.registerFleetWidget({
+		on: (event, handler) => {
+			if (event === "session_start") handler({}, { ui: { setWidget: (_key, f) => (factory = f) } });
+		},
+		registerShortcut: () => {},
+	});
+	assert.ok(factory, "widget factory captured");
+
+	const opened = [];
+	globalThis[registry.FLEET_OPENER] = (id) => opened.push(id ?? "list");
+	// Plain-theme strip for hit-box math: no tags, so line length == visible width.
+	const plain = factory(tui, { fg: (_c, text) => text, bold: (text) => `*${text}*` });
+	try {
+		registry.startDelegation("hint-1", "builder", "zai/glm-5.3", "sess", "run0");
+		const lines = plain.render(200);
+		const header = lines[1];
+		const end = header.length - 1;
+		// The chip sits at the very end of the header; a click there opens the list.
+		const click = plain.handleMouse({ type: "click", button: "left", x: end, y: 1 });
+		assert.deepEqual(click, { handled: true }, "chip click is handled");
+		assert.deepEqual(opened, ["list"], "chip click opens the fleet list");
+		// A click on the dim lead is not the chip's.
+		opened.length = 0;
+		assert.equal(plain.handleMouse({ type: "click", button: "left", x: 2, y: 1 }), undefined);
+		assert.deepEqual(opened, [], "dim lead does not open anything");
+		// Hover bolds just the chip.
+		plain.handleMouse({ type: "move", x: end, y: 1 });
+		assert.ok(plain.render(200)[1].endsWith("*alt+t all*"), "hovering the chip bolds it");
+	} finally {
+		plain.dispose();
+		delete globalThis[registry.FLEET_OPENER];
+	}
+
+	// Styled strip: header and overflow row both carry the accent chip.
+	const styled = factory(tui, theme);
+	try {
+		registry.resetRegistryForTesting();
+		registry.startDelegation("hint-2", "builder", "zai/glm-5.3", "sess", "run0");
+		for (let i = 1; i < 7; i += 1) {
+			registry.startDelegation(`hint-2-${i}`, "builder", "zai/glm-5.3", "sess", `run${i}`);
+		}
+		const lines = styled.render(200).join("\n");
+		assert.match(
+			lines,
+			/\{dim\}torus fleet — 5 running · \+2 more · click\/alt\+1\.\.5 · \{\/\}\{accent\}alt\+t all\{\/\}/,
+			"header ends in the accent chip",
+		);
+		assert.match(
+			lines,
+			/\{dim\}\+2 more · \{\/\}\{accent\}alt\+t all\{\/\}/,
+			"overflow row ends in the accent chip",
+		);
+	} finally {
+		styled.dispose();
+	}
+});
+
 test("strip: member and delegate lines show input→output tokens", () => {
 	registry.resetRegistryForTesting();
 	const tui = { mode: "fullscreen", requestRender: () => {} };
