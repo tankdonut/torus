@@ -4,6 +4,7 @@ import interLatin from "@fontsource-variable/inter/files/inter-latin-wght-normal
 import monoLatinExt from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-ext-wght-normal.woff2";
 import monoLatin from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2";
 import "../styles/global.css";
+import pkg from "../../../package.json";
 import GitHubMark from "../components/GitHubMark.astro";
 import ThemeToggle from "../components/ThemeToggle.astro";
 import { installCopyButtons } from "../lib/copy-buttons.mjs";
@@ -15,6 +16,10 @@ interface Props {
 
 const { title = "torus", wide = false } = Astro.props;
 const base = import.meta.env.BASE_URL;
+// Same source as the landing's install pins: three levels up is the repo
+// root's package.json, not site/package.json. The navbar keeps the release
+// segment on every page, docs included, so navigation never drops it.
+const version = pkg.version;
 
 // Two type voices: mono is the machine voice (wordmark, labels, data),
 // sans is the explainer's. The woff2 files are imported directly (vite
@@ -56,6 +61,7 @@ const fontFaces = [
 	<body>
 		<header>
 			<a class="wordmark" href={`${base}/`}>torus</a>
+			<span class="seg">v{version}</span>
 			<span class="seg sep" aria-hidden="true">·</span>
 			<a class="seg" href={`${base}/docs/`}>docs</a>
 			<a class="gh" href="https://github.com/tankdonut/torus" aria-label="torus on GitHub">
