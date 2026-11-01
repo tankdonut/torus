@@ -401,7 +401,7 @@ jobs:
           for name in torus-* sha256sums.txt; do
             d="$(mktemp -d)"
             (cd "$d" && gh attestation download "$stage/$name" -R tankdonut/torus)
-            cat "$d"/sha256-*.jsonl > "$name.intoto.jsonl"
+            cat "$d"/sha256*.jsonl > "$name.intoto.jsonl"
             rm -rf "$d"
           done
           cd ../..
