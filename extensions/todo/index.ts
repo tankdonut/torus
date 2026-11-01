@@ -238,8 +238,7 @@ function currentSession(ctx?: ExtensionContext): string | null {
 
 function chipText(state: TodoState): string | undefined {
 	if (state.pending === 0 && state.todos.length === 0) return undefined;
-	const base = `todos ●${state.done} ○${state.pending}`;
-	return state.stats.tracked > state.todos.length ? `${base} of ${state.stats.tracked}` : base;
+	return `todo:${state.done}/${state.done + state.pending}`;
 }
 
 const todoWriteTool = defineTool({
