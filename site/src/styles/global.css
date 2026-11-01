@@ -19,6 +19,7 @@
 	--term-border: #26262e;
 	--term-ink: #cfd6dd;
 	--term-muted: #7e8892;
+	--term-green: #68b78d;
 	--font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
 	--font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
 	--spacing: 0.25rem;
@@ -289,6 +290,43 @@ pre code {
 	background: none;
 	padding: 0;
 	font-size: inherit;
+}
+
+/* Markdown fences (rehype plugin in lib/code-copy.mjs) carry the same copy
+   button CodeBlock renders in flow; here it pins to the fence's corner,
+   outside the pre so the pre's horizontal scroll never carries it away. The
+   wrapper takes the standard figure rhythm above; the pre inside loses its
+   browser margin so the two don't stack. Shiki paints fences dark in both
+   themes, so the button speaks the terminal palette, not the page theme. */
+.code-fence {
+	position: relative;
+}
+
+.code-fence pre {
+	margin: 0;
+}
+
+.code-fence .copy {
+	position: absolute;
+	top: calc(var(--spacing) * 2);
+	inset-inline-end: calc(var(--spacing) * 3);
+	font-family: var(--font-mono);
+	font-size: 0.75rem;
+	color: var(--term-muted);
+	background: var(--term-panel);
+	border: 1px solid var(--term-border);
+	padding: 0.05rem 0.6rem;
+	cursor: pointer;
+}
+
+.code-fence .copy:hover {
+	color: var(--term-ink);
+	border-color: var(--term-muted);
+}
+
+.code-fence .copy[data-copied] {
+	color: var(--term-green);
+	border-color: color-mix(in srgb, var(--term-green) 45%, transparent);
 }
 
 :focus-visible {

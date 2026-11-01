@@ -5,6 +5,7 @@ import monoLatinExt from "@fontsource-variable/jetbrains-mono/files/jetbrains-mo
 import monoLatin from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2";
 import "../styles/global.css";
 import GitHubMark from "../components/GitHubMark.astro";
+import { installCopyButtons } from "../lib/copy-buttons.mjs";
 
 interface Props {
 	title?: string;
@@ -118,6 +119,12 @@ const fontFaces = [
 				});
 				paint();
 			})();
+		</script>
+		<script>
+			// Markdown fences carry data-copy copy buttons (rehype plugin in
+			// lib/code-copy.mjs); this is the shared handler for them.
+			import { installCopyButtons } from "../lib/copy-buttons.mjs";
+			installCopyButtons();
 		</script>
 	</body>
 </html>

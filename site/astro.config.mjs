@@ -3,6 +3,7 @@ import { unified } from "@astrojs/markdown-remark";
 import sitemap from "@astrojs/sitemap";
 import { defineConfig } from "astro/config";
 import rehypeSlug from "rehype-slug";
+import { rehypeCodeCopy } from "./src/lib/code-copy.mjs";
 import { rehypeRewriteDocLinks } from "./src/lib/md-links.mjs";
 
 // The root workspace hoists cookie@0.7.x for express while astro needs its own
@@ -25,6 +26,9 @@ export default defineConfig({
 			rehypePlugins: [
 				rehypeSlug,
 				[rehypeRewriteDocLinks, { siteBase, repoRoot: new URL("../", import.meta.url) }],
+				// Copy buttons on every markdown fence (the landing's CodeBlock owns
+				// its own); runs last so it wraps the fully rewritten fence.
+				rehypeCodeCopy,
 			],
 		}),
 	},

@@ -103,17 +103,6 @@ const payload = lines.map((line) => line.replace(/^\$\s+/, "")).join("\n");
 </style>
 
 <script>
-	for (const button of document.querySelectorAll<HTMLButtonElement>("[data-copy]")) {
-		button.addEventListener("click", () => {
-			const text = button.dataset.copy ?? "";
-			void navigator.clipboard?.writeText(text).then(() => {
-				button.textContent = "copied";
-				button.setAttribute("data-copied", "");
-				setTimeout(() => {
-					button.textContent = "copy";
-					button.removeAttribute("data-copied");
-				}, 1500);
-			});
-		});
-	}
+	import { installCopyButtons } from "../lib/copy-buttons.mjs";
+	installCopyButtons();
 </script>
