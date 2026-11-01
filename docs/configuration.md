@@ -38,6 +38,7 @@ Rows carrying a config key also read that key from the [unified config](#the-uni
 | Variable | Consumer | Purpose |
 | --- | --- | --- |
 | `TORUS_PI_BIN` | launcher | Explicit engine binary path (overrides `node_modules/.bin/pi`) |
+| `TORUS_BOOTSTRAP` | launcher | `network` = install the engine over npm instead of using the binary's bundled dependency tree (binaries bundle by default and boot offline) |
 | `TORUS_ROOT` | launcher → registry | Payload root override (source layout otherwise) |
 | `TORUS_ENGINE` | launcher sets, ui reads | Engine tag (display) |
 | `TORUS_ENGINE_BIN` | launcher sets, roster/engine-child read | Engine binary for child spawns |

@@ -146,6 +146,11 @@ test("payload-assets: embeds the packed payload tree from an explicit override",
 	assert.ok(treeExport, "PAYLOAD_TREE must export { virtual: t0, sha256 }");
 	assert.equal(treeExport[1], expectedSha, "PAYLOAD_TREE.sha256 must be the tree's sha256");
 
+	const withTreeHash = generatedConstant("PAYLOAD_HASH");
+	const diskHash = generatedConstant("PAYLOAD_DISK_HASH");
+	assert.match(diskHash, /^[0-9a-f]{64}$/, "the disk-side hash must be a sha256 hex digest");
+	assert.notEqual(diskHash, withTreeHash, "the packed tree must stay out of the disk-side hash");
+
 	generateAssets({ [PAYLOAD_LOCK_ENV]: lock });
 	assert.notEqual(
 		generatedConstant("PAYLOAD_HASH"),
@@ -173,4 +178,9 @@ test("payload-assets: stays lock-only when no tree is available", (t) => {
 		"PAYLOAD_TREE must be null without a packed tree",
 	);
 	assert.match(generatedConstant("PAYLOAD_HASH"), /^[0-9a-f]{64}$/);
+	assert.equal(
+		generatedConstant("PAYLOAD_DISK_HASH"),
+		generatedConstant("PAYLOAD_HASH"),
+		"lock-only builds keep the disk-side hash equal to the full payload hash",
+	);
 });

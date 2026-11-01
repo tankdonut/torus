@@ -131,12 +131,13 @@ test("build job: fresh-home smoke bootstraps once and checks locked versions", (
 	const step = ciWorkflow.slice(at, end);
 	assert.ok(
 		(step.match(/dist\/torus\/bin\/torus --version/g) ?? []).length === 2,
-		"smoke must run --version twice: bootstrap once, then prove no reinstall",
+		"smoke must run --version twice: extract once, then prove no reinstall",
 	);
 	assert.ok(
-		step.includes("grep -Eq 'torus: .*(installing|bootstrapping) \\((npm ci|npm install)'"),
-		"first run must assert the bootstrap line on stderr",
+		step.includes("grep -q 'extracting the bundled engine tree'"),
+		"first run must assert the offline tree extraction on stderr",
 	);
+	assert.ok(step.includes("! grep -q 'npm '"), "first run must assert npm is never invoked");
 	assert.ok(
 		step.includes("second run must not reinstall"),
 		"second run must assert the absence of a bootstrap line",

@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { PAYLOAD_LOCK_ENV } from "../scripts/generate-payload-lock.mjs";
+import { PAYLOAD_TREE_ENV, packDir } from "../scripts/pack-payload-tree.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, "dist", "tamper-test");
@@ -58,7 +59,7 @@ if (!skipReason) {
 	);
 	const gen = spawnSync("node", [path.join(root, "scripts", "generate-payload-assets.mjs")], {
 		encoding: "utf8",
-		env: { ...process.env, [PAYLOAD_LOCK_ENV]: fixtureLock },
+		env: { ...process.env, [PAYLOAD_LOCK_ENV]: fixtureLock, [PAYLOAD_TREE_ENV]: fixtureTreePath() },
 	});
 	assert.equal(gen.status, 0, `generate-payload-assets failed: ${gen.stderr}`);
 
@@ -69,6 +70,33 @@ if (!skipReason) {
 	);
 	assert.equal(build.status, 0, `bun build --compile failed: ${build.stderr}`);
 	chmodSync(bin, 0o755);
+}
+
+/**
+ * Packs a minimal node_modules fixture (an engine package whose bin entry the
+ * launcher can resolve) into the tar.gz the binary embeds as its tree.
+ */
+function fixtureTreePath() {
+	const base = path.join(outDir, "fixture-tree");
+	const engineDir = path.join(base, "node_modules", "@earendil-works", "pi-coding-agent");
+	mkdirSync(path.join(base, "node_modules", "example"), { recursive: true });
+	mkdirSync(engineDir, { recursive: true });
+	writeFileSync(
+		path.join(engineDir, "package.json"),
+		`${JSON.stringify(
+			{ name: "@earendil-works/pi-coding-agent", version: "0.0.0", bin: { pi: "cli.js" } },
+			null,
+			"\t",
+		)}\n`,
+	);
+	writeFileSync(path.join(engineDir, "cli.js"), "#!/usr/bin/env node\n");
+	chmodSync(path.join(engineDir, "cli.js"), 0o755);
+	writeFileSync(path.join(base, "node_modules", "example", "package.json"), '{"name":"example"}\n');
+	const tarPath = path.join(outDir, "payload-tree.tar.gz");
+	// pack the node_modules directory itself, matching the real packer's shape:
+	// entries are relative to node_modules and the launcher re-creates them there
+	writeFileSync(tarPath, packDir(path.join(base, "node_modules")).tarGz);
+	return tarPath;
 }
 
 // Ambient TORUS_* exports from a running torus session must not leak in: the
@@ -82,6 +110,71 @@ function runBinary() {
 	env["TORUS_PI_BIN"] = engineBin;
 	return spawnSync(bin, ["--version"], { encoding: "utf8", timeout: 120000, env });
 }
+
+// Offline runner: no TORUS_PI_BIN override, so the launcher must resolve the
+// engine entry from the extracted bundled tree itself.
+function runBinaryOffline(targetHome) {
+	const env = { ...process.env };
+	for (const key of ["TORUS_ROOT", "TORUS_ENGINE", "TORUS_ENGINE_BIN", "TORUS_PI_BIN"]) {
+		delete env[key];
+	}
+	env["HOME"] = targetHome;
+	return spawnSync(bin, ["--version"], { encoding: "utf8", timeout: 120000, env });
+}
+
+const treeHome = path.join(outDir, "home-tree");
+
+test("the bundled tree boots offline with no npm involvement", {
+	skip: skipReason || false,
+}, () => {
+	rmSync(treeHome, { recursive: true, force: true });
+	const run = runBinaryOffline(treeHome);
+	assert.equal(run.status, 0, `offline --version failed: ${run.stderr}`);
+	assert.match(run.stdout, /^torus \d+\.\d+\.\d+/);
+	assert.ok(
+		run.stderr.includes("extracting the bundled engine tree"),
+		"first run extracts the tree",
+	);
+	assert.ok(!run.stderr.includes("npm "), "no npm command may run in offline mode");
+	assert.ok(
+		existsSync(
+			path.join(
+				treeHome,
+				".torus",
+				"runtime",
+				"node_modules",
+				"@earendil-works",
+				"pi-coding-agent",
+				"cli.js",
+			),
+		),
+		"the engine entry must exist in the extracted tree",
+	);
+});
+
+test("a deleted engine entry is re-extracted from the bundled tree", {
+	skip: skipReason || false,
+}, () => {
+	const pkgDir = path.join(
+		treeHome,
+		".torus",
+		"runtime",
+		"node_modules",
+		"@earendil-works",
+		"pi-coding-agent",
+	);
+	rmSync(pkgDir, { recursive: true, force: true });
+	const run = runBinaryOffline(treeHome);
+	assert.equal(run.status, 0, `tree-heal run failed: ${run.stderr}`);
+	assert.ok(run.stderr.includes("re-extracting"), "the tree heal must be named on stderr");
+	assert.ok(existsSync(path.join(pkgDir, "cli.js")), "the engine entry must be restored");
+	const clean = runBinaryOffline(treeHome);
+	assert.equal(clean.status, 0, `clean rerun failed: ${clean.stderr}`);
+	assert.ok(
+		!clean.stderr.includes("extracting") && !clean.stderr.includes("re-extracting"),
+		"a healthy tree root must start silently",
+	);
+});
 
 test("compiled binary extracts the embedded payload into a fresh HOME", {
 	skip: skipReason || false,

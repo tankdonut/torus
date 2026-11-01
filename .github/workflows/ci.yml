@@ -87,11 +87,13 @@ jobs:
           H=$(mktemp -d)
           RT="$H/.torus/runtime"
           HOME="$H" dist/torus/bin/torus --version 2>"$H/first.err"
-          grep -Eq 'torus: .*(installing|bootstrapping) \((npm ci|npm install)' "$H/first.err" \
-            || { echo "first run must bootstrap the engine"; cat "$H/first.err"; exit 1; }
+          grep -q 'extracting the bundled engine tree' "$H/first.err" \
+            || { echo "first run must extract the bundled engine tree"; cat "$H/first.err"; exit 1; }
+          ! grep -q 'npm ' "$H/first.err" \
+            || { echo "first run must never invoke npm"; cat "$H/first.err"; exit 1; }
           HOME="$H" dist/torus/bin/torus --version 2>"$H/second.err"
           ! grep -Eq 'torus: .*(installing|bootstrapping|extracting)' "$H/second.err" \
-            || { echo "second run must not reinstall"; cat "$H/second.err"; exit 1; }
+            || { echo "second run must not reinstall or re-extract"; cat "$H/second.err"; exit 1; }
           # version source: the built payload lock once it exists, else the repo lock the payload embeds
           LOCK=package-lock.json
           if [ -f dist/payload-lock.json ]; then LOCK=dist/payload-lock.json; fi

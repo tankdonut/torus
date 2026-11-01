@@ -16,10 +16,10 @@
  *   4. compiled layout: <execPath>/../lib/torus, <execPath>/torus-payload
  *   5. ~/.torus/runtime
  *
- * If the engine is missing in the resolved payload — or the embedded payload's
- * dependency manifest changed since the last run — the launcher bootstraps it
- * there via `npm ci` when the payload carries a lock matching its manifest,
- * else `npm install` (cooldown-safe pin).
+ * The engine comes from the embedded dependency tree when the binary packs
+ * one: extracted offline into the payload root, no npm involved.
+ * TORUS_BOOTSTRAP=network opts into the npm path instead (`npm ci` against
+ * the payload lock when it matches the manifest, else `npm install`).
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -28,13 +28,9 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-	extractPayload,
-	readMarker,
-	shouldSkipInstall,
-	verifyExtracted,
-} from "./payload-extract.mjs";
+import { extractPayload, readMarker, readMarkerDeps, verifyExtracted } from "./payload-extract.mjs";
 import { extractPermissionMode } from "./permission-mode.mjs";
+import { extractTree } from "./untar.mjs";
 
 function isTorusRoot(candidate) {
 	try {
@@ -63,8 +59,30 @@ function userHome() {
  */
 /** Set when a compiled binary re-extracted its payload this run (hash changed). */
 let payloadRefreshed = false;
-/** Deps-hash embedded in this binary (package.json + lockfile); null unless compiled. */
-let embeddedDepsHash = null;
+/** sha256 of the embedded dependency tree; null unless the binary packs one. */
+let embeddedTreeSha = null;
+/** Embedded tree bytes, loaded at most once per run; null unless packed. */
+let embeddedTreeBytes = null;
+/** TORUS_BOOTSTRAP=network opts into npm bootstrap over the embedded tree. */
+const networkBootstrap = process.env["TORUS_BOOTSTRAP"] === "network";
+
+/**
+ * Load the embedded dependency tree (bytes + sha, checksum-verified) at most
+ * once per run. Called whenever the tree may be needed: extraction after a
+ * payload refresh, or the missing-engine heal in resolveBinary.
+ */
+async function loadEmbeddedTree(assets, bun) {
+	if (embeddedTreeBytes !== null || assets.PAYLOAD_TREE === null || networkBootstrap) return;
+	embeddedTreeSha = assets.PAYLOAD_TREE.sha256;
+	embeddedTreeBytes = Buffer.from(await bun.file(assets.PAYLOAD_TREE.virtual).arrayBuffer());
+	const actual = createHash("sha256").update(embeddedTreeBytes).digest("hex");
+	if (actual !== embeddedTreeSha) {
+		process.stderr.write(
+			"torus: embedded dependency tree failed its checksum — refusing to extract\n",
+		);
+		process.exit(1);
+	}
+}
 
 async function embeddedRoot() {
 	const bun = globalThis.Bun;
@@ -73,7 +91,23 @@ async function embeddedRoot() {
 	const root = path.join(userHome(), ".torus", "runtime");
 	if (isTorusRoot(root) && readMarker(root) === assets.PAYLOAD_HASH) {
 		// A matching marker alone proves nothing about content; recompute and heal on drift.
-		if (verifyExtracted(root, assets.PAYLOAD_HASH, assets.OWNED_TOP_LEVELS)) return root;
+		if (
+			verifyExtracted(
+				root,
+				assets.PAYLOAD_DISK_HASH ?? assets.PAYLOAD_HASH,
+				assets.OWNED_TOP_LEVELS,
+			)
+		) {
+			// The bundled tree may still be missing or stale below the intact payload:
+			// load it so resolveBinary can heal without touching the network.
+			if (
+				assets.PAYLOAD_TREE !== null &&
+				(readMarkerDeps(root) !== assets.PAYLOAD_TREE.sha256 || engineEntryPath(root) === null)
+			) {
+				await loadEmbeddedTree(assets, bun);
+			}
+			return root;
+		}
 		process.stderr.write(
 			`torus: extracted payload in ${root} no longer matches this binary — restoring\n`,
 		);
@@ -99,13 +133,27 @@ async function embeddedRoot() {
 	if (assets.PAYLOAD_PACKAGE_LOCK != null) depsHasher.update(assets.PAYLOAD_PACKAGE_LOCK, "utf8");
 	const depsHash = depsHasher.digest("hex");
 	process.stderr.write(`torus: extracting embedded payload to ${root}...\n`);
+	const priorDeps = readMarkerDeps(root);
+	const treeSha =
+		assets.PAYLOAD_TREE !== null && !networkBootstrap ? assets.PAYLOAD_TREE.sha256 : null;
 	try {
-		extractPayload(root, assets.PAYLOAD_HASH, assets.OWNED_TOP_LEVELS, files, depsHash);
+		extractPayload(root, assets.PAYLOAD_HASH, assets.OWNED_TOP_LEVELS, files, treeSha ?? depsHash);
 		payloadRefreshed = true;
-		embeddedDepsHash = depsHash;
 	} catch (err) {
 		process.stderr.write(`torus: payload extraction failed: ${err?.message ?? err}\n`);
 		process.exit(1);
+	}
+	if (treeSha !== null) {
+		await loadEmbeddedTree(assets, bun);
+		if (priorDeps !== treeSha || engineEntryPath(root) === null) {
+			process.stderr.write("torus: extracting the bundled engine tree...\n");
+			try {
+				extractTree(root, embeddedTreeBytes);
+			} catch (err) {
+				process.stderr.write(`torus: tree extraction failed: ${err?.message ?? err}\n`);
+				process.exit(1);
+			}
+		}
 	}
 	return root;
 }
@@ -396,12 +444,54 @@ function payloadLockMatches(root) {
 	}
 }
 
+/**
+ * The engine's executable entry resolved through its own package manifest —
+ * the bin field of the installed @earendil-works/pi-coding-agent — so the
+ * launcher never depends on npm's platform-specific .bin shims.
+ */
+function engineEntryPath(rootDir) {
+	try {
+		const pkgDir = path.join(rootDir, "node_modules", "@earendil-works", "pi-coding-agent");
+		const pkgJson = JSON.parse(readFileSync(path.join(pkgDir, "package.json"), "utf8"));
+		const rel = pkgJson?.bin?.pi;
+		if (typeof rel !== "string") return null;
+		const entry = path.join(pkgDir, rel);
+		return existsSync(entry) ? entry : null;
+	} catch {
+		return null;
+	}
+}
+
 function resolveBinary() {
 	const envBin = process.env["TORUS_PI_BIN"];
 	if (envBin) return envBin;
+	const entry = engineEntryPath(root);
+	if (entry !== null) return entry;
+	if (embeddedTreeBytes !== null && !networkBootstrap) {
+		process.stderr.write(
+			"torus: bundled engine tree missing from the runtime root — re-extracting\n",
+		);
+		try {
+			extractTree(root, embeddedTreeBytes);
+		} catch (err) {
+			process.stderr.write(`torus: tree re-extraction failed: ${err?.message ?? err}\n`);
+			process.exit(1);
+		}
+		const healed = engineEntryPath(root);
+		if (healed !== null) return healed;
+		process.stderr.write(
+			`torus: the bundled tree does not contain the pinned engine — delete ${root} and re-run, or set TORUS_BOOTSTRAP=network\n`,
+		);
+		process.exit(1);
+	}
 	const local = path.join(root, "node_modules", ".bin", "pi");
-	if (shouldSkipInstall(root, local, payloadRefreshed, embeddedDepsHash)) return local;
-
+	if (existsSync(local)) return local;
+	if (embeddedTreeBytes !== null && !networkBootstrap) {
+		process.stderr.write(
+			`torus: no engine available offline — delete ${root} and re-run, or set TORUS_BOOTSTRAP=network to install over the network\n`,
+		);
+		process.exit(1);
+	}
 	const pkg = path.join(root, "package.json");
 	if (!existsSync(pkg)) return "pi";
 	const args = payloadLockMatches(root)
@@ -468,6 +558,12 @@ function probePinDrift(bin, currentPin) {
 }
 
 function warnPinDrift(pin, actual) {
+	if (embeddedTreeSha !== null && !networkBootstrap) {
+		process.stderr.write(
+			`torus: engine pin drift — the bundled tree reports pi@${actual}, the payload pins ${pin}; refusing to start. Delete ${path.join(userHome(), ".torus", "runtime")} and re-run\n`,
+		);
+		process.exit(1);
+	}
 	process.stderr.write(
 		`torus: engine pin drift — package.json pins pi@${pin}, binary reports ${actual}\n`,
 	);
