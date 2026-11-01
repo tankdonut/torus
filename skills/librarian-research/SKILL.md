@@ -5,7 +5,7 @@ description: "Deep research playbooks for the librarian agent: documentation dis
 
 # librarian-research
 
-Full playbooks backing the librarian agent (`agents/librarian.md`). Tool truth: docs lookup is `mcp__context7__resolve_library_id` → `mcp__context7__query_docs`, code search is `mcp__grep_app__searchGitHub`, web is `web_search` / `fetch_content` (fallback `bash: curl -sL`). `gh` commands are the convenience form: `git clone` + `curl` always work. Clones go under `/tmp/torus-librarian/`.
+Full playbooks backing the librarian agent (`agents/librarian.md`). Tool truth: docs lookup is `mcp__context7__resolve_library_id` → `mcp__context7__query_docs`, code search is `mcp__grep_app__searchGitHub`, web is `web_search` / `fetch_content` (fallback `bash: curl -sL`). `gh` commands are the convenience form: `git clone` + `curl` always work. Clones go under `$TORUS_SCRATCH_DIR/librarian/`, each in its own `mktemp -d "$TORUS_SCRATCH_DIR/librarian/repo.XXXXXX"` directory so concurrent runs never collide.
 
 ## Documentation discovery (Types A and D)
 
@@ -87,11 +87,11 @@ Tool 3: mcp__grep_app__searchGitHub(query: "usage pattern", language: ["TypeScri
 **Execute in sequence**:
 
 ```text
-Step 1: Clone to temp directory
-        git clone --depth 1 https://github.com/owner/repo /tmp/torus-librarian/repo-name
+Step 1: Clone to scratch directory
+        REPO=$(mktemp -d "$TORUS_SCRATCH_DIR/librarian/repo.XXXXXX") && git clone --depth 1 https://github.com/owner/repo "$REPO"
 
 Step 2: Get commit SHA for permalinks
-        cd /tmp/torus-librarian/repo-name && git rev-parse HEAD
+        git -C "$REPO" rev-parse HEAD
 
 Step 3: Find the implementation
         - grep or the ast-grep skill for function/class
@@ -105,7 +105,7 @@ Step 4: Construct permalink
 **Parallel acceleration (4+ calls)**:
 
 ```text
-Tool 1: git clone --depth 1 https://github.com/owner/repo /tmp/torus-librarian/repo
+Tool 1: REPO=$(mktemp -d "$TORUS_SCRATCH_DIR/librarian/repo.XXXXXX") && git clone --depth 1 https://github.com/owner/repo "$REPO"
 Tool 2: mcp__grep_app__searchGitHub(query: "function_name", repo: "owner/repo")
 Tool 3: gh api repos/owner/repo/commits/HEAD --jq '.sha'
 Tool 4: mcp__context7__query_docs(libraryId: id, query: "relevant-api")
@@ -120,9 +120,9 @@ Tool 4: mcp__context7__query_docs(libraryId: id, query: "relevant-api")
 ```text
 Tool 1: gh search issues "keyword" --repo owner/repo --state all --limit 10
 Tool 2: gh search prs "keyword" --repo owner/repo --state merged --limit 10
-Tool 3: git clone --depth 50 https://github.com/owner/repo /tmp/torus-librarian/repo
-        → then: git log --oneline -n 20 -- path/to/file
-        → then: git blame -L 10,30 path/to/file
+Tool 3: REPO=$(mktemp -d "$TORUS_SCRATCH_DIR/librarian/repo.XXXXXX") && git clone --depth 50 https://github.com/owner/repo "$REPO"
+        → then: git -C "$REPO" log --oneline -n 20 -- path/to/file
+        → then: git -C "$REPO" blame -L 10,30 path/to/file
 Tool 4: gh api repos/owner/repo/releases --jq '.[0:5]'
 ```
 
@@ -150,7 +150,7 @@ Tool 3: mcp__grep_app__searchGitHub(query: "pattern1", language: [...])
 Tool 4: mcp__grep_app__searchGitHub(query: "pattern2", useRegexp: true)
 
 // Source Analysis
-Tool 5: git clone --depth 1 https://github.com/owner/repo /tmp/torus-librarian/repo
+Tool 5: REPO=$(mktemp -d "$TORUS_SCRATCH_DIR/librarian/repo.XXXXXX") && git clone --depth 1 https://github.com/owner/repo "$REPO"
 
 // Context
 Tool 6: gh search issues "topic" --repo owner/repo
@@ -180,7 +180,7 @@ https://github.com/tanstack/query/blob/abc123def/packages/react-query/src/useQue
 - **Latest Info**: Use `web_search("<query>")`
 - **Fast Code Search**: Use grep_app - `mcp__grep_app__searchGitHub(query, language, useRegexp)`
 - **Deep Code Search**: Use gh CLI - `gh search code "query" --repo owner/repo`
-- **Clone Repo**: Use `git clone --depth 1 https://github.com/owner/repo /tmp/torus-librarian/name`
+- **Clone Repo**: Use `REPO=$(mktemp -d "$TORUS_SCRATCH_DIR/librarian/repo.XXXXXX") && git clone --depth 1 https://github.com/owner/repo "$REPO"`
 - **Issues/PRs**: Use gh CLI - `gh search issues/prs "query" --repo owner/repo`
 - **View Issue/PR**: Use gh CLI - `gh issue/pr view <num> --repo owner/repo --comments`
 - **Release Info**: Use gh CLI - `gh api repos/owner/repo/releases/latest`
