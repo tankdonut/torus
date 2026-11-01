@@ -23,7 +23,7 @@ pi install git:github.com/tankdonut/torus@vX.Y.Z
 
 Launcher-only surfaces (`torus serve`, `torus acp-agent`) are not part of this mode; see [docs/pi-packages.md](docs/pi-packages.md).
 
-**As a single binary**: download `torus-<os>-<arch>` from [releases](https://github.com/tankdonut/torus/releases), make it executable, and run it. The first launch self-bootstraps the runtime:
+**As a single binary**: download `torus-<os>-<arch>` from [releases](https://github.com/tankdonut/torus/releases), make it executable, and run it. Node must be on your `PATH`; npm is not. The first launch boots offline, extracting the embedded payload and dependency tree (pinned engine included) into `~/.torus/runtime`:
 
 ```sh
 chmod +x torus-<os>-<arch> && ./torus-<os>-<arch>
@@ -39,7 +39,7 @@ docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus
 
 ```sh
 git clone https://github.com/tankdonut/torus.git && cd torus
-./make.sh npmrc      # one-time: writes .npmrc (agents are blocked from writing it by design)
+./make.sh npmrc      # one-time: writes the dev-only .npmrc (agents are blocked from writing it; it never ships)
 npm install
 ./runtime/bin/torus.mjs
 ```

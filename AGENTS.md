@@ -13,6 +13,8 @@
 | Auto-fix lint+format | `npm run lint:fix` |
 | Full gate | `./make.sh check` (typecheck + lint + test + smoke) |
 | Build binary | `./make.sh build` |
+| Generate the payload-native lock (needs the npm registry) | `node scripts/generate-payload-lock.mjs` |
+| Pack the embedded dependency tree (needs the npm registry) | `node scripts/pack-payload-tree.mjs` |
 | Build container image | `./make.sh image` |
 | Test container image | `./make.sh image-test` |
 | Overhead bench (spawns engine, costs tokens) | `npm run bench:overhead` |

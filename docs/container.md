@@ -16,7 +16,7 @@ torus ships as a prebuilt multi-arch image (`linux/amd64` + `linux/arm64`) on GH
 docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus
 ```
 
-Anything after the image name goes to torus as argv. The payload and its npm dependencies (the pinned pi engine included) are baked into the image at `/opt/torus`, and `TORUS_ROOT` points the launcher there. Containers boot instantly, never extract to `~/.torus/runtime`, and need no network access. `--list-models` works with no credentials:
+Anything after the image name goes to torus as argv. The payload and its npm dependencies (the pinned pi engine included) are baked into the image at `/opt/torus`, and `TORUS_ROOT` points the launcher there. With the baked root in place, containers boot instantly, extract nothing, and need no network access. If `TORUS_ROOT` arrives unset or empty, the binary's embedded payload and dependency tree serve as the in-image fallback, extracted offline inside the container. `--list-models` works with no credentials:
 
 ```sh
 docker run --rm ghcr.io/tankdonut/torus --list-models
@@ -49,7 +49,7 @@ Full-toolkit flavor:
 | Tool | Version / source |
 | ------ | ------------------ |
 | node + npm | pinned by `.tool-versions` (base image `node:<pin>-slim`) |
-| torus payload + pi engine | baked at `/opt/torus` from the repo payload manifest (engine pin promoted from devDependencies), deps resolved through the baked repo `package-lock.json` |
+| torus payload + pi engine | baked at `/opt/torus` from the repo payload manifest (engine pin promoted from devDependencies), deps resolved through the baked payload lock; the payload ships no `.npmrc` |
 | ast-grep (both the `sg` shim and `ast-grep`) | GitHub release pinned by the Dockerfile `ARG AST_GREP_VERSION` |
 | typescript-language-server / typescript | global npm pins in the Dockerfile's `npm i -g` layer |
 | tmux, bubblewrap, socat, git, ripgrep, notify-send (libnotify) | apt (distro packages) |

@@ -24,11 +24,11 @@ Read the changelog before taking a minor bump. Take patches as they arrive. The 
 
 ## Upgrading the binary
 
-Replace the old binary with the new one; that is the whole upgrade. The new binary carries a new payload hash, so the next launch re-extracts the payload and runs one `npm install` in `~/.torus/runtime`. The repair finishes in seconds.
+Replace the old binary with the new one; that is the whole upgrade. The new binary carries a new payload hash, so the next launch re-extracts the payload and its bundled dependency tree into `~/.torus/runtime`. The repair runs offline and finishes in seconds.
 
 ## Recovering the runtime
 
-A pinned engine left over from an older payload produces a drift warning at launch, not breakage. The documented recovery is:
+Under `TORUS_BOOTSTRAP=network`, a pinned engine left over from an older payload produces a drift warning at launch, not breakage. The documented recovery is:
 
 ```sh
 rm -rf ~/.torus/runtime
