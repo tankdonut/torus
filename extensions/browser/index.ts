@@ -316,10 +316,23 @@ class FleetBrowser implements Component {
 		this.theme = theme;
 		this.done = done;
 		if (focusDelegationId) {
-			const index = listDelegations().findIndex((record) => record.id === focusDelegationId);
+			const records = listDelegations();
+			const index = records.findIndex((record) => record.id === focusDelegationId);
 			if (index >= 0) {
 				this.cursor = index;
 				this.mode = "detail";
+			} else {
+				// External runs render after every delegation row, in the same order
+				// render() builds the list: running externals, delegations excluded
+				// by id. A stale member id falls back to the list view.
+				const running = listExternalRunsExcludingDelegations().filter(
+					(run) => run.state === "running",
+				);
+				const external = running.findIndex((run) => run.id === focusDelegationId);
+				if (external >= 0) {
+					this.cursor = records.length + external;
+					this.mode = "detail";
+				}
 			}
 		}
 		// A detail opened straight from a strip click has no list behind it.

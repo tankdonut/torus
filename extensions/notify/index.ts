@@ -1,9 +1,9 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import { type Component, MouseRegion, Text } from "@earendil-works/pi-tui";
-import { entityColor, flattenPreview } from "../fleet/theme-kit.js";
+import { type Component, MouseRegion, Text, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { entityColor, flattenPreview, teamName } from "../fleet/theme-kit.js";
 import { formatDuration } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
-import { FLEET_OPENER, sanitizeRender } from "../registry.js";
+import { FLEET_OPENER, listExternalRuns, sanitizeRender } from "../registry.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux"],
@@ -59,6 +59,56 @@ export function clickable(lines: Component[], delegationId: string | undefined):
 		}
 		return undefined;
 	});
+}
+
+/**
+ * Per-line click routing for multi-line markers: each logical line carries its
+ * own fleet target (id opens that run's detail, null the list, undefined
+ * nothing). Lines wrap at the render width, so targets track rendered rows.
+ */
+export function clickableLines(
+	lines: string[],
+	targets: Array<string | null | undefined>,
+): Component {
+	const state = { hovered: false };
+	let rowTargets: Array<string | null | undefined> = [];
+	const inner = new (class implements Component {
+		render(width: number): string[] {
+			const rows: string[] = [];
+			rowTargets = [];
+			for (const [index, line] of lines.entries()) {
+				for (const row of wrapTextWithAnsi(line, Math.max(1, width))) {
+					rows.push(state.hovered ? `\x1b[1m${row}\x1b[22m` : row);
+					rowTargets.push(targets[index]);
+				}
+			}
+			return rows;
+		}
+		invalidate(): void {}
+	})();
+	return new MouseRegion(inner, (event) => {
+		if (event.type === "move") {
+			if (hoveredMarker && hoveredMarker !== state) hoveredMarker.hovered = false;
+			state.hovered = true;
+			hoveredMarker = state;
+			return undefined;
+		}
+		if (event.type !== "click" || event.button !== "left") return undefined;
+		const target = rowTargets[event.y];
+		if (target === undefined) return undefined;
+		const open = opener();
+		if (!open) return undefined;
+		open(target ?? undefined);
+		return { handled: true };
+	});
+}
+
+/** A team-wake line's member resolved to its fleet run id; null opens the list. */
+function memberRunTarget(team: string, member: string): string | null {
+	const run = listExternalRuns().find(
+		(run) => run.handle === member && teamName(run.source) === team,
+	);
+	return run?.id ?? null;
 }
 
 /** Shared by the standalone marker and its wake-batch entry so both surfaces render identically. */
@@ -163,44 +213,56 @@ export function registerNotify(pi: ExtensionAPI): void {
 		return new Text(monitorLine(details, theme), 0, 0);
 	});
 
-	const teamWakeLines = (details: Record<string, unknown>, theme: Theme): string => {
+	const teamWakeEntries = (
+		details: Record<string, unknown>,
+		theme: Theme,
+	): { lines: string[]; targets: Array<string | null | undefined> } => {
 		const team = typeof details["team"] === "string" ? sanitizeRender(details["team"]) : "team";
-		const episodeLine = (entry: Record<string, unknown>): string => {
+		const episode = (entry: Record<string, unknown>) => {
 			const member = typeof entry["member"] === "string" ? sanitizeRender(entry["member"]) : "?";
 			const status = typeof entry["status"] === "string" ? entry["status"] : "idle";
 			const reason = sanitizeRender(flattenPreview(entry["reason"], 70));
-			return delegationLine(
-				status === "stopped" ? "✗" : "☾",
-				status === "stopped" ? "error" : "warning",
-				theme.fg("customMessageText", `team ${team}: `) +
-					theme.fg(entityColor(member), `@${member}`) +
-					theme.fg("customMessageText", ` ${status}`),
-				reason,
-				theme,
-			);
+			return {
+				line: delegationLine(
+					status === "stopped" ? "✗" : "☾",
+					status === "stopped" ? "error" : "warning",
+					theme.fg("customMessageText", `team ${team}: `) +
+						theme.fg(entityColor(member), `@${member}`) +
+						theme.fg("customMessageText", ` ${status}`),
+					reason,
+					theme,
+				),
+				// Clicking an episode opens that member's detail; a member with no
+				// live run left falls back to the list.
+				target: memberRunTarget(team, member),
+			};
 		};
-		if (Array.isArray(details["members"])) {
-			const lines = details["members"]
-				.filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null)
-				.map(episodeLine);
-			if (lines.length > 0) return lines.join("\n");
-		}
-		return episodeLine(details);
+		const candidates = Array.isArray(details["members"])
+			? details["members"].filter(
+					(e): e is Record<string, unknown> => typeof e === "object" && e !== null,
+				)
+			: [details];
+		const entries = candidates.length > 0 ? candidates : [details];
+		return {
+			lines: entries.map((entry) => episode(entry).line),
+			targets: entries.map((entry) => episode(entry).target),
+		};
 	};
 
 	pi.registerMessageRenderer("torus.team-wake", (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
-		return new Text(teamWakeLines(details, theme), 0, 0);
+		const { lines, targets } = teamWakeEntries(details, theme);
+		return clickableLines(lines, targets);
 	});
 
 	// One batch marker per wake-gate flush; each entry renders with the same
-	// lines its standalone marker would have shown (delegation completions keep
-	// their fleet click target too: one run opens it, several open the list).
+	// lines its standalone marker would have shown, and every line keeps its
+	// own click target: a completion opens its run, a member episode that
+	// member, monitor lines carry no target.
 	pi.registerMessageRenderer("torus.wake-batch", (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		const lines: string[] = [];
-		let delegationCount = 0;
-		let lastDelegationId: string | undefined;
+		const targets: Array<string | null | undefined> = [];
 		const entries = Array.isArray(details["entries"]) ? details["entries"] : [];
 		for (const entry of entries) {
 			if (typeof entry !== "object" || entry === null) continue;
@@ -208,14 +270,16 @@ export function registerNotify(pi: ExtensionAPI): void {
 			if (typeof entryDetails !== "object" || entryDetails === null) continue;
 			const customType = (entry as Record<string, unknown>)["customType"];
 			if (customType === "torus.team-wake") {
-				lines.push(teamWakeLines(entryDetails as Record<string, unknown>, theme));
+				const wake = teamWakeEntries(entryDetails as Record<string, unknown>, theme);
+				lines.push(...wake.lines);
+				targets.push(...wake.targets);
 			} else if (customType === "torus.monitor-fired") {
 				lines.push(monitorLine(entryDetails as Record<string, unknown>, theme));
+				targets.push(undefined);
 			} else if (customType === "torus.delegation-result") {
 				const record = entryDetails as Record<string, unknown>;
 				lines.push(delegationResultLine(record, theme));
-				delegationCount += 1;
-				if (typeof record["delegationId"] === "string") lastDelegationId = record["delegationId"];
+				targets.push(typeof record["delegationId"] === "string" ? record["delegationId"] : null);
 			}
 		}
 		if (lines.length === 0) {
@@ -233,10 +297,9 @@ export function registerNotify(pi: ExtensionAPI): void {
 					theme,
 				),
 			);
+			targets.push(undefined);
 		}
-		const text = new Text(lines.join("\n"), 0, 0);
-		if (delegationCount === 0) return text;
-		return clickable([text], delegationCount === 1 ? lastDelegationId : undefined);
+		return clickableLines(lines, targets);
 	});
 }
 

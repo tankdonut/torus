@@ -165,6 +165,36 @@ test("alt+t flow: detail opened from the list still backs out to the list first"
 	component.dispose();
 });
 
+test("FLEET_OPENER focuses a team member's external run in the detail view", () => {
+	registry.resetRegistryForTesting();
+	registry.startDelegation("fb-mem-1", "builder", "zai/glm-5.3", null, "delegate-row");
+	registry.publishExternalRun({
+		id: "team-t2/scout",
+		source: "torus-team:build-t2",
+		label: "scout",
+		handle: "scout",
+		model: "zai/glm-5.3-flash",
+		state: "running",
+		memberStatus: "idle",
+		activeSeconds: 10,
+		activeUpdatedAt: Date.now(),
+	});
+	const { hooks } = registerExtension();
+	const theme = { fg: (_color, text) => text, bold: (text) => `*${text}*` };
+	const driver = makeCtx("fullscreen", theme);
+	hooks.get("session_start")(undefined, driver.ctx);
+	globalThis[registry.FLEET_OPENER]("team-t2/scout");
+	const component = driver.component();
+	try {
+		const lines = component.render(200).join("\n");
+		assert.match(lines, /⧉build/, "member badge renders in the detail footer");
+		assert.match(lines, /@scout/, "detail is focused on the member, not the delegation");
+		assert.doesNotMatch(lines, /@delegate-row/, "delegation row must not be the focus");
+	} finally {
+		component.dispose();
+	}
+});
+
 test("fullscreen wheel: handleMouse scrolls the detail view by host wheelDelta", () => {
 	registry.resetRegistryForTesting();
 	registry.startDelegation("fb-wheel-1", "builder", "zai/glm-5.3", null, "wheely");

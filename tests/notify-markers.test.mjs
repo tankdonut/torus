@@ -12,6 +12,7 @@ const HOME = mkdtempSync(path.join(tmpdir(), "torus-notify-markers-test-"));
 process.env.TORUS_HOME = HOME;
 
 const { entityColor } = await import("../extensions/fleet/theme-kit.ts");
+const registry = await import("../extensions/registry.ts");
 const notify = await import("../extensions/notify/index.ts");
 
 const renderers = new Map();
@@ -21,12 +22,12 @@ notify.registerNotify({
 
 /** Colors render as <name>…</> tags so assertions can pin exact segments. */
 const theme = { fg: (color, text) => `<${color}>${text}>`, bold: (text) => text };
+const message = (details, content = "") => ({
+	details,
+	content: [{ type: "text", text: content }],
+});
 const render = (type, details, content = "") => {
-	const component = renderers.get(type)(
-		{ details, content: [{ type: "text", text: content }] },
-		{},
-		theme,
-	);
+	const component = renderers.get(type)(message(details, content), {}, theme);
 	return component.render(400).join("\n");
 };
 
@@ -89,4 +90,85 @@ test("team-wake episode lines keep the member's fleet color", () => {
 			`<customMessageText>team build: ><${entityColor("tank")}>@tank><customMessageText> stopped>`,
 		),
 	);
+});
+
+test("wake-batch lines route each click to its own run or member", () => {
+	registry.resetRegistryForTesting();
+	registry.publishExternalRun({
+		id: "team-t1/scout",
+		source: "torus-team:build-t1",
+		label: "scout",
+		handle: "scout",
+		model: "zai/glm-5.3-flash",
+		state: "running",
+		memberStatus: "idle",
+		activeSeconds: 10,
+		activeUpdatedAt: Date.now(),
+	});
+	const component = renderers.get("torus.wake-batch")(
+		message({
+			entries: [
+				{
+					customType: "torus.team-wake",
+					details: {
+						team: "build",
+						members: [{ member: "scout", status: "idle", reason: "bootstrap ready" }],
+					},
+				},
+				{ customType: "torus.monitor-fired", details: { name: "ci", reason: "change" } },
+				{
+					customType: "torus.delegation-result",
+					details: { agent: "explorer", handle: "scout", ok: true, delegationId: "d-9" },
+				},
+				{
+					customType: "torus.delegation-result",
+					details: { agent: "builder", ok: true, delegationId: "d-10" },
+				},
+			],
+		}),
+		{},
+		theme,
+	);
+	const rows = component.render(200);
+	assert.equal(rows.length, 4, "one row per entry line");
+
+	const opened = [];
+	globalThis[registry.FLEET_OPENER] = (id) => opened.push(id ?? "list");
+	try {
+		assert.deepEqual(component.handleMouse({ type: "click", button: "left", x: 3, y: 0 }), {
+			handled: true,
+		});
+		assert.deepEqual(component.handleMouse({ type: "click", button: "left", x: 3, y: 2 }), {
+			handled: true,
+		});
+		assert.deepEqual(component.handleMouse({ type: "click", button: "left", x: 3, y: 3 }), {
+			handled: true,
+		});
+		assert.equal(
+			component.handleMouse({ type: "click", button: "left", x: 3, y: 1 }),
+			undefined,
+			"monitor line carries no target",
+		);
+	} finally {
+		delete globalThis[registry.FLEET_OPENER];
+	}
+	assert.deepEqual(opened, ["team-t1/scout", "d-9", "d-10"]);
+});
+
+test("a team-wake member without a live run falls back to the list", () => {
+	registry.resetRegistryForTesting();
+	const component = renderers.get("torus.team-wake")(
+		message({ team: "build", members: [{ member: "ghost", status: "idle", reason: "r" }] }),
+		{},
+		theme,
+	);
+	component.render(200);
+	const opened = [];
+	globalThis[registry.FLEET_OPENER] = (id) => opened.push(id ?? "list");
+	try {
+		component.handleMouse({ type: "click", button: "left", x: 3, y: 0 });
+	} finally {
+		delete globalThis[registry.FLEET_OPENER];
+	}
+	assert.deepEqual(opened, ["list"]);
 });
