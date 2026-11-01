@@ -8,6 +8,7 @@
   "vulnerabilityAlerts": {
     "labels": ["security"]
   },
+  "osvVulnerabilityAlerts": true,
   "lockFileMaintenance": {
     "enabled": true
   },
@@ -39,6 +40,11 @@
       "description": "Automerge development dependencies.",
       "matchDepTypes": ["devDependencies"],
       "automerge": true
+    },
+    {
+      "description": "Workflow and container base-image updates require manual review.",
+      "matchManagers": ["github-actions", "dockerfile"],
+      "automerge": false
     },
     {
       "description": "Engine pins stay manual: the release-workflow env-audit is required before merge.",
