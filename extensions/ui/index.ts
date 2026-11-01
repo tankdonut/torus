@@ -113,17 +113,6 @@ export function createTorusStatusline(): Component {
 type AppTheme = ExtensionContext["ui"]["theme"];
 export type StatusPainter = Pick<AppTheme, "fg" | "bold">;
 
-/** Delegation tool executions that count toward the in-flight statusline chip. */
-const DELEGATION_TOOLS = new Set([
-	"torus_delegate",
-	"torus_fanout",
-	"torus_chain",
-	"torus_results",
-]);
-
-/** In-flight delegation tool executions; parallel fanouts must not wipe each other's indicator. */
-let delegateInFlight = 0;
-
 /**
  * Session-cost tallies behind the `torus:cost` chip, keyed by session id so a
  * switch back to an earlier in-process session restores its own total. Fed
@@ -315,10 +304,6 @@ export function buildStatus(theme?: StatusPainter): string {
 		const color = goalChip.status === "active" ? "warning" : "dim";
 		const text = `goal:${goalChip.head}`;
 		segments.push(theme ? theme.fg(color, text) : text);
-	}
-	if (delegateInFlight > 0) {
-		const tag = delegateInFlight > 1 ? `delegate ×${delegateInFlight}` : "delegate";
-		segments.push(theme ? theme.fg("warning", tag) : tag);
 	}
 	return segments.join(sep);
 }
@@ -636,20 +621,6 @@ export function registerUi(pi: ExtensionAPI): void {
 	pi.on("thinking_level_select", (event, ctx: ExtensionContext) => {
 		currentEffort = event.level;
 		refreshToruStatus(ctx);
-	});
-
-	pi.on("tool_execution_start", (event, ctx: ExtensionContext) => {
-		if (DELEGATION_TOOLS.has(event.toolName)) {
-			delegateInFlight += 1;
-			refreshToruStatus(ctx);
-		}
-	});
-
-	pi.on("tool_execution_end", (event, ctx: ExtensionContext) => {
-		if (DELEGATION_TOOLS.has(event.toolName)) {
-			delegateInFlight = Math.max(0, delegateInFlight - 1);
-			if (delegateInFlight === 0) refreshToruStatus(ctx);
-		}
 	});
 }
 
