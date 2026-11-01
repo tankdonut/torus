@@ -33,6 +33,7 @@ export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin"
 
 export const STATUS_KEY = "torus";
 const STATUSLINE_WIDGET_KEY = "torus-statusline";
+const DOCK_GAP_WIDGET_KEY = "torus-dock-gap";
 
 /** Persistent session-cost chip key; `torus:`-prefixed like the delegation markers. */
 export const COST_STATUS_KEY = "torus:cost";
@@ -602,6 +603,13 @@ export function registerUi(pi: ExtensionAPI): void {
 		// order is registration order, and the fleet extension registers
 		// before this one — without this the strip would sit above the chips.
 		ctx.ui.setWidget(FLEET_WIDGET_KEY, (tui, theme) => createFleetStrip(tui, theme));
+		// The engine spaces the chat side of the widget dock with a leading
+		// spacer but leaves the editor side flush; one blank row keeps the
+		// chips/strip off the editor border (and its embedded working spinner).
+		ctx.ui.setWidget(DOCK_GAP_WIDGET_KEY, () => ({
+			render: () => [""],
+			invalidate: () => {},
+		}));
 		installStartupBanner(pi, ctx);
 		installCursorBlinkWidget(ctx);
 	});

@@ -630,6 +630,38 @@ test("statusline chip counts delegate, fanout, and chain executions", () => {
 	);
 });
 
+test("session_start docks chips, then the fleet strip, then a blank-row gap", () => {
+	const handlers = {};
+	const fakePi = {
+		on: (event, handler) => {
+			handlers[event] = handler;
+		},
+		getMcpServers: () => [],
+		getActiveTools: () => [],
+		// quietStartup skips the startup-banner install (setHeader surface);
+		// this test only pins the above-editor dock order
+		getSettings: () => ({ quietStartup: true }),
+	};
+	ui.registerUi(fakePi);
+	const registered = [];
+	const ctx = {
+		mode: "tui",
+		ui: {
+			setWidget: (key, factory) => registered.push([key, factory]),
+			theme: { fg: (_color, text) => text, bold: (text) => `*${text}*` },
+		},
+	};
+	handlers["session_start"]({ type: "session_start", reason: "startup" }, ctx);
+	assert.deepEqual(
+		registered.map(([key]) => key),
+		["torus-statusline", "torus-fleet", "torus-dock-gap", "torus:cursor-blink"],
+		"docked rows render in registration order; the gap must be the last row " +
+			"before the editor so it spaces the whole dock off the input box",
+	);
+	const gap = registered.find(([key]) => key === "torus-dock-gap")?.[1]?.({}, {});
+	assert.deepEqual(gap.render(140), [""], "the gap paints exactly one blank row");
+});
+
 function registeredTools() {
 	const tools = [];
 	team.registerTeam({
