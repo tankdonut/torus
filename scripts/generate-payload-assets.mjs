@@ -2,7 +2,7 @@
 /**
  * Generates runtime/bin/payload-assets.mjs (gitignored): one file-loader
  * import per payload file plus string constants for the runtime package.json,
- * .npmrc, the generated payload lock (dist/payload-lock.json via
+ * the generated payload lock (dist/payload-lock.json via
  * scripts/generate-payload-lock.mjs) and, when one was packed, the payload
  * dependency tree (dist/payload-tree.tar.gz via scripts/pack-payload-tree.mjs),
  * plus a sha256 payload hash. bun build --compile embeds the
@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { computePayloadHash } from "../runtime/bin/payload-extract.mjs";
 import { PAYLOAD_LOCK_ENV, readPayloadLock } from "./generate-payload-lock.mjs";
 import { PAYLOAD_TREE_ENV } from "./pack-payload-tree.mjs";
-import { PAYLOAD_DIRS, payloadNpmrc, payloadPackageJson } from "./payload-manifest.mjs";
+import { PAYLOAD_DIRS, payloadPackageJson } from "./payload-manifest.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -40,7 +40,6 @@ for (const dir of PAYLOAD_DIRS) {
 const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 const generatedPackageJson = payloadPackageJson(pkg);
 
-const payloadNpmrcValue = payloadNpmrc();
 // the generated payload lock, not the repo lock — the payload manifest's
 // dep set (engine promoted) differs from the repo's, so the repo lock would
 // leave npm re-resolving at install time
@@ -66,7 +65,9 @@ if (treeOverride !== undefined) {
 const hashInput = [
 	...payloadFiles,
 	{ path: "package.json", bytes: Buffer.from(generatedPackageJson, "utf8") },
-	{ path: ".npmrc", bytes: Buffer.from(payloadNpmrcValue ?? "", "utf8") },
+	// no payload .npmrc ships; hashed as empty to mirror the runtime verifier's
+	// absent-file handling in verifyExtracted
+	{ path: ".npmrc", bytes: Buffer.alloc(0) },
 	{ path: "package-lock.json", bytes: Buffer.from(payloadPackageLockValue ?? "", "utf8") },
 ];
 if (payloadTree !== null) {
@@ -100,7 +101,6 @@ lines.push(`export const PAYLOAD_HASH = ${JSON.stringify(payloadHash)};`);
 lines.push(`export const PAYLOAD_DISK_HASH = ${JSON.stringify(payloadDiskHash)};`);
 lines.push('export const OWNED_TOP_LEVELS = ["extensions", "agents", "skills"];');
 lines.push(`export const PAYLOAD_PACKAGE_JSON = ${JSON.stringify(generatedPackageJson)};`);
-lines.push(`export const PAYLOAD_NPMRC = ${JSON.stringify(payloadNpmrcValue)};`);
 lines.push(`export const PAYLOAD_PACKAGE_LOCK = ${JSON.stringify(payloadPackageLockValue)};`);
 if (payloadTree !== null) {
 	const sha256 = createHash("sha256").update(payloadTree.bytes).digest("hex");

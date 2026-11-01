@@ -15,7 +15,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { payloadNpmrc, payloadPackageJson, payloadPackageLock } from "./payload-manifest.mjs";
+import { payloadPackageJson, payloadPackageLock } from "./payload-manifest.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -44,13 +44,9 @@ export function readPayloadLock() {
 export function generatePayloadLock({ out = payloadLockPath() } = {}) {
 	const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 	const seed = payloadPackageLock();
-	const npmrc = payloadNpmrc();
 	const tmp = mkdtempSync(path.join(tmpdir(), "torus-payload-lock-"));
 	try {
 		writeFileSync(path.join(tmp, "package.json"), payloadPackageJson(pkg));
-		if (npmrc !== null) {
-			writeFileSync(path.join(tmp, ".npmrc"), npmrc);
-		}
 		if (seed !== null) {
 			writeFileSync(path.join(tmp, "package-lock.json"), seed);
 		}

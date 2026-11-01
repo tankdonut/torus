@@ -58,10 +58,9 @@ test("bake-payload: writes the payload tree carrying the shared runtime manifest
 		assert.ok(existsSync(path.join(dir, entry)), `baked tree missing ${entry}`);
 	}
 	const repoHasNpmrc = existsSync(path.join(root, ".npmrc"));
-	assert.equal(
-		existsSync(path.join(dir, ".npmrc")),
-		repoHasNpmrc,
-		repoHasNpmrc ? "baked tree missing .npmrc" : "baked tree must not invent an .npmrc",
+	assert.ok(
+		!existsSync(path.join(dir, ".npmrc")),
+		`baked tree must not carry an .npmrc (repo ${repoHasNpmrc ? "has" : "lacks"} a dev .npmrc — it never ships)`,
 	);
 
 	assert.equal(

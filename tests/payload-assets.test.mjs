@@ -159,6 +159,18 @@ test("payload-assets: embeds the packed payload tree from an explicit override",
 	);
 });
 
+test("payload-assets: embeds no .npmrc", (t) => {
+	const fixture = writeFixtureLock(t);
+	generateAssets({ [PAYLOAD_LOCK_ENV]: fixture });
+
+	const text = readFileSync(path.join(root, "runtime", "bin", "payload-assets.mjs"), "utf8");
+	assert.ok(!text.includes("PAYLOAD_NPMRC"), "the generated module must not export PAYLOAD_NPMRC");
+	assert.ok(
+		!text.includes("min-release-age") && !text.includes("before=null"),
+		"the payload must not embed cooldown-clearing .npmrc bytes even when the repo carries a dev .npmrc",
+	);
+});
+
 test("payload-assets: stays lock-only when no tree is available", (t) => {
 	parkDistTree(t);
 	const env = { ...process.env };

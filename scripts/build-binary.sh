@@ -32,7 +32,7 @@ mkdir -p "$ROOT/$DIST/bin"
 # requires network and fails loudly without it
 node "$ROOT/scripts/pack-payload-tree.mjs"
 
-# embed the payload (extensions, agents, skills, .npmrc, runtime package.json,
+# embed the payload (extensions, agents, skills, runtime package.json,
 # payload lock, packed dependency tree) as file assets: generated file-loader
 # imports + content hash
 node "$ROOT/scripts/generate-payload-assets.mjs"

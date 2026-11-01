@@ -117,9 +117,6 @@ async function embeddedRoot() {
 		files.push({ path: file.path, bytes: Buffer.from(await bun.file(file.virtual).arrayBuffer()) });
 	}
 	files.push({ path: "package.json", bytes: Buffer.from(assets.PAYLOAD_PACKAGE_JSON, "utf8") });
-	if (assets.PAYLOAD_NPMRC !== null) {
-		files.push({ path: ".npmrc", bytes: Buffer.from(assets.PAYLOAD_NPMRC, "utf8") });
-	}
 	if (assets.PAYLOAD_PACKAGE_LOCK != null) {
 		files.push({
 			path: "package-lock.json",

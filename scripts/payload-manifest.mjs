@@ -44,15 +44,6 @@ export function payloadPackageJson(pkg) {
 	return `${JSON.stringify(payloadManifest(pkg), null, 2)}\n`;
 }
 
-/** Repo .npmrc contents, or null when absent (the launcher only writes it when present). */
-export function payloadNpmrc() {
-	try {
-		return readFileSync(path.join(root, ".npmrc"), "utf8");
-	} catch {
-		return null;
-	}
-}
-
 /**
  * Repo package-lock.json contents, or null when absent. This file is only a
  * resolution SEED for payload-lock generation (scripts/generate-payload-lock.mjs);

@@ -95,17 +95,15 @@ test("container: runtime-stage apt install ships every agent runtime dep", () =>
 	}
 });
 
-test("container: Dockerfile keeps torus entrypoint, non-root user, npmrc-before-build", () => {
+test("container: Dockerfile keeps torus entrypoint, non-root user, no build-stage npmrc", () => {
 	assert.ok(
 		dockerfile.includes('ENTRYPOINT ["torus"]'),
 		'Dockerfile must keep ENTRYPOINT ["torus"]',
 	);
 	assert.ok(/^USER torus$/m.test(dockerfile), "Dockerfile must set USER torus");
-	const npmrcAt = dockerfile.indexOf("./make.sh npmrc");
-	const buildAt = dockerfile.indexOf("./scripts/build-binary.sh");
 	assert.ok(
-		npmrcAt !== -1 && buildAt !== -1 && npmrcAt < buildAt,
-		"Dockerfile must run ./make.sh npmrc before ./scripts/build-binary.sh",
+		!dockerfile.includes("./make.sh npmrc"),
+		"the build stage must not generate a .npmrc — the payload ships none and its npm ci passes --legacy-peer-deps explicitly",
 	);
 });
 

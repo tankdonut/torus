@@ -1,8 +1,7 @@
 # torus container image — multi-stage, pinned toolchain.
 #
 # build stage: compile the single-file bun binary from a source snapshot
-# (COPY . . pruned by .dockerignore; the payload .npmrc is generated inside
-# the stage via ./make.sh npmrc and never committed), then bake the payload
+# (COPY . . pruned by .dockerignore), then bake the payload
 # tree + its npm dependencies (pinned pi engine included) into /out/torus.
 #
 # runtime stage: node-slim base (via mirror.gcr.io) plus the baked payload at
@@ -47,8 +46,7 @@ RUN set -eux; \
         arm64|aarch64) BUN_TARGET="bun-linux-arm64" ;; \
         *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
     esac; \
-    ./make.sh npmrc \
-    && ./scripts/build-binary.sh dist/torus --target "$BUN_TARGET"
+    ./scripts/build-binary.sh dist/torus --target "$BUN_TARGET"
 
 # Bake the payload tree and npm-ci its dependencies from the payload-native
 # lock (pinned engine included) so the runtime image never bootstraps over

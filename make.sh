@@ -55,8 +55,8 @@ case "$cmd" in
 		# .npmrc). "null" is not a valid min-release-age duration — npm leaves
 		# the cooldown active — so 0 disables it explicitly. legacy-peer-deps
 		# matches how the repo installs while pi-lsp-client declares wildcard
-		# peers on host-bundled packages. The payload ships this .npmrc, so the
-		# launcher's first-run engine install clears the same filters.
+		# peers on host-bundled packages. Dev-only: this .npmrc configures
+		# development installs and never ships in the binary's payload.
 		printf 'before=null\nmin-release-age=0\nlegacy-peer-deps=true\n' > .npmrc
 		echo "created .npmrc:"
 		cat .npmrc
@@ -66,7 +66,7 @@ case "$cmd" in
 usage: ./make.sh <command>
 
 commands:
-  npmrc     create the project .npmrc (clears before/min-release-age filters, sets legacy-peer-deps)
+  npmrc     create the dev-only project .npmrc (never ships in the payload; clears before/min-release-age filters, sets legacy-peer-deps)
   typecheck tsc --noEmit
   lint      biome check (lint + format + import order)
   test      node test suite (tests/)
