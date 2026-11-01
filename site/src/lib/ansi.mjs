@@ -112,7 +112,7 @@ function sameStyle(a, b) {
 	return true;
 }
 
-const CSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
+const _CSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
 /**

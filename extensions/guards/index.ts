@@ -17,7 +17,7 @@
  * the session runs without the context guards like every other guard.
  */
 
-import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, statSync } from "node:fs";
 import path from "node:path";
 import {
 	type BashToolCallEvent,
