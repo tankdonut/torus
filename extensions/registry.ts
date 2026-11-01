@@ -18,7 +18,7 @@ import {
 import path from "node:path";
 import {
 	formatCost,
-	projectKey,
+	projectKeyFor,
 	projectStateDir,
 	readHead,
 	torusHome,
@@ -777,7 +777,7 @@ export async function startDelegation(
 		logFile,
 		sessionId: null,
 		parentSession,
-		project: projectKey(cwd),
+		project: projectKeyFor(cwd),
 		// The pane opens asynchronously below; the record registers first so a
 		// stop or steer during the split-window race still lands on this record.
 		paneId: null,
@@ -802,7 +802,7 @@ export async function startDelegation(
 		pid: process.pid,
 		parentSession,
 		sessionId: null,
-		project: projectKey(cwd),
+		project: projectKeyFor(cwd),
 		logFile,
 	});
 	appendFileSync(
@@ -1099,7 +1099,7 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 			logFile,
 			sessionId: end?.groups.session ?? null,
 			parentSession,
-			project: projectKey(process.cwd()),
+			project: projectKeyFor(process.cwd()),
 			paneId: null,
 			...(raw.includes("<torus:stop-requested ") ? { stopRequested: true } : {}),
 		});
