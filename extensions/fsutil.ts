@@ -16,6 +16,7 @@ import {
 	readFileSync,
 	readSync,
 	renameSync,
+	rmSync,
 	statSync,
 	unlinkSync,
 	writeFileSync,
@@ -134,18 +135,53 @@ export function projectStateDir(cwd?: string): string {
  */
 export const TORUS_STATE_DIR_ENV = "TORUS_STATE_DIR";
 
-/** (Re)export TORUS_STATE_DIR from this process's cwd; returns the value. */
+/**
+ * Env var carrying this process's canonical scratch dir (default
+ * <state dir>/scratch) for throwaway working files that retention sweeps may
+ * delete. An explicit export always wins; children inherit the parent's
+ * value through `engineChildEnv()`'s env spread.
+ */
+export const TORUS_SCRATCH_DIR_ENV = "TORUS_SCRATCH_DIR";
+
+/**
+ * (Re)export TORUS_STATE_DIR and TORUS_SCRATCH_DIR from this process's cwd;
+ * returns the state dir. An explicitly exported TORUS_SCRATCH_DIR is kept
+ * verbatim (operator or parent override), never recomputed.
+ */
 export function ensureStateDirEnv(): string {
-	return projectStateDir();
+	const stateDir = projectStateDir();
+	scratchDir();
+	return stateDir;
+}
+
+/**
+ * This process's canonical scratch dir: an explicit TORUS_SCRATCH_DIR export
+ * wins; otherwise <state dir>/scratch, mirrored into the env so every later
+ * call agrees with the module-load export and `$TORUS_SCRATCH_DIR/…` expands
+ * in shell commands.
+ */
+export function scratchDir(): string {
+	const override = process.env[TORUS_SCRATCH_DIR_ENV];
+	if (override !== undefined && override.length > 0) return override;
+	const dir = path.join(projectStateDir(), "scratch");
+	process.env[TORUS_SCRATCH_DIR_ENV] = dir;
+	return dir;
 }
 
 /**
  * Display form of a torus-owned path for tool output and prompts: this
- * process's state root renders as `$TORUS_STATE_DIR/…` (copy-pasteable — the
- * var is exported, so it expands in shell commands), any other TORUS_HOME path
- * as `$TORUS_HOME/…`, anything else unchanged. Never affects paths on disk.
+ * process's scratch root renders as `$TORUS_SCRATCH_DIR/…` (checked first —
+ * the default scratch root sits inside the state root, and the longer
+ * prefix must win), its state root as `$TORUS_STATE_DIR/…` (copy-pasteable —
+ * both vars are exported, so they expand in shell commands), any other
+ * TORUS_HOME path as `$TORUS_HOME/…`, anything else unchanged. Never affects
+ * paths on disk.
  */
 export function displayPath(file: string): string {
+	const scratch = scratchDir();
+	if (file === scratch || file.startsWith(`${scratch}${path.sep}`)) {
+		return file.replace(scratch, () => `$${TORUS_SCRATCH_DIR_ENV}`);
+	}
 	const state = projectStateDir();
 	if (file === state || file.startsWith(`${state}${path.sep}`)) {
 		return file.replace(state, () => `$${TORUS_STATE_DIR_ENV}`);
@@ -159,8 +195,8 @@ export function displayPath(file: string): string {
 
 // Exported at module load so every torus process — main session, delegated
 // children, team members (all load extensions that import this module) —
-// carries $TORUS_STATE_DIR from its first turn; later projectStateDir() calls
-// keep it fresh.
+// carries $TORUS_STATE_DIR and $TORUS_SCRATCH_DIR from its first turn; later
+// projectStateDir() calls keep the state dir fresh.
 ensureStateDirEnv();
 
 /** Parse `file` as JSON; any read/parse failure yields `fallback`. */
@@ -207,6 +243,56 @@ export function pruneOrphanSessionFiles(
 		}
 	} catch {}
 	return removed;
+}
+
+/**
+ * Retention sweep for the top-level entries of a scratch root: an entry is
+ * removed only when the newest mtime anywhere in its tree is older than
+ * `retentionDays` — one fresh file deep inside keeps the whole entry.
+ * `retentionDays <= 0` disables removal and only counts. Best-effort like
+ * pruneOrphanSessionFiles: a missing root yields an empty result, and
+ * per-entry failures are swallowed (a failed removal counts as kept).
+ */
+export function pruneScratch(
+	root: string,
+	retentionDays: number,
+	now: number = Date.now(),
+): { removed: string[]; kept: number } {
+	let entries: string[];
+	try {
+		entries = readdirSync(root);
+	} catch {
+		return { removed: [], kept: 0 };
+	}
+	const removed: string[] = [];
+	let kept = 0;
+	for (const entry of entries) {
+		const target = path.join(root, entry);
+		try {
+			if (retentionDays > 0 && newestTreeMtime(target) < now - retentionDays * 86400000) {
+				rmSync(target, { recursive: true, force: true });
+				removed.push(entry);
+				continue;
+			}
+		} catch {}
+		kept += 1;
+	}
+	return { removed, kept };
+}
+
+/**
+ * Newest mtime of `target` and everything under it; stat/read errors
+ * propagate so pruneScratch's per-entry catch keeps the entry (conservative).
+ */
+function newestTreeMtime(target: string): number {
+	const stat = statSync(target);
+	let newest = stat.mtimeMs;
+	if (stat.isDirectory()) {
+		for (const child of readdirSync(target)) {
+			newest = Math.max(newest, newestTreeMtime(path.join(target, child)));
+		}
+	}
+	return newest;
 }
 
 /**

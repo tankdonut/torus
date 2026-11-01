@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -9,6 +17,7 @@ const home = mkdtempSync(path.join(tmpdir(), "torus-fsutil-project-"));
 process.env["TORUS_HOME"] = home;
 delete process.env["TORUS_ENGINE_CHILD"];
 delete process.env["TORUS_STATE_DIR"];
+delete process.env["TORUS_SCRATCH_DIR"];
 
 const fsutil = await import("../extensions/fsutil.ts");
 
@@ -22,6 +31,13 @@ function aged(file, days) {
 	writeFileSync(file, "{}", "utf8");
 	const stamp = new Date(Date.now() - days * DAY_MS);
 	utimesSync(file, stamp, stamp);
+}
+
+// Dir mtimes count toward a tree's newest mtime, so aged trees need their
+// directories stamped too (aged() writes a file, which only works on files).
+function agedDir(dir, days) {
+	const stamp = new Date(Date.now() - days * DAY_MS);
+	utimesSync(dir, stamp, stamp);
 }
 
 test("projectKey mirrors pi's session directory scheme", () => {
@@ -121,6 +137,52 @@ test("worktree canonical lookup runs once per cwd (later calls stay canonical)",
 	}
 });
 
+test("module load exports TORUS_SCRATCH_DIR as the state dir's scratch child", () => {
+	assert.equal(
+		process.env["TORUS_SCRATCH_DIR"],
+		path.join(process.env["TORUS_STATE_DIR"], "scratch"),
+	);
+	assert.equal(fsutil.scratchDir(), process.env["TORUS_SCRATCH_DIR"]);
+});
+
+test("scratchDir honors an explicit TORUS_SCRATCH_DIR and treats empty as unset", () => {
+	const prev = process.env["TORUS_SCRATCH_DIR"];
+	try {
+		process.env["TORUS_SCRATCH_DIR"] = "/custom/x";
+		assert.equal(fsutil.scratchDir(), "/custom/x");
+		assert.equal(fsutil.ensureStateDirEnv(), process.env["TORUS_STATE_DIR"]);
+		assert.equal(process.env["TORUS_SCRATCH_DIR"], "/custom/x", "override is kept verbatim");
+		assert.equal(fsutil.displayPath("/custom/x/y"), "$TORUS_SCRATCH_DIR/y");
+
+		process.env["TORUS_SCRATCH_DIR"] = "";
+		assert.equal(
+			fsutil.scratchDir(),
+			path.join(process.env["TORUS_STATE_DIR"], "scratch"),
+			"empty string falls back to the default",
+		);
+	} finally {
+		if (prev === undefined) delete process.env["TORUS_SCRATCH_DIR"];
+		else process.env["TORUS_SCRATCH_DIR"] = prev;
+	}
+});
+
+test("displayPath renders scratch paths as $TORUS_SCRATCH_DIR before $TORUS_STATE_DIR", () => {
+	const scratch = fsutil.scratchDir();
+	assert.equal(fsutil.displayPath(scratch), "$TORUS_SCRATCH_DIR");
+	assert.equal(
+		fsutil.displayPath(path.join(scratch, "librarian", "x")),
+		"$TORUS_SCRATCH_DIR/librarian/x",
+		"the longer scratch prefix must beat the nested state prefix",
+	);
+	const state = fsutil.projectStateDir();
+	assert.equal(
+		fsutil.displayPath(path.join(state, "work", "plan.ledger.jsonl")),
+		"$TORUS_STATE_DIR/work/plan.ledger.jsonl",
+	);
+	assert.equal(fsutil.displayPath(path.join(home, "other")), "$TORUS_HOME/other");
+	assert.equal(fsutil.displayPath("/tmp/elsewhere"), "/tmp/elsewhere");
+});
+
 test("pruneOrphanSessionFiles: only orphan+old goes; live, unknown, and fresh stay", () => {
 	const dir = mkdtempSync(path.join(home, "orphan-"));
 	aged(path.join(dir, "gone-old.json"), 40);
@@ -135,6 +197,69 @@ test("pruneOrphanSessionFiles: only orphan+old goes; live, unknown, and fresh st
 	assert.ok(!existsSync(path.join(dir, "gone-old.json")));
 	for (const kept of ["live-old.json", "unknown-old.json", "gone-fresh.json", "not-session.txt"]) {
 		assert.ok(existsSync(path.join(dir, kept)), `${kept} must survive`);
+	}
+});
+
+test("pruneScratch: whole-tree age decides; a fresh deep file keeps an otherwise-old entry", () => {
+	const root = mkdtempSync(path.join(home, "scratch-age-"));
+	const old = path.join(root, "old");
+	mkdirSync(path.join(old, "sub"), { recursive: true });
+	aged(path.join(old, "stale.txt"), 40);
+	aged(path.join(old, "sub", "deep.txt"), 40);
+	agedDir(path.join(old, "sub"), 40);
+	agedDir(old, 40);
+
+	const mixed = path.join(root, "mixed");
+	mkdirSync(path.join(mixed, "sub"), { recursive: true });
+	aged(path.join(mixed, "old.txt"), 40);
+	aged(path.join(mixed, "sub", "older.txt"), 60);
+	writeFileSync(path.join(mixed, "sub", "new.txt"), "", "utf8");
+
+	const fresh = path.join(root, "fresh");
+	mkdirSync(fresh);
+	writeFileSync(path.join(fresh, "new.txt"), "", "utf8");
+
+	const result = fsutil.pruneScratch(root, 30, Date.now());
+	assert.deepEqual(result.removed, ["old"]);
+	assert.equal(result.kept, 2);
+	assert.ok(!existsSync(old), "fully aged tree is removed");
+	assert.ok(existsSync(path.join(mixed, "sub", "new.txt")), "one fresh deep file keeps the entry");
+	assert.ok(existsSync(fresh));
+});
+
+test("pruneScratch: retentionDays <= 0 disables removal", () => {
+	const root = mkdtempSync(path.join(home, "scratch-off-"));
+	const ancient = path.join(root, "ancient");
+	mkdirSync(ancient);
+	aged(path.join(ancient, "dust.txt"), 3650);
+	agedDir(ancient, 3650);
+	for (const days of [0, -1]) {
+		assert.deepEqual(fsutil.pruneScratch(root, days, Date.now()), { removed: [], kept: 1 });
+	}
+	assert.ok(existsSync(ancient));
+});
+
+test("pruneScratch: missing root is an empty no-op", () => {
+	assert.deepEqual(fsutil.pruneScratch(path.join(home, "no-such-scratch"), 30), {
+		removed: [],
+		kept: 0,
+	});
+});
+
+test("pruneScratch: per-entry removal failure is swallowed and counts as kept", {
+	skip: (process.getuid?.() ?? 0) === 0 && "chmod 0o500 cannot block root",
+}, () => {
+	const root = mkdtempSync(path.join(home, "scratch-rmfail-"));
+	const stuck = path.join(root, "stuck");
+	mkdirSync(stuck);
+	aged(path.join(stuck, "x.txt"), 40);
+	agedDir(stuck, 40);
+	chmodSync(root, 0o500);
+	try {
+		assert.deepEqual(fsutil.pruneScratch(root, 30, Date.now()), { removed: [], kept: 1 });
+		assert.ok(existsSync(stuck));
+	} finally {
+		chmodSync(root, 0o700);
 	}
 });
 
