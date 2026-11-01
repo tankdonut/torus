@@ -208,6 +208,7 @@ test("configuration.md covers every registered config section and knob", () => {
 		"TORUS_MONITOR/monitor.enabled",
 		"TORUS_NOTIFY/notify.enabled",
 		"TORUS_REFLECT_TURNS/reflection.reflectTurns",
+		"TORUS_SCRATCH_RETENTION_DAYS/fsutil.scratchRetentionDays",
 		"TORUS_REFLECTION/reflection.enabled",
 		"TORUS_STATUSLINE_COST/ui.statuslineCost",
 		"TORUS_TASK_STALE_MIN/team.taskStaleMin",

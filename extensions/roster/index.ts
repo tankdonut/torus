@@ -24,7 +24,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, loadSkills } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { type AcpAgentSpec, acpAgents, runAcpAgent } from "../acp/index.js";
-import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
+import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import {
 	childExtensionArgs,
 	type EngineTally,
@@ -36,7 +36,7 @@ import {
 } from "../engine-child.js";
 import { flattenPreview, formatDuration, shortModel } from "../fleet/theme-kit.js";
 import { parseFrontmatter, stripFrontmatter } from "../frontmatter.js";
-import { formatCost, sleep, splitList } from "../fsutil.js";
+import { formatCost, pruneScratch, scratchDir, sleep, splitList } from "../fsutil.js";
 import { clickable } from "../notify/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
@@ -1735,6 +1735,22 @@ export function registerRoster(pi: ExtensionAPI): void {
 		const sessionId = ctx.sessionManager.getSessionId();
 		setCurrentSession(sessionId);
 		rehydrateFromLogs(sessionId);
+		// Stale-scratch sweep is best-effort — it must never break session start.
+		try {
+			const retentionDays = knobNumber(
+				"TORUS_SCRATCH_RETENTION_DAYS",
+				"fsutil",
+				"scratchRetentionDays",
+				14,
+			);
+			const { removed } = pruneScratch(scratchDir(), retentionDays);
+			if (removed.length > 0) {
+				ctx.ui.notify(
+					`scratch sweep: removed ${removed.length} stale ${removed.length === 1 ? "entry" : "entries"}`,
+					"info",
+				);
+			}
+		} catch {}
 	});
 
 	pi.on("session_shutdown", () => {
