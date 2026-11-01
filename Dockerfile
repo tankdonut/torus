@@ -50,14 +50,14 @@ RUN set -eux; \
     ./make.sh npmrc \
     && ./scripts/build-binary.sh dist/torus --target "$BUN_TARGET"
 
-# Bake the payload tree and npm-install its dependencies (pinned engine
-# included) so the runtime image never bootstraps over the network. The
-# trailing pi --version fails the build if the engine did not land in the
-# tree.
+# Bake the payload tree and npm-ci its dependencies from the payload-native
+# lock (pinned engine included) so the runtime image never bootstraps over
+# the network and nothing floats at build time. The trailing pi --version
+# fails the build if the engine did not land in the tree.
 RUN set -eux; \
     node scripts/bake-payload.mjs /out/torus; \
     cd /out/torus; \
-    npm install --no-fund --no-audit --omit=dev --legacy-peer-deps; \
+    npm ci --no-fund --no-audit --omit=dev --legacy-peer-deps; \
     node_modules/.bin/pi --version
 
 FROM mirror.gcr.io/library/node:${NODE_VERSION}-slim

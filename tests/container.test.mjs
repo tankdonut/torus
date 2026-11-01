@@ -127,18 +127,21 @@ test("container: image bakes payload deps — no first-run npm bootstrap", () =>
 		"Dockerfile must set ENV TORUS_ROOT=/opt/torus so the launcher skips extraction + bootstrap",
 	);
 	const bakeAt = dockerfile.indexOf("scripts/bake-payload.mjs");
-	const installAt = dockerfile.indexOf(
-		"npm install --no-fund --no-audit --omit=dev --legacy-peer-deps",
-	);
+	const installAt = dockerfile.indexOf("npm ci --no-fund --no-audit --omit=dev --legacy-peer-deps");
 	assert.ok(
 		bakeAt !== -1 && installAt !== -1 && bakeAt < installAt,
-		"build stage must bake the payload tree before npm-installing into it",
+		"build stage must bake the payload tree before npm ci into it",
 	);
-	// the bake installs with the same flags as the launcher bootstrap, so the
-	// baked tree matches what a network bootstrapped ~/.torus/runtime would hold
+	// the bake installs with npm ci against the payload-native lock that
+	// bake-payload.mjs writes next to the manifest, so the baked tree holds
+	// exactly the lock's resolutions — nothing floats at build time
 	const installCmd = dockerfile.slice(installAt, installAt + 120);
-	for (const flag of ["--omit=dev", "--legacy-peer-deps"]) {
-		assert.ok(installCmd.includes(flag), `bake npm install must keep ${flag}`);
+	assert.ok(
+		installCmd.startsWith("npm ci "),
+		"the bake must install with npm ci, not a floating npm install",
+	);
+	for (const flag of ["--no-fund", "--no-audit", "--omit=dev", "--legacy-peer-deps"]) {
+		assert.ok(installCmd.includes(flag), `bake npm ci must keep ${flag}`);
 	}
 });
 
@@ -316,6 +319,22 @@ test("container: engine boots fully offline — deps baked, no first-run npm ins
 	// nothing can be downloaded, so a clean boot proves the bake.
 	const run = dockerRun(["run", "--rm", "--network", "none", IMAGE, "--list-models"], 120_000);
 	assert.equal(run.status, 0, `offline torus --list-models failed: ${describeResult(run)}`);
+});
+
+test("container: binary boots from its embedded tree with the baked root disabled (docker-gated)", (t) => {
+	if (!gated(t)) return;
+	requireImage();
+	// TORUS_ROOT set to empty is falsy, so the launcher ignores the baked
+	// /opt/torus and extracts the payload + tree embedded in the binary to
+	// ~/.torus/runtime — proving the in-image binary is self-sufficient.
+	const run = dockerRun(["run", "--rm", "-e", "TORUS_ROOT=", IMAGE, "--version"], 240_000);
+	assert.equal(run.status, 0, `torus --version with TORUS_ROOT= failed: ${describeResult(run)}`);
+	// first run also prints extraction progress lines before the version
+	assert.match(
+		stdoutOf(run),
+		/^torus \d\S*( \(pi@\S+\))?$/m,
+		`torus --version should print the torus version: ${describeResult(run)}`,
+	);
 });
 
 test("container: node runtime matches .tool-versions pin (docker-gated)", (t) => {
