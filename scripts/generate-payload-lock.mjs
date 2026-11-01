@@ -63,6 +63,14 @@ export function generatePayloadLock({ out = payloadLockPath() } = {}) {
 			};
 		}
 		const lock = readFileSync(path.join(tmp, "package-lock.json"), "utf8");
+		const staged = JSON.parse(readFileSync(path.join(tmp, "package.json"), "utf8"));
+		const generated = JSON.parse(lock);
+		if (generated.name !== staged.name || generated.version !== staged.version) {
+			return {
+				ok: false,
+				error: `generated lock root ${generated.name}@${generated.version} does not match the payload manifest ${staged.name}@${staged.version}`,
+			};
+		}
 		mkdirSync(path.dirname(out), { recursive: true });
 		writeFileSync(out, lock);
 		return { ok: true, out };
