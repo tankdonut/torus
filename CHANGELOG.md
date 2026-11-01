@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.20.0](https://github.com/tankdonut/torus/compare/v0.19.0...v0.20.0) (2026-11-01)
+
+
+### Features
+
+* **agents/librarian:** clone into the canonical scratch root ([ebda5bc](https://github.com/tankdonut/torus/commit/ebda5bc114cf90716ef06267cebd7212e41ec0ed))
+* **extensions/automode:** fastpath scratch-confined file operations ([dc9f2ac](https://github.com/tankdonut/torus/commit/dc9f2ac449828a01cf74ec49a6bf24b0ceeee2b5))
+* **extensions/roster:** sweep stale scratch entries at session start ([2b060a2](https://github.com/tankdonut/torus/commit/2b060a206582c315ed2914c04615bff2cc1cd251))
+* **extensions/sandbox:** make the scratch root writable in the full sandbox ([cd2013d](https://github.com/tankdonut/torus/commit/cd2013dfe44a809e9b81fbd33d68349c249e7921))
+* **extensions:** absorb pi-lsp-client's footer status into the lsp chip ([97af8b0](https://github.com/tankdonut/torus/commit/97af8b0318e4783ec72b2c902c2694f16d09b702))
+* **extensions:** accent, click-routable alt+t-all chip and fleet-colored wake markers ([bc6016b](https://github.com/tankdonut/torus/commit/bc6016b1d08be3d87237b761ca53a96d3b3c6934))
+* **extensions:** alt+m cycles the session permission mode ([b8c5023](https://github.com/tankdonut/torus/commit/b8c5023792b495ed2e937c82d6259becf55e6efc))
+* **extensions:** drop the duplicative in-flight delegate chip ([91af556](https://github.com/tankdonut/torus/commit/91af55676263b13bd6559297dda54e6abafe31f7))
+* **extensions:** export a canonical scratch dir beside the state dir ([c1395b8](https://github.com/tankdonut/torus/commit/c1395b8ebb2d59065104b730af27eef27ded4c40))
+* **extensions:** match the MCP chip to the sbx chip style ([e399054](https://github.com/tankdonut/torus/commit/e3990544f4f54c08bcaca40088d976b1e497fdba))
+* **extensions:** reimagine the statusline chips and pin a one-line fleet strip ([7841cab](https://github.com/tankdonut/torus/commit/7841cabea7f84375ae7ff140995056256c0ed8d5))
+* **extensions:** render the goal chip in the prefix:state style ([6b8fa83](https://github.com/tankdonut/torus/commit/6b8fa83b7fdf9d4d91dbb24c78566f7b25ea55ee))
+* **extensions:** render the todo chip in the prefix:state style ([3ac6656](https://github.com/tankdonut/torus/commit/3ac6656e9b681edd92c92493ff17efb21b346bca))
+* **extensions:** route wake-marker clicks per line to the agent's fleet transcript ([19be9a8](https://github.com/tankdonut/torus/commit/19be9a895a3183e7e8d13ff3681f606ab868fe50))
+* **extensions:** space the status dock off the input box ([e24b5a4](https://github.com/tankdonut/torus/commit/e24b5a41197bcc8c32296f1f0cda7b3a1254ef70))
+* **extensions:** wrap the torus statusline chips instead of truncating ([b7ecc29](https://github.com/tankdonut/torus/commit/b7ecc2925b8facd2867d63c9aba4f9a7c86a002a))
+* **site:** copy buttons on every markdown code fence ([68977fd](https://github.com/tankdonut/torus/commit/68977fdddcf0c1436b1bd3f7ce7688d58864f0fe))
+* **site:** glyph theme toggle at the far right of the header ([254e71e](https://github.com/tankdonut/torus/commit/254e71efe272e4d2bdbe72718f6424903d239ca8))
+* **site:** theme toggle with system-follow default ([fb61a29](https://github.com/tankdonut/torus/commit/fb61a2914252f823f6bade053fd50e1fa3892483))
+* teach the scratch and state dir convention in agent prompts ([536b2e4](https://github.com/tankdonut/torus/commit/536b2e4f89383d6f14474972b940b8b34f23c69c))
+
+
+### Bug Fixes
+
+* replace the project LSP config with an asdf biome pin ([21808da](https://github.com/tankdonut/torus/commit/21808da0b1367216c31f80043f6bbac02da1fb8c))
+* **scripts:** assert the generated payload lock matches the payload manifest ([92f3159](https://github.com/tankdonut/torus/commit/92f31597d47ee13c2a63e0af38fbf35ccdf379f0))
+* **site:** keep the release version in the navbar on every page ([d445c82](https://github.com/tankdonut/torus/commit/d445c820cdcfca5bce9f8207ad7ada31a64f8ce2))
+* **site:** recapture the TUI scenes for the statusline redesign ([d574fe7](https://github.com/tankdonut/torus/commit/d574fe74df40fdb09a8a1dacbcb2928f71d417f6))
+* **skills/automode-setup:** name both scratch classes in the trust profiles ([2e9387e](https://github.com/tankdonut/torus/commit/2e9387ef4fd529873fc4c29da0bda334dc27b8cc))
+* **skills/torus-research:** let wide report tables shrink instead of scrolling horizontally ([64fc4dc](https://github.com/tankdonut/torus/commit/64fc4dcba8753b0df849deebe3901bc37c369ba8))
+
 ## [0.19.0](https://github.com/tankdonut/torus/compare/v0.18.0...v0.19.0) (2026-11-01)
 
 
