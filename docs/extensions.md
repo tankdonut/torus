@@ -560,7 +560,7 @@ Per-session standing objective, stored at `$TORUS_STATE_DIR/goal/<session>.json`
 - **Commands:** `/goal <text>` (set), `/goal note <text>`, `/goal pause`, `/goal resume`, `/goal off|clear`; bare `/goal` shows status
 - **Hooks:** `session_start`: record session id, refresh chip; `context`: inject goal block
 
-Active goals inject into every turn's context (goal + notes + completion instruction) and show as a chip in the unified `torus` statusline segment (`▶ <head>` warning, `⏸` dim when paused; nothing when unset, so there is no permanent no-goal chip).
+Active goals inject into every turn's context (goal + notes + completion instruction) and show as a chip in the unified `torus` statusline segment (`goal:<head>`, warning while active, dim while paused; the color is the state signal, there is no icon; nothing when unset, so there is no permanent no-goal chip).
 
 ### `todo`
 
@@ -651,7 +651,7 @@ The `torus` statusline segment and the torus startup banner.
 - **Hooks:** `session_start`, `turn_start`, `model_select`, `thinking_level_select` (effort tracking for the identity block), `message_end`, `tool_execution_start`, `tool_execution_end` (`torus_delegate`, `torus_fanout`, `torus_chain` only)
 - **Env:** `TORUS_ENGINE` (display only; the engine tag appears only when overridden); `TORUS_STATUSLINE_COST=0` disables the session-cost chip; `TORUS_BANNER=0` keeps pi's built-in startup header
 
-Renders the brand, then the identity block (persona, shortened model id, thinking effort, all in the persona's truecolor RGB), then dim provider availability. Health and objective follow: the MCP connected count (`MCP N`, success/warning; polled as the `mcp` section describes) and the session goal as a compact chip (`▶ <48-char head>` warning while active, `⏸` dim while paused, absent when unset or complete; pushed by the goal extension). Model and effort are event-tracked module state, so every writer renders the same line.
+Renders the brand, then the identity block (persona, shortened model id, thinking effort, all in the persona's truecolor RGB), then dim provider availability. Health and objective follow: the MCP connected count (`mcp:N`, success/warning; polled as the `mcp` section describes) and the session goal as a compact chip (`goal:<48-char head>` warning while active, dim while paused; the color is the state signal, there is no icon, and the chip is absent when unset or complete; pushed by the goal extension). Model and effort are event-tracked module state, so every writer renders the same line.
 
 Two more chips: a warning `delegate ×N` chip while `torus_delegate`, `torus_fanout`, or `torus_chain` executions are in flight (ref-counted), and a persistent child-session spend chip (`fleet:$…`) on its own `torus:cost` chip key (child spend the engine's own session `$` tally does not include). Assistant `message_end` usage is folded through the shared engine-child tally reducer and rendered with `formatCost`: `$0` shows only once tokens were spent, and the chip stays absent until something measurable happens. Source of the persona color map used by persona-theming.
 

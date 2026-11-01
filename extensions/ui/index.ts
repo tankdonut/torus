@@ -311,9 +311,9 @@ export function buildStatus(theme?: StatusPainter): string {
 		segments.push(theme ? theme.fg(color, mcpText) : mcpText);
 	}
 	if (goalChip) {
-		const icon = goalChip.status === "active" ? "▶" : "⏸";
-		const text = `${icon} ${goalChip.head}`;
+		// state rides the color, not an icon: warning while active, dim while paused
 		const color = goalChip.status === "active" ? "warning" : "dim";
+		const text = `goal:${goalChip.head}`;
 		segments.push(theme ? theme.fg(color, text) : text);
 	}
 	if (delegateInFlight > 0) {

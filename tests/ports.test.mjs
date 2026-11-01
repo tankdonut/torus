@@ -174,7 +174,7 @@ test("buildStatus: MCP count and goal chip render on the torus line", () => {
 	};
 	const bare = buildStatus(fakeTheme);
 	assert.ok(!bare.includes("mcp"), "MCP segment should drop when none registered");
-	assert.ok(!bare.includes("▶"), "goal segment should drop when unset");
+	assert.ok(!bare.includes("goal:"), "goal segment should drop when unset");
 
 	setStatusExtras(
 		{ connected: 0, registered: 2 },
@@ -182,7 +182,7 @@ test("buildStatus: MCP count and goal chip render on the torus line", () => {
 	);
 	const loaded = buildStatus(fakeTheme);
 	assert.ok(loaded.includes("<warning>mcp:0</warning>"), "down servers should warn");
-	assert.ok(loaded.includes("<warning>▶ ship the frobnicator</warning>"), "active goal chip");
+	assert.ok(loaded.includes("<warning>goal:ship the frobnicator</warning>"), "active goal chip");
 
 	setStatusExtras(
 		{ connected: 2, registered: 2 },
@@ -190,7 +190,10 @@ test("buildStatus: MCP count and goal chip render on the torus line", () => {
 	);
 	const healthy = buildStatus(fakeTheme);
 	assert.ok(healthy.includes("<success>mcp:2</success>"), "connected servers should be success");
-	assert.ok(healthy.includes("<dim>⏸ ship the frobnicator</dim>"), "paused goal chip should dim");
+	assert.ok(
+		healthy.includes("<dim>goal:ship the frobnicator</dim>"),
+		"paused goal chip should dim",
+	);
 	setStatusExtras(null, null);
 	setSessionPersona(null);
 });
