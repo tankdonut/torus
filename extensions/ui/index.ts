@@ -11,14 +11,18 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
 	backgroundAnsi,
+	type Component,
 	foregroundAnsi,
 	isAppleTerminalSession,
 	rgbColor,
 	type TerminalColorMode,
+	truncateToWidth,
+	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { installCursorBlink } from "../cursor-blink.js";
 import { type EngineTally, reduceEngineEvent } from "../engine-child.js";
+import { createFleetStrip, FLEET_WIDGET_KEY } from "../fleet/index.js";
 import { formatCost } from "../fsutil.js";
 import { connectedServerCount, mcpStatusText } from "../mcp/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -28,9 +32,82 @@ import { sessionPersona } from "../registry.js";
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 export const STATUS_KEY = "torus";
+const STATUSLINE_WIDGET_KEY = "torus-statusline";
 
 /** Persistent session-cost chip key; `torus:`-prefixed like the delegation markers. */
 export const COST_STATUS_KEY = "torus:cost";
+
+/**
+ * The torus statusline chips live on a Symbol.for global, not module state:
+ * pi gives each extension file its own module instance of this file, so
+ * instance-local chips would vanish or split across instances. Undefined
+ * removes a chip; the store re-renders through the widget's repaint hook.
+ */
+const CHIPS_KEY = Symbol.for("torus.statusline.chips.v1");
+const CHIPS_REPAINT_KEY = Symbol.for("torus.statusline.repaint.v1");
+
+function chipsStore(): Map<string, string> {
+	const store = globalThis as Record<symbol, unknown>;
+	let chips = store[CHIPS_KEY] as Map<string, string> | undefined;
+	if (chips === undefined) {
+		chips = new Map();
+		store[CHIPS_KEY] = chips;
+	}
+	return chips;
+}
+
+/** Test/interop accessor: the live chip map (key → pre-styled text). */
+export function torusChips(): Map<string, string> {
+	return chipsStore();
+}
+
+/** Set or clear one torus statusline chip; repaints the widget when one is mounted. */
+export function setTorusChip(key: string, text: string | undefined): void {
+	const chips = chipsStore();
+	if (text === undefined) chips.delete(key);
+	else chips.set(key, text);
+	const repaint = (globalThis as Record<symbol, unknown>)[CHIPS_REPAINT_KEY] as
+		| (() => void)
+		| undefined;
+	repaint?.();
+}
+
+/**
+ * The torus statusline: every chip on wrapping rows instead of the engine
+ * footer's single truncated line. Chips render sorted by key (the order the
+ * engine's footer used), greedily filled at the render width, capped at two
+ * rows so a chip flood cannot squeeze the editor.
+ */
+class TorusStatusline implements Component {
+	render(width: number): string[] {
+		const chips = [...chipsStore().entries()]
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([, text]) => text);
+		if (chips.length === 0) return [];
+		const rows: string[] = [];
+		let row = "";
+		for (const chip of chips) {
+			const piece = truncateToWidth(chip, width);
+			const candidate = row === "" ? piece : `${row} ${piece}`;
+			if (row === "" || visibleWidth(candidate) <= width) {
+				row = candidate;
+			} else {
+				rows.push(row);
+				row = piece;
+				if (rows.length === 2) break;
+			}
+		}
+		if (row !== "" && rows.length < 2) rows.push(row);
+		return rows;
+	}
+
+	invalidate(): void {}
+}
+
+/** The statusline component factory; session_start mounts it and tests drive it directly. */
+export function createTorusStatusline(): Component {
+	return new TorusStatusline();
+}
 
 type AppTheme = ExtensionContext["ui"]["theme"];
 export type StatusPainter = Pick<AppTheme, "fg" | "bold">;
@@ -76,7 +153,7 @@ function paintSessionCost(ctx: ExtensionContext): void {
 	if (statuslineCostSuppressed()) return;
 	const tally = sessionCostTallies.get(sessionCostId(ctx));
 	const cost = tally ? formatCost(tally.cost, tally.tokensIn + tally.tokensOut > 0) : "";
-	ctx.ui.setStatus(COST_STATUS_KEY, cost === "" ? undefined : `fleet:${cost}`);
+	setTorusChip(COST_STATUS_KEY, cost === "" ? undefined : `fleet:${cost}`);
 }
 
 /** Current model / thinking effort, seeded from ctx and kept fresh via events. */
@@ -255,7 +332,7 @@ export function buildStatus(theme?: StatusPainter): string {
 export function refreshToruStatus(ctx: ExtensionContext): void {
 	currentModel = ctx.model?.id ?? currentModel;
 	currentEffort = ctx.thinkingLevel ?? currentEffort;
-	ctx.ui.setStatus(STATUS_KEY, buildStatus(ctx.ui.theme));
+	setTorusChip(STATUS_KEY, buildStatus(ctx.ui.theme));
 }
 
 /** TORUS_BANNER=0, or ui.banner=false in config.json, keeps pi's built-in startup header instead of the torus banner. */
@@ -517,6 +594,14 @@ export function registerUi(pi: ExtensionAPI): void {
 		refreshToruStatus(ctx);
 		// a fresh session has spent nothing yet — drop any chip from the prior one
 		paintSessionCost(ctx);
+		ctx.ui.setWidget(STATUSLINE_WIDGET_KEY, (tui, _theme) => {
+			(globalThis as Record<symbol, unknown>)[CHIPS_REPAINT_KEY] = () => tui.requestRender();
+			return createTorusStatusline();
+		});
+		// Re-register the fleet strip after the chip rows: widget insertion
+		// order is registration order, and the fleet extension registers
+		// before this one — without this the strip would sit above the chips.
+		ctx.ui.setWidget(FLEET_WIDGET_KEY, (tui, theme) => createFleetStrip(tui, theme));
 		installStartupBanner(pi, ctx);
 		installCursorBlinkWidget(ctx);
 	});

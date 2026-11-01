@@ -29,7 +29,8 @@ export const PLATFORM_SUPPORT: PlatformSupport = {
 	deps: [{ name: "tmux", required: false, note: "optional delegation panes and fleet views" }],
 };
 
-const WIDGET_KEY = "torus-fleet";
+/** Statusline-widget key, exported so ui can re-register the strip below the torus chip rows. */
+export const FLEET_WIDGET_KEY = "torus-fleet";
 const SPINNER_INTERVAL_MS = 80;
 /** Agent segments shown before the rest fold into the +N overflow chip. */
 const MAX_SEGMENTS = 4;
@@ -211,9 +212,14 @@ class FleetStrip implements Component {
 	}
 }
 
+/** The strip component factory; ui re-registers it under the same key to order the widget dock. */
+export function createFleetStrip(tui: TUI, theme: Theme): Component {
+	return new FleetStrip(tui, theme);
+}
+
 export function registerFleetWidget(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
-		ctx.ui.setWidget(WIDGET_KEY, (tui, theme) => new FleetStrip(tui, theme));
+		ctx.ui.setWidget(FLEET_WIDGET_KEY, (tui, theme) => createFleetStrip(tui, theme));
 	});
 	for (const [index, key] of SLOT_KEYS.entries()) {
 		pi.registerShortcut(key, {

@@ -267,11 +267,11 @@ test("tool handlers set and clear the torus:worktree statusline chip", async () 
 	assert.equal(tools.length, 3);
 	const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
 
-	const statuses = [];
+	const { torusChips } = await import("../extensions/ui/index.ts");
+	torusChips().clear();
 	const ctx = {
 		cwd: repo,
 		ui: {
-			setStatus: (key, value) => statuses.push([key, value]),
 			theme: { fg: (_key, text) => text },
 		},
 	};
@@ -284,10 +284,7 @@ test("tool handlers set and clear the torus:worktree statusline chip", async () 
 		ctx,
 	);
 	assert.match(created.content[0].text, /worktree ready/);
-	assert.ok(
-		statuses.some(([key, value]) => key === "torus:worktree" && /feat\/chip/.test(value)),
-		"chip set after create",
-	);
+	assert.match(torusChips().get("torus:worktree") ?? "", /feat\/chip/, "chip set after create");
 
 	const removed = await byName.worktree_remove.execute(
 		"t2",
@@ -297,10 +294,7 @@ test("tool handlers set and clear the torus:worktree statusline chip", async () 
 		ctx,
 	);
 	assert.match(removed.content[0].text, /removed worktree/);
-	assert.ok(
-		statuses.some(([key, value]) => key === "torus:worktree" && value === undefined),
-		"chip cleared after remove",
-	);
+	assert.equal(torusChips().has("torus:worktree"), false, "chip cleared after remove");
 });
 
 test("tool refusals carry isError so the TUI paints them red", async () => {

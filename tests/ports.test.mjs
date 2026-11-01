@@ -19,6 +19,9 @@ const {
 	setStatusExtras,
 	setStatusModel,
 	setStatusPermission,
+	torusChips,
+	createTorusStatusline,
+	setTorusChip,
 } = await import("../extensions/ui/index.ts");
 const { goalChipFor } = await import("../extensions/goal/index.ts");
 const { AGENTS } = await import("../extensions/roster/index.ts");
@@ -88,10 +91,9 @@ test("registerUi: model/effort state self-heals from ctx when events were missed
 		getMcpServers: () => [],
 		getActiveTools: () => [],
 	});
-	const setStatusCalls = [];
 	const ctx = {
 		ui: {
-			setStatus: (key, value) => setStatusCalls.push([key, value]),
+			setWidget: () => {},
 			theme: { fg: (color, text) => `<${color}>${text}</${color}>`, bold: (text) => `*${text}*` },
 		},
 		model: undefined,
@@ -99,10 +101,11 @@ test("registerUi: model/effort state self-heals from ctx when events were missed
 	};
 	setSessionPersona("leader");
 	setStatusModel(undefined, undefined);
+	torusChips().clear();
 
 	// startup before the model was selected: no model in the line
 	handlers["session_start"]({ type: "session_start", reason: "startup" }, ctx);
-	assert.ok(!setStatusCalls[0][1].includes("glm"), "no model expected yet");
+	assert.ok(!(torusChips().get("torus") ?? "").includes("glm"), "no model expected yet");
 
 	// same-model persona switch: engine fires NO model_select — a later
 	// turn_start must still backfill model+effort from live ctx
@@ -110,11 +113,11 @@ test("registerUi: model/effort state self-heals from ctx when events were missed
 	ctx.thinkingLevel = "high";
 	handlers["turn_start"]({ type: "turn_start" }, ctx);
 	assert.ok(
-		setStatusCalls.at(-1)[1].includes(personaFg("leader", "glm-4.7")),
+		(torusChips().get("torus") ?? "").includes(personaFg("leader", "glm-4.7")),
 		"model must backfill from ctx without a model_select event",
 	);
 	assert.ok(
-		setStatusCalls.at(-1)[1].includes(personaFg("leader", "high")),
+		(torusChips().get("torus") ?? "").includes(personaFg("leader", "high")),
 		"effort must backfill from ctx without a thinking_level_select event",
 	);
 	setSessionPersona(null);
@@ -128,20 +131,20 @@ test("statusline: stale cached model loses to live ctx.model on repaint", () => 
 		getMcpServers: () => [],
 		getActiveTools: () => [],
 	});
-	const paints = [];
 	const ctx = {
-		ui: { setStatus: (key, value) => paints.push([key, value]) },
+		ui: { setWidget: () => {} },
 		sessionManager: { getSessionId: () => "sess-stale-model" },
 		model: { id: "zai/glm-5.3-flash" },
 		thinkingLevel: undefined,
 	};
 	setSessionPersona("explorer");
+	torusChips().clear();
 	// the engine moved to flash without emitting model_select (same-model
 	// persona switch): a stale cache must never override the live ctx model
 	setStatusModel("zai/glm-5.3", undefined);
 	handlers["turn_start"]({ type: "turn_start" }, ctx);
 	assert.ok(
-		paints.at(-1)[1].includes(personaFg("explorer", "glm-5.3-flash")),
+		(torusChips().get("torus") ?? "").includes(personaFg("explorer", "glm-5.3-flash")),
 		"repaint must take the model from ctx.model, not a stale cache",
 	);
 	setSessionPersona(null);
@@ -199,11 +202,11 @@ test("statusline cost chip: message_end costs accumulate via the shared tally re
 		getMcpServers: () => [],
 		getActiveTools: () => [],
 	});
-	const paints = [];
 	const ctx = {
-		ui: { setStatus: (key, value) => paints.push([key, value]) },
+		ui: { setWidget: () => {} },
 		sessionManager: { getSessionId: () => "sess-cost-sum" },
 	};
+	torusChips().clear();
 	const assistantEnd = (usage) =>
 		handlers["message_end"](
 			{
@@ -228,10 +231,11 @@ test("statusline cost chip: message_end costs accumulate via the shared tally re
 		cost: { input: 0.004, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.005 },
 	});
 
-	const costPaints = paints.filter(([key]) => key === COST_STATUS_KEY);
-	assert.equal(costPaints.length, 2, "each message_end repaints the cost chip");
-	assert.equal(costPaints[0][1], "fleet:$0.0300", "first event renders alone at 4dp under $1");
-	assert.equal(costPaints.at(-1)[1], "fleet:$0.0350", "costs sum across message_end events");
+	assert.equal(
+		torusChips().get(COST_STATUS_KEY),
+		"fleet:$0.0350",
+		"costs sum across message_end events",
+	);
 });
 
 test("statusline cost chip: tokens without cost render $0; nothing spent keeps the chip absent", () => {
@@ -241,9 +245,9 @@ test("statusline cost chip: tokens without cost render $0; nothing spent keeps t
 		getMcpServers: () => [],
 		getActiveTools: () => [],
 	});
-	const paints = [];
+	torusChips().clear();
 	const mkCtx = (sessionId) => ({
-		ui: { setStatus: (key, value) => paints.push([key, value]) },
+		ui: { setWidget: () => {} },
 		sessionManager: { getSessionId: () => sessionId },
 	});
 	const assistantEnd = (ctx, usage) =>
@@ -262,18 +266,14 @@ test("statusline cost chip: tokens without cost render $0; nothing spent keeps t
 	// tokens spent, model has no catalog price: an explicit $0 beats an ambiguous blank
 	assistantEnd(mkCtx("sess-cost-zero"), { input: 10, output: 4 });
 	assert.equal(
-		paints.filter(([key]) => key === COST_STATUS_KEY).at(-1)[1],
+		torusChips().get(COST_STATUS_KEY),
 		"fleet:$0",
 		"zero cost with tokens spent renders $0",
 	);
 
 	// no usage at all: nothing measurable — the entry is cleared, not $0
 	assistantEnd(mkCtx("sess-cost-empty"), undefined);
-	assert.equal(
-		paints.filter(([key]) => key === COST_STATUS_KEY).at(-1)[1],
-		undefined,
-		"no usage keeps the chip absent",
-	);
+	assert.equal(torusChips().get(COST_STATUS_KEY), undefined, "no usage keeps the chip absent");
 
 	// a fresh session boundary drops the prior session's chip
 	handlers["session_start"](
@@ -281,7 +281,7 @@ test("statusline cost chip: tokens without cost render $0; nothing spent keeps t
 		{ ...mkCtx("sess-cost-fresh"), model: undefined, thinkingLevel: undefined },
 	);
 	assert.equal(
-		paints.filter(([key]) => key === COST_STATUS_KEY).at(-1)[1],
+		torusChips().get(COST_STATUS_KEY),
 		undefined,
 		"session_start clears the chip for the new session",
 	);
@@ -296,10 +296,10 @@ test("statusline cost chip: TORUS_STATUSLINE_COST=0 never touches the cost key",
 			getMcpServers: () => [],
 			getActiveTools: () => [],
 		});
-		const paints = [];
+		torusChips().clear();
 		const ctx = {
 			ui: {
-				setStatus: (key, value) => paints.push([key, value]),
+				setWidget: () => {},
 				theme: { fg: (_color, text) => text, bold: (text) => text },
 			},
 			sessionManager: { getSessionId: () => "sess-cost-off" },
@@ -328,9 +328,9 @@ test("statusline cost chip: TORUS_STATUSLINE_COST=0 never touches the cost key",
 		handlers["session_start"]({ type: "session_start", reason: "new" }, ctx);
 
 		assert.equal(
-			paints.filter(([key]) => key === COST_STATUS_KEY).length,
-			0,
-			"kill switch: no setStatus call ever carries the cost key",
+			torusChips().has(COST_STATUS_KEY),
+			false,
+			"kill switch: the cost chip never lands in the store",
 		);
 	} finally {
 		delete process.env["TORUS_STATUSLINE_COST"];
@@ -497,7 +497,6 @@ test("alt+p paints the engine's live model even across duplicated ui module inst
 
 		const engine = { model: { id: "glm-5.3", provider: "zai" } };
 		const listeners = new Map();
-		const paints = [];
 		const shortcuts = new Map();
 		const sameModel = (a, b) => a?.provider === b?.provider && a?.id === b?.id;
 		const pi = {
@@ -539,7 +538,7 @@ test("alt+p paints the engine's live model even across duplicated ui module inst
 			},
 			sessionManager: { getSessionId: () => `sess-altp-${Date.now()}` },
 			ui: {
-				setStatus: (key, value) => paints.push([key, value]),
+				setWidget: () => {},
 				notify: () => {},
 				theme: undefined,
 			},
@@ -547,17 +546,17 @@ test("alt+p paints the engine's live model even across duplicated ui module inst
 
 		promptsMod.registerPrompts(pi);
 		uiEntry.registerUi(pi);
+		torusChips().clear();
 		await pi.emit("session_start", { type: "session_start" });
 
 		// land on explorer like the user: the final dreamer->explorer hop is a
 		// same-model switch, so the engine never emits model_select for it
+		let finalPaint = "";
 		for (let i = 0; i < 8; i++) {
 			await shortcuts.get("alt+p").handler(ctx);
-			const plain = (paints.at(-1)?.[1] ?? "").replaceAll(/\x1b\[[0-9;]*m/g, "").split(" · ");
-			if (plain[1] === "explorer") break;
+			finalPaint = (torusChips().get("torus") ?? "").replaceAll(/\x1b\[[0-9;]*m/g, "");
+			if (finalPaint.split(" · ")[1] === "explorer") break;
 		}
-
-		const finalPaint = (paints.at(-1)?.[1] ?? "").replaceAll(/\x1b\[[0-9;]*m/g, "");
 		assert.ok(finalPaint.includes("explorer"), `expected explorer persona, got: ${finalPaint}`);
 		assert.ok(
 			finalPaint.includes("glm-5.3-flash"),
@@ -579,4 +578,25 @@ test("statusline renders the permission chip in every mode", () => {
 	assert.ok(buildStatus().split(" · ").includes("perm:bypass"));
 	setStatusPermission("default");
 	assert.ok(buildStatus().split(" · ").includes("perm:default"));
+});
+
+test("torus statusline wraps chips onto rows instead of truncating the line", () => {
+	const line = createTorusStatusline();
+	torusChips().clear();
+	setTorusChip("torus", "torus · leader · glm-4.7 · high · zai|opencode-go · perm:default");
+	setTorusChip("torus:cost", "fleet:$0.0147");
+	setTorusChip("torus:sandbox", "sbx:off");
+	setTorusChip("torus:worktree", "wt:torus/feat-x");
+
+	const rows = line.render(70);
+	assert.equal(rows.length, 2, "chips wrap onto a second row at narrow widths");
+	assert.match(rows[0], /perm:default/);
+	assert.match(rows[1], /sbx:off/, "trailing chips survive instead of being ellipsized away");
+	assert.match(rows[1], /wt:torus\/feat-x/);
+
+	assert.equal(line.render(400).length, 1, "wide terminals keep one row");
+	for (const key of ["torus", "torus:cost", "torus:sandbox", "torus:worktree"]) {
+		setTorusChip(key, undefined);
+	}
+	assert.deepEqual(line.render(400), [], "no chips renders nothing");
 });

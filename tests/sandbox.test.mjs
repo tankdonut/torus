@@ -647,19 +647,18 @@ test("tool_call during async init waits for activation (no unwrapped slip-throug
 test("statusline chip: set on session_start, updated after activation, cleared on shutdown", async () => {
 	const manager = sandboxManagerFake();
 	const pi = await activateHandlers(manager);
-	const chip = [];
 	const ctx = {
 		ui: {
-			setStatus(key, text) {
-				chip.push([key, text]);
-			},
+			setWidget: () => {},
 			theme: { fg: (_color, text) => text },
 		},
 	};
+	const { torusChips } = await import("../extensions/ui/index.ts");
+	torusChips().clear();
 	await pi.handlers.session_start({ type: "session_start" }, ctx);
-	assert.deepEqual(chip.at(-1), ["torus:sandbox", "sbx:on"]);
+	assert.equal(torusChips().get("torus:sandbox"), "sbx:on");
 	await pi.handlers.session_shutdown({ type: "session_shutdown" }, ctx);
-	assert.deepEqual(chip.at(-1), ["torus:sandbox", undefined]);
+	assert.equal(torusChips().has("torus:sandbox"), false);
 });
 
 test("stale ctx after session replacement must not crash registerSandbox", async () => {

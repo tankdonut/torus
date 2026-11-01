@@ -56,6 +56,7 @@ import { readPersistedHosts } from "../approval/index.js";
 import { isBypassMode } from "../automode/config.js";
 import { scratchDir, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
+import { setTorusChip } from "../ui/index.js";
 import {
 	loadSandboxPolicy,
 	type ResolvedSandboxPolicy,
@@ -440,21 +441,14 @@ function chipText(state: SandboxState): string {
 	return state.active ? "sbx:on" : "sbx:down";
 }
 
-function setSandboxStatus(ctx: ExtensionContext, text: string | undefined): void {
-	try {
-		ctx.ui.setStatus(STATUS_KEY, text);
-	} catch {
-		// Session replacement (resume/fork/switch/reload) invalidates a captured ctx;
-		// accessing ctx.ui on it throws. The chip is cosmetic — the next session_start
-		// re-renders it with the fresh ctx, so drop the stale reference and move on.
-		lastCtx = null;
-	}
+function setSandboxStatus(text: string | undefined): void {
+	setTorusChip(STATUS_KEY, text);
 }
 
 function subscribeChip(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		lastCtx = ctx;
-		setSandboxStatus(ctx, chipText(shared.state));
+		setSandboxStatus(chipText(shared.state));
 		maybeReloadTrustedPolicy();
 		return undefined;
 	});
@@ -814,7 +808,7 @@ function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
-		setSandboxStatus(ctx, undefined);
+		setSandboxStatus(undefined);
 		const relay = activeSignRelay;
 		activeSignRelay = null;
 		if (relay) void relay.stop();
@@ -935,7 +929,7 @@ export async function registerSandbox(
 		deps.seededHosts?.() ?? [],
 	);
 	shared.state = await activationPromise;
-	if (lastCtx) setSandboxStatus(lastCtx, chipText(shared.state));
+	setSandboxStatus(chipText(shared.state));
 	if (shared.state.active) activeManager = deps.manager;
 	await maybeStartSignRelay(deps);
 }

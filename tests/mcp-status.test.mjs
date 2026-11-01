@@ -4,7 +4,7 @@ import { test } from "node:test";
 const { registerMcp, mcpStatusText, connectedServerCount } = await import(
 	"../extensions/mcp/index.ts"
 );
-const { registerUi, mcpSettlePollActive } = await import("../extensions/ui/index.ts");
+const { registerUi, mcpSettlePollActive, torusChips } = await import("../extensions/ui/index.ts");
 
 test("connectedServerCount counts only servers with declared tools (prefix-exact, underscore-safe)", () => {
 	const active = [
@@ -62,10 +62,10 @@ test("registerMcp registers servers; registerUi renders the count on the torus k
 	assert.ok(handlers["session_start"], "session_start wiring missing");
 	assert.ok(handlers["turn_start"], "turn_start wiring missing");
 
-	const setStatusCalls = [];
+	torusChips().clear();
 	const ctx = {
 		ui: {
-			setStatus: (key, value) => setStatusCalls.push([key, value]),
+			setWidget: () => {},
 			theme: {
 				fg: (color, text) => `<${color}>${text}</${color}>`,
 				bold: (text) => `*${text}*`,
@@ -75,9 +75,9 @@ test("registerMcp registers servers; registerUi renders the count on the torus k
 		},
 	};
 	handlers["session_start"]({ type: "session_start", reason: "startup" }, ctx);
-	assert.equal(setStatusCalls[0][0], "torus", "MCP count must render on the torus key");
+	assert.ok(torusChips().has("torus"), "MCP count must render on the torus key");
 	assert.ok(
-		setStatusCalls[0][1].includes("<warning>MCP 0</warning>"),
+		(torusChips().get("torus") ?? "").includes("<warning>MCP 0</warning>"),
 		"before connections settle: warning MCP 0",
 	);
 	assert.ok(mcpSettlePollActive(), "session_start must start the settle-poll");
@@ -87,7 +87,7 @@ test("registerMcp registers servers; registerUi renders the count on the torus k
 	const { setTimeout } = await import("node:timers/promises");
 	for (let i = 0; i < 20 && mcpSettlePollActive(); i++) await setTimeout(50);
 	assert.ok(
-		setStatusCalls.at(-1)[1].includes("<success>MCP 2</success>"),
+		(torusChips().get("torus") ?? "").includes("<success>MCP 2</success>"),
 		"settle-poll repaints once tools are declared, before any turn",
 	);
 	assert.ok(!mcpSettlePollActive(), "poll stops once every registered server is connected");
@@ -106,7 +106,7 @@ test("a new session_start restarts the settle-poll instead of stacking timers", 
 	registerUi(fakePi);
 	const ctx = {
 		ui: {
-			setStatus: () => {},
+			setWidget: () => {},
 			theme: {
 				fg: (color, text) => `<${color}>${text}</${color}>`,
 				bold: (text) => `*${text}*`,

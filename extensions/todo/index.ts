@@ -10,6 +10,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { projectStateDir, pruneOrphanSessionFiles, readJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { sessionFileExists } from "../sessions/index.js";
+import { setTorusChip } from "../ui/index.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
@@ -300,7 +301,7 @@ const todoWriteTool = defineTool({
 			};
 		}
 		const state = writeTodos(sessionId, params.todos);
-		ctx.ui.setStatus("torus:todo", chipText(state));
+		setTorusChip("torus:todo", chipText(state));
 		return {
 			content: [
 				{
@@ -323,7 +324,7 @@ export function registerTodo(pi: ExtensionAPI): void {
 		currentSession(ctx);
 		const sessionId = currentSession();
 		if (!sessionId) return;
-		ctx.ui.setStatus("torus:todo", chipText(readTodoState(sessionId)));
+		setTorusChip("torus:todo", chipText(readTodoState(sessionId)));
 	});
 
 	pi.on("context", (event) => {

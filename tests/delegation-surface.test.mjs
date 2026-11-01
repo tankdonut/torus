@@ -600,13 +600,13 @@ test("statusline chip counts delegate, fanout, and chain executions", () => {
 		getActiveTools: () => [],
 	};
 	ui.registerUi(fakePi);
-	const paints = [];
 	const ctx = {
 		ui: {
-			setStatus: (key, value) => paints.push([key, value]),
+			setWidget: () => {},
 			theme: { fg: (_color, text) => text, bold: (text) => `*${text}*` },
 		},
 	};
+	ui.torusChips().clear();
 	const start = (toolName) => handlers["tool_execution_start"]({ toolName }, ctx);
 	const end = (toolName) => handlers["tool_execution_end"]({ toolName }, ctx);
 
@@ -615,12 +615,19 @@ test("statusline chip counts delegate, fanout, and chain executions", () => {
 	start("torus_fanout");
 	start("torus_chain");
 	assert.ok(ui.buildStatus().includes("delegate ×3"), "all three delegation tools count");
+	assert.ok(
+		(ui.torusChips().get("torus") ?? "").includes("delegate ×3"),
+		"each transition repaints the torus chip",
+	);
 	end("torus_fanout");
 	assert.ok(ui.buildStatus().includes("delegate ×2"), "fanout end decrements");
 	end("torus_delegate");
 	end("torus_chain");
 	assert.ok(!ui.buildStatus().includes("delegate"), "chip clears when all finish");
-	assert.ok(paints.length >= 4, "each transition repaints the torus status key");
+	assert.ok(
+		!(ui.torusChips().get("torus") ?? "").includes("delegate"),
+		"the chip store clears with it",
+	);
 });
 
 function registeredTools() {

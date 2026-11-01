@@ -44,6 +44,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { projectKey, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
+import { setTorusChip } from "../ui/index.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin", "win32"],
@@ -59,7 +60,7 @@ function setWorktreeStatus(
 	branch: string | null,
 ): void {
 	activeBranch = branch;
-	ctx.ui.setStatus(
+	setTorusChip(
 		STATUS_KEY,
 		repo && branch ? ctx.ui.theme.fg("warning", `wt:${repo}/${branch}`) : undefined,
 	);
