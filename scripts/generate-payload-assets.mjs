@@ -2,15 +2,19 @@
 /**
  * Generates runtime/bin/payload-assets.mjs (gitignored): one file-loader
  * import per payload file plus string constants for the runtime package.json,
- * .npmrc and the generated payload lock (dist/payload-lock.json via
- * scripts/generate-payload-lock.mjs), and a sha256 payload hash. bun build --compile embeds the
+ * .npmrc, the generated payload lock (dist/payload-lock.json via
+ * scripts/generate-payload-lock.mjs) and, when one was packed, the payload
+ * dependency tree (dist/payload-tree.tar.gz via scripts/pack-payload-tree.mjs),
+ * plus a sha256 payload hash. bun build --compile embeds the
  * imported files; runtime/bin/torus.mjs extracts them to ~/.torus/runtime.
  */
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computePayloadHash } from "../runtime/bin/payload-extract.mjs";
-import { readPayloadLock } from "./generate-payload-lock.mjs";
+import { PAYLOAD_LOCK_ENV, readPayloadLock } from "./generate-payload-lock.mjs";
+import { PAYLOAD_TREE_ENV } from "./pack-payload-tree.mjs";
 import { PAYLOAD_DIRS, payloadNpmrc, payloadPackageJson } from "./payload-manifest.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -42,12 +46,32 @@ const payloadNpmrcValue = payloadNpmrc();
 // leave npm re-resolving at install time
 const payloadPackageLockValue = readPayloadLock();
 
+// The packed dependency tree joins the payload when one is available: an
+// explicit path always wins (offline tests point it at a fixture), otherwise
+// the default dist path participates in full builds only — runs that steer
+// the lock to a fixture keep building lock-only so a leftover dist tree is
+// never swept into a fixture build.
+const treeOverride = process.env[PAYLOAD_TREE_ENV];
+let payloadTree = null;
+if (treeOverride !== undefined) {
+	const treePath = path.resolve(treeOverride);
+	payloadTree = { virtual: treePath, bytes: readFileSync(treePath) };
+} else if (process.env[PAYLOAD_LOCK_ENV] === undefined) {
+	const treePath = path.join(root, "dist", "payload-tree.tar.gz");
+	if (existsSync(treePath)) {
+		payloadTree = { virtual: treePath, bytes: readFileSync(treePath) };
+	}
+}
+
 const hashInput = [
 	...payloadFiles,
 	{ path: "package.json", bytes: Buffer.from(generatedPackageJson, "utf8") },
 	{ path: ".npmrc", bytes: Buffer.from(payloadNpmrcValue ?? "", "utf8") },
 	{ path: "package-lock.json", bytes: Buffer.from(payloadPackageLockValue ?? "", "utf8") },
 ];
+if (payloadTree !== null) {
+	hashInput.push({ path: "payload-tree.tar.gz", bytes: payloadTree.bytes });
+}
 const payloadHash = computePayloadHash(hashInput);
 
 const lines = [];
@@ -57,11 +81,24 @@ for (const [i, file] of payloadFiles.entries()) {
 	const specifier = path.relative(path.join(root, "runtime", "bin"), path.join(root, file.path));
 	lines.push(`import f${i} from ${JSON.stringify(specifier)} with { type: "file" };`);
 }
+if (payloadTree !== null) {
+	const specifier = path
+		.relative(path.join(root, "runtime", "bin"), payloadTree.virtual)
+		.split(path.sep)
+		.join("/");
+	lines.push(`import t0 from ${JSON.stringify(specifier)} with { type: "file" };`);
+}
 lines.push(`export const PAYLOAD_HASH = ${JSON.stringify(payloadHash)};`);
 lines.push('export const OWNED_TOP_LEVELS = ["extensions", "agents", "skills"];');
 lines.push(`export const PAYLOAD_PACKAGE_JSON = ${JSON.stringify(generatedPackageJson)};`);
 lines.push(`export const PAYLOAD_NPMRC = ${JSON.stringify(payloadNpmrcValue)};`);
 lines.push(`export const PAYLOAD_PACKAGE_LOCK = ${JSON.stringify(payloadPackageLockValue)};`);
+if (payloadTree !== null) {
+	const sha256 = createHash("sha256").update(payloadTree.bytes).digest("hex");
+	lines.push(`export const PAYLOAD_TREE = { virtual: t0, sha256: ${JSON.stringify(sha256)} };`);
+} else {
+	lines.push("export const PAYLOAD_TREE = null;");
+}
 lines.push("export const payloadFiles = [");
 for (const [i, file] of payloadFiles.entries()) {
 	lines.push(`\t{ path: ${JSON.stringify(file.path)}, virtual: f${i} },`);
@@ -72,3 +109,17 @@ writeFileSync(path.join(root, "runtime", "bin", "payload-assets.mjs"), `${lines.
 process.stderr.write(
 	`payload-assets.mjs: ${payloadFiles.length} files, hash ${payloadHash.slice(0, 12)}…\n`,
 );
+if (payloadTree === null) {
+	process.stderr.write(
+		"payload-assets.mjs: no packed payload tree — building lock-only (run scripts/pack-payload-tree.mjs to bundle one)\n",
+	);
+} else {
+	process.stderr.write(
+		`payload-assets.mjs: payload tree ${payloadTree.bytes.length} bytes (sha256 ${createHash(
+			"sha256",
+		)
+			.update(payloadTree.bytes)
+			.digest("hex")
+			.slice(0, 12)}…)\n`,
+	);
+}

@@ -25,13 +25,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 rm -rf "$ROOT/dist"
 mkdir -p "$ROOT/$DIST/bin"
 
-# generate the payload-native lock first — npm resolves the payload manifest
-# (engine promoted to prod, overrides carried) against the registry so installs
-# on user machines never re-resolve; requires network and fails loudly without it
-node "$ROOT/scripts/generate-payload-lock.mjs"
+# pack the payload dependency tree (pinned engine included) into one
+# deterministic tar.gz — this step first generates the payload-native lock
+# (npm resolves the payload manifest against the registry so installs on user
+# machines never re-resolve), then npm ci's the tree inside a staging dir;
+# requires network and fails loudly without it
+node "$ROOT/scripts/pack-payload-tree.mjs"
 
 # embed the payload (extensions, agents, skills, .npmrc, runtime package.json,
-# payload lock) as file assets: generated file-loader imports + content hash
+# payload lock, packed dependency tree) as file assets: generated file-loader
+# imports + content hash
 node "$ROOT/scripts/generate-payload-assets.mjs"
 
 # cross-compile with --target (bun-linux-x64, bun-linux-arm64, bun-darwin-x64,
@@ -47,6 +50,12 @@ else
 fi
 
 chmod +x "$ROOT/$BIN"
-echo "built $ROOT/$BIN (single self-contained binary)"
+SIZE=$(( $(wc -c < "$ROOT/$BIN") ))
+echo "built $ROOT/$BIN (single self-contained binary, $SIZE bytes)"
+if (( SIZE > 400 * 1024 * 1024 )); then
+	echo "build-binary.sh: binary exceeds 400 MiB ($SIZE bytes) — the embedded payload tree is too large" >&2
+	exit 1
+fi
 echo "  payload: embedded; extracted to ~/.torus/runtime on first run (hash-keyed)"
+echo "  tree:    embedded dependency tree ($((SIZE / (1024 * 1024))) MiB binary), runtime use lands separately"
 echo "  engine:  npm-installed into the extracted payload on first run (network required)"
