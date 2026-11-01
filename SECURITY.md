@@ -60,3 +60,24 @@ Process isolation, credential protection, and filesystem permissions belong to t
 ## Disclosure
 
 Report vulnerabilities privately via [GitHub security advisories](https://github.com/tankdonut/torus/security/advisories) on this repository ("Report a vulnerability"). torus is a solo-maintained personal project: there is no fixed SLA and no bounty program. Reports are triaged and answered as capacity allows, and fixes ship through the normal release flow. Please do not open public issues for suspected vulnerabilities.
+
+## Distribution and artifact integrity
+
+torus distributes through three channels:
+
+- **GitHub Releases**: the platform binaries, `sha256sums.txt`, the software bill of materials (`torus-sbom.cdx.json`), and per-asset attestation bundles (`*.intoto.jsonl`).
+- **Container image**: `ghcr.io/tankdonut/torus`, built by CI with build provenance attached.
+- **Git tags**: the `v*` tags in this repository.
+
+npm is not a distribution channel. The `torus` package name on the npm registry belongs to an unrelated, dormant project, so installing from npm gets you that project, not this one.
+
+To verify a binary from a release, run both commands from the directory holding the download; `sha256sums.txt` comes from the same release:
+
+```sh
+sha256sum -c --ignore-missing sha256sums.txt
+gh attestation verify torus-<os>-<arch> --repo tankdonut/torus
+```
+
+The full walkthrough, image included, is in the [verifying artifacts section](README.md#verifying-artifacts) of the README.
+
+Supported versions: the latest release only, through 0.x; the versioning contract is in [docs/updating.md](docs/updating.md).

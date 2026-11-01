@@ -46,6 +46,24 @@ npm install
 
 All paths need provider auth on first run: `/login zai` signs in to the built-in Z.ai provider (GLM models). In containers, mount credentials read-only instead; see [docs/container.md](docs/container.md).
 
+## Verifying artifacts
+
+Each release ships `sha256sums.txt` and per-asset attestation bundles alongside the binaries. To check a download, fetch `sha256sums.txt` from the same release and run, from the download's directory:
+
+```sh
+sha256sum -c --ignore-missing sha256sums.txt
+```
+
+The sums file covers every platform; `--ignore-missing` skips the binaries you did not download. With the GitHub CLI (`gh`) installed, verify the binary's build provenance:
+
+```sh
+gh attestation verify torus-<os>-<arch> --repo tankdonut/torus
+```
+
+The container image carries build provenance as well. The image's `X.Y` and `X.Y.Z` tags are immutable once pushed; pin one of those, or a digest, instead of `latest`.
+
+npm is not a distribution channel: the `torus` name on the npm registry belongs to an unrelated, dormant project.
+
 ## First five minutes
 
 Open with `/roster`, then delegate something small and watch it in the tmux pane and the **alt+t** fleet view. The walkthrough lives in [docs/getting-started.md](docs/getting-started.md).

@@ -20,6 +20,8 @@ chmod +x torus-<os>-<arch> && ./torus-<os>-<arch>
 
 The boot needs no network. Set `TORUS_BOOTSTRAP=network` to bootstrap over npm instead; the launcher env rows in [configuration.md](configuration.md) cover it.
 
+Verify the download before you run it: the release ships `sha256sums.txt` and attestations alongside the binary. The commands are in the [verifying artifacts](../README.md#verifying-artifacts) section of the README.
+
 **In a container** (full toolchain, no host install):
 
 ```sh
