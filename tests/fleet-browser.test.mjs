@@ -305,7 +305,7 @@ test("fan-out coalesces near-simultaneous completions into one combined result m
 	registry.setCustomSender(() => {});
 });
 
-test("strip: team members show a badge + idle state; overflow row appears past MAX_ROWS", () => {
+test("strip: one line — count chip, entity segments with slot numbers, +N overflow", () => {
 	registry.resetRegistryForTesting();
 	const tui = { mode: "fullscreen", requestRender: () => {} };
 	const theme = { fg: (_color, text) => text, bold: (text) => `*${text}*` };
@@ -331,12 +331,24 @@ test("strip: team members show a badge + idle state; overflow row appears past M
 		activeSeconds: 5000,
 		activeUpdatedAt: Date.now(),
 	});
+	registry.publishExternalRun({
+		id: "ext-solo",
+		label: "solo",
+		handle: "solo",
+		state: "running",
+	});
 	const strip = factory(tui, theme);
 	try {
-		const lines = strip.render(200).join("\n");
-		assert.match(lines, /⧉myteam/, "team badge carries the short team name");
-		assert.match(lines, /· idle\b/, "idle member renders an idle marker");
-		assert.doesNotMatch(lines, /idle \d/, "idle must not borrow the banked work clock");
+		const lines = strip.render(200);
+		assert.equal(lines.length, 1, "the strip is a single line");
+		const line = lines[0];
+		assert.match(line, /fleet 2/, "count chip carries every running entity");
+		assert.match(line, /1 [·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] @scout/, "delegation segment is slot-numbered");
+		assert.match(line, /[·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] @solo/, "external segment carries no slot number");
+		assert.match(line, /@scout 0s/, "segments show run age");
+		assert.doesNotMatch(line, /⧉/, "team badge lives in the browser, not the strip");
+		assert.doesNotMatch(line, /glm/, "model lives in the browser, not the strip");
+		assert.doesNotMatch(line, /idle/, "idle rests on the dim dot instead of a word");
 	} finally {
 		strip.dispose();
 	}
@@ -348,18 +360,22 @@ test("strip: team members show a badge + idle state; overflow row appears past M
 	}
 	const crowded = factory(tui, theme);
 	try {
-		const lines = crowded.render(200).join("\n");
-		assert.match(lines, /\+2 more/, "overflow row lists hidden runs");
-		assert.match(lines, /5 running · \+2 more/, "header counts what is rendered");
+		const line = crowded.render(200)[0];
+		assert.match(line, /fleet 7/, "count chip counts what would not fit too");
+		assert.match(line, /@run0/, "first segments render in slot order");
+		assert.match(line, /@run3/, "segment cap leaves room for the overflow chip");
+		assert.doesNotMatch(line, /@run4/, "past the cap, segments fold away");
+		assert.match(line, /\+3 · alt\+t all$/, "overflow chip and all-hint close the line");
 	} finally {
 		crowded.dispose();
 	}
 });
 
-test("strip: alt+t-all hint is an accent chip in header and overflow row, click-routed to the list", () => {
+test("strip: count chip, segments, overflow, and alt+t-all are click-routed", () => {
 	registry.resetRegistryForTesting();
 	const tui = { mode: "fullscreen", requestRender: () => {} };
-	const theme = { fg: (color, text) => `{${color}}${text}{/}`, bold: (text) => `*${text}*` };
+	const plain = { fg: (_c, text) => text, bold: (text) => `*${text}*` };
+	const styled = { fg: (color, text) => `{${color}}${text}{/}`, bold: (text) => `*${text}*` };
 	let factory = null;
 	fleet.registerFleetWidget({
 		on: (event, handler) => {
@@ -371,54 +387,53 @@ test("strip: alt+t-all hint is an accent chip in header and overflow row, click-
 
 	const opened = [];
 	globalThis[registry.FLEET_OPENER] = (id) => opened.push(id ?? "list");
-	// Plain-theme strip for hit-box math: no tags, so line length == visible width.
-	const plain = factory(tui, { fg: (_c, text) => text, bold: (text) => `*${text}*` });
+	registry.startDelegation("click-1", "builder", "zai/glm-5.3", "sess", "run0");
+	registry.publishExternalRun({
+		id: "team-t3/scout",
+		source: "torus-team:build-t3",
+		label: "scout",
+		handle: "scout",
+		state: "running",
+	});
+	const strip = factory(tui, plain);
 	try {
-		registry.startDelegation("hint-1", "builder", "zai/glm-5.3", "sess", "run0");
-		const lines = plain.render(200);
-		const header = lines[1];
-		const end = header.length - 1;
-		// The chip sits at the very end of the header; a click there opens the list.
-		const click = plain.handleMouse({ type: "click", button: "left", x: end, y: 1 });
-		assert.deepEqual(click, { handled: true }, "chip click is handled");
-		assert.deepEqual(opened, ["list"], "chip click opens the fleet list");
-		// A click on the dim lead is not the chip's.
+		const line = strip.render(200)[0];
+		const at = (needle) => line.indexOf(needle) + 1;
+		strip.handleMouse({ type: "click", button: "left", x: at("fleet 2"), y: 0 });
+		strip.handleMouse({ type: "click", button: "left", x: at("@run0"), y: 0 });
+		strip.handleMouse({ type: "click", button: "left", x: at("@scout"), y: 0 });
+		strip.handleMouse({ type: "click", button: "left", x: at("alt+t all"), y: 0 });
+		assert.deepEqual(opened, ["list", "click-1", "team-t3/scout", "list"]);
+		// Between chips (a separator) nothing opens.
 		opened.length = 0;
-		assert.equal(plain.handleMouse({ type: "click", button: "left", x: 2, y: 1 }), undefined);
-		assert.deepEqual(opened, [], "dim lead does not open anything");
-		// Hover bolds just the chip.
-		plain.handleMouse({ type: "move", x: end, y: 1 });
-		assert.ok(plain.render(200)[1].endsWith("*alt+t all*"), "hovering the chip bolds it");
+		const sep = line.indexOf(" · ", at("fleet 2"));
+		assert.equal(
+			strip.handleMouse({ type: "click", button: "left", x: sep + 1, y: 0 }),
+			undefined,
+			"separator carries no target",
+		);
+		assert.deepEqual(opened, []);
+		// Hovering a segment bolds exactly that chip.
+		strip.handleMouse({ type: "move", x: at("@run0"), y: 0 });
+		assert.match(strip.render(200)[0], /\*1 [^*]*@run0[^*]*\*/, "hovered segment bolds");
+		assert.doesNotMatch(strip.render(200)[0], /\*alt\+t all\*/, "other chips stay unbolded");
 	} finally {
-		plain.dispose();
+		strip.dispose();
 		delete globalThis[registry.FLEET_OPENER];
 	}
 
-	// Styled strip: header and overflow row both carry the accent chip.
-	const styled = factory(tui, theme);
+	// Styled strip: the count chip and all-hint render as accent chips.
+	const colored = factory(tui, styled);
 	try {
-		registry.resetRegistryForTesting();
-		registry.startDelegation("hint-2", "builder", "zai/glm-5.3", "sess", "run0");
-		for (let i = 1; i < 7; i += 1) {
-			registry.startDelegation(`hint-2-${i}`, "builder", "zai/glm-5.3", "sess", `run${i}`);
-		}
-		const lines = styled.render(200).join("\n");
-		assert.match(
-			lines,
-			/\{dim\}torus fleet — 5 running · \+2 more · click\/alt\+1\.\.5 · \{\/\}\{accent\}alt\+t all\{\/\}/,
-			"header ends in the accent chip",
-		);
-		assert.match(
-			lines,
-			/\{dim\}\+2 more · \{\/\}\{accent\}alt\+t all\{\/\}/,
-			"overflow row ends in the accent chip",
-		);
+		const line = colored.render(200)[0];
+		assert.match(line, /^\{accent\}\*fleet 2\*\{\/\}/, "count chip leads in accent");
+		assert.match(line, /\{accent\}alt\+t all\{\/\}$/, "all-hint closes the line in accent");
 	} finally {
-		styled.dispose();
+		colored.dispose();
 	}
 });
 
-test("strip: member and delegate lines show input→output tokens", () => {
+test("strip: segments carry name and age; token and cost detail stays in the browser", () => {
 	registry.resetRegistryForTesting();
 	const tui = { mode: "fullscreen", requestRender: () => {} };
 	const theme = { fg: (_color, text) => text, bold: (text) => `*${text}*` };
@@ -448,14 +463,14 @@ test("strip: member and delegate lines show input→output tokens", () => {
 	});
 	const strip = factory(tui, theme);
 	try {
-		const lines = strip.render(200).join("\n");
-		assert.match(lines, /1\.2k→5\.7k/, "running delegate row shows input→output tokens");
-		assert.match(lines, /100→250/, "external-run row shows input→output tokens");
-		assert.doesNotMatch(lines, /}o\b/, "output-only token suffix is gone");
+		const line = strip.render(200)[0];
+		assert.match(line, /@scout/, "delegate segment names the entity");
+		assert.match(line, /@solo/, "external segment names the entity");
+		assert.doesNotMatch(line, /→/, "token counts live in the browser, not the strip");
+		assert.doesNotMatch(line, /\$/, "cost lives in the browser, not the strip");
 	} finally {
 		strip.dispose();
 	}
-	registry.resetRegistryForTesting();
 });
 
 test("detail footer: [steer]/[stop] ride the status line, stop needs y/n, hover bolds rows", () => {
@@ -930,9 +945,8 @@ test("browser list matches the strip for team members: badge, idle state, frozen
 	} finally {
 		strip.dispose();
 	}
-	assert.ok(stripRow, "strip row rendered");
-	assert.match(stripRow, /⧉myteam/, "strip shows the short team badge");
-	assert.match(stripRow, /· idle\b/, "strip marks the member idle");
+	assert.ok(stripRow, "strip segment rendered");
+	assert.match(stripRow, /· @scout/, "strip rests the idle member on the dim dot");
 
 	const { shortcuts } = registerExtension();
 	const driver = makeCtx("fullscreen", theme);

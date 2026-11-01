@@ -230,8 +230,8 @@ test("statusline cost chip: message_end costs accumulate via the shared tally re
 
 	const costPaints = paints.filter(([key]) => key === COST_STATUS_KEY);
 	assert.equal(costPaints.length, 2, "each message_end repaints the cost chip");
-	assert.equal(costPaints[0][1], "$0.0300", "first event renders alone at 4dp under $1");
-	assert.equal(costPaints.at(-1)[1], "$0.0350", "costs sum across message_end events");
+	assert.equal(costPaints[0][1], "fleet:$0.0300", "first event renders alone at 4dp under $1");
+	assert.equal(costPaints.at(-1)[1], "fleet:$0.0350", "costs sum across message_end events");
 });
 
 test("statusline cost chip: tokens without cost render $0; nothing spent keeps the chip absent", () => {
@@ -263,7 +263,7 @@ test("statusline cost chip: tokens without cost render $0; nothing spent keeps t
 	assistantEnd(mkCtx("sess-cost-zero"), { input: 10, output: 4 });
 	assert.equal(
 		paints.filter(([key]) => key === COST_STATUS_KEY).at(-1)[1],
-		"$0",
+		"fleet:$0",
 		"zero cost with tokens spent renders $0",
 	);
 
@@ -570,15 +570,13 @@ test("alt+p paints the engine's live model even across duplicated ui module inst
 	}
 });
 
-test("statusline renders the permission chip only in auto mode", () => {
+test("statusline renders the permission chip in every mode", () => {
 	setStatusPermission("auto");
-	assert.ok(buildStatus().split(" · ").includes("auto"));
+	assert.ok(buildStatus().split(" · ").includes("perm:auto"));
 	setStatusPermission("auto", true);
-	assert.ok(buildStatus().split(" · ").includes("auto·ask"));
+	assert.ok(buildStatus().split(" · ").includes("perm:auto·ask"));
+	setStatusPermission("bypass");
+	assert.ok(buildStatus().split(" · ").includes("perm:bypass"));
 	setStatusPermission("default");
-	assert.ok(
-		!buildStatus()
-			.split(" · ")
-			.some((segment) => segment === "auto" || segment === "auto·ask"),
-	);
+	assert.ok(buildStatus().split(" · ").includes("perm:default"));
 });

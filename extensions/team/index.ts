@@ -341,34 +341,17 @@ const fanoutTool = defineTool({
 		};
 		const settledRuns = await Promise.allSettled(
 			params.runs.map(async (run) => {
-				// Per-run statusline marker, same shape as the delegate tool, so
-				// parallel fan-out runs stay visible while they work.
 				const handle = run.handle?.trim().replace(/^@+/, "") ?? null;
 				const label = handle ? `@${handle}` : run.agent;
-				// Id-suffixed from the first snapshot so handleless same-agent runs in
-				// one fan-out never share (or early-clear) one statusline entry.
-				const baseStatusKey = `torus:${handle ?? run.agent}`;
-				let statusKey = baseStatusKey;
-				ctx.ui.setStatus(statusKey, `▶ ${label} · starting`);
+				// Live state rides the fleet strip and browser; no per-run
+				// statusline chips.
 				const runStartedAt = Date.now();
 				try {
 					const outcome = await runDelegation(
 						run.agent,
 						run.task,
 						run.cwd,
-						(snapshot) => {
-							if (snapshot.delegationId) {
-								const keyed = `${baseStatusKey}:${snapshot.delegationId.slice(0, 8)}`;
-								if (keyed !== statusKey) {
-									ctx.ui.setStatus(statusKey, undefined);
-									statusKey = keyed;
-								}
-							}
-							ctx.ui.setStatus(
-								statusKey,
-								`▶ ${label} · turn ${snapshot.turns} · ${snapshot.usage.output} tok`,
-							);
-						},
+						() => {},
 						parentSession,
 						handle,
 						run.skills ?? null,
@@ -409,8 +392,6 @@ const fanoutTool = defineTool({
 						durationMs: Date.now() - runStartedAt,
 					});
 					throw error;
-				} finally {
-					ctx.ui.setStatus(statusKey, undefined);
 				}
 			}),
 		);
@@ -519,41 +500,18 @@ const chainTool = defineTool({
 					details: { phase: "running", step: i + 1 },
 				});
 				const handle = step.handle?.trim().replace(/^@+/, "") ?? null;
-				const label = handle ? `@${handle}` : step.agent;
-				// Id-suffixed from the first snapshot so handleless same-agent steps
-				// never share (or early-clear) one statusline entry.
-				const baseStatusKey = `torus:${handle ?? step.agent}`;
-				let statusKey = baseStatusKey;
-				ctx.ui.setStatus(statusKey, `▶ ${label} · starting`);
-				let outcome: DelegationOutcome;
-				try {
-					outcome = await runDelegation(
-						step.agent,
-						context,
-						step.cwd,
-						(snapshot) => {
-							if (snapshot.delegationId) {
-								const keyed = `${baseStatusKey}:${snapshot.delegationId.slice(0, 8)}`;
-								if (keyed !== statusKey) {
-									ctx.ui.setStatus(statusKey, undefined);
-									statusKey = keyed;
-								}
-							}
-							ctx.ui.setStatus(
-								statusKey,
-								`▶ ${label} · turn ${snapshot.turns} · ${snapshot.usage.output} tok`,
-							);
-						},
-						parentSession,
-						handle,
-						step.skills ?? null,
-						announce,
-						emitResult,
-						{ model: step.model ?? null },
-					);
-				} finally {
-					ctx.ui.setStatus(statusKey, undefined);
-				}
+				const outcome: DelegationOutcome = await runDelegation(
+					step.agent,
+					context,
+					step.cwd,
+					() => {},
+					parentSession,
+					handle,
+					step.skills ?? null,
+					announce,
+					emitResult,
+					{ model: step.model ?? null },
+				);
 				lastDelegationId = outcome.delegationId;
 				outcomes.push({ agent: step.agent, ok: outcome.ok, text: outcome.text });
 				if (!outcome.ok) break;

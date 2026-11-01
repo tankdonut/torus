@@ -351,7 +351,7 @@ LLM-classified bash auto-approval for unattended runs, opt-in via `TORUS_PERMISS
 - **Commands:** `/automode` prints the effective config (mode and its source, decision model, every rule entry, `environment` and `hardDeny` prose, `classifyAllShell`, cache size, breaker state); `/automode auto` and `/automode default` switch the session mode, clear the cache, reset the breaker, and reload the rules (bypass sessions refuse the switch: bypass is startup-only, so the posture cannot change mid-session); `/automode denied` lists the last ten denials from the audit log; `/automode setup` drafts `environment` entries from the repo's git remotes and `ask` entries from repeated audit denials, then writes them into config.json's `automode` section (interactive sessions only; headless ones print the draft and write nothing); `/automode setup apply <file>` lands a reviewed draft file through the same validated merge, refusing every key except `environment` and `ask` (the `automode-setup` skill drafts such files from git remotes, the audit log, session transcripts, delegation logs, and memory)
 - **Hooks:** `tool_call`: judges each bash command in auto mode; `tool_result`: annotates runs that went unjudged
 - **Env:** `TORUS_PERMISSION_MODE` (`1`/`on`/`auto` select auto mode; `bypass` disables every permission guard for the session, startup-only and refused from config.json; unset, `0`, `off`, `default` keep the built-in gate; other values fall back to default mode and `/automode` surfaces the warning; the `torus --permission-mode <auto|default|bypass>` launcher flag sets it for the spawned engine session, overriding any pre-set value; with none set, the unified config's top-level `permissionMode` key supplies the default, exactly `"auto"`/`"default"`, anything else warns and is treated as unset); `TORUS_PERMISSION_MODEL=provider/model-id` pins the permission classifier
-- **Statusline:** the statusline shows `auto` while the session is in auto mode, `auto·ask` once the circuit breaker degrades it to asking, and a red `bypass` chip for a session running without permission guards
+- **Statusline:** a `perm:` chip is always on: dim `perm:default`, `perm:auto` while the session is in auto mode (`perm:auto·ask` once the circuit breaker degrades it to asking), red `perm:bypass` for a session running without permission guards; `/automode auto|default` repaints it
 - **Interactions:** rules live in the `automode` section of the [unified config](configuration.md#the-unified-config-file) and nowhere else (`allow`/`ask`/`deny` prefix patterns; `environment` and `hardDeny` prose arrays that ride into both judge prompts; `softDeny` and `softDenyExceptions` prose arrays for the judge tier below; a `classifyAllShell` boolean that suspends allow rules); a project-level `.torus/config.json` may add `deny` and `ask` entries on top (tightening only, `/automode` status shows the extras); decisions append one JSON line each to `automode.log` under the project state dir (torus home when no project state exists); `sandbox`, `guards`, and cc-safety-net denials still win (the engine blocks on the first block)
 
 The decision pipeline runs in a fixed order:
@@ -421,7 +421,7 @@ Stops on `stopOn: change` (output hash changed) or `stopOn: fail` (command faile
 
 ### `fleet`
 
-The ambient fleet strip: a TUI statusline widget showing running delegations + external runs with spinners, per-entity colors, turns/tokens/age. Renders nothing when idle.
+The ambient fleet strip: a single pinned line above the input box. An accent `fleet N` count chip, then one compact segment per running entity (slot number, spinner, entity-colored name, age), then a `+N` overflow chip and the accent `alt+t all` affordance; model, tokens, and cost live in the fleet browser. Renders nothing when idle.
 
 No tools or commands.
 
@@ -429,7 +429,7 @@ No tools or commands.
 - **Hooks:** `session_start`: install the `torus-fleet` widget
 - **Interactions:** `registry.ts` + `fleet/theme-kit.ts` (shared presentation kit also used by browser, notify, roster); opens the browser overlay via the shared `FLEET_OPENER` slot (the same path notify's clickable transcript lines use)
 
-Rows are numbered oldest-running-first (numbers stay stable while agents run) and are the primary selector. Clicking a row opens the detail view, but only under fullscreen TUI mode: pi's regular inline mode enables no mouse reporting at all, so the strip advertises clicks only when `tui.mode === "fullscreen"`. External-run rows open the plain list. Shows up to 5 running delegations. The trailing `alt+t all` hint in the header (and on the `+N more` overflow row) renders as an accent chip in the footer-button style, hover-bolds, and clicking it opens the fleet list.
+Segments are ordered oldest-delegation-first and their numbers match the `alt+N` shortcuts; idle team members rest on a dim dot. Every chip is click-routed in the footer-button style (hover-bolds, accent for the count chip and all-hint): a segment opens that run's detail, the count chip, `+N`, and `alt+t all` open the fleet list. Clicks land only under fullscreen TUI mode: pi's regular inline mode enables no mouse reporting at all. Up to 4 segments fit before the rest fold into `+N`.
 
 ### `team`
 
@@ -599,8 +599,6 @@ Folds the torus session context into the engine's compaction summary, so the goa
 
 The hook fires for every compaction reason (`/compact`, context threshold, overflow recovery). When all four blocks are empty (no active goal, work, todos, or memories) the handler is a no-op and the engine's default compaction runs unchanged; the same fallback covers a failed summary call, and the handler never cancels a compaction.
 
-The extension also owns the live context-usage chip: a `torus:ctx` statusline segment reading exactly `ctx NN%` (a rounded percentage of the model's context window, no thresholds, colors, or raw token counts), repainted on `session_start`, every `message_end`, and `session_compact`. When usage is unavailable (no active model, or the token estimate still unknown right after compaction), the segment is cleared via the same `undefined` convention the `torus:todo` chip uses.
-
 ### `worktrees`
 
 Git-worktree lifecycle under one canonical root outside the repo (`$TORUS_HOME/worktrees/--<repo>--/<branch>`).
@@ -614,7 +612,7 @@ Git-worktree lifecycle under one canonical root outside the repo (`$TORUS_HOME/w
 - **Env:** `TORUS_WORKTREES_ROOT` (root override)
 - **Interactions:** registration is skipped entirely when `TORUS_ENGINE_CHILD=1` (parent sessions only)
 
-A `torus:worktree` statusline chip shows the active branch.
+A `torus:worktree` statusline chip shows the active worktree as `wt:repo/branch`, so parallel sessions working different repos' worktrees stay distinguishable at a glance.
 
 ### `exit`
 
@@ -654,7 +652,7 @@ The `torus` statusline segment and the torus startup banner.
 
 Renders the brand, then the identity block (persona, shortened model id, thinking effort, all in the persona's truecolor RGB), then dim provider availability. Health and objective follow: the MCP connected count (`MCP N`, success/warning; polled as the `mcp` section describes) and the session goal as a compact chip (`▶ <48-char head>` warning while active, `⏸` dim while paused, absent when unset or complete; pushed by the goal extension). Model and effort are event-tracked module state, so every writer renders the same line.
 
-Two more chips: a warning `delegate ×N` chip while `torus_delegate`, `torus_fanout`, or `torus_chain` executions are in flight (ref-counted), and a persistent session-cost chip on its own `torus:cost` statusline key beside the torus segment. Assistant `message_end` usage is folded through the shared engine-child tally reducer and rendered with `formatCost`: `$0` shows only once tokens were spent, and the chip stays absent until something measurable happens. Source of the persona color map used by persona-theming.
+Two more chips: a warning `delegate ×N` chip while `torus_delegate`, `torus_fanout`, or `torus_chain` executions are in flight (ref-counted), and a persistent child-session spend chip (`fleet:$…`) on its own `torus:cost` statusline key beside the torus segment (child spend the engine's own session `$` tally does not include). Assistant `message_end` usage is folded through the shared engine-child tally reducer and rendered with `formatCost`: `$0` shows only once tokens were spent, and the chip stays absent until something measurable happens. Source of the persona color map used by persona-theming.
 
 On `session_start` (interactive only) the same extension swaps pi's built-in startup header for a torus banner: the torus mark (a brand-teal ring with an amber glint, six half-block cells over two lines in the geometry of pi's own logo; terminals that misalign half blocks, Apple Terminal among them, get the `torus` text wordmark instead) with the payload and engine versions in the same shape `torus --version` prints, the engine's compact keybinding hints rebuilt through `keyHint`/`keyText` from the live keybinding config, and an onboarding line pointing at both torus and pi. `ctrl+o` keeps working because the component implements `setExpanded`: the expanded view adds the fleet row (`/roster`, `/doctor`, `alt+t`) and the launcher row (`torus serve`, `torus acp-agent`, `torus --help`) above the engine's full keybinding sheet. `quietStartup: true` leaves the header silenced, `quietStartup: "header"` drops the loaded-resources suffix, and `TORUS_BANNER=0` restores pi's own header. The hint rows mirror the engine's built-in header lists and follow the pinned engine, so pin bumps should re-check them.
 

@@ -12,9 +12,6 @@
  * never cancels and never throws — a failed summary call falls back to the
  * engine's default compaction.
  *
- * The extension also paints the live context-usage chip ("ctx NN%" under the
- * torus:ctx statusline key) on session start, at every message end, and after
- * compaction, clearing the segment whenever usage is unavailable.
  */
 
 import { uuidv7 } from "@earendil-works/pi-ai";
@@ -166,27 +163,6 @@ async function defaultGenerate(
 	};
 }
 
-/** Minimal context surface the chip needs; the engine context satisfies it. */
-export interface ChipContext {
-	getContextUsage(): ContextUsage | undefined;
-	ui: { setStatus(key: string, text: string | undefined): void };
-}
-
-/**
- * Paints the live context-usage statusline chip under the "torus:ctx" key:
- * exactly "ctx NN%" (rounded percentage, no thresholds, colors, or raw token
- * counts), or undefined to clear the segment when usage is unavailable (no
- * active model, or the token estimate is still unknown right after
- * compaction).
- */
-export function paintContextChip(ctx: ChipContext): void {
-	const usage = ctx.getContextUsage();
-	ctx.ui.setStatus(
-		"torus:ctx",
-		usage && usage.percent !== null ? `ctx ${Math.round(usage.percent)}%` : undefined,
-	);
-}
-
 /**
  * Registers the fold. Never cancels, never throws: with nothing to fold (all
  * four blocks empty) or on any generation failure, the handler returns
@@ -198,7 +174,6 @@ export function registerCompact(
 ): void {
 	pi.on("session_start", (_event, ctx) => {
 		setCurrentSessionId(ctx.sessionManager.getSessionId());
-		paintContextChip(ctx);
 	});
 	pi.on("session_before_compact", async (event, ctx) => {
 		try {
@@ -211,12 +186,6 @@ export function registerCompact(
 		} catch {
 			return undefined;
 		}
-	});
-	pi.on("message_end", (_event, ctx) => {
-		paintContextChip(ctx);
-	});
-	pi.on("session_compact", (_event, ctx) => {
-		paintContextChip(ctx);
 	});
 }
 

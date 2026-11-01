@@ -75,8 +75,8 @@ function statuslineCostSuppressed(): boolean {
 function paintSessionCost(ctx: ExtensionContext): void {
 	if (statuslineCostSuppressed()) return;
 	const tally = sessionCostTallies.get(sessionCostId(ctx));
-	const text = tally ? formatCost(tally.cost, tally.tokensIn + tally.tokensOut > 0) : "";
-	ctx.ui.setStatus(COST_STATUS_KEY, text === "" ? undefined : text);
+	const cost = tally ? formatCost(tally.cost, tally.tokensIn + tally.tokensOut > 0) : "";
+	ctx.ui.setStatus(COST_STATUS_KEY, cost === "" ? undefined : `fleet:${cost}`);
 }
 
 /** Current model / thinking effort, seeded from ctx and kept fresh via events. */
@@ -100,18 +100,31 @@ export interface GoalChip {
 }
 let goalChip: GoalChip | undefined;
 
-/** Permission-mode chip state pushed by the automode extension; unset in default mode. */
-let permissionChip: { kind: "auto" | "bypass"; degraded: boolean } | undefined;
+/**
+ * Permission-mode chip state pushed by the automode extension. Lives on a
+ * Symbol.for global, not module state: pi gives each extension file its own
+ * module instance of this file, and an instance-local chip would vanish the
+ * next time a different instance repaints the torus segment.
+ */
+const PERMISSION_KEY = Symbol.for("torus.status.permission.v1");
+type PermissionChip = { kind: "default" | "auto" | "bypass"; degraded: boolean };
+
+function permissionChip(): PermissionChip | undefined {
+	return (globalThis as Record<symbol, unknown>)[PERMISSION_KEY] as PermissionChip | undefined;
+}
 
 /**
- * Prod hook for the automode extension: auto mode renders a statusline chip
- * (`auto`, or `auto·ask` once the circuit breaker degrades the session to
- * asking); bypass mode renders a red `bypass` chip for the whole session so
- * the missing guards stay visible; default mode drops it.
+ * Prod hook for the automode extension. The chip is always on, in the sbx:
+ * style: dim `perm:default`, green `perm:auto` (amber `perm:auto·ask` once the
+ * circuit breaker degrades the session to asking), red `perm:bypass` for the
+ * whole startup-locked session so the missing guards stay visible. Toggle
+ * rides `/automode auto|default`.
  */
 export function setStatusPermission(mode: "auto" | "default" | "bypass", degraded = false): void {
-	permissionChip =
-		mode === "default" ? undefined : { kind: mode, degraded: mode === "auto" && degraded };
+	(globalThis as Record<symbol, unknown>)[PERMISSION_KEY] = {
+		kind: mode,
+		degraded: mode === "auto" && degraded,
+	};
 }
 
 /**
@@ -194,11 +207,24 @@ export function buildStatus(theme?: StatusPainter): string {
 	if (engine !== "pi") {
 		segments.push(theme ? theme.fg("dim", `[${engine}]`) : `[${engine}]`);
 	}
-	if (permissionChip) {
+	const permission = permissionChip();
+	if (permission) {
 		const text =
-			permissionChip.kind === "bypass" ? "bypass" : permissionChip.degraded ? "auto·ask" : "auto";
+			permission.kind === "bypass"
+				? "perm:bypass"
+				: permission.kind === "default"
+					? "perm:default"
+					: permission.degraded
+						? "perm:auto·ask"
+						: "perm:auto";
 		const color =
-			permissionChip.kind === "bypass" ? "error" : permissionChip.degraded ? "warning" : "success";
+			permission.kind === "bypass"
+				? "error"
+				: permission.kind === "default"
+					? "dim"
+					: permission.degraded
+						? "warning"
+						: "success";
 		segments.push(theme ? theme.fg(color, text) : text);
 	}
 	const mcpText = mcpStatusText(mcpCounts.connected, mcpCounts.registered);

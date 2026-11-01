@@ -631,7 +631,7 @@ function registeredTools() {
 	return tools;
 }
 
-test("fanout paints a per-run statusline turn marker for every parallel run", async () => {
+test("fanout paints no per-run statusline chips (live state rides the fleet strip)", async () => {
 	registry.resetRegistryForTesting();
 	const fanoutTool = registeredTools().find((t) => t.name === "torus_fanout");
 	assert.ok(fanoutTool, "torus_fanout not registered");
@@ -657,31 +657,14 @@ test("fanout paints a per-run statusline turn marker for every parallel run", as
 		assert.equal(result.details.ok, 2);
 	});
 
-	for (const handle of ["alpha", "beta"]) {
-		assert.ok(
-			statuses.some(
-				([key, value]) =>
-					key === `torus:${handle}` && String(value).includes(`▶ @${handle} · starting`),
-			),
-			`@${handle} starting chip painted before the first snapshot`,
-		);
-		assert.ok(
-			statuses.some(
-				([key, value]) =>
-					new RegExp(`^torus:${handle}:[0-9a-f]{8}$`).test(key) &&
-					String(value).includes(`▶ @${handle} · turn 1 · 20 tok`),
-			),
-			`@${handle} turn marker painted on its id-suffixed key`,
-		);
-	}
 	assert.equal(
-		statuses.filter(([key, value]) => /torus:(alpha|beta)/.test(key) && value === undefined).length,
-		4,
-		"each run clears its base and suffixed marker on completion",
+		statuses.filter(([key]) => /^torus:(alpha|beta)/.test(key)).length,
+		0,
+		"no per-run chip keys painted for the batch",
 	);
 });
 
-test("chain paints a per-step statusline turn marker and clears it per step", async () => {
+test("chain paints no per-step statusline chips", async () => {
 	registry.resetRegistryForTesting();
 	const chainTool = registeredTools().find((t) => t.name === "torus_chain");
 	assert.ok(chainTool, "torus_chain not registered");
@@ -707,23 +690,11 @@ test("chain paints a per-step statusline turn marker and clears it per step", as
 		assert.equal(result.details.ok, 2);
 	});
 
-	for (const handle of ["one", "two"]) {
-		assert.ok(
-			statuses.some(
-				([key, value]) =>
-					new RegExp(`^torus:${handle}:[0-9a-f]{8}$`).test(key) &&
-					String(value).includes(`▶ @${handle} · turn 1 · 20 tok`),
-			),
-			`@${handle} turn marker painted on its id-suffixed key`,
-		);
-		assert.ok(
-			statuses.some(
-				([key, value]) =>
-					new RegExp(`^torus:${handle}(:[0-9a-f]{8})?$`).test(key) && value === undefined,
-			),
-			`@${handle} marker must be cleared after the step`,
-		);
-	}
+	assert.equal(
+		statuses.filter(([key]) => /^torus:(one|two)/.test(key)).length,
+		0,
+		"no per-step chip keys painted",
+	);
 });
 
 test("fan-out emits one combined start marker instead of per-run markers", async () => {
@@ -1010,14 +981,7 @@ test("delegate leads with a live start signal before the first child turn", asyn
 		/▶ @scout · running/,
 		"immediate onUpdate leads the delegation",
 	);
-	assert.ok(
-		paints.some(([k, v]) => k === "torus:scout" && String(v).includes("starting")),
-		"starting chip painted before the first snapshot",
-	);
-	assert.ok(
-		paints.some(([k]) => /^torus:scout:[0-9a-f]{8}$/.test(k)),
-		"turn chip keyed by delegation id",
-	);
+	assert.equal(paints.length, 0, "no per-run statusline chips for tool-driven delegate");
 	assert.ok(
 		!customs.some((m) => m.customType === "torus.delegation-start"),
 		"no start marker for tool-driven delegate — the tool block is the surface",

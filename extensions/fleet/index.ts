@@ -4,13 +4,11 @@ import {
 	type TUI,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
-	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	type DelegationRecord,
-	type ExternalRun,
 	externalRunAgeSeconds,
 	FLEET_OPENER,
 	listDelegations,
@@ -22,11 +20,8 @@ import {
 	delegationIcon,
 	entityColor,
 	externalRunIcon,
-	fleetStats,
-	rule,
-	shortModel,
+	formatDuration,
 	type Theme,
-	teamBadgeText,
 } from "./theme-kit.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
@@ -36,8 +31,9 @@ export const PLATFORM_SUPPORT: PlatformSupport = {
 
 const WIDGET_KEY = "torus-fleet";
 const SPINNER_INTERVAL_MS = 80;
-const MAX_ROWS = 5;
-/** The header's list-open affordance: accent chip, click-routed like the browser footer buttons. */
+/** Agent segments shown before the rest fold into the +N overflow chip. */
+const MAX_SEGMENTS = 4;
+/** The line's list-open affordance: accent chip, click-routed like the browser footer buttons. */
 const ALL_HINT = "alt+t all";
 const SLOT_KEYS = [
 	"alt+1",
@@ -68,57 +64,31 @@ function stableRunning(): DelegationRecord[] {
 		.sort((a, b) => a.startedAt - b.startedAt);
 }
 
-function formatRow(
-	record: DelegationRecord,
-	theme: Theme,
-	tick: number,
-	width: number,
-	slot: number,
-	run?: ExternalRun,
-): string {
-	const color = entityColor(record.handle ?? record.agent);
-	const prefix = theme.fg("dim", `${slot}`);
-	const name = theme.fg(
-		color,
-		record.handle ? `@${sanitizeRender(record.handle)}` : sanitizeRender(record.agent),
-	);
-	const model = theme.fg("dim", sanitizeRender(shortModel(record.model)));
-	const badgeText = run === undefined ? "" : teamBadgeText(run.source);
-	const badge = badgeText === "" ? "" : ` ${theme.fg("dim", sanitizeRender(badgeText))}`;
-	const icon = delegationIcon(theme, record.status, run, tick);
-	const running = record.status === "running";
-	const stats = theme.fg(
-		"dim",
-		fleetStats({
-			turns: record.turns,
-			tokensIn: record.tokensIn,
-			tokensOut: record.tokensOut,
-			cost: record.cost,
-			idle: running && run?.memberStatus === "idle",
-			finished: !running,
-			durationMs: running
-				? Date.now() - record.startedAt
-				: record.finishedAt !== undefined
-					? record.finishedAt - record.startedAt
-					: undefined,
-		}),
-	);
-	return truncateToWidth(`${prefix} ${icon} ${name}${badge} ${model} ${stats}`, width);
+/** One clickable piece of the strip line: styled text plus what a click opens. */
+interface StripSegment {
+	text: string;
+	/** Delegation or external-run id; null opens the fleet list. */
+	id: string | null;
 }
 
+/**
+ * The fleet strip as a single pinned line above the input box: an accent
+ * `fleet N` count chip, then one compact segment per running entity (slot
+ * number, spinner, entity-colored name, age), then a `+N` overflow chip and
+ * the accent `alt+t all` affordance. Every chip is click-routed like the
+ * browser footer buttons: a segment opens that run's detail, the rest open
+ * the list. Detail (model, tokens, cost) lives in the fleet browser.
+ */
 class FleetStrip implements Component {
 	private tui: TUI;
 	private theme: Theme;
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private tick = 0;
 	private lastProbe: string | null = null;
-	/** Per rendered row: delegation id, or null for an external-run row. */
-	private rowTargets: Array<string | null> = [];
-	/** Hovered row index for bold-on-hover; null when the pointer is off-row. */
-	private hoverIndex: number | null = null;
-	/** Hover state of the header's [alt+t all] chip; its hit-box lives on y=1. */
-	private hoverAll = false;
-	private allSpan: [number, number] | null = null;
+	/** Clickable spans of the rendered line: column ranges and their target. */
+	private spans: Array<{ start: number; end: number; id: string | null }> = [];
+	/** Hovered span index for bold-on-hover; null when the pointer is off-chip. */
+	private hoverSpan: number | null = null;
 
 	constructor(tui: TUI, theme: Theme) {
 		this.tui = tui;
@@ -138,37 +108,28 @@ class FleetStrip implements Component {
 
 	invalidate(): void {}
 
+	private spanAt(x: number): number | null {
+		for (const [index, span] of this.spans.entries()) {
+			if (withinSpan(x, [span.start, span.end])) return index;
+		}
+		return null;
+	}
+
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (event.type === "move") {
-			let next: number | null = null;
-			let hoverAll = false;
-			if (this.allSpan !== null && event.y === 1 && withinSpan(event.x, this.allSpan)) {
-				hoverAll = true;
-			} else {
-				const index = event.y - 2;
-				next = index >= 0 && index < this.rowTargets.length ? index : null;
-			}
-			if (next !== this.hoverIndex || hoverAll !== this.hoverAll) {
-				this.hoverIndex = next;
-				this.hoverAll = hoverAll;
+			const next = event.y === 0 ? this.spanAt(event.x) : null;
+			if (next !== this.hoverSpan) {
+				this.hoverSpan = next;
 				this.tui.requestRender();
 			}
 			return undefined;
 		}
-		if (event.type !== "click" || event.button !== "left") return undefined;
-		// Layout is [rule, header, ...rows, rule, ""] — rows start at y=2.
-		if (this.allSpan !== null && event.y === 1 && withinSpan(event.x, this.allSpan)) {
-			const open = opener();
-			if (!open) return undefined;
-			open();
-			return { handled: true };
-		}
-		const target = this.rowTargets[event.y - 2];
-		if (target === undefined) return undefined;
+		if (event.type !== "click" || event.button !== "left" || event.y !== 0) return undefined;
+		const span = this.spanAt(event.x);
+		if (span === null) return undefined;
 		const open = opener();
 		if (!open) return undefined;
-		// null (external run) opens the plain list; a stale id falls back to it too.
-		open(target ?? undefined);
+		open(this.spans[span]?.id ?? undefined);
 		return { handled: true };
 	}
 
@@ -176,69 +137,77 @@ class FleetStrip implements Component {
 		const running = stableRunning();
 		const external = listExternalRunsExcludingDelegations().filter((r) => r.state === "running");
 		if (running.length === 0 && external.length === 0) {
-			this.rowTargets = [];
-			this.allSpan = null;
+			this.spans = [];
 			return [];
 		}
 
-		const rows: string[] = [];
-		const targets: Array<string | null> = [];
 		const byId = new Map(listExternalRuns().map((r) => [r.id, r] as const));
-		const shownRunning = Math.min(running.length, MAX_ROWS);
-		for (const [index, record] of running.slice(0, MAX_ROWS).entries()) {
-			rows.push(formatRow(record, this.theme, this.tick, width, index + 1, byId.get(record.id)));
-			targets.push(record.id);
+		const candidates: StripSegment[] = [];
+		for (const [index, record] of running.entries()) {
+			const name = record.handle
+				? `@${sanitizeRender(record.handle)}`
+				: sanitizeRender(record.agent);
+			candidates.push({
+				text:
+					this.theme.fg("dim", `${index + 1} `) +
+					delegationIcon(this.theme, record.status, byId.get(record.id), this.tick) +
+					" " +
+					this.theme.fg(entityColor(record.handle ?? record.agent), name) +
+					" " +
+					this.theme.fg("dim", formatDuration(Date.now() - record.startedAt)),
+				id: record.id,
+			});
 		}
-		const shownExternal = external.slice(0, Math.max(0, MAX_ROWS - shownRunning));
-		for (const run of shownExternal) {
-			const stats = this.theme.fg(
-				"dim",
-				fleetStats({
-					turns: run.turns ?? 0,
-					tokensIn: run.tokensIn ?? 0,
-					tokensOut: run.tokensOut ?? 0,
-					cost: run.cost,
-					durationMs: externalRunAgeSeconds(run) * 1000,
-				}),
-			);
-			const who = this.theme.fg(
-				entityColor(run.handle ?? run.label),
-				`@${sanitizeRender(run.handle ?? run.label)}`,
-			);
-			const model = run.model ? this.theme.fg("dim", sanitizeRender(shortModel(run.model))) : "";
-			const icon = externalRunIcon(this.theme, run, this.tick);
-			const badgeText = teamBadgeText(run.source);
-			const badge = badgeText === "" ? "" : ` ${this.theme.fg("dim", sanitizeRender(badgeText))}`;
-			rows.push(truncateToWidth(`${icon} ${who}${badge} ${model} ${stats}`, width));
-			targets.push(null);
+		for (const run of external) {
+			const name = `@${sanitizeRender(run.handle ?? run.label)}`;
+			candidates.push({
+				text:
+					externalRunIcon(this.theme, run, this.tick) +
+					" " +
+					this.theme.fg(entityColor(run.handle ?? run.label), name) +
+					" " +
+					this.theme.fg("dim", formatDuration(externalRunAgeSeconds(run) * 1000)),
+				id: run.id,
+			});
 		}
-		const hidden = running.length + external.length - shownRunning - shownExternal.length;
-		if (hidden > 0) {
-			rows.push(this.theme.fg("dim", `+${hidden} more · `) + this.theme.fg("accent", ALL_HINT));
-			targets.push(null);
-		}
-		const hoveredRows =
-			this.hoverIndex !== null && this.hoverIndex < rows.length
-				? rows.map((line, i) => (i === this.hoverIndex ? this.theme.bold(line) : line))
-				: rows;
-		this.rowTargets = targets;
 
-		const mouse = this.tui.mode === "fullscreen";
-		const slots = Math.min(shownRunning, MAX_ROWS, SLOT_KEYS.length);
-		const access: string[] = [];
-		if (slots > 0) access.push(mouse ? `click/alt+1..${slots}` : `alt+1..${slots}`);
-		else if (mouse) access.push("click");
-		const accessSeg = access.length > 0 ? `${access.join(" · ")} · ` : "";
-		const lead = this.theme.fg(
-			"dim",
-			`torus fleet — ${shownRunning} running${shownExternal.length > 0 ? ` · ${shownExternal.length} external` : ""}${hidden > 0 ? ` · +${hidden} more` : ""} · ${accessSeg}`,
-		);
-		const hint = this.theme.fg("accent", this.hoverAll ? this.theme.bold(ALL_HINT) : ALL_HINT);
-		const start = visibleWidth(lead);
-		this.allSpan = start + ALL_HINT.length <= width ? [start, start + ALL_HINT.length - 1] : null;
-		const header = lead + hint;
-		const frameRule = rule(this.theme, Math.max(0, width));
-		return [frameRule, header, ...hoveredRows, frameRule, ""];
+		const sep = this.theme.fg("dim", " · ");
+		const countChip = this.theme.fg("accent", this.theme.bold(`fleet ${candidates.length}`));
+		const allHint = this.theme.fg("accent", ALL_HINT);
+		// The count chip and the all-hint are permanent; agent segments fill the
+		// remaining width, newest-dropped-first, and everything that no longer
+		// fits folds into the +N overflow chip.
+		const lineFits = (segments: StripSegment[], overflow: number): boolean => {
+			let used = visibleWidth(countChip) + visibleWidth(sep) + visibleWidth(allHint);
+			for (const segment of segments) used += visibleWidth(sep) + visibleWidth(segment.text);
+			if (overflow > 0) used += visibleWidth(sep) + visibleWidth(`+${overflow}`);
+			return used <= width;
+		};
+		let shown = candidates.slice(0, MAX_SEGMENTS);
+		let hidden = candidates.length - shown.length;
+		while (!lineFits(shown, hidden) && shown.length > 0) {
+			shown = shown.slice(0, -1);
+			hidden += 1;
+		}
+
+		const pieces: StripSegment[] = [{ text: countChip, id: null }, ...shown];
+		if (hidden > 0) pieces.push({ text: this.theme.fg("dim", `+${hidden}`), id: null });
+		pieces.push({ text: allHint, id: null });
+
+		let line = "";
+		let column = 0;
+		this.spans = [];
+		for (const [index, piece] of pieces.entries()) {
+			if (line !== "") {
+				line += sep;
+				column += visibleWidth(sep);
+			}
+			const start = column;
+			line += this.hoverSpan === index ? this.theme.bold(piece.text) : piece.text;
+			column += visibleWidth(piece.text);
+			this.spans.push({ start, end: column - 1, id: piece.id });
+		}
+		return [line];
 	}
 }
 

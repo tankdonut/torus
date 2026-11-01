@@ -450,16 +450,16 @@ test("statusline chip tracks session mode and breaker degradation", async () => 
 		replies: [jsonReply("deny"), jsonReply("deny"), jsonReply("deny")],
 	});
 	await call(pi, ctx, "ls /tmp", "chip-0");
-	assert.ok(segment().includes("auto"), "auto mode paints the chip");
+	assert.ok(segment().includes("perm:auto"), "auto mode paints the chip");
 	const denied = ["cargo build", "make -j4", "npm install left-pad"];
 	for (const [index, command] of denied.entries()) {
 		await call(pi, ctx, command, `chip-deny-${index}`);
 	}
-	assert.ok(segment().includes("auto·ask"), "breaker degradation repaints the chip");
+	assert.ok(segment().includes("perm:auto·ask"), "breaker degradation repaints the chip");
 	await pi.commands.automode.handler("default", ctx);
-	assert.ok(!segment().some((s) => s === "auto" || s === "auto·ask"), "default drops the chip");
+	assert.ok(segment().includes("perm:default"), "default keeps the chip on, dimmed");
 	await pi.commands.automode.handler("auto", ctx);
-	assert.ok(segment().includes("auto"), "auto repaints the chip");
+	assert.ok(segment().includes("perm:auto"), "auto repaints the chip");
 });
 
 test("classifyAllShell: allow rules suspend, the model judges instead", async () => {

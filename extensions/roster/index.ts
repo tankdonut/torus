@@ -1464,12 +1464,9 @@ const delegateTool = defineTool({
 		const handle = params.handle?.trim().replace(/^@+/, "") ?? null;
 		const label = handle ? `@${handle}` : params.agent;
 		// Live start signal: a transcript marker cannot render until this tool
-		// call returns (engine defers mid-turn custom messages), so the chip and
-		// onUpdate lead. The key gains the delegation id on first snapshot so
-		// concurrent same-agent runs never share a statusline entry.
-		const baseStatusKey = `torus:${handle ?? params.agent}`;
-		let statusKey = baseStatusKey;
-		ctx.ui.setStatus(statusKey, `▶ ${label} · starting`);
+		// call returns (engine defers mid-turn custom messages), so onUpdate
+		// leads. Live fleet state rides the strip and browser, not per-run
+		// statusline chips.
 		if (onUpdate) {
 			onUpdate({ content: [{ type: "text", text: `▶ ${label} · running` }], details: {} });
 		}
@@ -1511,7 +1508,6 @@ const delegateTool = defineTool({
 				// echo; the run itself is fire-and-forget.
 				await sleep(100);
 				const record = handle ? listDelegations().find((r) => r.handle === handle) : undefined;
-				ctx.ui.setStatus(statusKey, undefined);
 				return {
 					content: [
 						{
@@ -1537,48 +1533,33 @@ const delegateTool = defineTool({
 			}
 		}
 		let outcome: DelegationOutcome;
-		try {
-			outcome = await runDelegation(
-				params.agent,
-				params.task,
-				params.cwd,
-				(snapshot) => {
-					if (snapshot.delegationId) {
-						const keyed = `${baseStatusKey}:${snapshot.delegationId.slice(0, 8)}`;
-						if (keyed !== statusKey) {
-							ctx.ui.setStatus(statusKey, undefined);
-							statusKey = keyed;
-						}
-					}
-					ctx.ui.setStatus(
-						statusKey,
-						`▶ ${label} · turn ${snapshot.turns} · ${snapshot.usage.output} tok`,
-					);
-					if (!onUpdate) return;
-					const preview =
-						snapshot.text.length > 1500 ? `${snapshot.text.slice(0, 1500)}...` : snapshot.text;
-					onUpdate({
-						content: [{ type: "text", text: preview || "(working...)" }],
-						details: {
-							agent: params.agent,
-							delegationId: snapshot.delegationId,
-							turns: snapshot.turns,
-							usage: snapshot.usage,
-						},
-					});
-				},
-				ctx.sessionManager.getSessionId(),
-				handle,
-				params.skills ?? null,
-				// No start marker: it defers until this call returns and would land
-				// as a duplicate of the call line above. The tool block is the surface.
-				false,
-				undefined,
-				{ model: params.model ?? null },
-			);
-		} finally {
-			ctx.ui.setStatus(statusKey, undefined);
-		}
+		outcome = await runDelegation(
+			params.agent,
+			params.task,
+			params.cwd,
+			(snapshot) => {
+				if (!onUpdate) return;
+				const preview =
+					snapshot.text.length > 1500 ? `${snapshot.text.slice(0, 1500)}...` : snapshot.text;
+				onUpdate({
+					content: [{ type: "text", text: preview || "(working...)" }],
+					details: {
+						agent: params.agent,
+						delegationId: snapshot.delegationId,
+						turns: snapshot.turns,
+						usage: snapshot.usage,
+					},
+				});
+			},
+			ctx.sessionManager.getSessionId(),
+			handle,
+			params.skills ?? null,
+			// No start marker: it defers until this call returns and would land
+			// as a duplicate of the call line above. The tool block is the surface.
+			false,
+			undefined,
+			{ model: params.model ?? null },
+		);
 		if (!outcome.ok) {
 			// Exit-code failures render red through details.exitCode; engine-signaled
 			// model errors and dead tails fail with exit 0, so isError is what flips
