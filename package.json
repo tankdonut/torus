@@ -67,7 +67,7 @@
     "bench": "node scripts/bench.mjs",
     "site:dev": "npm run dev -w site",
     "site:build": "npm run build -w site",
-    "prepare": "husky"
+    "prepare": "node scripts/husky-prepare.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

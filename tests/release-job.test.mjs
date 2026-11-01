@@ -209,3 +209,15 @@ test("release job: staging step fails on tag/package/binary version skew", (t) =
 		"failure output must name all three versions",
 	);
 });
+
+test("package-channel job: the git-install channel installs without dev dependencies", () => {
+	assert.ok(/^ {2}package-channel:$/m.test(ciWorkflow), "ci.yml must define a package-channel job");
+	assert.ok(
+		ciWorkflow.includes("npm install --omit=dev --legacy-peer-deps"),
+		"package-channel must run the exact install command pi's git-install uses",
+	);
+	assert.ok(
+		ciWorkflow.includes("test ! -e node_modules/husky"),
+		"package-channel must prove husky stays absent from the consumer install",
+	);
+});

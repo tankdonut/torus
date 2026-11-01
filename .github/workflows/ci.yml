@@ -124,6 +124,30 @@ jobs:
       - run: npm ci
       - run: npm audit --audit-level=high
 
+  # The README's primary install path is `pi install git:github.com/tankdonut/torus@vX.Y.Z`:
+  # the engine clones the tag and runs `npm install --omit=dev --legacy-peer-deps`
+  # with lifecycle scripts enabled. Exercise that exact flow against this commit.
+  package-channel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .tool-versions
+      - name: Install from a fresh clone the way pi's git-install does
+        run: |
+          CLONE="$PWD/channel-clone"
+          SCRATCH_HOME="$PWD/channel-home"
+          mkdir -p "$SCRATCH_HOME"
+          git clone --quiet "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$CLONE"
+          # a plain clone carries branches and tags; PR runs test the merge ref
+          git -C "$CLONE" fetch --quiet origin "$GITHUB_REF"
+          git -C "$CLONE" checkout --quiet "$GITHUB_SHA"
+          cd "$CLONE"
+          HOME="$SCRATCH_HOME" npm install --omit=dev --legacy-peer-deps
+          test ! -e node_modules/husky \
+            || { echo "consumer installs must not pull in husky"; exit 1; }
+
   # Container pipeline: each platform builds exactly once per run and pushes
   # by digest; the multi-arch tag is assembled from those digests only after
   # the container test suite has passed against the amd64 image. PRs run the
