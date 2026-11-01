@@ -39,9 +39,9 @@ test("connectedServerCount counts only servers with declared tools (prefix-exact
 
 test("mcpStatusText: registered-but-down is visible, none-registered clears", () => {
 	assert.equal(mcpStatusText(0, 0), undefined);
-	assert.equal(mcpStatusText(2, 2), "MCP 2");
-	assert.equal(mcpStatusText(1, 2), "MCP 1");
-	assert.equal(mcpStatusText(0, 2), "MCP 0");
+	assert.equal(mcpStatusText(2, 2), "mcp:2");
+	assert.equal(mcpStatusText(1, 2), "mcp:1");
+	assert.equal(mcpStatusText(0, 2), "mcp:0");
 });
 
 test("registerMcp registers servers; registerUi renders the count on the torus key", async () => {
@@ -77,8 +77,8 @@ test("registerMcp registers servers; registerUi renders the count on the torus k
 	handlers["session_start"]({ type: "session_start", reason: "startup" }, ctx);
 	assert.ok(torusChips().has("torus"), "MCP count must render on the torus key");
 	assert.ok(
-		(torusChips().get("torus") ?? "").includes("<warning>MCP 0</warning>"),
-		"before connections settle: warning MCP 0",
+		(torusChips().get("torus") ?? "").includes("<warning>mcp:0</warning>"),
+		"before connections settle: warning mcp:0",
 	);
 	assert.ok(mcpSettlePollActive(), "session_start must start the settle-poll");
 
@@ -87,7 +87,7 @@ test("registerMcp registers servers; registerUi renders the count on the torus k
 	const { setTimeout } = await import("node:timers/promises");
 	for (let i = 0; i < 20 && mcpSettlePollActive(); i++) await setTimeout(50);
 	assert.ok(
-		(torusChips().get("torus") ?? "").includes("<success>MCP 2</success>"),
+		(torusChips().get("torus") ?? "").includes("<success>mcp:2</success>"),
 		"settle-poll repaints once tools are declared, before any turn",
 	);
 	assert.ok(!mcpSettlePollActive(), "poll stops once every registered server is connected");

@@ -19,8 +19,8 @@ export function connectedServerCount(servers: string[], activeTools: string[]): 
 
 export function mcpStatusText(connected: number, registered: number): string | undefined {
 	if (registered <= 0) return undefined;
-	if (connected <= 0) return "MCP 0";
-	return `MCP ${connected}`;
+	if (connected <= 0) return "mcp:0";
+	return `mcp:${connected}`;
 }
 
 export function registerMcp(pi: ExtensionAPI): void {

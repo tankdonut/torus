@@ -32,9 +32,9 @@ No tools, commands, or hooks. No filesystem or state.
 
 #### Statusline count
 
-The connected-server count renders in the unified `torus` statusline segment (`MCP 2`, beside pi-lsp-client's `LSP N` chip). A server counts only once its `mcp__<server>__<tool>` entries appear in the active tool set: registered-but-down shows `MCP 0` in warning color, connected shows success.
+The connected-server count renders in the unified `torus` statusline segment (`mcp:2`, beside pi-lsp-client's `LSP N` chip). A server counts only once its `mcp__<server>__<tool>` entries appear in the active tool set: registered-but-down shows `mcp:0` in warning color, connected shows success.
 
-The `ui` extension polls the count on `session_start` and every `turn_start`, plus a short settle-poll after each `session_start`. pi emits no event when a connection comes up, so the poll repaints the count as background connections settle; without it the statusline would read `MCP 0` until the first prompt.
+The `ui` extension polls the count on `session_start` and every `turn_start`, plus a short settle-poll after each `session_start`. pi emits no event when a connection comes up, so the poll repaints the count as background connections settle; without it the statusline would read `mcp:0` until the first prompt.
 
 #### MCP spec status
 

@@ -167,7 +167,7 @@ let mcpCounts = { connected: 0, registered: 0 };
 /**
  * Settle-poll timer: MCP connections come up in the background after session_start and pi emits
  * no event when one connects (mcp_servers_change fires only on register/unregister), so without
- * polling the first statusline paint would show MCP 0 until the first prompt's turn_start.
+ * polling the first statusline paint would show mcp:0 until the first prompt's turn_start.
  */
 let mcpPollTimer: ReturnType<typeof setInterval> | undefined;
 

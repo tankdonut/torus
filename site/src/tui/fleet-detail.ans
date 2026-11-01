@@ -1,31 +1,31 @@
 [38;2;205;154;34m──────────────────────────────────────────────────────────────────────────────────────────
-[39m[48;2;33;59;73m
- [38;2;222;224;225mTask: list every exported symbol in extensions/fsutil.ts with a one-line summary of each[39m
+[39m [3m[38;2;150;160;164msummary of each. Let me read the file first.
+
+[0m <analysis>
+ **Literal Request**: List every exported symbol in extensions/fsutil.ts with one-line
+ summaries.
+ **Actual Need**: A complete inventory of the file's public API surface (functions,
+ constants, types) so the caller can understand what fsutil offers without reading it.
+ **Success Looks Like**: Every `export` in the file enumerated with name, kind, and
+ one-line purpose — no omissions, no follow-up needed.
+ </analysis>
+
+[48;2;37;65;49m
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/fsutil.ts[38;2;205;154;34m:1-2000[39m
 
 
 
+ [1m[38;2;222;224;225m$ grep -n "^export\|^declare\|export {" extensions/fsutil.ts[0m[38;2;157;165;169m[48;2;37;65;49m (timeout 30s)[39m
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+ [38;2;157;165;169m... (14 earlier lines,[39m [38;2;126;136;142mctrl+o[38;2;157;165;169m to expand)[39m
+ [38;2;157;165;169m328:export function readFileCached(file: string): string | null {[39m
+ [38;2;157;165;169m376:export function _readCacheStats(): { hits: number; misses: number; size: number } {[39m
+ [38;2;157;165;169m381:export function sleep(ms: number): Promise<void> {[39m
+ [38;2;157;165;169m386:export function splitList(raw: string | undefined): string[] {[39m
+ [38;2;157;165;169m404:export function formatCost(cost: number | undefined, tokensSpent: boolean): string {[39m
 
 
 [38;2;205;154;34m[49m──────────────────────────────────────────────────────────────────────────────────────────
-[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠸ live[39m [38;2;126;136;142mt0 · 0→0 · 9s · j/k scroll · g/G ends[39m
-[38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[38;2;126;136;142m · 01a198da-a8bb-7402-bb57-d538dcea1c61[39m
+[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠸ live[39m [38;2;126;136;142mt1 · 6.9k→176 · $0.0011 · 9s · j/k scroll · g[39m…
+[38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[38;2;126;136;142m · 01a198e1-0d38-7255-a4f9-b95482dd0c06[39m
 [38;2;205;154;34m──────────────────────────────────────────────────────────────────────────────────────────
