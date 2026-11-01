@@ -141,8 +141,10 @@ try {
 	tmux(["resize-window", "-t", SESSION, "-x", String(WIDTH)]);
 	sleep(1500);
 
+	// The pinned strip renders "fleet N · <segments> · alt+t all" once the
+	// delegation registers; "alt+t all" is the strip's permanent tail chip.
 	tmux(["send-keys", "-t", `${SESSION}.0`, `/explorer ${DISPATCH}`, "Enter"]);
-	waitFor(`${SESSION}.0`, "torus fleet", 30_000, "fleet strip after dispatch");
+	waitFor(`${SESSION}.0`, "alt+t all", 30_000, "fleet strip after dispatch");
 	sleep(2000);
 	capture(`${SESSION}.0`, "statusline-fleet");
 
@@ -157,12 +159,14 @@ try {
 	capture(`${SESSION}.0`, "fleet-list");
 
 	// M-1 is the strip slot shortcut: it opens the first running agent's
-	// detail directly. Detail mode drops the row list (no ❯) and the strip.
+	// detail directly. The detail head truncates at the pane width, so the
+	// reliable marker is the detail-only [s] steer footer; the list head
+	// shows "↑↓ move" instead.
 	tmux(["send-keys", "-t", `${SESSION}.0`, "Escape"]);
 	sleep(600);
 	tmux(["send-keys", "-t", `${SESSION}.0`, "M-1"]);
 	sleep(3500);
-	const inDetail = (text) => !text.includes("❯") && !text.includes("torus fleet —");
+	const inDetail = (text) => text.includes("[s] steer");
 	if (!inDetail(paneText(`${SESSION}.0`))) {
 		// Fallback: reopen the list and walk into detail with the keyboard.
 		tmux(["send-keys", "-t", `${SESSION}.0`, "Escape"]);
@@ -205,10 +209,11 @@ try {
 	]);
 	waitFor(`${SESSION}.0`, "torus · leader", 60_000, "TUI boot (team session)");
 	tmux(["send-keys", "-t", `${SESSION}.0`, TEAM_MESSAGE, "Enter"]);
-	// The ⧉ badge renders only on team-member rows in the strip; the prompt
-	// itself echoes the handles, so "@scout" would match the sent message.
+	// The strip carries member rows once they run; its permanent "alt+t all"
+	// tail is the marker (the ⧉ badge is browser-only now, and the prompt
+	// itself echoes the handles, so "@scout" would match the sent message).
 	try {
-		waitFor(`${SESSION}.0`, "⧉", 180_000, "team members to spawn");
+		waitFor(`${SESSION}.0`, "alt+t all", 180_000, "team members to spawn");
 	} catch (error) {
 		console.error(`site: pane while waiting for the team:\n${paneText(`${SESSION}.0`)}`);
 		throw error;
