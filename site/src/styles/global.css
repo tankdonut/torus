@@ -32,11 +32,14 @@
 	--text-mono-label: 0.8125rem;
 }
 
+/* Dark theme is the terminal's own world, not an inversion: the page
+ * ground is the TUI background, panels are the TUI's pane color, and
+ * the accents sit at their in-terminal values. Two selectors reach it:
+ * the system preference (still honored with scripts off) unless the
+ * visitor pinned light, and the visitor's pinned choice. The pinned
+ * block below repeats the media block verbatim — keep them identical. */
 @media (prefers-color-scheme: dark) {
-	:root {
-		/* Dark theme is the terminal's own world, not an inversion: the page
-		 * ground is the TUI background, panels are the TUI's pane color, and
-		 * the accents sit at their in-terminal values. */
+	:root:not([data-theme="light"]) {
 		--color-bg: #101216;
 		--color-surface: #16161c;
 		--color-surface-2: #1d1d25;
@@ -49,6 +52,28 @@
 		--color-green: #68b78d;
 		--color-border: #26262e;
 	}
+}
+
+:root[data-theme="dark"] {
+	--color-bg: #101216;
+	--color-surface: #16161c;
+	--color-surface-2: #1d1d25;
+	--color-text: #d6dbe1;
+	--color-muted: #8b939c;
+	--color-accent: #56b6c2;
+	--color-accent-soft: color-mix(in srgb, #56b6c2 18%, transparent);
+	--color-amber: #cd9a22;
+	--color-violet: #a798d7;
+	--color-green: #68b78d;
+	--color-border: #26262e;
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+	color-scheme: light;
 }
 
 * {
@@ -102,6 +127,26 @@ a.gh {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.4em;
+}
+
+/* The header's theme toggle is a statusline segment: mono, quiet, and only
+   offered when scripts can honor it (has-js lands before first paint). */
+button.theme-toggle {
+	display: none;
+	font: inherit;
+	color: var(--color-muted);
+	background: none;
+	border: none;
+	padding: 0;
+	cursor: pointer;
+}
+
+.has-js button.theme-toggle {
+	display: inline;
+}
+
+button.theme-toggle:hover {
+	color: var(--color-accent);
 }
 
 header,

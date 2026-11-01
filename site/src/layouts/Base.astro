@@ -34,6 +34,20 @@ const fontFaces = [
 		<link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}/favicon.svg`} />
 		<meta name="theme-color" content="#f8f8f7" media="(prefers-color-scheme: light)" />
 		<meta name="theme-color" content="#101216" media="(prefers-color-scheme: dark)" />
+		<script is:inline>
+			// Applies a stored theme pin before first paint; auto (no pin) leaves the
+			// media-query theme in charge, which also works with scripts off.
+			(() => {
+				document.documentElement.classList.add("has-js");
+				let stored = null;
+				try {
+					stored = localStorage.getItem("torus-theme");
+				} catch {}
+				if (stored === "light" || stored === "dark") {
+					document.documentElement.dataset.theme = stored;
+				}
+			})();
+		</script>
 		<style is:inline set:html={fontFaces} />
 		<title>{title}</title>
 	</head>
@@ -42,6 +56,7 @@ const fontFaces = [
 			<a class="wordmark" href={`${base}/`}>torus</a>
 			<span class="seg sep" aria-hidden="true">·</span>
 			<a class="seg" href={`${base}/docs/`}>docs</a>
+			<button class="theme-toggle" type="button" aria-label="color theme">theme:auto</button>
 			<a class="gh" href="https://github.com/tankdonut/torus" aria-label="torus on GitHub">
 				<GitHubMark />
 			</a>
@@ -74,6 +89,34 @@ const fontFaces = [
 					{ rootMargin: "0px 0px -10% 0px" },
 				);
 				for (const el of targets) io.observe(el);
+			})();
+		</script>
+		<script is:inline>
+			// Cycles the theme pin auto -> light -> dark; auto clears the pin and
+			// hands control back to the system preference.
+			(() => {
+				const root = document.documentElement;
+				const button = document.querySelector("button.theme-toggle");
+				if (!button) return;
+				const order = ["auto", "light", "dark"];
+				const current = () => {
+					const t = root.dataset.theme;
+					return t === "light" || t === "dark" ? t : "auto";
+				};
+				const paint = () => {
+					button.textContent = `theme:${current()}`;
+				};
+				button.addEventListener("click", () => {
+					const next = order[(order.indexOf(current()) + 1) % order.length];
+					if (next === "auto") delete root.dataset.theme;
+					else root.dataset.theme = next;
+					try {
+						if (next === "auto") localStorage.removeItem("torus-theme");
+						else localStorage.setItem("torus-theme", next);
+					} catch {}
+					paint();
+				});
+				paint();
 			})();
 		</script>
 	</body>
