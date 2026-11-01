@@ -964,6 +964,40 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		}
 	}
 
+	/**
+	 * Switch the live session mode; shared by `/automode auto|default` and the
+	 * `alt+m` shortcut. Bypass refuses: it is startup-only by construction, so
+	 * changing posture means restarting the session.
+	 */
+	async function setSessionMode(arg: "auto" | "default", ctx: ExtensionContext): Promise<void> {
+		if (startupMode === "bypass") {
+			ctx.ui.notify(
+				"automode: this session started in bypass mode, which is startup-only — restart with torus --permission-mode auto (or default) to change the permission posture",
+				"warning",
+			);
+			return;
+		}
+		modeOverride = arg;
+		cache.clear();
+		consecutiveDenies = 0;
+		askEverything = false;
+		failopenReasons.clear();
+		intentLines.length = 0;
+		if (arg === "auto") {
+			loadAutoConfig(ctx);
+		}
+		ctx.ui.notify(`automode: session mode set to ${arg}`, "info");
+		paintPermission(ctx);
+	}
+
+	pi.registerShortcut("alt+m", {
+		description: "Cycle permission mode: default ↔ auto (bypass is startup-only)",
+		handler: async (ctx) => {
+			await ensureStartup(ctx);
+			await setSessionMode(mode() === "auto" ? "default" : "auto", ctx);
+		},
+	});
+
 	pi.registerCommand("automode", {
 		description:
 			"Show the automode permission status; /automode auto|default switches the session mode; /automode denied lists recent denials; /automode setup drafts config entries from git remotes and the audit log; /automode setup apply <file> lands a reviewed draft file (environment and ask only) through the same merge",
@@ -999,24 +1033,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 				);
 				return;
 			}
-			if (startupMode === "bypass") {
-				ctx.ui.notify(
-					"automode: this session started in bypass mode, which is startup-only — restart with torus --permission-mode auto (or default) to change the permission posture",
-					"warning",
-				);
-				return;
-			}
-			modeOverride = arg;
-			cache.clear();
-			consecutiveDenies = 0;
-			askEverything = false;
-			failopenReasons.clear();
-			intentLines.length = 0;
-			if (arg === "auto") {
-				loadAutoConfig(ctx);
-			}
-			ctx.ui.notify(`automode: session mode set to ${arg}`, "info");
-			paintPermission(ctx);
+			await setSessionMode(arg, ctx);
 		},
 	});
 }

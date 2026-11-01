@@ -84,14 +84,19 @@ const sessionModel = { provider: "test", id: "chat-1" };
 function makePi() {
 	const handlers = {};
 	const commands = {};
+	const shortcuts = {};
 	return {
 		handlers,
 		commands,
+		shortcuts,
 		on: (name, fn) => {
 			handlers[name] = fn;
 		},
 		registerCommand: (name, def) => {
 			commands[name] = def;
+		},
+		registerShortcut: (key, def) => {
+			shortcuts[key] = def;
 		},
 	};
 }
@@ -437,6 +442,30 @@ test("startup notice: auto mode announces on once, naming the session model and 
 		notifications.filter((n) => n.message.startsWith("automode: on")).length,
 		1,
 		"not repeated on later calls",
+	);
+});
+
+test("alt+m cycles the session between default and auto; bypass refuses", async () => {
+	const ui = await import("../extensions/ui/index.ts");
+	const segment = () => ui.buildStatus().split(" · ");
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ mode: "1", hasUI: true });
+	assert.ok(pi.shortcuts["alt+m"], "shortcut registered");
+	await pi.shortcuts["alt+m"].handler(ctx);
+	assert.ok(segment().includes("perm:default"), "cycling from auto lands on default");
+	await pi.shortcuts["alt+m"].handler(ctx);
+	assert.ok(segment().includes("perm:auto"), "cycling back re-enters auto");
+	assert.ok(
+		notifications.some((n) => /session mode set to auto/.test(n.message)),
+		"each flip notifies",
+	);
+
+	setMode("bypass");
+	const bypassed = setup({ mode: "bypass", hasUI: true });
+	await bypassed.pi.shortcuts["alt+m"].handler(bypassed.ctx);
+	assert.ok(
+		bypassed.notifications.some((n) => /startup-only/.test(n.message)),
+		"bypass sessions refuse with the restart hint",
 	);
 });
 
