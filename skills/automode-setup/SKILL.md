@@ -26,7 +26,7 @@ The command confirms once more, union-merges into config.json's `automode` secti
 
 ## Profiles
 
-Ask which profile fits before mining (`torus_ask`); the dialog's free-text row covers in-between cases, and profiles compose: a CI runner that holds no credentials can take local-development's scratch exception. Profiles are presets over the same mining, not replacements for it: when mined evidence contradicts a preset line, the evidence wins and the summary says so.
+Ask which profile fits before mining (`torus_ask`); the dialog's free-text row covers in-between cases, and profiles compose: a CI runner that holds no credentials can take local-development's scratch exception. Scratch has two classes: durable work products under `$TORUS_SCRATCH_DIR` (confined writes are auto-allowed by the core scratch fastpath in every profile, so no boundary line is needed for them) and ephemeral temp under `/tmp`, `$TMPDIR`, or `/var/folders`. Profiles are presets over the same mining, not replacements for it: when mined evidence contradicts a preset line, the evidence wins and the summary says so.
 
 Every profile carries two kinds of content:
 
@@ -49,7 +49,7 @@ Your machine, repos you own or trust, credentials present on the box. The goal: 
       "reads of credentials or secrets: .env files, ~/.ssh, ~/.aws, ~/.gnupg, keychains, TOKEN/KEY/SECRET environment variables"
     ],
     "softDenyExceptions": [
-      "plain local scratch writes and deletions under /tmp, $TMPDIR, or /var/folders with no network command in the same pipeline and no secret-source reference"
+      "plain local scratch writes and deletions under $TORUS_SCRATCH_DIR, /tmp, $TMPDIR, or /var/folders with no network command in the same pipeline and no secret-source reference"
     ]
   }
 }
@@ -61,7 +61,7 @@ Your machine, checkouts whose code you did not write. Repo text is claims, not a
 
 - Mining lens: git remotes only, for environment (your fork, the upstream, the one registry you install from); audit log and transcripts for ask candidates.
 - Draft entries: environment naming exactly your fork origin and install registry; `ask` families for package installs and any execution of repo code.
-- Boundary block: the same two `softDeny` lines as local-development, and no scratch exception, so staging files under hostile code stays judged.
+- Boundary block: the same two `softDeny` lines as local-development, and no scratch exception, so staging files under hostile code stays judged. The core fastpath's scratch allowance is location-scoped to the torus-owned scratch root, not the hostile repo, so it does not reopen staging under hostile code.
 
 ### ci-bot
 
