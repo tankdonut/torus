@@ -25,8 +25,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 rm -rf "$ROOT/dist"
 mkdir -p "$ROOT/$DIST/bin"
 
-# embed the payload (extensions, agents, skills, .npmrc, runtime package.json)
-# as file assets: generated file-loader imports + content hash
+# generate the payload-native lock first — npm resolves the payload manifest
+# (engine promoted to prod, overrides carried) against the registry so installs
+# on user machines never re-resolve; requires network and fails loudly without it
+node "$ROOT/scripts/generate-payload-lock.mjs"
+
+# embed the payload (extensions, agents, skills, .npmrc, runtime package.json,
+# payload lock) as file assets: generated file-loader imports + content hash
 node "$ROOT/scripts/generate-payload-assets.mjs"
 
 # cross-compile with --target (bun-linux-x64, bun-linux-arm64, bun-darwin-x64,

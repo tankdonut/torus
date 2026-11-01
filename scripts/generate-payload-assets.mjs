@@ -1,20 +1,17 @@
 #!/usr/bin/env node
 /**
  * Generates runtime/bin/payload-assets.mjs (gitignored): one file-loader
- * import per payload file plus string constants for the runtime package.json
- * and .npmrc and package-lock.json, and a sha256 payload hash. bun build --compile embeds the
+ * import per payload file plus string constants for the runtime package.json,
+ * .npmrc and the generated payload lock (dist/payload-lock.json via
+ * scripts/generate-payload-lock.mjs), and a sha256 payload hash. bun build --compile embeds the
  * imported files; runtime/bin/torus.mjs extracts them to ~/.torus/runtime.
  */
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computePayloadHash } from "../runtime/bin/payload-extract.mjs";
-import {
-	PAYLOAD_DIRS,
-	payloadNpmrc,
-	payloadPackageJson,
-	payloadPackageLock,
-} from "./payload-manifest.mjs";
+import { readPayloadLock } from "./generate-payload-lock.mjs";
+import { PAYLOAD_DIRS, payloadNpmrc, payloadPackageJson } from "./payload-manifest.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -40,7 +37,10 @@ const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 const generatedPackageJson = payloadPackageJson(pkg);
 
 const payloadNpmrcValue = payloadNpmrc();
-const payloadPackageLockValue = payloadPackageLock();
+// the generated payload lock, not the repo lock — the payload manifest's
+// dep set (engine promoted) differs from the repo's, so the repo lock would
+// leave npm re-resolving at install time
+const payloadPackageLockValue = readPayloadLock();
 
 const hashInput = [
 	...payloadFiles,

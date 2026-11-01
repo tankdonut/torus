@@ -33,6 +33,9 @@ export function payloadManifest(pkg) {
 			...pkg.dependencies,
 			"@earendil-works/pi-coding-agent": pkg.devDependencies["@earendil-works/pi-coding-agent"],
 		},
+		// carried through verbatim — without it npm re-resolves override-forced
+		// edges (zod, undici) at install time on user machines
+		...(pkg.overrides === undefined ? {} : { overrides: pkg.overrides }),
 	};
 }
 
@@ -50,7 +53,11 @@ export function payloadNpmrc() {
 	}
 }
 
-/** Repo package-lock.json contents, or null when absent (payload installs then float to latest-at-build). */
+/**
+ * Repo package-lock.json contents, or null when absent. This file is only a
+ * resolution SEED for payload-lock generation (scripts/generate-payload-lock.mjs);
+ * what ships in the payload is the generated lock, never this file verbatim.
+ */
 export function payloadPackageLock() {
 	try {
 		return readFileSync(path.join(root, "package-lock.json"), "utf8");

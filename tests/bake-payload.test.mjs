@@ -1,19 +1,56 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { PAYLOAD_LOCK_ENV } from "../scripts/generate-payload-lock.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+/** Minimal payload-shaped lock written to a temp dir; bake reads it via the env override, so no network is needed. */
+function writeFixtureLock(t) {
+	const dir = mkdtempSync(path.join(tmpdir(), "torus-bake-lock-fixture-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const fixture = path.join(dir, "payload-lock.json");
+	writeFileSync(
+		fixture,
+		`${JSON.stringify(
+			{
+				name: "torus-payload",
+				version: "0.0.0",
+				lockfileVersion: 3,
+				requires: true,
+				packages: {
+					"": {
+						name: "torus-payload",
+						version: "0.0.0",
+						dependencies: { example: "1.0.0" },
+					},
+					"node_modules/example": {
+						version: "1.0.0",
+						resolved: "https://registry.npmjs.org/example/-/example-1.0.0.tgz",
+						integrity:
+							"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+					},
+				},
+			},
+			null,
+			"\t",
+		)}\n`,
+	);
+	return fixture;
+}
+
 test("bake-payload: writes the payload tree carrying the shared runtime manifest", (t) => {
 	const dir = mkdtempSync(path.join(tmpdir(), "torus-bake-"));
+	const fixture = writeFixtureLock(t);
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
 
 	const run = spawnSync("node", [path.join(root, "scripts", "bake-payload.mjs"), dir], {
 		encoding: "utf8",
+		env: { ...process.env, [PAYLOAD_LOCK_ENV]: fixture },
 	});
 	assert.equal(run.status, 0, `bake-payload failed: ${run.stderr}`);
 
@@ -29,8 +66,8 @@ test("bake-payload: writes the payload tree carrying the shared runtime manifest
 
 	assert.equal(
 		readFileSync(path.join(dir, "package-lock.json"), "utf8"),
-		readFileSync(path.join(root, "package-lock.json"), "utf8"),
-		"baked lockfile must be byte-identical to the repo lockfile — payload installs pin to repo resolutions, not latest-at-build",
+		readFileSync(fixture, "utf8"),
+		"baked lockfile must be the generated payload-native lock — its dep set (engine promoted) differs from the repo's, so the repo lock would leave npm re-resolving at install time",
 	);
 
 	const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
@@ -44,6 +81,11 @@ test("bake-payload: writes the payload tree carrying the shared runtime manifest
 			"@earendil-works/pi-coding-agent": pkg.devDependencies["@earendil-works/pi-coding-agent"],
 		},
 		"payload manifest must promote the engine pin from devDependencies and mirror runtime deps",
+	);
+	assert.deepEqual(
+		manifest.overrides,
+		pkg.overrides,
+		"payload manifest must carry the repo overrides — the payload lock's override-forced resolutions install consistently only with them",
 	);
 });
 
