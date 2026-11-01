@@ -174,6 +174,40 @@ test("container: image bakes payload deps — no first-run npm bootstrap", () =>
 	}
 });
 
+test("container: PR validation and publishing are separate jobs with separate grants", () => {
+	assert.ok(/^ {2}container-pr:$/m.test(ciWorkflow), "ci.yml must define a container-pr job");
+	const prJob = ciWorkflow.slice(
+		ciWorkflow.indexOf("  container-pr:"),
+		ciWorkflow.indexOf("\n  container:\n"),
+	);
+	assert.ok(
+		prJob.includes("github.ref != 'refs/heads/main'") &&
+			prJob.includes("!startsWith(github.ref, 'refs/tags/v')"),
+		"container-pr must run exactly on non-publish refs",
+	);
+	assert.ok(!prJob.includes("packages: write"), "container-pr must hold no registry write grant");
+	assert.ok(!prJob.includes("docker/login-action"), "container-pr must never log in to a registry");
+	assert.ok(prJob.includes("load: true"), "container-pr builds a locally loaded test image");
+	assert.ok(
+		prJob.includes("./make.sh image-test torus:ci"),
+		"container-pr runs the full container suite",
+	);
+	assert.ok(
+		/container:\n {4}if: github\.ref == 'refs\/heads\/main' \|\| startsWith\(github\.ref, 'refs\/tags\/v'\)/.test(
+			ciWorkflow,
+		),
+		"the publish job must be gated to main/tags",
+	);
+	assert.ok(
+		(ciWorkflow.match(/version: v0\.38\.1/g) ?? []).length >= 3,
+		"every buildx setup must pin the version so multi-arch merges keep attestations",
+	);
+	assert.ok(
+		!ciWorkflow.includes("NODE_VERSION="),
+		"no job may pass the retired NODE_VERSION build arg",
+	);
+});
+
 test("container: ci.yml builds each platform once, tests the pushed digest, merges multi-arch after tests", () => {
 	assert.ok(
 		/^ {2}container:$/m.test(ciWorkflow),
@@ -248,10 +282,10 @@ test("container: ci.yml builds each platform once, tests the pushed digest, merg
 		"latest must stay on the default branch (docs/container.md tag policy)",
 	);
 	assert.ok(
-		/release:\n[\s\S]*?\n {4}needs: \[lint-typecheck, smoke, build, container-publish\]/.test(
+		/release:\n[\s\S]*?\n {4}needs: \[audit, lint-typecheck, smoke, build, container-publish\]/.test(
 			ciWorkflow,
 		),
-		"release must gate on container-publish (transitively: tests + both platforms)",
+		"release must gate on container-publish and the dependency audit (transitively: tests + both platforms)",
 	);
 	// Cache: scopes split per arch so parallel platform builds never race the
 	// same GHA cache record, while shared layers still cross-hit.

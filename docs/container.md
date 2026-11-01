@@ -36,7 +36,7 @@ Not supported inside the container. `TORUS_SANDBOX` (and `TORUS_SANDBOX_DEFAULT`
 
 ## Versions & updating
 
-`.tool-versions` is the single source of truth for the node and bun versions. CI reads it (`setup-node` `node-version-file`, `setup-bun` `bun-version-file`); `./make.sh image` and the CI platform builds pass it as build args. The Dockerfile declares `NODE_VERSION`/`BUN_VERSION` without defaults, so Renovate's asdf updates move the container image versions with no separate bump.
+`.tool-versions` is the single source of truth for the node and bun versions. CI reads it (`setup-node` `node-version-file`, `setup-bun` `bun-version-file`); `./make.sh image` and the CI platform builds pass the bun pin as a build arg (the base image tag is digest-pinned in the Dockerfile and test-synced to the node pin here). Renovate's asdf updates move the container image versions with no separate bump.
 
 Two pins are renovate blind spots and must be bumped by hand: the Dockerfile `ARG AST_GREP_VERSION` and the global npm pins for `typescript-language-server`/`typescript`.
 

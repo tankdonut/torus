@@ -114,11 +114,53 @@ jobs:
           path: dist/torus
           if-no-files-found: error
 
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .tool-versions
+      - run: npm ci
+      - run: npm audit --audit-level=high
+
   # Container pipeline: each platform builds exactly once per run and pushes
   # by digest; the multi-arch tag is assembled from those digests only after
   # the container test suite has passed against the amd64 image. PRs run the
-  # amd64 build + test suite only — no arm64, no registry traffic.
+  # same amd64 build + test suite in container-pr — no registry traffic, and
+  # no job on an unreviewed ref holds a packages-write grant.
+  container-pr:
+    if: github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .tool-versions
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        with:
+          version: v0.38.1
+      - name: Resolve .tool-versions pins for build args
+        run: echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
+      - name: Build test image (amd64)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: torus:ci
+          build-args: BUN_VERSION=${{ env.BUN_VERSION }}
+          cache-from: |
+            type=gha,scope=torus-amd64
+            type=gha,scope=torus-arm64
+          cache-to: type=gha,mode=max,scope=torus-amd64
+      - name: Container test suite
+        run: ./make.sh image-test torus:ci
+
   container:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -126,70 +168,42 @@ jobs:
     outputs:
       amd64_digest: ${{ steps.build.outputs.digest }}
     steps:
+      - name: Refuse to publish outside tankdonut/torus
+        if: github.repository != 'tankdonut/torus'
+        run: |
+          echo "::error::publishing workflow copied to ${GITHUB_REPOSITORY}"
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .tool-versions
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - name: Resolve .tool-versions pins + publish flag
-        run: |
-          echo "NODE_VERSION=$(awk '$1=="nodejs"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
-          echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
-          publishing=false
-          case "$GITHUB_REF" in
-            refs/heads/main|refs/tags/v*) publishing=true ;;
-          esac
-          echo "PUBLISHING=$publishing" >> "$GITHUB_ENV"
-      - name: Refuse to publish outside tankdonut/torus
-        if: env.PUBLISHING == 'true' && github.repository != 'tankdonut/torus'
-        run: |
-          echo "::error::publishing workflow copied to ${GITHUB_REPOSITORY}"
-          exit 1
+        with:
+          version: v0.38.1
+      - name: Resolve .tool-versions pins for build args
+        run: echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
       - name: Login to GHCR
-        if: env.PUBLISHING == 'true'
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Docker meta (image labels)
-        if: env.PUBLISHING == 'true'
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/tankdonut/torus
-      # PR path: one docker-format load for the test suite. No registry push,
-      # no arm64 — the publish machinery below is skipped entirely.
-      - name: Build test image (amd64)
-        if: env.PUBLISHING != 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: .
-          platforms: linux/amd64
-          load: true
-          tags: torus:ci
-          build-args: |
-            NODE_VERSION=${{ env.NODE_VERSION }}
-            BUN_VERSION=${{ env.BUN_VERSION }}
-          cache-from: |
-            type=gha,scope=torus-amd64
-            type=gha,scope=torus-arm64
-          cache-to: type=gha,mode=max,scope=torus-amd64
-      # Publish path: one build, pushed unnamed by digest; the step below
-      # pulls that exact digest back as torus:ci so the suite tests the
-      # published object itself. Multi-output builds (type=docker +
-      # push-by-digest in one build) silently skip the registry push — see
-      # docker/build-push-action#1318 — hence the pull-back.
+      # One build, pushed unnamed by digest; the step below pulls that exact
+      # digest back as torus:ci so the suite tests the published object itself.
+      # Multi-output builds (type=docker + push-by-digest in one build)
+      # silently skip the registry push — see docker/build-push-action#1318.
       - name: Build amd64 image (push by digest)
-        if: env.PUBLISHING == 'true'
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           platforms: linux/amd64
-          build-args: |
-            NODE_VERSION=${{ env.NODE_VERSION }}
-            BUN_VERSION=${{ env.BUN_VERSION }}
+          build-args: BUN_VERSION=${{ env.BUN_VERSION }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           outputs: type=image,name=ghcr.io/tankdonut/torus,push-by-digest=true,push=true
@@ -198,7 +212,6 @@ jobs:
             type=gha,scope=torus-arm64
           cache-to: type=gha,mode=max,scope=torus-amd64
       - name: Stage pushed digest as torus:ci for the test suite
-        if: env.PUBLISHING == 'true'
         run: |
           docker pull "ghcr.io/tankdonut/torus@${{ steps.build.outputs.digest }}"
           docker tag "ghcr.io/tankdonut/torus@${{ steps.build.outputs.digest }}" torus:ci
@@ -224,10 +237,10 @@ jobs:
           exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        with:
+          version: v0.38.1
       - name: Resolve .tool-versions pins for build args
-        run: |
-          echo "NODE_VERSION=$(awk '$1=="nodejs"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
-          echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
+        run: echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
       - name: Login to GHCR
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
@@ -245,9 +258,7 @@ jobs:
         with:
           context: .
           platforms: linux/arm64
-          build-args: |
-            NODE_VERSION=${{ env.NODE_VERSION }}
-            BUN_VERSION=${{ env.BUN_VERSION }}
+          build-args: BUN_VERSION=${{ env.BUN_VERSION }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           outputs: type=image,name=ghcr.io/tankdonut/torus,push-by-digest=true,push=true
@@ -302,7 +313,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [lint-typecheck, smoke, build, container-publish]
+    needs: [audit, lint-typecheck, smoke, build, container-publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -342,11 +353,32 @@ jobs:
           bin_ver="$(TORUS_PI_BIN="$PWD/node_modules/.bin/pi" dist/stage/torus-linux-x64 --version | awk '{print $2}')"
           echo "tag=$tag_ver pkg=$pkg_ver bin=$bin_ver"
           [ "$tag_ver" = "$pkg_ver" ] && [ "$tag_ver" = "$bin_ver" ]
-      - name: Attach binaries and checksums to the release
+      - name: Generate SBOM
+        run: |
+          mkdir -p dist/stage
+          node scripts/generate-payload-lock.mjs
+          node scripts/generate-sbom.mjs dist/payload-lock.json dist/stage/torus-sbom.cdx.json
+      - name: Attach binaries, checksums, and SBOM to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" dist/stage/torus-* dist/stage/sha256sums.txt --clobber
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
-          subject-path: dist/stage/torus-*
+          subject-path: |
+            dist/stage/torus-*
+            dist/stage/sha256sums.txt
+      - name: Attach attestation bundles to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stage="$(pwd)/dist/stage"
+          cd "$stage"
+          for name in torus-* sha256sums.txt; do
+            d="$(mktemp -d)"
+            (cd "$d" && gh attestation download "$stage/$name" -R tankdonut/torus)
+            cat "$d"/sha256-*.jsonl > "$name.intoto.jsonl"
+            rm -rf "$d"
+          done
+          cd ../..
+          gh release upload "$GITHUB_REF_NAME" "$stage"/*.intoto.jsonl --clobber

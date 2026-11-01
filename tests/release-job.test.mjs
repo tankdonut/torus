@@ -19,6 +19,42 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ciWorkflow = readFileSync(path.join(root, ".github", "workflows", "ci.yml"), "utf8");
 
+test("audit job: blocking dependency scan on every push and PR", () => {
+	assert.ok(/^ {2}audit:$/m.test(ciWorkflow), "ci.yml must define an audit job");
+	assert.ok(
+		ciWorkflow.includes("npm audit --audit-level=high"),
+		"audit job must run a blocking npm audit at high severity",
+	);
+});
+
+test("release job: attests checksums and SBOM, ships attestation bundles", () => {
+	assert.ok(
+		ciWorkflow.includes(
+			"node scripts/generate-sbom.mjs dist/payload-lock.json dist/stage/torus-sbom.cdx.json",
+		),
+		"release job must generate the SBOM from the payload lock into the staged assets",
+	);
+	const subjectAt = ciWorkflow.indexOf("subject-path:");
+	const subjectBlock = ciWorkflow.slice(subjectAt, subjectAt + 200);
+	assert.ok(
+		subjectBlock.includes("dist/stage/torus-*") &&
+			subjectBlock.includes("dist/stage/sha256sums.txt"),
+		"provenance subjects must cover the binaries and the checksum file",
+	);
+	assert.ok(
+		ciWorkflow.includes('cd "$stage"'),
+		"the bundle loop must cd into the stage dir so torus-* expands against the staged files",
+	);
+	assert.ok(
+		ciWorkflow.includes('gh attestation download "$stage/$name"'),
+		"the bundle loop must pass absolute staged paths to gh",
+	);
+	assert.ok(
+		ciWorkflow.includes(".intoto.jsonl"),
+		"attestation bundles must land as .intoto.jsonl release assets",
+	);
+});
+
 test("release job: tag-gated, gated on every job, staged outside the artifact tree", () => {
 	assert.ok(/^ {2}release:$/m.test(ciWorkflow), "ci.yml must define a release: job");
 	assert.ok(
@@ -30,8 +66,8 @@ test("release job: tag-gated, gated on every job, staged outside the artifact tr
 		"release job must be gated to v* tag refs",
 	);
 	assert.ok(
-		ciWorkflow.includes("needs: [lint-typecheck, smoke, build, container-publish]"),
-		"release job must depend on every gate job",
+		ciWorkflow.includes("needs: [audit, lint-typecheck, smoke, build, container-publish]"),
+		"release job must depend on every gate job incl. the dependency audit",
 	);
 	assert.ok(
 		ciWorkflow.includes("attestations: write"),
