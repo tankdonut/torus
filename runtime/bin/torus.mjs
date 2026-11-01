@@ -10,8 +10,9 @@
  * Payload resolution (source tree OR compiled single-file binary):
  *   1. TORUS_ROOT env
  *   2. source checkout (repo layout two levels above this file)
- *   3. embedded payload (compiled binaries): extracted once to ~/.torus/runtime,
- *      hash-keyed — re-extracted only when the binary's payload hash changes
+ *   3. embedded payload (compiled binaries): extracted to ~/.torus/runtime,
+ *      hash-keyed — re-extracted when the binary's payload hash changes or the
+ *      extracted content no longer matches it (tampering self-heals)
  *   4. compiled layout: <execPath>/../lib/torus, <execPath>/torus-payload
  *   5. ~/.torus/runtime
  *
@@ -27,7 +28,12 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { extractPayload, readMarker, shouldSkipInstall } from "./payload-extract.mjs";
+import {
+	extractPayload,
+	readMarker,
+	shouldSkipInstall,
+	verifyExtracted,
+} from "./payload-extract.mjs";
 import { extractPermissionMode } from "./permission-mode.mjs";
 
 function isTorusRoot(candidate) {
@@ -65,7 +71,13 @@ async function embeddedRoot() {
 	if (!bun || !Array.isArray(bun.embeddedFiles) || bun.embeddedFiles.length === 0) return null;
 	const assets = await import("./payload-assets.mjs");
 	const root = path.join(userHome(), ".torus", "runtime");
-	if (isTorusRoot(root) && readMarker(root) === assets.PAYLOAD_HASH) return root;
+	if (isTorusRoot(root) && readMarker(root) === assets.PAYLOAD_HASH) {
+		// A matching marker alone proves nothing about content; recompute and heal on drift.
+		if (verifyExtracted(root, assets.PAYLOAD_HASH, assets.OWNED_TOP_LEVELS)) return root;
+		process.stderr.write(
+			`torus: extracted payload in ${root} no longer matches this binary — restoring\n`,
+		);
+	}
 	const files = [];
 	for (const file of assets.payloadFiles) {
 		files.push({ path: file.path, bytes: Buffer.from(await bun.file(file.virtual).arrayBuffer()) });

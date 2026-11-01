@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
 /** Marker file inside a payload root recording the hash of the extracted payload. */
@@ -7,8 +15,8 @@ export const MARKER_NAME = ".payload-hash";
 
 /**
  * Stable, order-independent digest over payload entries ({ path, bytes }).
- * Computed at build time by the asset generator; the runtime trusts the marker
- * written after a successful extraction instead of recomputing.
+ * Computed at build time by the asset generator and recomputed at startup by
+ * verifyExtracted over the extracted root; a mismatch re-extracts the payload.
  */
 export function computePayloadHash(entries) {
 	const hash = createHash("sha256");
@@ -57,6 +65,50 @@ export function shouldSkipInstall(root, localBin, refreshed, embeddedDepsHash) {
 	if (!existsSync(localBin)) return false;
 	if (!refreshed) return true;
 	return embeddedDepsHash != null && readMarkerDeps(root) === embeddedDepsHash;
+}
+
+const ROOT_FILES = ["package.json", ".npmrc", "package-lock.json"];
+
+function walkDir(root, rel, out) {
+	for (const name of readdirSync(path.join(root, rel)).sort()) {
+		const relPath = rel ? `${rel}/${name}` : name;
+		const abs = path.join(root, relPath);
+		if (statSync(abs).isDirectory()) {
+			walkDir(root, relPath, out);
+		} else {
+			out.push({ path: relPath, bytes: readFileSync(abs) });
+		}
+	}
+	return out;
+}
+
+/**
+ * Whether the extracted root still matches the build-time payload hash. The
+ * entry set mirrors the generator: every file under the owned top-levels plus
+ * the root files, with absent root files hashing as empty bytes (the
+ * generator's null handling). node_modules stays outside the set — the
+ * marker's deps line guards it separately. Unreadable content counts as a
+ * mismatch so the caller can self-heal by re-extracting.
+ */
+export function verifyExtracted(root, expectedHash, ownedTopLevels) {
+	try {
+		const entries = [];
+		for (const name of ownedTopLevels) {
+			if (existsSync(path.join(root, name))) walkDir(root, name, entries);
+		}
+		for (const name of ROOT_FILES) {
+			let bytes = Buffer.alloc(0);
+			try {
+				bytes = readFileSync(path.join(root, name));
+			} catch {
+				// absent root files hash as empty, like the generator
+			}
+			entries.push({ path: name, bytes });
+		}
+		return computePayloadHash(entries) === expectedHash;
+	} catch {
+		return false;
+	}
 }
 
 /**

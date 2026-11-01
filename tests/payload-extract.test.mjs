@@ -9,6 +9,7 @@ import {
 	MARKER_NAME,
 	readMarker,
 	readMarkerDeps,
+	verifyExtracted,
 } from "../runtime/bin/payload-extract.mjs";
 
 function tmpRoot() {
@@ -126,6 +127,87 @@ test("readMarkerDeps: null for missing marker, legacy single-line, or blank line
 		assert.equal(readMarkerDeps(root), null, "blank second line is not a deps hash");
 		writeFileSync(path.join(root, MARKER_NAME), "abc123\ndeadbeef\n");
 		assert.equal(readMarkerDeps(root), "deadbeef");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+/** Extracted fixture whose hash mirrors the generator's entry set (no .npmrc or lock shipped, so both hash as empty). */
+function extractedFixture() {
+	const root = tmpRoot();
+	const owned = ["extensions", "agents"];
+	const files = [
+		{ path: "extensions/a/index.ts", bytes: Buffer.from("export {};\n") },
+		{ path: "extensions/a/nested/util.ts", bytes: Buffer.from("export const one = 1;\n") },
+		{ path: "agents/lead.md", bytes: Buffer.from("# lead\n") },
+		{ path: "package.json", bytes: Buffer.from('{"name":"torus-payload"}\n') },
+	];
+	const hash = computePayloadHash([
+		...files,
+		{ path: ".npmrc", bytes: Buffer.alloc(0) },
+		{ path: "package-lock.json", bytes: Buffer.alloc(0) },
+	]);
+	extractPayload(root, hash, owned, files);
+	return { root, owned, files, hash };
+}
+
+test("verifyExtracted: clean root matches", () => {
+	const { root, owned, hash } = extractedFixture();
+	try {
+		assert.equal(verifyExtracted(root, hash, owned), true);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("verifyExtracted: tampered file inside an owned top-level fails", () => {
+	const { root, owned, hash } = extractedFixture();
+	try {
+		writeFileSync(path.join(root, "extensions/a/index.ts"), "tampered");
+		assert.equal(verifyExtracted(root, hash, owned), false);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("verifyExtracted: missing file inside an owned top-level fails", () => {
+	const { root, owned, hash } = extractedFixture();
+	try {
+		rmSync(path.join(root, "extensions/a/nested/util.ts"));
+		assert.equal(verifyExtracted(root, hash, owned), false);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("verifyExtracted: extra file inside an owned top-level fails", () => {
+	const { root, owned, hash } = extractedFixture();
+	try {
+		writeFileSync(path.join(root, "extensions/a/extra.ts"), "extra");
+		assert.equal(verifyExtracted(root, hash, owned), false);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("verifyExtracted: node_modules is outside the check", () => {
+	const { root, owned, hash } = extractedFixture();
+	try {
+		mkdirSync(path.join(root, "node_modules/.bin"), { recursive: true });
+		writeFileSync(path.join(root, "node_modules/.bin/pi"), "engine");
+		assert.equal(verifyExtracted(root, hash, owned), true);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("verifyExtracted: root files are hashed even when the payload ships none", () => {
+	const { root, owned, hash } = extractedFixture();
+	try {
+		// a planted lock file changes the recomputed hash even though the payload
+		// shipped no lock (the generator hashes the absent value as empty)
+		writeFileSync(path.join(root, "package-lock.json"), "{}\n");
+		assert.equal(verifyExtracted(root, hash, owned), false);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
