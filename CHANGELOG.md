@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.21.0](https://github.com/tankdonut/torus/compare/v0.20.0...v0.21.0) (2026-11-02)
+
+
+### Features
+
+* **extensions/memory:** reject personal-life PII from memory by default ([307ce4a](https://github.com/tankdonut/torus/commit/307ce4a9045e40f5f055310d12143a475b6ecc48))
+* **extensions/monitor:** steer waiting models to end the turn instead of polling in-turn ([17fbdd9](https://github.com/tankdonut/torus/commit/17fbdd9a3bbd9c1bf1043b636c25868bc22cc51c))
+* **extensions/sessions:** add scope flag to torus_sessions search ([501d92f](https://github.com/tankdonut/torus/commit/501d92f7d5fbd04e694ecffbc0b155c511db4ca3))
+* **extensions:** store child session transcripts under the state dir ([b2f2355](https://github.com/tankdonut/torus/commit/b2f2355e1f8a6cc91538d2dcc263fe167e42fdc2))
+
+
+### Bug Fixes
+
+* **deps:** update dependency pi-web-access to ^0.45.0 ([#93](https://github.com/tankdonut/torus/issues/93)) ([c1288a2](https://github.com/tankdonut/torus/commit/c1288a2158c73dba7ce34cb9e532664e1f4893bc))
+* **scripts:** find unnamed and cross-root child sessions in the migration ([8d0509b](https://github.com/tankdonut/torus/commit/8d0509bce7b3e0901466ec7d513f2241a8befe8b))
+
 ## [0.20.0](https://github.com/tankdonut/torus/compare/v0.19.0...v0.20.0) (2026-11-01)
 
 
