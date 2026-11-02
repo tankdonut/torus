@@ -384,6 +384,36 @@ export function cleanProfileFact(rawFact: string): string | null {
 	return fact;
 }
 
+/*
+ * Profile PII screen: the person-model surface injects into every future
+ * session in every project, so personal-life specifics are refused at the
+ * write boundary on both admission paths (the remember tool's profile scope
+ * and dreamer proposals). Like the credential redaction this matches
+ * high-precision SHAPES — possessive homes, lives-in phrasings, family,
+ * health, and finance vocabulary — not a PII database; unknown forms fall
+ * through to the policy layers (the dreamer role prompt, the tool
+ * description), which are the primary control. Entries are deliberately
+ * unscreened: technical corpora make lexical PII lists false-positive
+ * prone, so they carry the policy layer alone.
+ */
+const PROFILE_PII_RES: RegExp[] = [
+	/\b(?:home|mailing|residential)\s+address\b/i,
+	/\b(?:live|lives|reside|resides)\s+in\s+[a-z]/i,
+	/\b(?:his|her|their)\s+(?:own\s+)?(?:[\w/.]+\s+){0,3}(?:home|residence|house|apartment|condo)\b/i,
+	/\b(?:wife|husband|spouse|son|daughter|children|kids)\b/i,
+	/\b(?:diagnos\w*|medications?|prescriptions?|therapist|therapy)\b/i,
+	/\b(?:salary|mortgage|bank\s+account)\b/i,
+];
+
+/** The matched PII signal for a profile line, or null when the line is clean. */
+export function profilePiiSignal(line: string): string | null {
+	for (const re of PROFILE_PII_RES) {
+		const match = re.exec(line);
+		if (match) return match[0];
+	}
+	return null;
+}
+
 /**
  * Parse a dreamer agent's structured proposal. The child is read-only and its
  * output is untrusted: entry frontmatter is validated field by field, delete
@@ -586,7 +616,7 @@ export function applyDreamProposal(
 			counts.deletedFiles.push(name);
 		}
 	}
-	const profiles = proposal.profiles.slice(0, 2);
+	const profiles = proposal.profiles.filter((line) => profilePiiSignal(line) === null).slice(0, 2);
 	if (profiles.length > 0) {
 		const existingLines = readProfile()
 			.split(/\n+/)
@@ -830,7 +860,7 @@ export const rememberTool = defineTool({
 	name: "torus_remember",
 	label: "Torus Remember",
 	description:
-		"Write a durable memory (git-backed). Scope 'project' ties it to the current repo; 'global' applies everywhere; 'profile' appends to the stable user model. Use for lessons, decisions, and facts worth recalling in future sessions.",
+		"Write a durable memory (git-backed). Scope 'project' ties it to the current repo; 'global' applies everywhere; 'profile' appends to the stable user model. Use for lessons, decisions, and facts worth recalling in future sessions. No PII or personal-life specifics (locations, residence, family, health, finances, purchases): memorize working behavior and durable lessons, never the user's personal life; profile lines carrying them are rejected at the write boundary.",
 	parameters: Type.Object({
 		topic: Type.String({ description: "Short topic line" }),
 		content: Type.String({ description: "The memory body — self-contained, dense" }),
@@ -886,10 +916,24 @@ export const rememberTool = defineTool({
 					content: [
 						{
 							type: "text",
-							text: "profile line rejected: admission gate (null-word, stub, or too short) — write one durable line about the user's behavior, patterns, preferences, or desires",
+							text: "profile line rejected: admission gate (null-word, stub, or too short) — write one durable line about the user's working behavior, patterns, or preferences",
 						},
 					],
 					details: { error: "profile-admission" } as MemoryToolDetails,
+					isError: true,
+				};
+			}
+			const signals = facts.map(profilePiiSignal);
+			const pii = signals.find((signal) => signal !== null);
+			if (pii !== undefined) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `profile line rejected: torus profiles working behavior, not the user's personal life — no locations, residence, family, health, finances, or purchases by default (matched "${pii}")`,
+						},
+					],
+					details: { error: "profile-pii" } as MemoryToolDetails,
 					isError: true,
 				};
 			}
@@ -1280,7 +1324,7 @@ async function runIdleReflection(
 		const task = [
 			reflectOpening(trigger),
 			`Store: ${MEMORY_ROOT} (entries/*.md with frontmatter: topic, tags, project: ${projectSlug(process.cwd())} or global, created) — read existing entries first. Profile file: ${PROFILE_FILE}.`,
-			"Use PROFILE: lines only for durable USER behaviors, patterns, preferences, or desires observed in the user's OWN messages this session — never repo/tool configuration, project stances, one-off events, or anything about the work itself (see the Profile lines section of your role prompt). When you have no user observation, emit no PROFILE line at all. Entries are for durable lessons/decisions/facts; prefer proposing nothing over noise.",
+			"Use PROFILE: lines only for durable USER behaviors, patterns, and preferences observed in the user's OWN messages this session — never repo/tool configuration, project stances, one-off events, or anything about the work itself (see the Profile lines section of your role prompt). Never personal-life specifics or PII (locations, residence, family, health, finances, purchases): record how the user directs, never the subject of the request. When you have no user observation, emit no PROFILE line at all. Entries are for durable lessons/decisions/facts and carry the same no-PII rule; prefer proposing nothing over noise.",
 			transcript
 				? `Session transcript: ${transcript} (JSONL, one record per line — read the END for the latest turns; user messages and final assistant text matter, tool chatter does not)`
 				: "",
@@ -1363,6 +1407,7 @@ async function dream(_pi: ExtensionAPI): Promise<void> {
 		"You are dreaming: consolidating torus's memory store during idle time.",
 		`Store: ${MEMORY_ROOT} (entries/*.md with frontmatter: topic, tags, project: ${projectSlug(process.cwd())} or global, created) — read recent entries first to see existing coverage.`,
 		"Consolidate genuine duplicates (new ENTRY plus DELETE for the absorbed files) and add only durable lessons/decisions/facts future sessions need. Prefer proposing no change over noise.",
+		"Never personal-life specifics or PII (locations, residence, family, health, finances, purchases) in ENTRY bodies or PROFILE lines: working behavior yes, the subject of personal requests no.",
 		`Activity since last dream: ${recentLogs}`,
 		"If a lesson extends an existing entry, propose the SAME topic — near-duplicate proposals update the existing entry in place rather than creating a second file.",
 		"You have read-only tools. READ the store and logs, then return your proposal using the exact ENTRY:/DELETE:/PROFILE: format from your role prompt. Do not attempt to write anything.",

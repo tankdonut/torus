@@ -516,7 +516,7 @@ Durable, git-backed memory store at `~/.torus/memory` (entries + `profile.md`, a
 
 | Tool | Purpose |
 | --- | --- |
-| `torus_remember` | Add an entry (topic/content/tags/scope: project\|global\|profile/force/pinned); blocks near-duplicate topics unless `force: true` (updates the existing entry in place); profile scope runs the same admission gate and near-duplicate merge as dreamer proposals |
+| `torus_remember` | Add an entry (topic/content/tags/scope: project\|global\|profile/force/pinned); blocks near-duplicate topics unless `force: true` (updates the existing entry in place); profile scope runs the same admission gate, PII screen, and near-duplicate merge as dreamer proposals |
 | `torus_recall` | Query the store (query/scope) |
 | `torus_memories` | List entries; warns about unparseable ones |
 | `torus_forget` | Delete by exact filename; git history keeps it recoverable |
@@ -539,7 +539,7 @@ Tags are sanitized and content is capped (8 KB).
 
 #### Dreams and reflection
 
-Dreams (≥6h interval) and idle reflection (10 min idle or N settles since the last reflect, re-armed after each; fed that session's own transcript and delegation logs) delegate to the read-only `dreamer` agent and apply its validated proposals parent-side: entries capped per run, deletes constrained to bare filenames, profile lines admitted through a null-word/stub gate and merged against near-duplicates instead of appended, and the profile bounded by whole lines. Failed dreamer delegations are logged to `reflection-error.log`. Both announce with a neutral start marker, never the dreamer-directed task text, and the reflect task opening matches what triggered it (idle vs turn threshold).
+Dreams (≥6h interval) and idle reflection (10 min idle or N settles since the last reflect, re-armed after each; fed that session's own transcript and delegation logs) delegate to the read-only `dreamer` agent and apply its validated proposals parent-side: entries capped per run, deletes constrained to bare filenames, profile lines admitted through a null-word/stub gate plus a PII screen (the profile models working behavior; personal-life specifics such as locations, residence, family, health, finances, and purchases are rejected at the write boundary) and merged against near-duplicates instead of appended, and the profile bounded by whole lines. The dreamer role prompt and the `torus_remember` description carry the same no-PII policy for ENTRY bodies; entries get no lexical screen because technical corpora make PII word lists false-positive prone. Failed dreamer delegations are logged to `reflection-error.log`. Both announce with a neutral start marker, never the dreamer-directed task text, and the reflect task opening matches what triggered it (idle vs turn threshold).
 
 Every applied dream/reflect run emits a `torus.memory-applied` transcript line (✿ per-kind counts with entry topics and deleted filenames) so the session sees what changed. Dream scheduling ignores the dreamer's own delegation logs, so dreams cannot self-trigger.
 
