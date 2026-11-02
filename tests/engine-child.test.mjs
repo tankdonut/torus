@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 // engine-child.ts: JSONL event parse/reduce pair + child extension args.
@@ -8,6 +11,7 @@ import { test } from "node:test";
 const { parseEngineEvent, reduceEngineEvent, childExtensionArgs, engineChildEnv } = await import(
 	"../extensions/engine-child.ts"
 );
+const { childSessionsRoot, projectKeyFor } = await import("../extensions/fsutil.ts");
 
 test("parseEngineEvent accepts JSON objects and rejects junk", () => {
 	assert.deepEqual(parseEngineEvent('{"type":"session","id":"s1"}'), { type: "session", id: "s1" });
@@ -422,4 +426,78 @@ test("engineChildEnv marks the child without clobbering inherited env", () => {
 		delete process.env["TORUS_TEST_MARKER"];
 		if (ambient !== undefined) process.env["TORUS_ENGINE_CHILD"] = ambient;
 	}
+});
+
+// Child-session storage mode (TORUS_CHILD_SESSIONS, default separate): the env
+// children spawn with. A sandboxed TORUS_HOME keeps the state-dir expectation
+// and any ambient config file out of the assertion; every knob var is snapshotted.
+const envVars = [
+	"TORUS_HOME",
+	"TORUS_STATE_DIR",
+	"TORUS_CHILD_SESSIONS",
+	"PI_CODING_AGENT_SESSION_DIR",
+];
+
+function withSandboxedEnv(overrides, run) {
+	const saved = new Map(envVars.map((name) => [name, process.env[name]]));
+	const home = mkdtempSync(path.join(tmpdir(), "torus-child-sessions-env-"));
+	process.env["TORUS_HOME"] = home;
+	delete process.env["TORUS_CHILD_SESSIONS"];
+	delete process.env["PI_CODING_AGENT_SESSION_DIR"];
+	delete process.env["TORUS_STATE_DIR"];
+	for (const [name, value] of Object.entries(overrides)) {
+		if (value === undefined) delete process.env[name];
+		else process.env[name] = value;
+	}
+	try {
+		run(home);
+	} finally {
+		for (const name of envVars) {
+			const value = saved.get(name);
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+		rmSync(home, { recursive: true, force: true });
+	}
+}
+
+test("engineChildEnv redirects child session storage to the state-dir child-sessions root", () => {
+	withSandboxedEnv({}, (home) => {
+		const expected = path.join(home, "state", projectKeyFor(process.cwd()), "child-sessions");
+		const env = engineChildEnv();
+		assert.equal(env["PI_CODING_AGENT_SESSION_DIR"], expected);
+		assert.equal(env["PI_CODING_AGENT_SESSION_DIR"], childSessionsRoot());
+		assert.equal(process.env["PI_CODING_AGENT_SESSION_DIR"], undefined, "parent env untouched");
+		assert.equal(env["TORUS_ENGINE_CHILD"], "1");
+	});
+});
+
+test("TORUS_CHILD_SESSIONS=inline keeps children in pi's default session dir", () => {
+	withSandboxedEnv({ TORUS_CHILD_SESSIONS: "inline" }, () => {
+		const env = engineChildEnv();
+		assert.equal(env["PI_CODING_AGENT_SESSION_DIR"], undefined);
+		assert.ok(!childExtensionArgs(process.cwd()).includes("--no-session"));
+	});
+});
+
+test("TORUS_CHILD_SESSIONS=ephemeral runs children with --no-session", () => {
+	withSandboxedEnv({ TORUS_CHILD_SESSIONS: "ephemeral" }, () => {
+		assert.equal(engineChildEnv()["PI_CODING_AGENT_SESSION_DIR"], undefined);
+		assert.ok(childExtensionArgs(process.cwd()).includes("--no-session"));
+	});
+});
+
+test("an explicit PI_CODING_AGENT_SESSION_DIR passes through untouched", () => {
+	withSandboxedEnv({ PI_CODING_AGENT_SESSION_DIR: "/tmp/operator-chosen" }, () => {
+		assert.equal(engineChildEnv()["PI_CODING_AGENT_SESSION_DIR"], "/tmp/operator-chosen");
+	});
+});
+
+test("unrecognized TORUS_CHILD_SESSIONS values fall back to separate", () => {
+	withSandboxedEnv({ TORUS_CHILD_SESSIONS: "banana" }, (home) => {
+		assert.equal(
+			engineChildEnv()["PI_CODING_AGENT_SESSION_DIR"],
+			path.join(home, "state", projectKeyFor(process.cwd()), "child-sessions"),
+		);
+	});
 });

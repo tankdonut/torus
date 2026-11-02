@@ -10,13 +10,27 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { childSessionsRoot, displayPath } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
-const DEFAULT_ROOT = path.join(homedir(), ".pi", "agent", "sessions");
+const DEFAULT_ROOT = process.env["PI_CODING_AGENT_DIR"]
+	? path.join(process.env["PI_CODING_AGENT_DIR"], "sessions")
+	: path.join(homedir(), ".pi", "agent", "sessions");
 const SCAN_LIMIT = 300;
 const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Roots an id lookup covers when the caller names none: the torus
+ * child-sessions root first (running delegations write there, so live-tail
+ * and keep-forever checks resolve them without scanning pi's default tree),
+ * then pi's default root. Callers that pass an explicit root (tests, custom
+ * layouts) keep single-root behavior. Missing roots read as empty.
+ */
+export function sessionLookupRoots(): string[] {
+	return [childSessionsRoot(), DEFAULT_ROOT];
+}
 
 export interface SessionHit {
 	file: string;
@@ -66,10 +80,18 @@ export function searchSessions(
 	root: string,
 	limit: number,
 	stats?: SessionScanStats,
+	opts?: { rootFiles?: boolean },
 ): SessionHit[] {
 	const needle = new RegExp(escapeRegExp(query), "gi");
 	const dirs: Array<{ dir: string; mtimeMs: number }> = [];
 	try {
+		if (opts?.rootFiles) {
+			// Flat roots (the child-sessions tree stores transcripts directly at
+			// the root) scan the root itself as one project dir.
+			try {
+				dirs.push({ dir: root, mtimeMs: statSync(root).mtimeMs });
+			} catch {}
+		}
 		for (const entry of readdirSync(root, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			const dir = path.join(root, entry.name);
@@ -114,19 +136,31 @@ export function searchSessions(
 	return hits;
 }
 
-/** Locate the transcript file for a session id (uuid-suffix match) under root. */
-export function findSessionFile(sessionId: string, root: string = DEFAULT_ROOT): string | null {
+/**
+ * Locate the transcript file for a session id (uuid-suffix match). An explicit
+ * `root` scans only that root; without one, every lookup root is tried in
+ * order — the child-sessions root first, then pi's default. Root-level files
+ * (the child-sessions layout) match alongside per-project subdirs.
+ */
+export function findSessionFile(sessionId: string, root?: string): string | null {
 	const suffix = `_${sessionId}.jsonl`;
-	try {
-		for (const entry of readdirSync(root, { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
-			const dir = path.join(root, entry.name);
-			try {
-				const hit = readdirSync(dir).find((file) => file.endsWith(suffix));
-				if (hit) return path.join(dir, hit);
-			} catch {}
-		}
-	} catch {}
+	const bare = `${sessionId}.jsonl`;
+	const roots = root === undefined ? sessionLookupRoots() : [root];
+	for (const lookupRoot of roots) {
+		try {
+			for (const entry of readdirSync(lookupRoot, { withFileTypes: true })) {
+				if (entry.isDirectory()) {
+					const dir = path.join(lookupRoot, entry.name);
+					try {
+						const hit = readdirSync(dir).find((file) => file.endsWith(suffix) || file === bare);
+						if (hit) return path.join(dir, hit);
+					} catch {}
+				} else if (entry.name.endsWith(suffix) || entry.name === bare) {
+					return path.join(lookupRoot, entry.name);
+				}
+			}
+		} catch {}
+	}
 	return null;
 }
 
@@ -212,14 +246,27 @@ function sessionIndexFor(root: string): SessionIndexEntry | null {
 }
 
 /**
- * Does any session file for `sessionId` exist under `root`? `null` means the
- * root is unreadable — callers must prune nothing in that case. Sessions are
- * resumable indefinitely, so `true` must keep a session's satellite state
- * forever. Lookups are served from the memoized root index.
+ * Does any session file for `sessionId` exist under `root`? Without an
+ * explicit root every lookup root is checked (child-sessions first, then pi's
+ * default — child transcripts moved out of the default tree must still read
+ * as resumable). `null` means the root is unreadable — callers must prune
+ * nothing in that case. Sessions are resumable indefinitely, so `true` must
+ * keep a session's satellite state forever. Lookups are served from the
+ * memoized root index.
  */
-export function sessionFileExists(sessionId: string, root: string = DEFAULT_ROOT): boolean | null {
-	const index = sessionIndexFor(root);
-	return index ? index.ids.has(sessionId) : null;
+export function sessionFileExists(sessionId: string, root?: string): boolean | null {
+	if (root !== undefined) {
+		const index = sessionIndexFor(root);
+		return index ? index.ids.has(sessionId) : null;
+	}
+	let anyRootReadable = false;
+	for (const lookupRoot of sessionLookupRoots()) {
+		const index = sessionIndexFor(lookupRoot);
+		if (!index) continue;
+		anyRootReadable = true;
+		if (index.ids.has(sessionId)) return true;
+	}
+	return anyRootReadable ? false : null;
 }
 
 const sessionsTool = defineTool({
@@ -235,7 +282,20 @@ const sessionsTool = defineTool({
 	}),
 	async execute(_toolCallId, params) {
 		const stats: SessionScanStats = { skippedOversized: 0 };
-		const hits = searchSessions(params.query, DEFAULT_ROOT, params.limit ?? 8, stats);
+		const limit = params.limit ?? 8;
+		const childRoot = childSessionsRoot();
+		let hits: SessionHit[] = [];
+		// Interactive sessions (pi's default root) first, child transcripts
+		// second: recency ordering only holds within a root, and a user's own
+		// sessions are the likelier target.
+		for (const root of [DEFAULT_ROOT, childRoot]) {
+			if (hits.length >= limit) break;
+			hits = hits.concat(
+				searchSessions(params.query, root, limit - hits.length, stats, {
+					rootFiles: root === childRoot,
+				}),
+			);
+		}
 		const details: { hits: number; note?: string } = { hits: hits.length };
 		if (stats.skippedOversized > 0) {
 			details.note = `skipped ${stats.skippedOversized} oversized transcripts`;
@@ -247,7 +307,12 @@ const sessionsTool = defineTool({
 			};
 		}
 		const text = hits
-			.map((hit) => `${hit.when} · ${hit.project} · ${hit.sessionId}\n  ${hit.snippet}`)
+			.map((hit) => {
+				// Hits outside pi's default root carry their location: child-root
+				// transcripts resume only with an explicit --session-dir.
+				const where = hit.file.startsWith(DEFAULT_ROOT) ? hit.project : displayPath(hit.file);
+				return `${hit.when} · ${where} · ${hit.sessionId}\n  ${hit.snippet}`;
+			})
 			.join("\n\n");
 		return { content: [{ type: "text", text }], details };
 	},

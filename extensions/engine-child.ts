@@ -8,15 +8,50 @@
 
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { knobString } from "./config/knobs.js";
+import { childSessionsRoot } from "./fsutil.js";
 import { repoRoot } from "./registry.js";
+
+/**
+ * How delegated engine children persist their session transcripts.
+ *
+ * - `separate` (default): children carry PI_CODING_AGENT_SESSION_DIR pointing
+ *   at `<state dir>/child-sessions`, so pi's `/resume` — which lists the
+ *   default per-cwd session dir — shows only interactive sessions while
+ *   child transcripts stay on disk and findable (fleet live tails, session
+ *   search treat the child root as an extra lookup root).
+ * - `inline`: the historical behavior — children write into the default
+ *   per-cwd dir and appear in `/resume`.
+ * - `ephemeral`: children run with `--no-session`; no transcript files at
+ *   all, so fleet live transcripts and session search lose them.
+ */
+export type ChildSessionsMode = "separate" | "inline" | "ephemeral";
+
+const CHILD_SESSIONS_MODES: readonly string[] = ["separate", "inline", "ephemeral"];
+
+/** Resolve the child-session mode knob; unrecognized values fall back to separate. */
+export function childSessionsMode(): ChildSessionsMode {
+	const raw = knobString("TORUS_CHILD_SESSIONS", "roster", "childSessions", "separate");
+	return CHILD_SESSIONS_MODES.includes(raw) ? (raw as ChildSessionsMode) : "separate";
+}
 
 /**
  * Environment for spawned engine children. Sets TORUS_ENGINE_CHILD so
  * parent-only extensions (worktree lifecycle tools) skip registration in
- * delegation and team-member sessions.
+ * delegation and team-member sessions. In `separate` mode it also redirects
+ * the child's session storage to the state-dir child-sessions root — unless
+ * the parent process already carries an explicit PI_CODING_AGENT_SESSION_DIR,
+ * which is an operator choice and passes through untouched.
  */
 export function engineChildEnv(): NodeJS.ProcessEnv {
-	return { ...process.env, TORUS_ENGINE_CHILD: "1" };
+	const env: NodeJS.ProcessEnv = { ...process.env, TORUS_ENGINE_CHILD: "1" };
+	if (
+		childSessionsMode() === "separate" &&
+		process.env["PI_CODING_AGENT_SESSION_DIR"] === undefined
+	) {
+		env["PI_CODING_AGENT_SESSION_DIR"] = childSessionsRoot();
+	}
+	return env;
 }
 
 /** Parse one JSONL event line; non-object or unparseable input yields null. */
@@ -170,9 +205,13 @@ export function reduceEngineEvent(record: Record<string, unknown>, tally: Engine
 	tally.noProgressTail = progressed ? 0 : (tally.noProgressTail ?? 0) + 1;
 }
 
-/** The canonical `--extension` argument list every torus child engine gets. */
+/**
+ * The canonical `--extension` argument list every torus child engine gets.
+ * In `ephemeral` child-session mode the list grows `--no-session`: children
+ * keep no transcript files at all.
+ */
 export function childExtensionArgs(root: string): string[] {
-	return [
+	const args = [
 		"--extension",
 		path.join(root, "extensions", "mcp", "index.ts"),
 		"--extension",
@@ -196,6 +235,8 @@ export function childExtensionArgs(root: string): string[] {
 		"--extension",
 		path.join(root, "node_modules", "pi-lsp-client", "src", "index.ts"),
 	];
+	if (childSessionsMode() === "ephemeral") args.push("--no-session");
+	return args;
 }
 
 /**
