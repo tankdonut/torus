@@ -400,9 +400,10 @@ Full-text search *inside* historical pi session transcripts, not filenames.
 
 | Tool | Purpose |
 |---|---|
-| `torus_sessions` | Search transcript contents (query, limit); returns session id, date, project dir, and a match snippet per hit |
+| `torus_sessions` | Search transcript contents (query, limit, scope); returns session id, date, project dir, and a match snippet per hit |
 
 - **Interactions:** `findSessionFile(sessionId)` export resolves a session's transcript path (memory's idle reflection uses it to feed the current session's own activity)
+- **Scopes:** `scope` narrows the roots searched. `torus` scans only engine-spawned child transcripts (delegations, team members, RPC/ACP children, reflector runs) under `<state dir>/child-sessions`, `interactive` only pi's default tree, and `all` (the default) scans both, default tree first
 
 Default root `~/.pi/agent/sessions`. Resume via pi's `/resume` or `pi --session-id <id>`.
 
