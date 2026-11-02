@@ -68,6 +68,6 @@ export const CONFIG_SECTIONS: readonly SectionSpec[] = [
 	},
 	{
 		name: "roster",
-		description: "Delegation background execution override",
+		description: "Delegation knobs: background execution, child session storage",
 	},
 ];

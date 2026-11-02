@@ -136,6 +136,19 @@ export function projectStateDir(cwd?: string): string {
 export const TORUS_STATE_DIR_ENV = "TORUS_STATE_DIR";
 
 /**
+ * Session-storage root for delegated engine children:
+ * `<state dir>/child-sessions`. Engine children spawned with this dir as their
+ * PI_CODING_AGENT_SESSION_DIR write their transcripts here — flat, directly
+ * under the root — instead of pi's default per-cwd dir, so `/resume` (which
+ * lists the default dir) shows only interactive sessions. Readers that must
+ * still find child transcripts (fleet live tails, session search) treat this
+ * as an additional lookup root; a missing dir reads as empty everywhere.
+ */
+export function childSessionsRoot(): string {
+	return path.join(projectStateDir(), "child-sessions");
+}
+
+/**
  * Env var carrying this process's canonical scratch dir (default
  * <state dir>/scratch) for throwaway working files that retention sweeps may
  * delete. An explicit export always wins; children inherit the parent's

@@ -2,6 +2,7 @@ import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } fr
 import { homedir } from "node:os";
 import path from "node:path";
 import type { AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
+import { childSessionsRoot } from "./fsutil.js";
 
 export type AssistantMessageLike = ConstructorParameters<typeof AssistantMessageComponent>[0];
 
@@ -48,15 +49,21 @@ interface ParseState {
 	openTools: Map<string, ToolItem>;
 }
 
+// Lookup roots for session transcripts by id, most specific first: an explicit
+// PI_CODING_AGENT_SESSION_DIR (an operator choice), the torus child-sessions
+// root where delegated engine children write (fleet live tails resolve running
+// delegations here), then pi's defaults. findSessionFile tolerates roots that
+// don't exist, so the child root is harmless where no children have run.
 const SESSION_ROOTS = [
 	...(process.env["PI_CODING_AGENT_SESSION_DIR"]
 		? [process.env["PI_CODING_AGENT_SESSION_DIR"]]
 		: []),
+	childSessionsRoot(),
 	...(process.env["PI_CODING_AGENT_DIR"]
 		? [path.join(process.env["PI_CODING_AGENT_DIR"], "sessions")]
 		: []),
 	path.join(homedir(), ".pi", "agent", "sessions"),
-];
+].filter((root, index, all) => all.indexOf(root) === index);
 
 const TRANSCRIPT_CACHE_LIMIT = 16;
 const transcriptCache = new Map<string, TranscriptCache>();
