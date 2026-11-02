@@ -32,6 +32,33 @@ export function sessionLookupRoots(): string[] {
 	return [childSessionsRoot(), DEFAULT_ROOT];
 }
 
+/** Which sessions a `torus_sessions` search covers. */
+export type SessionScope = "all" | "torus" | "interactive";
+
+/**
+ * Roots a tool search scans for a scope, in scan order. `all` walks pi's
+ * default root first, child transcripts second: recency ordering only holds
+ * within a root, and a user's own sessions are the likelier target. `torus`
+ * covers only engine-spawned children (delegations, team members, RPC/ACP
+ * children, idle reflection), everything `engineChildEnv()` sends to the
+ * child-sessions root; `interactive` only pi's default tree.
+ */
+export function sessionSearchRoots(
+	scope: SessionScope,
+): Array<{ root: string; rootFiles: boolean }> {
+	switch (scope) {
+		case "torus":
+			return [{ root: childSessionsRoot(), rootFiles: true }];
+		case "interactive":
+			return [{ root: DEFAULT_ROOT, rootFiles: false }];
+		default:
+			return [
+				{ root: DEFAULT_ROOT, rootFiles: false },
+				{ root: childSessionsRoot(), rootFiles: true },
+			];
+	}
+}
+
 export interface SessionHit {
 	file: string;
 	sessionId: string;
@@ -269,7 +296,7 @@ export function sessionFileExists(sessionId: string, root?: string): boolean | n
 	return anyRootReadable ? false : null;
 }
 
-const sessionsTool = defineTool({
+export const sessionsTool = defineTool({
 	name: "torus_sessions",
 	label: "Torus Sessions",
 	description:
@@ -279,24 +306,28 @@ const sessionsTool = defineTool({
 		limit: Type.Optional(
 			Type.Number({ minimum: 1, maximum: 20, description: "Max hits (default 8)" }),
 		),
+		scope: Type.Optional(
+			Type.Union([Type.Literal("all"), Type.Literal("torus"), Type.Literal("interactive")], {
+				description:
+					"Sessions to search: torus scans only engine-spawned children (delegations, team members, RPC/ACP children, reflector runs), interactive only pi's default tree, all (default) both",
+			}),
+		),
 	}),
 	async execute(_toolCallId, params) {
 		const stats: SessionScanStats = { skippedOversized: 0 };
 		const limit = params.limit ?? 8;
-		const childRoot = childSessionsRoot();
+		const scope = params.scope ?? "all";
 		let hits: SessionHit[] = [];
-		// Interactive sessions (pi's default root) first, child transcripts
-		// second: recency ordering only holds within a root, and a user's own
-		// sessions are the likelier target.
-		for (const root of [DEFAULT_ROOT, childRoot]) {
+		for (const { root, rootFiles } of sessionSearchRoots(scope)) {
 			if (hits.length >= limit) break;
 			hits = hits.concat(
-				searchSessions(params.query, root, limit - hits.length, stats, {
-					rootFiles: root === childRoot,
-				}),
+				searchSessions(params.query, root, limit - hits.length, stats, { rootFiles }),
 			);
 		}
-		const details: { hits: number; note?: string } = { hits: hits.length };
+		const details: { hits: number; note?: string; scope: SessionScope } = {
+			hits: hits.length,
+			scope,
+		};
 		if (stats.skippedOversized > 0) {
 			details.note = `skipped ${stats.skippedOversized} oversized transcripts`;
 		}

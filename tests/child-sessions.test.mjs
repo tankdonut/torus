@@ -103,6 +103,50 @@ test("searchSessions scans flat root-level transcripts when asked", () => {
 	assert.equal(sessions.searchSessions("mailbox cursors", childRoot, 8).length, 0);
 });
 
+test("sessionSearchRoots maps each scope to its roots in scan order", () => {
+	const piRoot = path.join(AGENT_DIR, "sessions");
+	assert.deepEqual(sessions.sessionSearchRoots("all"), [
+		{ root: piRoot, rootFiles: false },
+		{ root: childRoot, rootFiles: true },
+	]);
+	assert.deepEqual(sessions.sessionSearchRoots("torus"), [{ root: childRoot, rootFiles: true }]);
+	assert.deepEqual(sessions.sessionSearchRoots("interactive"), [
+		{ root: piRoot, rootFiles: false },
+	]);
+});
+
+test("torus_sessions scope steers which roots a search covers", async () => {
+	// torus: the child transcript hits, the interactive one stays invisible.
+	const scoped = await sessions.sessionsTool.execute("t-scope-1", {
+		query: "mailbox cursors",
+		scope: "torus",
+		limit: 8,
+	});
+	assert.match(scoped.content[0].text, new RegExp(CHILD_ID));
+	assert.doesNotMatch(scoped.content[0].text, /no sessions match/);
+
+	const scopedMiss = await sessions.sessionsTool.execute("t-scope-2", {
+		query: "interactive lens review",
+		scope: "torus",
+		limit: 8,
+	});
+	assert.match(scopedMiss.content[0].text, /no sessions match/);
+
+	const interactive = await sessions.sessionsTool.execute("t-scope-3", {
+		query: "interactive lens review",
+		scope: "interactive",
+		limit: 8,
+	});
+	assert.match(interactive.content[0].text, new RegExp(PARENT_ID));
+
+	// default (no scope): default root first, falling through to the child root.
+	const byDefault = await sessions.sessionsTool.execute("t-scope-4", {
+		query: "mailbox cursors",
+		limit: 8,
+	});
+	assert.match(byDefault.content[0].text, new RegExp(CHILD_ID));
+});
+
 test("fleet transcript lookup resolves child sessions through the child root", () => {
 	const items = transcript.transcriptItems(CHILD_ID, 10);
 	assert.equal(items.length, 1);
