@@ -91,7 +91,7 @@ The remaining files are behavior side-effects, state rather than config: torus w
 | `~/.torus/teams.json` | The global team index: team id to project key |
 | `~/.torus/memory/` | The git-backed memory store |
 | `~/.torus/runs/` | Run beacons that keep externally spawned delegations (`torus serve` runs) fleet-visible, pruned by age and count |
-| `$TORUS_STATE_DIR/child-sessions/` | Session transcripts of delegated engine children (default `TORUS_CHILD_SESSIONS=separate`); transcripts sit directly under the root, resumable with `pi --session-dir <root> --session-id <id>`. `scripts/migrate-child-sessions.mjs` relocates pre-existing child sessions out of pi's default session dir |
+| `$TORUS_STATE_DIR/child-sessions/` | Session transcripts of delegated engine children (default `TORUS_CHILD_SESSIONS=separate`); transcripts sit directly under the root, resumable with `pi --session-dir <root> --session-id <id>`. `scripts/migrate-child-sessions.mjs` relocates pre-existing child sessions out of pi's default session dir: ids come from delegation/team logs across every state root, and its `--unnamed` pass also moves sessions torus never named (children carry no name; named sessions are interactive). Forks (`parentSession`), anything modified within the hour, and named sessions always stay; dry-run unless `--apply` |
 
 ## Project-level configuration
 
