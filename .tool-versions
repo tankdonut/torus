@@ -1,4 +1,4 @@
 # Single source of truth for toolchain pins; consumed by CI (setup-node node-version-file, setup-bun bun-version-file), ./make.sh image, and the Dockerfile build args. The biome pin resolves the asdf shim so the bare `biome` command (lint, LSP server) runs from any cwd inside the repo.
-nodejs 26.12.1
+nodejs 26.13.0
 bun 1.4.4
 biome 2.6.2
