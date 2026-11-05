@@ -24,7 +24,7 @@ ARG AST_GREP_VERSION=0.45.3
 ARG AST_GREP_SHA256_X86_64=f8ac830881339d1edee6b2652f54798c0f4da5a827f2db38a08ee31117783ce8
 ARG AST_GREP_SHA256_AARCH64=b39cfbc58da4b869a88b8a4bc57bd5deb0d24541e704cf7c257da7b53ec81c8f
 
-FROM mirror.gcr.io/library/node:26.12.1-slim@sha256:94816674c62774da0d099a947bf4613b9e1972a2733abd0d0cd80e795f8411d0 AS build
+FROM mirror.gcr.io/library/node:26.13.0-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS build
 
 # global ARGs only apply to FROM; re-declare to use inside the stage
 ARG BUN_VERSION
@@ -62,7 +62,7 @@ RUN set -eux; \
     npm ci --no-fund --no-audit --omit=dev --legacy-peer-deps; \
     node_modules/.bin/pi --version
 
-FROM mirror.gcr.io/library/node:26.12.1-slim@sha256:94816674c62774da0d099a947bf4613b9e1972a2733abd0d0cd80e795f8411d0
+FROM mirror.gcr.io/library/node:26.13.0-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39
 
 # tmux bubblewrap socat git ripgrep libnotify-bin ca-certificates: agent
 # runtime deps. curl + unzip: only to fetch/extract the pinned ast-grep
