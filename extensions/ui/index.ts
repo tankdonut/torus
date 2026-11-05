@@ -248,6 +248,7 @@ export const PERSONA_COLORS: Record<string, [number, number, number]> = {
 	explorer: [241, 196, 15],
 	librarian: [189, 147, 249],
 	reviewer: [255, 85, 85],
+	critic: [255, 140, 0],
 	dreamer: [255, 121, 198],
 	looker: [142, 200, 255],
 };

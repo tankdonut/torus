@@ -63,6 +63,7 @@ test("every agents/*.md name survives the gate", () => {
 	for (const name of names) assert.match(name, AGENT_NAME_RE, `agent name rejected: ${name}`);
 	assert.deepEqual([...names].sort(), [
 		"builder",
+		"critic",
 		"dreamer",
 		"explorer",
 		"leader",
