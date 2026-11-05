@@ -267,6 +267,16 @@ test("a closed list reopens when a stored item is written back to a live status"
 	}
 });
 
+test("title lines: data-only items with status icons, empty when untracked", () => {
+	todo.writeTodos("sess-title", [
+		{ content: "first task", status: "completed", priority: "high" },
+		{ content: "second task", status: "in_progress", priority: "medium" },
+	]);
+	assert.deepEqual(todo.todoTitleLines("sess-title"), ["- ● t1 first task", "- ◐ t2 second task"]);
+	assert.deepEqual(todo.todoTitleLines(null), []);
+	assert.deepEqual(todo.todoTitleLines("no-such-session"), []);
+});
+
 test("context block shows completed items with their ids", () => {
 	try {
 		todo.writeTodos("sess-block", [

@@ -51,6 +51,32 @@ test("writeGoal lands under TORUS_HOME/state/<project-key>/goal", () => {
 	}
 });
 
+test("goalTitleLine: status-marked one-liner for every status, empty when untracked", () => {
+	goal.writeGoal("ses-title", {
+		goal: "Land the rename brief",
+		status: "active",
+		createdAt: 1,
+		notes: [],
+	});
+	assert.equal(goal.goalTitleLine("ses-title"), "goal (active): Land the rename brief");
+	goal.writeGoal("ses-title", {
+		...goalState("x"),
+		goal: "Land the rename brief",
+		status: "complete",
+	});
+	assert.equal(goal.goalTitleLine("ses-title"), "goal (complete): Land the rename brief");
+	goal.writeGoal("ses-title", {
+		...goalState("x"),
+		goal: "Land the rename brief",
+		status: "paused",
+	});
+	assert.equal(goal.goalTitleLine("ses-title"), "goal (paused): Land the rename brief");
+	goal.writeGoal("ses-title-ws", { ...goalState("a\n\nb   c"), goal: "a\n\nb   c" });
+	assert.equal(goal.goalTitleLine("ses-title-ws"), "goal (active): a b c");
+	assert.equal(goal.goalTitleLine(null), "");
+	assert.equal(goal.goalTitleLine("no-such-session"), "");
+});
+
 test("cleared goal writes a literal null that reads back null", () => {
 	try {
 		goal.writeGoal("sess-d", null);

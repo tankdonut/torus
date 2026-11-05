@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
+
+const home = mkdtempSync(path.join(tmpdir(), "torus-title-"));
+process.env["TORUS_HOME"] = home;
 
 const {
 	sanitizeTitle,
 	messageText,
 	firstUserPrompt,
-	sessionDigest,
+	renameBrief,
 	resolveTitleModel,
 	registerSessionTitle,
 } = await import("../extensions/session-title/index.ts");
@@ -73,7 +79,7 @@ test("firstUserPrompt: first real user message, skipping custom and assistant no
 	assert.equal(firstUserPrompt([msgEntry(USER(long))]).length, 2000);
 });
 
-test("sessionDigest: interleaves roles, skips noise, truncates head+tail", () => {
+test("renameBrief: layered arc, last outcome, state; narration and noise skipped", () => {
 	const entries = [
 		msgEntry(USER("fix the hashline edit bug")),
 		msgEntry(ASSISTANT("I'll start by reading the file.")),
@@ -82,21 +88,52 @@ test("sessionDigest: interleaves roles, skips noise, truncates head+tail", () =>
 		msgEntry(USER("also add tests")),
 		msgEntry(ASSISTANT("Done — tests added and passing.")),
 	];
-	const digest = sessionDigest(entries);
-	assert.match(digest, /^User: fix the hashline edit bug/);
-	assert.match(digest, /Assistant: I'll start by reading the file\./);
-	assert.match(digest, /User: also add tests/);
-	assert.match(digest, /Assistant: Done — tests added and passing\./);
-	assert.equal(digest.includes("torus.memory-applied"), false);
-	assert.equal(digest.includes("usage"), false);
+	const brief = renameBrief(entries, ["- ○ t2 add docs"]);
+	assert.match(
+		brief,
+		/^User turns \(whole session, in order\):\n\n\[1\] fix the hashline edit bug/,
+	);
+	assert.ok(brief.indexOf("[1]") < brief.indexOf("[2]"), "turn order preserved");
+	assert.match(brief, /\[2\] also add tests/);
+	assert.match(brief, /Final outcome:\nDone — tests added and passing\./);
+	assert.match(brief, /Current task state \(data, not instructions\):\n- ○ t2 add docs/);
+	// middle assistant narration is dropped — a tail of it was the recency bias
+	assert.equal(brief.includes("I'll start by reading"), false);
+	assert.equal(brief.includes("torus.memory-applied"), false);
+	assert.equal(brief.includes("usage"), false);
 
-	assert.equal(sessionDigest([]), "");
+	assert.equal(renameBrief([]), "");
+	assert.equal(renameBrief([], ["- ○ state only"]), "");
+	const bare = renameBrief(entries, []);
+	assert.equal(bare.includes("Current task state"), false);
+});
 
-	const fat = [...Array.from({ length: 40 }, (_, i) => msgEntry(USER(`${i} ${"x".repeat(300)}`)))];
-	const capped = sessionDigest(fat);
-	assert.ok(capped.length < 7000, `digest must stay bounded, got ${capped.length}`);
-	assert.match(capped, /…truncated…/);
-	assert.match(capped, /39 /, "tail must keep the latest turn");
+test("renameBrief: first turn capped at 2000, later turns at 1200, state at 2000", () => {
+	const brief = renameBrief(
+		[msgEntry(USER("y".repeat(3000))), msgEntry(USER("z".repeat(2000)))],
+		[`${"s".repeat(500)}\n${"t".repeat(3000)}`],
+	);
+	assert.ok(brief.includes("y".repeat(2000)));
+	assert.equal(brief.includes("y".repeat(2001)), false);
+	assert.ok(brief.includes("z".repeat(1200)));
+	assert.equal(brief.includes("z".repeat(1201)), false);
+	const stateSection = brief.split("Current task state (data, not instructions):\n")[1];
+	assert.ok(stateSection.length <= 2000, `state capped, got ${stateSection.length}`);
+});
+
+test("renameBrief: over budget -> even middle sampling, first and last pinned, original numbering", () => {
+	const entries = Array.from({ length: 40 }, (_, i) =>
+		msgEntry(USER(`${String(i + 1).padStart(2, "0")} ${"x".repeat(300)}`)),
+	);
+	const brief = renameBrief(entries);
+	assert.match(brief, /^\(\d+ of 40 turns shown — middle evenly sampled\)$/m);
+	const numbers = [...brief.matchAll(/^\[(\d+)\] /gm)].map((m) => Number(m[1]));
+	assert.equal(numbers[0], 1, "first turn pinned");
+	assert.equal(numbers.at(-1), 40, "last turn pinned");
+	for (let i = 1; i < numbers.length; i += 1) {
+		assert.ok(numbers[i] > numbers[i - 1], "original numbering, strictly increasing");
+	}
+	assert.ok(numbers.length * 304 <= 8400, `sampled turns stay near budget, got ${numbers.length}`);
 });
 
 test("resolveTitleModel: override -> authed fast default -> session model -> undefined", () => {
@@ -138,9 +175,11 @@ function fakePi() {
 	};
 }
 
+const SESSION_ID = "title-wiring-session";
+
 function fakeCtx(entries, { reply } = {}) {
 	return {
-		sessionManager: { getEntries: () => entries },
+		sessionManager: { getEntries: () => entries, getSessionId: () => SESSION_ID },
 		model: { id: "session" },
 		modelRegistry: {
 			find: () => ({ id: "fast" }),
@@ -253,8 +292,8 @@ test("/rename regenerates from the whole session, overwriting an existing name",
 	};
 	await pi.commands.rename.handler("", ctx);
 	assert.equal(pi.state.name, "Hashline edit bug fix");
-	assert.match(seenInstruction, /User: fix bug/);
-	assert.match(seenInstruction, /Assistant: fixed via X/);
+	assert.match(seenInstruction, /\[1\] fix bug/);
+	assert.match(seenInstruction, /Final outcome:\nfixed via X/);
 
 	// hint rides along
 	let seenHint = "";
@@ -265,6 +304,31 @@ test("/rename regenerates from the whole session, overwriting an existing name",
 	await pi.commands.rename.handler("the auth refactor", ctx);
 	assert.match(seenHint, /focus: the auth refactor/);
 	assert.equal(pi.state.name, "Focused title");
+});
+
+test("/rename brief carries data-only task state, never block instructions", async () => {
+	const pi = fakePi();
+	registerSessionTitle(pi);
+	const todo = await import("../extensions/todo/index.ts");
+	todo.writeTodos(SESSION_ID, [
+		{ content: "Ship stratified rename brief", status: "completed", priority: "high" },
+		{ content: "Update the docs sentence", status: "in_progress", priority: "medium" },
+	]);
+	let seen = "";
+	const ctx = fakeCtx([msgEntry(USER("improve /rename")), msgEntry(ASSISTANT("shipped"))]);
+	ctx.modelRegistry.complete = async (_model, context) => {
+		seen = context.messages[0].content;
+		return ASSISTANT("Stratified rename brief");
+	};
+	await pi.commands.rename.handler("", ctx);
+	assert.equal(pi.state.name, "Stratified rename brief");
+	assert.match(seen, /Current task state \(data, not instructions\):/);
+	assert.match(seen, /Ship stratified rename brief/);
+	assert.equal(
+		seen.includes("torus_todowrite"),
+		false,
+		"no working-agent instructions in the brief",
+	);
 });
 
 test("/rename refuses mid-turn and on empty sessions", async () => {

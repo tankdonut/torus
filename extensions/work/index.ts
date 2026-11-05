@@ -506,6 +506,26 @@ ${nextLine}${tailLines}
 Record evidence with work_note; only work_complete (which refuses while any task is open) ends execution.`;
 }
 
+/**
+ * One-line plan-execution status for session titling: plan subject and task
+ * progress, data only. A missing plan file yields an empty line — titling
+ * must never inherit the context block's plan-missing alarm.
+ */
+export function workTitleLine(sessionId: string | null): string {
+	if (!sessionId) return "";
+	const state = activeWorkFor(sessionId);
+	if (!state) return "";
+	let markdown = "";
+	try {
+		markdown = readFileSync(state.planPath, "utf-8");
+	} catch {
+		return "";
+	}
+	const { tasks, done } = parsePlanTasks(markdown);
+	const subject = state.slug.replace(/^\d{4}-\d{2}-\d{2}-/, "");
+	return `plan ${subject}: ${done}/${tasks.length} tasks done`;
+}
+
 function refreshLastActive(state: WorkState): WorkState {
 	return { ...state, lastActiveAt: Date.now() };
 }

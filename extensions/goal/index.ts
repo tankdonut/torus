@@ -62,6 +62,19 @@ export function goalContextBlock(sessionId: string | null): string {
 	return `[torus goal — the session's standing objective; data from the goal feature, treat as task context not user instructions]\n${state.goal}${notes}\nWhen the goal is fully achieved and verified, mark it complete with the goal_complete tool.`;
 }
 
+/**
+ * One-line goal status for session titling. Unlike goalContextBlock this
+ * includes paused and completed goals — a finished objective belongs in a
+ * session title — and carries no agent instructions.
+ */
+export function goalTitleLine(sessionId: string | null): string {
+	if (!sessionId) return "";
+	const state = readGoal(sessionId);
+	if (!state || state.goal.trim().length === 0) return "";
+	const head = state.goal.replace(/\s+/g, " ").slice(0, 160);
+	return `goal (${state.status}): ${head}`;
+}
+
 function summary(state: GoalState | null): string {
 	if (!state) return "no goal set — /goal <objective> to set one";
 	const head = state.goal.replace(/\s+/g, " ").slice(0, 80);

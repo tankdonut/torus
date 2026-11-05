@@ -203,6 +203,22 @@ export function pruneTodoOrphans(
 	return pruneOrphanSessionFiles(todoDir(), exists, ORPHAN_MIN_AGE_MS);
 }
 
+function statusIcon(status: TodoItem["status"]): string {
+	return status === "completed" ? "●" : status === "in_progress" ? "◐" : "○";
+}
+
+/**
+ * Data-only todo lines for session titling: items in list order with status
+ * icons and no agent instructions — the context block's header would steer
+ * a titler instead of informing it.
+ */
+export function todoTitleLines(sessionId: string | null): string[] {
+	if (!sessionId) return [];
+	return readTodoState(sessionId).todos.map(
+		(t) => `- ${statusIcon(t.status)} ${t.id ?? "?"} ${t.content}`,
+	);
+}
+
 export function todoContextBlock(sessionId: string | null): string {
 	if (!sessionId) return "";
 	const { todos, stats } = readTodoState(sessionId);
@@ -213,8 +229,7 @@ export function todoContextBlock(sessionId: string | null): string {
 		return `[torus todos — every item complete (●${doneItems.length} of ${stats.tracked} done): the list is closed and the next torus_todowrite starts a fresh list]`;
 	}
 	const lines = [...active, ...doneItems].map((t) => {
-		const icon = t.status === "completed" ? "●" : t.status === "in_progress" ? "◐" : "○";
-		return `- ${icon} ${t.id ?? "?"} (${t.priority ?? "medium"}) ${t.content}`;
+		return `- ${statusIcon(t.status)} ${t.id ?? "?"} (${t.priority ?? "medium"}) ${t.content}`;
 	});
 	const header = [
 		"[torus todos — the live task list; work it top-down, keep exactly one in_progress,",

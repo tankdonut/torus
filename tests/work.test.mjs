@@ -31,6 +31,7 @@ const {
 	listWorkStates,
 	activeWorkFor,
 	workContextBlock,
+	workTitleLine,
 	_workStats,
 } = await import("../extensions/work/index.ts");
 const { setCurrentSessionId } = await import("../extensions/registry.ts");
@@ -248,6 +249,35 @@ test("activeWorkFor: newest active binding for the session wins; paused/complete
 		listed.map((s) => s.slug),
 		["old", "new", "paused", "done", "other"],
 	);
+});
+
+test("workTitleLine: subject and progress, missing plan silent, complete binding invisible", () => {
+	assert.equal(workTitleLine(null), "");
+	assert.equal(workTitleLine("ses-none"), "");
+	const file = plantPlan("title-plan", "- [x] 1. A\n- [ ] 2. B\n");
+	plantState({
+		slug: "2026-11-05-title-plan",
+		planPath: file,
+		sessionId: "ses-t",
+		lastActiveAt: 900,
+	});
+	assert.equal(workTitleLine("ses-t"), "plan title-plan: 1/2 tasks done");
+	plantState({
+		slug: "title-missing",
+		planPath: "/nowhere.md",
+		sessionId: "ses-t2",
+		lastActiveAt: 999,
+	});
+	assert.equal(workTitleLine("ses-t2"), "");
+	plantState({
+		slug: "2026-11-05-title-plan",
+		planPath: file,
+		sessionId: "ses-t3",
+		status: "complete",
+		completedAt: 2,
+		lastActiveAt: 901,
+	});
+	assert.equal(workTitleLine("ses-t3"), "");
 });
 
 test("work state round-trips through disk", () => {
