@@ -1,6 +1,6 @@
 # torus
 
-A multi-agent coding harness on the pinned stock [pi](https://github.com/earendil-works/pi) engine: a lead session that delegates to a roster of specialist agents (builder, explorer, librarian, reviewer, …) with live visibility into everything they do.
+A multi-agent coding harness on the pinned stock [pi](https://github.com/earendil-works/pi) engine: a lead session that delegates to a roster of specialist agents (builder, critic, explorer, librarian, reviewer, …) with live visibility into everything they do.
 
 torus owns the harness layer: roster, delegation, ambient UI, memory. The engine beneath it is a pinned, replaceable dependency.
 

@@ -186,7 +186,8 @@ export function registerPrompts(pi: ExtensionAPI): void {
 	};
 
 	pi.registerShortcut("alt+p", {
-		description: "Cycle torus persona (leader/builder/dreamer/explorer/librarian/looker/reviewer)",
+		description:
+			"Cycle torus persona (leader/builder/critic/dreamer/explorer/librarian/looker/reviewer)",
 		handler: async (ctx) => {
 			await applyPersona(nextPersona(sessionPersona()), ctx);
 		},

@@ -50,7 +50,7 @@ Both servers keep `exposure: "direct"`: the lead session uses context7 and grep_
 | --- | --- |
 | `explorer` | grep_app, via the `mcp__grep_app__*` glob |
 | `librarian` | context7 and grep_app |
-| `builder`, `dreamer`, `looker`, `reviewer` | none (MCP is a researcher surface, and builder's web tools already cover doc lookup) |
+| `builder`, `critic`, `dreamer`, `looker`, `reviewer` | none (MCP is a researcher surface, and builder's web tools already cover doc lookup) |
 
 If main-session context cost ever justifies slimming, the documented lever is `exposure: "codemode"` (or per-tool `toolExposure` patterns) on `registerMcpServer`, pushing the servers behind codemode scripts. Recorded here, deliberately not pulled yet.
 
@@ -121,7 +121,7 @@ The delegation core: parses `agents/*.md` into the roster and spawns the pinned 
 | `torus_delegate` | Run one self-contained task on a roster agent; accepts `agent`, `task`, `handle`, `skills`, `cwd`, `model`, `background`; live `renderCall`/`renderResult` |
 | `torus_results` | Read a delegation record's full final output by `id` (status, turns, cost, duration), or list recent records, optionally filtered by `status` |
 
-- **Commands:** `/roster`; one command per agent file. Session-mode `/leader` toggles the persona. Child agents (`/builder`, `/dreamer`, `/explorer`, `/librarian` + alias `/research`, `/looker`, `/reviewer`) delegate the argument text, wait for that session's running delegations to quiesce (10-min cap), and inject the result as a follow-up user message
+- **Commands:** `/roster`; one command per agent file. Session-mode `/leader` toggles the persona. Child agents (`/builder`, `/critic`, `/dreamer`, `/explorer`, `/librarian` + alias `/research`, `/looker`, `/reviewer`) delegate the argument text, wait for that session's running delegations to quiesce (10-min cap), and inject the result as a follow-up user message
 - **Hooks:** `session_start`: record session id; rehydrate past delegations from the project state dir's logs
 - **Env:** `TORUS_DELEGATE_BACKGROUND=0` forces blocking even when a call passes `background: true` (config: `roster.delegateBackground`)
 - **Interactions:** heavy consumer of the shared registry; memory's dream/reflect and team's fanout/chain call `runDelegation()`; prompts, ui, notify, browser, and fleet all consume its state
@@ -186,7 +186,7 @@ Builds the system prompt each turn: the active persona's body, the delegation po
 No tools.
 
 - **Commands:** `/persona-<name>` for every roster agent (one per `agents/*.md`): switch the main session to that persona
-- **Shortcuts:** `alt+p` / `alt+shift+p`: cycle personas forward / backward (leader → builder → dreamer → explorer → librarian → looker → reviewer)
+- **Shortcuts:** `alt+p` / `alt+shift+p`: cycle personas forward / backward (leader → builder → critic → dreamer → explorer → librarian → looker → reviewer)
 - **Hooks:** `session_start`: restore the saved persona and theme; `message_end`: keyword detection on user messages; `before_agent_start`: append persona + policy + memory policy pointer + armed mode to the system prompt
 - **Env:** none read here (`persona-theme.ts` reads `TORUS_THEME_DEBUG` for theme debugging)
 - **State:** persona persists per session at `$TORUS_STATE_DIR/persona/<session>.json`; orphans whose session is gone age out after 30 days

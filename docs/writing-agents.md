@@ -8,7 +8,7 @@ Two shapes exist; do not blend them.
 
 | Archetype | `mode` | Body convention | Currently |
 | --- | --- | --- | --- |
-| **Child agent** | `child` (default) | Markdown, canonical H2 skeleton below | builder, dreamer, explorer, librarian, looker, reviewer |
+| **Child agent** | `child` (default) | Markdown, canonical H2 skeleton below | builder, critic, dreamer, explorer, librarian, looker, reviewer |
 | **Session persona** | `session` | XML-style lowercase tags (`<role>`, `<behavior>`, …) matching the host system-prompt style it is spliced into | leader |
 
 A session persona is excluded from child delegation; it orchestrates and never runs as a spawned task. Everything else on this page about body structure applies to child agents; personas follow the tag style of `leader.md`.
