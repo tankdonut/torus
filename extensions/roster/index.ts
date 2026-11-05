@@ -1601,6 +1601,9 @@ const delegateTool = defineTool({
 
 const RESULTS_LIST_CAP = 15;
 
+/** Status filter values for the torus_results list: exactly the record statuses the list prints. */
+const RESULTS_STATUS_FILTER = ["running", "done", "failed"] as const;
+
 /** Resolve an id to its record: exact match, else a unique prefix (the list renders 8-char id previews). */
 function findRecordById(records: DelegationRecord[], id: string): DelegationRecord | undefined {
 	const exact = records.find((r) => r.id === id);
@@ -1613,13 +1616,22 @@ const resultsTool = defineTool({
 	name: "torus_results",
 	label: "Torus Results",
 	description:
-		"Read back delegation results (read-only): with id, one run's stored output — status, duration, turns, cost, log path, and the full text tail; without id, the most recent delegations",
+		"Read back delegation results (read-only): with id, one run's stored output — status, duration, turns, cost, log path, and the full text tail; without id, the most recent delegations, optionally narrowed to one status (running, done, or failed)",
 	parameters: Type.Object({
 		id: Type.Optional(
 			Type.String({
 				description:
 					"Delegation id from a torus_delegate/torus_fanout/torus_chain echo or wake marker (exact id or a unique prefix); omit to list recent runs",
 			}),
+		),
+		status: Type.Optional(
+			Type.Union(
+				RESULTS_STATUS_FILTER.map((s) => Type.Literal(s)),
+				{
+					description:
+						"List only records with this status (running | done | failed); applies only when listing, not with id",
+				},
+			),
 		),
 	}),
 	// Machine-readable shape of the single-record path; list and unknown-id
@@ -1636,17 +1648,38 @@ const resultsTool = defineTool({
 		durationMs: Type.Optional(Type.Number()),
 	}),
 	async execute(_toolCallId, params) {
+		if (params.id !== undefined && params.status !== undefined) {
+			return {
+				isError: true,
+				content: [
+					{
+						type: "text",
+						text: "status filters the list; it cannot combine with an id — pass one or the other",
+					},
+				],
+				details: {},
+			};
+		}
 		const records = listDelegations();
 		if (params.id === undefined) {
-			if (records.length === 0) {
-				return { content: [{ type: "text", text: "no delegation records yet" }], details: {} };
+			const filtered =
+				params.status === undefined ? records : records.filter((r) => r.status === params.status);
+			if (filtered.length === 0) {
+				const text =
+					params.status === undefined
+						? "no delegation records yet"
+						: `no ${params.status} delegation records${records.length > 0 ? ` (${records.length} total)` : " yet"}`;
+				return { content: [{ type: "text", text }], details: {} };
 			}
-			const lines = records.slice(0, RESULTS_LIST_CAP).map((record) => {
+			const lines = filtered.slice(0, RESULTS_LIST_CAP).map((record) => {
 				const who = record.handle ? `@${record.handle}` : record.agent;
 				const age = formatDuration((record.finishedAt ?? Date.now()) - record.startedAt);
 				return `${who} · ${record.agent} · ${record.status} · ${age} · ${record.id.slice(0, 8)}…`;
 			});
-			const listDetails: Record<string, unknown> = { listed: lines.length };
+			const listDetails: Record<string, unknown> = {
+				listed: lines.length,
+				...(params.status === undefined ? {} : { filter: params.status }),
+			};
 			return {
 				content: [{ type: "text", text: lines.join("\n") }],
 				details: listDetails,

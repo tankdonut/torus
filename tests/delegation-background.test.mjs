@@ -327,3 +327,73 @@ test("torus_results reads a finished record by id, lists recent runs, and fails 
 	assert.equal(missing.isError, true);
 	assert.match(missing.content[0].text, /no delegation record with id nope/);
 });
+
+test("torus_results narrows the list by status and refuses id plus status", async () => {
+	registry.resetRegistryForTesting();
+	gate._resetWakeGateForTesting();
+	sent.length = 0;
+
+	const resultsTool = tools.find((t) => t.name === "torus_results");
+	assert.ok(resultsTool, "torus_results not registered");
+
+	await registry.startDelegation("done-run-1", "builder", "m", null, "finished");
+	await registry.finishDelegation("done-run-1", true, "ok tail", null);
+	await registry.startDelegation("failed-run-1", "builder", "m", null, "busted");
+	await registry.finishDelegation("failed-run-1", false, "boom", null);
+	await registry.startDelegation("live-run-1", "builder", "m", null, "in-flight");
+
+	const doneOnly = await resultsTool.execute("c9", { status: "done" }, undefined, undefined, ctx);
+	const doneLines = doneOnly.content[0].text.split("\n");
+	assert.equal(doneLines.length, 1, "status=done lists only the done record");
+	assert.match(doneLines[0], /@finished · builder · done/);
+	assert.equal(doneOnly.details.filter, "done");
+
+	const runningOnly = await resultsTool.execute(
+		"c10",
+		{ status: "running" },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(runningOnly.isError, undefined);
+	assert.match(runningOnly.content[0].text, /@in-flight · builder · running/);
+	assert.ok(
+		!runningOnly.content[0].text.includes("failed-run"),
+		"running filter hides finished records",
+	);
+
+	const failedOnly = await resultsTool.execute(
+		"c11",
+		{ status: "failed" },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.match(failedOnly.content[0].text, /@busted · builder · failed/);
+	assert.ok(
+		!failedOnly.content[0].text.includes("done-run"),
+		"failed filter hides the done record",
+	);
+
+	const unfiltered = await resultsTool.execute("c12", {}, undefined, undefined, ctx);
+	assert.equal(unfiltered.content[0].text.split("\n").length, 3, "no filter lists every record");
+	assert.equal(unfiltered.details.filter, undefined);
+
+	const combined = await resultsTool.execute(
+		"c13",
+		{ id: "done-run-1", status: "done" },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(combined.isError, true, "id and status are mutually exclusive");
+	assert.match(combined.content[0].text, /cannot combine with an id/);
+
+	registry.resetRegistryForTesting();
+	await registry.startDelegation("only-live-1", "builder", "m", null, null);
+	const emptyDone = await resultsTool.execute("c14", { status: "done" }, undefined, undefined, ctx);
+	assert.equal(emptyDone.isError, undefined);
+	assert.match(emptyDone.content[0].text, /no done delegation records \(1 total\)/);
+
+	registry.resetRegistryForTesting();
+});

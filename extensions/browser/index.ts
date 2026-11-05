@@ -105,7 +105,7 @@ const TORUS_TOOL_DEFINITIONS: Record<string, ToolDefinitionLike> = {
 	torus_roster: torusToolDefinition("torus_roster", () => "roster"),
 	torus_results: torusToolDefinition(
 		"torus_results",
-		(args) => `results ${String(args["id"] ?? "(list)")}`,
+		(args) => `results ${String(args["id"] ?? args["status"] ?? "(list)")}`,
 	),
 	hashline_edit: torusToolDefinition("hashline_edit", (args) => {
 		const file =
