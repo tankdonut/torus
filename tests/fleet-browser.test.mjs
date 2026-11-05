@@ -1007,6 +1007,62 @@ test("list and detail show the run duration once complete", () => {
 	}
 });
 
+test("detail transcript: a user block never sits flush under the item above", () => {
+	registry.resetRegistryForTesting();
+	const sid = "0f0e0d0c-aaaa-4bbb-8ccc-444455550001";
+	mkdirSync(path.join(SESSIONS, "proj"), { recursive: true });
+	const lines = [
+		JSON.stringify({ type: "session", id: sid, timestamp: Date.now(), cwd: "/tmp" }),
+		JSON.stringify({
+			type: "message",
+			id: "u1",
+			message: { role: "user", content: [{ type: "text", text: "first task prompt" }] },
+		}),
+		JSON.stringify({
+			type: "message",
+			id: "a1",
+			message: { role: "assistant", content: [{ type: "text", text: "working on it" }] },
+		}),
+		JSON.stringify({
+			type: "message",
+			id: "u2",
+			message: { role: "user", content: [{ type: "text", text: "second task prompt" }] },
+		}),
+	];
+	writeFileSync(
+		path.join(SESSIONS, "proj", `2026-09-30T00-00-00-000Z_${sid}.jsonl`),
+		`${lines.join("\n")}\n`,
+		"utf8",
+	);
+	registry.startDelegation("fb-gap-1", "builder", "zai/glm-5.3", null, "gap");
+	registry.finishDelegation("fb-gap-1", true, "done", sid, { toast: false });
+	const { hooks } = registerExtension();
+	const driver = makeCtx("fullscreen", { fg: (_color, text) => text, bold: (text) => text });
+	hooks.get("session_start")(undefined, driver.ctx);
+	globalThis[registry.FLEET_OPENER]("fb-gap-1");
+	const component = driver.component();
+	try {
+		const rendered = component
+			.render(100)
+			.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\][^\x07]*\x07/g, ""));
+		const blanksAbove = (index) => {
+			let count = 0;
+			for (let i = index - 1; i >= 0 && rendered[i]?.trim() === ""; i -= 1) count += 1;
+			return count;
+		};
+		const second = rendered.findIndex((line) => line.includes("second task prompt"));
+		assert.ok(second > 0, "second user block renders");
+		// One blank is the block's own background pad; the second is the
+		// inter-item gap the engine's chat adds above every user message.
+		assert.equal(blanksAbove(second), 2, "a spacer separates the user block from the item above");
+		const first = rendered.findIndex((line) => line.includes("first task prompt"));
+		assert.ok(first > 0, "first user block renders");
+		assert.equal(blanksAbove(first), 1, "the transcript's first entry earns no inter-item spacer");
+	} finally {
+		component.dispose();
+	}
+});
+
 test("detail transcript: edit success renders its diff from persisted result details", () => {
 	registry.resetRegistryForTesting();
 	const sid = "0f0e0d0c-aaaa-4bbb-8ccc-444455559999";

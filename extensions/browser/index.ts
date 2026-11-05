@@ -1030,12 +1030,15 @@ class FleetBrowser implements Component {
 		const body: string[] = [];
 		for (const item of transcriptItems(sessionId, TRANSCRIPT_RENDER_ITEM_CAP)) {
 			const component = this.componentForItem(sessionId, item);
-			// No separator: components carry their own leading spacers, matching the
-			// main session's back-to-back chat stacking; tool-only assistant items
-			// render zero lines and must not earn a blank either.
-			if (component) {
-				body.push(...component.render(width));
-			}
+			if (!component) continue;
+			const lines = component.render(width);
+			if (lines.length === 0) continue;
+			// Spacing contract, mirroring the engine's chat container: assistant
+			// components carry their own leading spacer, user components rely on the
+			// container for one (added above every user message but the first entry),
+			// and zero-line tool-only assistant items earn no blank at all.
+			if (item.kind === "user" && body.length > 0) body.push("");
+			body.push(...lines);
 		}
 		return body;
 	}
