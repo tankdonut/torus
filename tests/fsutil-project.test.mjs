@@ -221,7 +221,6 @@ test("pruneScratch: whole-tree age decides; a fresh deep file keeps an otherwise
 
 	const result = fsutil.pruneScratch(root, 30, Date.now());
 	assert.deepEqual(result.removed, ["old"]);
-	assert.equal(result.kept, 2);
 	assert.ok(!existsSync(old), "fully aged tree is removed");
 	assert.ok(existsSync(path.join(mixed, "sub", "new.txt")), "one fresh deep file keeps the entry");
 	assert.ok(existsSync(fresh));
@@ -234,7 +233,7 @@ test("pruneScratch: retentionDays <= 0 disables removal", () => {
 	aged(path.join(ancient, "dust.txt"), 3650);
 	agedDir(ancient, 3650);
 	for (const days of [0, -1]) {
-		assert.deepEqual(fsutil.pruneScratch(root, days, Date.now()), { removed: [], kept: 1 });
+		assert.deepEqual(fsutil.pruneScratch(root, days, Date.now()), { removed: [] });
 	}
 	assert.ok(existsSync(ancient));
 });
@@ -242,11 +241,10 @@ test("pruneScratch: retentionDays <= 0 disables removal", () => {
 test("pruneScratch: missing root is an empty no-op", () => {
 	assert.deepEqual(fsutil.pruneScratch(path.join(home, "no-such-scratch"), 30), {
 		removed: [],
-		kept: 0,
 	});
 });
 
-test("pruneScratch: per-entry removal failure is swallowed and counts as kept", {
+test("pruneScratch: per-entry removal failure is swallowed and the entry stays", {
 	skip: (process.getuid?.() ?? 0) === 0 && "chmod 0o500 cannot block root",
 }, () => {
 	const root = mkdtempSync(path.join(home, "scratch-rmfail-"));
@@ -256,7 +254,7 @@ test("pruneScratch: per-entry removal failure is swallowed and counts as kept", 
 	agedDir(stuck, 40);
 	chmodSync(root, 0o500);
 	try {
-		assert.deepEqual(fsutil.pruneScratch(root, 30, Date.now()), { removed: [], kept: 1 });
+		assert.deepEqual(fsutil.pruneScratch(root, 30, Date.now()), { removed: [] });
 		assert.ok(existsSync(stuck));
 	} finally {
 		chmodSync(root, 0o700);

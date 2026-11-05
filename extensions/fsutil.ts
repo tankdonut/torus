@@ -262,35 +262,32 @@ export function pruneOrphanSessionFiles(
  * Retention sweep for the top-level entries of a scratch root: an entry is
  * removed only when the newest mtime anywhere in its tree is older than
  * `retentionDays` — one fresh file deep inside keeps the whole entry.
- * `retentionDays <= 0` disables removal and only counts. Best-effort like
+ * `retentionDays <= 0` disables removal entirely. Best-effort like
  * pruneOrphanSessionFiles: a missing root yields an empty result, and
- * per-entry failures are swallowed (a failed removal counts as kept).
+ * per-entry failures are swallowed (a failed removal stays in place).
  */
 export function pruneScratch(
 	root: string,
 	retentionDays: number,
 	now: number = Date.now(),
-): { removed: string[]; kept: number } {
+): { removed: string[] } {
 	let entries: string[];
 	try {
 		entries = readdirSync(root);
 	} catch {
-		return { removed: [], kept: 0 };
+		return { removed: [] };
 	}
 	const removed: string[] = [];
-	let kept = 0;
 	for (const entry of entries) {
 		const target = path.join(root, entry);
 		try {
 			if (retentionDays > 0 && newestTreeMtime(target) < now - retentionDays * 86400000) {
 				rmSync(target, { recursive: true, force: true });
 				removed.push(entry);
-				continue;
 			}
 		} catch {}
-		kept += 1;
 	}
-	return { removed, kept };
+	return { removed };
 }
 
 /**
