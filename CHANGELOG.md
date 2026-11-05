@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.22.0](https://github.com/tankdonut/torus/compare/v0.21.0...v0.22.0) (2026-11-05)
+
+
+### Features
+
+* **agents:** add critic persona to the roster ([df2068f](https://github.com/tankdonut/torus/commit/df2068fb8651d2d0d61622674b3bad159e89e361))
+* **extensions/handles:** make [@handles](https://github.com/handles) steerable from the input box ([49bdae2](https://github.com/tankdonut/torus/commit/49bdae2595ce5695208882bd6cd68ad8da5d950d))
+* **extensions/monitor:** add torus_bg one-shot background commands ([190077c](https://github.com/tankdonut/torus/commit/190077cce86b0195aa3664b628cb0866cbeb6687))
+* **extensions/session-title:** regenerate /rename from a layered session brief ([d13a190](https://github.com/tankdonut/torus/commit/d13a190bd20da38f7f554ecdf5c10ac3a8cdd828))
+* **extensions:** add status filter to torus_results list ([74742cd](https://github.com/tankdonut/torus/commit/74742cdbb2b3a668ae963fc2c5177cec7eb6bbc3))
+* **skills/site-design:** fold taste-skill v2.5 methods into the skill ([d83d057](https://github.com/tankdonut/torus/commit/d83d057b45f1f0d5bf32ba9ebafdec3bc355e177))
+* **skills/torus-plan:** gate plans through torus-plan-review ([0046e21](https://github.com/tankdonut/torus/commit/0046e21286b07d584ecd7d7c0b680971fa439edf))
+* **skills:** add torus-plan-review gate skill ([8922f58](https://github.com/tankdonut/torus/commit/8922f5872ce1a830756794afbe6c726e386c8573))
+
+
+### Bug Fixes
+
+* **deps:** update dependency pi-web-access to ^0.46.0 ([#101](https://github.com/tankdonut/torus/issues/101)) ([be2b2f8](https://github.com/tankdonut/torus/commit/be2b2f8b03f8d05bade87b401e7492f2489e39ba))
+* **extensions/browser:** restore spacing above user blocks in delegation transcripts ([1d3bfcc](https://github.com/tankdonut/torus/commit/1d3bfccab384af12ccb54642e08268f6cf963f99))
+* **extensions:** make delegation log names collision-proof ([8cf7e2a](https://github.com/tankdonut/torus/commit/8cf7e2aaab4a4a9d66650d44c86646ee304ae900))
+
 ## [0.21.0](https://github.com/tankdonut/torus/compare/v0.20.0...v0.21.0) (2026-11-02)
 
 
