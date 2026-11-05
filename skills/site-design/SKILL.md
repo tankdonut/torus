@@ -1,6 +1,6 @@
 ---
 name: site-design
-description: "Re-imagining or reworking the visual design of a project's site (landing, docs, changelog): design direction grounded in the product's own world, a checklist of generated-looking defaults to design against, and evidence rules (real captures over mockups, machine-derived numbers). Use when restyling a site, redesigning a page, planning a visual direction, or critiquing a design pass."
+description: "Re-imagining or reworking the visual design of a project's site (a software landing, docs, changelog, or a company page for a product, service, or place): design direction grounded in the subject's own world, page-kind routing for what leads and whether effects are allowed, a one-section-per-screen layout discipline, a checklist of generated-looking defaults to design against, and evidence rules (real captures over mockups, machine-derived numbers). Use when restyling a site, redesigning a page, planning a visual direction, or critiquing a design pass."
 ---
 
 # site-design
@@ -30,26 +30,74 @@ site.
   fragment at true size is the strongest picture a software page can carry, and
   a claim the page can prove beats an adjective.
 
-## Process: claims, tokens, build, verify
+## Route by page kind
 
-1. **Claims before layout.** Write the page as claims, each with its proof on
-   the same screen: a capture, a number with its derivation, or a command.
+The kind of page decides what leads and what is allowed. Write it on the
+plan's first line.
+
+| Brief | Kind | What leads | Effects |
+| --- | --- | --- | --- |
+| App, SaaS, AI, developer tool, fintech | software | its own UI, live and at true size | yes |
+| A game | gaming | the name and genre; the world as key art | yes |
+| Hardware or a technical device | tech | its photographs, else its render | yes |
+| Any other physical product | product | the product, big and whole, photographed | its render only |
+| People are hired: clinic, agency, studio | service | the work and the people, photographed | none |
+| People come to it: cafe, hotel, shop | place | the place, 12 to 20 photographs | none |
+
+- Shader grounds, scroll scenes, and WebGL moments belong only where the
+  subject is technical. A product, service, or place page is photographs,
+  type, and flat color, and nothing on it moves by itself: no entrance, no
+  ticker, no count, no scroll effect.
+- A technical page still leads with its own subject: a code-review tool shows
+  a real diff with its accept action, never a generic dashboard. Effects stay
+  within four live WebGL contexts, each with a still fallback for phones and
+  reduced motion.
+- A product page shows the product: whole, most of its frame, never mid-size
+  in a gray panel; a different picture each section; every headline promise
+  pictured; no fact stated twice.
+- One object never carries the page: the hero subject leads the hero and two
+  more sections at most; another visual kind (the world, the crew, the bench,
+  a diagram, a type moment) carries the rest.
+
+## Process: classify, copy, screens, tokens, build, verify, report
+
+1. **Classify, then claims and copy.** Write the kind on the plan's first
+   line (the table above) and the page as claims, each with its proof on the
+   same screen: a capture, a number with its derivation, or a command.
    Sections without a claim get deleted; the argument's order replaces the
-   stock section order.
-2. **Token plan before code.** One compact plan: 4-6 named hex values per theme
+   stock section order. Copy rules: the h1 names the category and the buyer
+   or the place in 2 to 8 words; the first screen carries one hard fact (a
+   number, price, date, or place); every heading names a thing; buttons are a
+   verb plus its object ("Start a free trial"), never "Learn more". Word
+   budgets: 60 to 80 words a screen on a technical page outside UI mocks,
+   about 45 on a place, 35 on a service, about 900 a page; over budget, cut
+   the second sentence under a heading, then card bodies to one sentence,
+   then the fourth card.
+2. **Plan the page as screens.** One section per screen: the hero alone on
+   the first screen, every section one or two viewport heights, no next
+   section's heading peeking in (a 327-site study puts the hero alone on 78%
+   of company first screens). Under half a screen of content, merge the
+   section or add the picture it lacks; between one and two screens, cut or
+   split; keep equal left and right content edges. Break the rule where
+   content owns the height: docs, long-form, app UIs.
+3. **Token plan before code.** One compact plan: 4-6 named hex values per theme
    and their roles; type roles (one family, or two that are clearly distinct);
    a layout concept as one sentence plus an ASCII wireframe; three principles
    naming what makes this page unlike any other. Review the plan against the
    tells checklist below before writing code: anything you would have produced
    for a different product gets redesigned now, while it costs a sentence.
-3. **Build complete at first paint.** The page is whole with styles and scripts
+4. **Build complete at first paint.** The page is whole with styles and scripts
    off; motion never rescues a layout. Entrances move what is already there.
-4. **Verify the render.** Build, then screenshots at the sizes the site ships
+5. **Verify the render.** Build, then screenshots at the sizes the site ships
    at, in both themes, with reduced motion on. Fix in batches; two look-fix
    rounds is the ceiling. Delegate screenshot critique to a vision-capable
    agent when a question depends on seeing the page. For a final audit pass,
    fetch the current Web Interface Guidelines (vercel-labs) and check the
    rendered pages against them.
+6. **Report.** Close with the classification and the decisions that followed
+   it; every assumption (the coined name and its search, assumed prices or
+   hours); every stand-in image the owner must replace; what could not be
+   checked.
 
 ## Principles
 
@@ -74,11 +122,16 @@ site.
   belonging to no design system. Themed from the palette, they are the cheapest
   signal that a page was built rather than assembled, and the part models skip
   most reliably.
-- **Motion is a budget.** One signature moment (a capture replaying, a graph
-  drawing itself); entrances elsewhere staggered 60-90ms, rising 16-32px,
-  firing once below the fold; transform and opacity only; exits run at roughly
-  60-70% of entrance duration. Respect prefers-reduced-motion in every entrance
-  effect.
+- **Motion is a budget; feedback is not.** One signature moment (a capture
+  replaying, a graph drawing itself); entrances elsewhere staggered 60-90ms,
+  rising 16-32px, firing once below the fold; transform and opacity only;
+  exits run at roughly 60-70% of entrance duration. Every link, card, and
+  button answers the pointer: a linked card lifts about 2px, a photograph
+  zooms 1.02-1.03 inside its frame, underlines draw; a loop running past 5s
+  gets a pause; no tilt, carousels, or timed tabs. Respect
+  prefers-reduced-motion in every entrance effect; a non-technical kind
+  (product, service, place) skips the signature moment and self-running loops
+  entirely.
 - **Placed space, not holes.** Every large void is a rest closed by the
   picture, the type, or a tone step; more than ~40% of a screen of plain ground
   is a hole. The gap between sections exceeds the gap within a section.
@@ -110,6 +163,14 @@ traits that were never chosen are the first things to redesign.
 - Fade-and-slide-up entrance on every section; hover transitions on every card.
 - A big number with a small label and a gradient accent as the default stat
   treatment.
+- Near-neutral ground, black type, and one loud accent (lime, mint) spent
+  everywhere at once instead of held to the action.
+- Black or tinted info tiles floating over one continuous photograph.
+- A giant condensed all-caps statement standing in for a positioning h1.
+- One generated voice: every passage lands a named person plus one house
+  rule, understatement worn as a register rather than chosen.
+- The live-state hero (an open-now line, a price in the nav) deployed as an
+  automatic credibility move.
 
 ## Evidence rules
 
@@ -119,6 +180,11 @@ traits that were never chosen are the first things to redesign.
 - Numbers, graphs, and version strings stay machine-derived: generated at build
   time from the repo, never retyped into copy. If a number cannot be generated,
   cut it or say where it came from.
+- Nothing is invented: no reviews, ratings, quotes, testimonials, customer
+  counts, customer names, or press lines; a real tool keeps its real mark,
+  never a drawn imitation. A coined brand name is searched before use and
+  recorded; assumed prices or hours stay uneven (3.60, not 4.00) and land in
+  the report.
 - The build and deploy are part of the design surface: find the repo's site
   conventions (AGENTS.md, site README, or the build script) and design within
   them, including constraints like inlined fonts, no client frameworks, or
@@ -133,19 +199,34 @@ traits that were never chosen are the first things to redesign.
 
 - The repo's own build and preview commands (from its AGENTS.md or
   package.json), plus its lint and any site tests
-- Screenshots: both themes at roughly 390, 768, and 1440px wide, plus a
-  reduced-motion pass; critique them against the tells checklist before calling
-  the work done
+- Screenshots: both themes at 1440x900, 1024, 820, and 768 wide, and 390x844,
+  plus a reduced-motion pass; critique them against the tells checklist and
+  the fault vocabulary below before calling the work done
+- Named faults to hunt, the craft failures a model skips: stagger (list rows
+  at different lefts), spill (content past the shared edges), fold-cut (a
+  heading sliced by the first screen's bottom), cut text, neighbor (the next
+  section's heading peeking into a screen), heading-scale inversion (a heading
+  smaller than the text under it), sparse (a section under half a screen of
+  content), hole (an empty space a picture or tone step should close),
+  busy-ground (text over the busiest part of a photograph)
+- An effects pass on technical pages: with WebGL refused, every effect shows
+  its still fallback; at most four live WebGL contexts at once
+- A weight pass: image weight and layout shift inside the site's budget, or
+  the heaviest visual goes
 - If the site derives stats at build time, a clean build from a fresh clone is
   the proof the numbers are machine-derived
 
 ## Sources
 
 Folded in from the ecosystem's design skills (mined October 2026, installed
-temporarily, distilled here so the repo carries its own):
+temporarily, distilled here so the repo carries its own; taste-skill re-mined
+at v2.5 in November 2026):
 
 - anthropics/skills `frontend-design`: tells list, two-pass process, writing in design.
-- leonxlnx/taste-skill `design-taste-frontend`: inventory-first, competitor test, color proportion, placed space, motion budget.
+- leonxlnx/taste-skill `design-taste-frontend` (v1: inventory-first,
+  competitor test, color proportion, placed space, motion budget; v2.5: kind
+  routing, one section per screen with its site study, word budgets, honesty
+  rules, feedback motion, the fault vocabulary).
 - pbakaus/impeccable: persuade mode, craft floor, browser-owned surfaces, batched render checks.
 - wondelai/skills `refactoring-ui`: hierarchy levers, shade scales, dark mode as redesign.
 - emilkowalski/skills `apple-design` and `animation-vocabulary`: named motion techniques, tabular numerals.
