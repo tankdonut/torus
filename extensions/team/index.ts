@@ -112,7 +112,7 @@ const fanoutTool = defineTool({
 				handle: Type.Optional(
 					Type.String({
 						description:
-							"Short @handle nickname for this run (fleet views, tmux pane title, statusline)",
+							"Short @handle nickname for this run (fleet views, tmux pane title, statusline); the operator can steer the live run by typing @handle <message> in the input box",
 					}),
 				),
 				skills: Type.Optional(
@@ -441,7 +441,7 @@ const chainTool = defineTool({
 				handle: Type.Optional(
 					Type.String({
 						description:
-							"Short @handle nickname for this step (fleet views, tmux pane title, statusline)",
+							"Short @handle nickname for this step (fleet views, tmux pane title, statusline); the operator can steer the live step by typing @handle <message> in the input box",
 					}),
 				),
 				skills: Type.Optional(
@@ -1015,7 +1015,10 @@ const teamCreateTool = defineTool({
 		objective: Type.String({ description: "The team's standing objective, given to every member" }),
 		members: Type.Array(
 			Type.Object({
-				name: Type.String({ description: "Member handle (unique in team)" }),
+				name: Type.String({
+					description:
+						"Member handle (unique in team); the operator can message the member by typing @name <text> in the input box",
+				}),
 				agent: Type.String({ description: "Role prompt: agent name from the roster" }),
 				model: Type.Optional(
 					Type.String({ description: "Override model (default glm-5.3-flash)" }),

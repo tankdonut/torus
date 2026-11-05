@@ -33,6 +33,7 @@
       "./extensions/monitor",
       "./extensions/fleet",
       "./extensions/team",
+      "./extensions/handles",
       "./extensions/notify",
       "./extensions/memory",
       "./extensions/goal",

@@ -504,6 +504,19 @@ Subcommands: `send <teamId> --as <name> --to <member> <text>` and `members <team
 
 `send` routes through `deliverMemberMail`, which refuses reserved senders (`lead`, `tasklist`), unknown members, self-sends, and empty text. The `members` subcommand emits one line per member with name and agent; an unknown team refuses. Default-off teams are unchanged: no sentence, byte-identical team spec.
 
+### `handles`
+
+The @-mention surface: handles become addresses in the main input box, not labels for fleet views.
+
+- **Hooks:** `input` intercepts a leading `@handle <message>` and routes it; `session_start` installs the editor completion provider and stashes the theme; a markdown transformer colors mentions in rendered prose
+- **Interactions:** registry (running delegations, team records), `team-runtime.ts` (`deliverMail`), `fleet/theme-kit.ts` (`entityColor`)
+
+Typing `@handle <message>` steers the named running delegation through the same registry control the fleet browser's `s` key uses; a run that cannot take input reports that instead of guessing. `@name <text>` to a team member appends to the member's inbox as `lead`, the same path `team_msg` uses, and the supervisor's inbox poll picks it up within seconds. The member's own registry record is never steered directly: a second prompt stream would race the supervisor's cycle, so the mailbox is the sanctioned path. A bare `@handle` prints the target's status line. A mention matching nothing falls through to the normal prompt, so `@path` file attachments keep working; a name matching several targets refuses and lists them.
+
+Tab completion: while the cursor sits in an `@token`, live targets are offered ahead of the built-in file suggestions in one merged menu. Each item carries its route (`steer` vs `mail`), the agent, and the run turn count or member status. Only handles address a run; a handleless delegation stays reachable through the fleet view alone.
+
+Rendered prose colors `@handle` tokens with the same per-entity palette as the strip and browser: assistant and user messages paint, thinking stays dim, and fenced code blocks and inline code stay plain. Colors come from the live target set plus a remembered-names cache, so a mention keeps its color after its run finishes.
+
 ### `notify`
 
 Transcript rendering of delegation lifecycle events.
@@ -682,7 +695,7 @@ The shared-modules consumer map lives in [docs/internals.md](internals.md).
 
 ## Child set
 
-Delegated children load: `mcp`, `comment-checker`, `hashline`, `vision`, `guards`, `astgrep`, `sessions`, `work` + the bundled packages below; `work` registers only `work_note` in children. Children get **no** roster/team/fleet/browser (they cannot recurse delegations), and worktree tools are additionally gated by `TORUS_ENGINE_CHILD`.
+Delegated children load: `mcp`, `comment-checker`, `hashline`, `vision`, `guards`, `astgrep`, `sessions`, `work` + the bundled packages below; `work` registers only `work_note` in children. Children get **no** roster/team/fleet/handles/browser (they cannot recurse delegations), and worktree tools are additionally gated by `TORUS_ENGINE_CHILD`.
 
 ## Bundled packages
 

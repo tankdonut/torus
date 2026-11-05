@@ -48,7 +48,7 @@ Meet the roster, delegate something small, and try a keyword gate:
 3. Say `team` in a message (or `deepwork`, `blueprint`). Keyword gates switch the session's execution mode.
 4. `/goal` to pin a standing objective; `/reflect` to distill the session into memory.
 
-Every delegation opens a tmux pane on the right, tailing what the agent does live. The statusline gains an entry per running child, and **alt+t** opens the fleet browser over every agent, where `s` steers one mid-run and `x` stops it. The agents, their model chains, and the delegation tools are documented in the [roster section](extensions.md#roster) of extensions.md.
+Every delegation opens a tmux pane on the right, tailing what the agent does live. The statusline gains an entry per running child, and **alt+t** opens the fleet browser over every agent, where `s` steers one mid-run and `x` stops it. Handles steer from the input box too: type `@handle <message>` (tab completes live handles next to file mentions) to steer a running delegation or queue mail for a team member. The agents, their model chains, and the delegation tools are documented in the [roster section](extensions.md#roster) of extensions.md.
 
 ## Permission modes
 
