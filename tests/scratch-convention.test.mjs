@@ -62,3 +62,27 @@ test("librarian references the canonical scratch variable", () => {
 		"agents/librarian.md must reference $TORUS_SCRATCH_DIR, the canonical per-project scratch root",
 	);
 });
+
+test("env convention is shared, not forked: roster owns it, team references it, leader carries it verbatim", async () => {
+	const { ENV_CONVENTION } = await import("../extensions/roster/index.ts");
+	const lines = ENV_CONVENTION.split("\n").filter((line) => line.length > 0);
+	assert.ok(lines.length >= 2, "the convention is a multi-line block");
+
+	const leader = readFileSync(path.join(root, "agents", "leader.md"), "utf8");
+	for (const line of lines) {
+		assert.ok(
+			leader.includes(line),
+			`agents/leader.md must carry every env-convention line verbatim (missing: ${line.slice(0, 40)}...)`,
+		);
+	}
+
+	const teamRuntime = readFileSync(path.join(root, "extensions", "team-runtime.ts"), "utf8");
+	assert.ok(
+		/\bENV_CONVENTION\b/.test(teamRuntime),
+		"team-runtime must reference the shared constant",
+	);
+	assert.ok(
+		!/^Env: \$TORUS_STATE_DIR/m.test(teamRuntime),
+		"team-runtime must not carry a forked copy of the env convention",
+	);
+});

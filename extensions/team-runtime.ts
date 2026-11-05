@@ -23,7 +23,7 @@ import { stripFrontmatter } from "./frontmatter.js";
 import { projectKey, projectStateDir, readJson, sleep, torusHome, writeJson } from "./fsutil.js";
 import { DEFAULT_MEMBER_MODEL } from "./providers/index.js";
 import { AGENT_NAME_RE, repoRoot } from "./registry.js";
-import { AGENTS, resolveModels } from "./roster/index.js";
+import { AGENTS, ENV_CONVENTION, resolveModels } from "./roster/index.js";
 import { RpcChild } from "./rpc.js";
 
 /**
@@ -561,8 +561,7 @@ YOUR CHANNELS (plain files — use read/write via your tools):
 - Shared tasklist (JSON; claim/complete your tasks by updating it via bash/read+write): ${tasksFile(teamId)} — when editing it, serialize with: flock ${tasksFile(teamId)} bash -c '<your read-edit-write>'
 - Other members' inboxes: ${mailRoot}/<member>/inbox.md — message them by appending a \`[FROM ${spec.name}] <iso-ts>\` header line followed by your text.
 
-Env: $TORUS_STATE_DIR is this project's torus state root (plans/, work/ ledgers, delegation logs); children inherit it pinned to the dispatching project; never hand-derive ~/.torus/state/--…-- keys, copy the $TORUS_STATE_DIR/… spelling tool output shows.
-Scratch: durable files (clones, artifacts that must survive a reboot) go under $TORUS_SCRATCH_DIR/<agent>/ (unique suffix for anything a sibling run might also create); ephemeral temp uses mktemp/$TMPDIR.
+${ENV_CONVENTION}
 
 PROTOCOL each cycle: finish current instruction, then read your inbox for new messages. Act on each message in order. Report outcomes by appending to your outbox (one block per report, with a timestamp line). Update the tasklist when you claim or complete work. Do not ask for permission to act within the objective — surface blockers in your outbox instead.
 </team-protocol>`;
