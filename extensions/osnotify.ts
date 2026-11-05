@@ -45,6 +45,17 @@ export interface MonitorToastInfo {
 
 export type MonitorToastKind = "failed" | "changed";
 
+export interface BgToastInfo {
+	name: string;
+	exit: number | null;
+	output: string;
+	durationMs: number;
+	stopped?: boolean;
+	timedOut?: boolean;
+}
+
+export type BgToastKind = "done" | "failed";
+
 export interface Toast {
 	summary: string;
 	body: string;
@@ -318,4 +329,34 @@ export async function notifyDelegation(
 
 export function notifyMonitor(kind: MonitorToastKind, info: MonitorToastInfo): void {
 	osNotify(monitorToast(kind, info)).catch(() => {});
+}
+
+export function bgToast(kind: BgToastKind, info: BgToastInfo): Toast {
+	const tail = previewLine(info.output, 120);
+	if (kind === "done") {
+		return {
+			summary: `torus bg ✓ ${info.name} exited 0 in ${formatDuration(info.durationMs)}`,
+			body: tail || "(no output)",
+			urgency: "normal",
+			expireMs: 8000,
+			transient: false,
+		};
+	}
+	const exit = info.exit === null ? "signal" : `exit ${info.exit}`;
+	const why = info.timedOut
+		? `timed out (${exit})`
+		: info.stopped
+			? `stopped (${exit})`
+			: `failed (${exit})`;
+	return {
+		summary: `torus bg ✗ ${info.name} ${why}`,
+		body: tail || "(no output)",
+		urgency: "critical",
+		expireMs: 0,
+		transient: false,
+	};
+}
+
+export function notifyBg(kind: BgToastKind, info: BgToastInfo): void {
+	osNotify(bgToast(kind, info)).catch(() => {});
 }

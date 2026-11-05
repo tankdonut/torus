@@ -197,6 +197,7 @@ test("configuration.md covers every registered config section and knob", () => {
 	const expected = [
 		"TORUS_APPROVAL/approval.enabled",
 		"TORUS_BANNER/ui.banner",
+		"TORUS_BG/monitor.bg",
 		"TORUS_CHILD_SESSIONS/roster.childSessions",
 		"TORUS_COMMENT_CHECKER/commentChecker.enabled",
 		"TORUS_DELEGATE_BACKGROUND/roster.delegateBackground",

@@ -409,17 +409,21 @@ Default root `~/.pi/agent/sessions`. Resume via pi's `/resume` or `pi --session-
 
 ### `monitor`
 
-Periodic command watcher: runs a shell command on an interval, hashes its output, and desktop-notifies + stops when the output changes or the command fails.
+Periodic command watcher and one-shot background commands: `torus_monitor` runs a shell command on an interval, hashes its output, and desktop-notifies + stops when the output changes or the command fails; `torus_bg` runs a command once to completion in the background and wakes the session when it exits.
 
 | Tool | Purpose |
 | --- | --- |
 | `torus_monitor` | Start a monitor (name, command, intervalSec ≥ 5, stopOn) |
 | `torus_monitor_stop` | Stop one monitor (name) |
+| `torus_bg` | Run a command once in the background (name, command, cwd, timeoutSec); the exit marker wakes the session |
+| `torus_bg_stop` | Stop one background task (name; SIGTERM, SIGKILL after 2s) |
 
 - **Hooks:** `session_shutdown`: stop all
-- **Env:** `TORUS_MONITOR=0` disables
+- **Env:** `TORUS_MONITOR=0` disables monitors, `TORUS_BG=0` background tasks
 
-Stops on `stopOn: change` (output hash changed) or `stopOn: fail` (command failed). History lands in `$TORUS_STATE_DIR/monitors/<name>.log`; at most 5 concurrent monitors (oldest evicted). When a monitor fires, a `torus.monitor-fired` transcript notification also lands in the session (name, reason, exit code, output tail; rendered like the fleet markers) and wakes the model through the wake gate: an idle session gets the marker straight away, a mid-run one holds it so the fire joins the single settle flush instead of trickling out of the follow-up queue one turn apiece. Waiting on a monitor therefore means ending the turn rather than waiting in it: the gate holds the marker while a run is active, so in-turn sleeping or re-polling can never observe the fire. The arm-time tool result and the tool description both steer the model there.
+Monitors stop on `stopOn: change` (output hash changed) or `stopOn: fail` (command failed); a check that runs longer than 30s is killed, so a monitor is a watcher, never a host. History lands in `$TORUS_STATE_DIR/monitors/<name>.log`; at most 5 concurrent monitors (oldest evicted). When a monitor fires, a `torus.monitor-fired` transcript notification also lands in the session (name, reason, exit code, output tail; rendered like the fleet markers) and wakes the model through the wake gate: an idle session gets the marker straight away, a mid-run one holds it so the fire joins the single settle flush instead of trickling out of the follow-up queue one turn apiece. Waiting on a monitor therefore means ending the turn rather than waiting in it: the gate holds the marker while a run is active, so in-turn sleeping or re-polling can never observe the fire. The arm-time tool result and the tool description both steer the model there.
+
+Background tasks are the long-running sibling: any duration (no 30s ceiling), `bash -c` under the engine, output appended to `$TORUS_STATE_DIR/bg/<name>.log`, and a `torus.bg-exit` marker on close (name, exit code, duration, tail) delivered through the same wake gate, plus a desktop toast. Optional `timeoutSec` SIGTERMs past the deadline and SIGKILLs 2s later; `torus_bg_stop` uses the same escalation and the wake reports the task as stopped. At most 5 tasks; a running name refuses re-use until it closes; tasks die with the session (the log survives). Use them instead of `nohup`/`&` in bash for anything the bash timeout would cut.
 
 ### `fleet`
 

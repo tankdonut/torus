@@ -2,18 +2,20 @@
  * torus — monitor.
  *
  * Watch a command's output on an interval; notify + log when it changes or
- * fails. Monitors live on globalThis (one map per process) and are cleaned
- * up on session shutdown. TORUS_MONITOR=0 disables.
+ * fails (torus_monitor). Run a command once in the background and wake the
+ * session when it exits (torus_bg). Both live on globalThis (one map per
+ * process) and are cleaned up on session shutdown. TORUS_MONITOR=0 disables
+ * monitors, TORUS_BG=0 background tasks.
  */
 
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { projectStateDir } from "../fsutil.js";
-import { notifyMonitor } from "../osnotify.js";
+import { formatDuration, notifyBg, notifyMonitor } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { queueWakeEntry } from "../wake-gate.js";
 
@@ -29,6 +31,9 @@ function toolDetails(d: Record<string, unknown>): Record<string, unknown> {
 const MIN_INTERVAL_SEC = 5;
 const MAX_MONITORS = 5;
 const CHECK_TIMEOUT_SEC = 30;
+const MAX_BG_TASKS = 5;
+const BG_KILL_GRACE_MS = 2_000;
+const BG_TAIL_CHARS = 4096;
 
 /** Per-project monitor log dir, resolved per check — a session can cd after load. */
 function monitorLogDir(): string {
@@ -188,6 +193,191 @@ export function stopMonitor(name: string): boolean {
 	return true;
 }
 
+/** Per-project bg log dir, resolved at spawn time — a session can cd after load. */
+function bgLogDir(): string {
+	return path.join(projectStateDir(), "bg");
+}
+
+export interface BgStart {
+	name: string;
+	command: string;
+	cwd?: string;
+	timeoutSec?: number;
+}
+
+interface BgEntry {
+	name: string;
+	command: string;
+	child: ChildProcess;
+	startedAt: number;
+	logFile: string;
+	/** Rolling in-memory tail; the log file keeps everything. */
+	tail: string;
+	stopped: boolean;
+	timedOut: boolean;
+	timeoutTimer: ReturnType<typeof setTimeout> | null;
+	killTimer: ReturnType<typeof setTimeout> | null;
+	closePromise: Promise<void>;
+}
+
+const BG_KEY = Symbol.for("torus.bg.v1");
+
+function bgTasks(): Map<string, BgEntry> {
+	const existing = (globalThis as Record<symbol, unknown>)[BG_KEY] as
+		| Map<string, BgEntry>
+		| undefined;
+	if (existing) return existing;
+	const created = new Map<string, BgEntry>();
+	(globalThis as Record<symbol, unknown>)[BG_KEY] = created;
+	return created;
+}
+
+export function validateBgName(name: string): string | null {
+	if (!/^[a-z0-9-]{1,24}$/.test(name)) return "name must be 1-24 chars of [a-z0-9-]";
+	return null;
+}
+
+/** Exit path shared by every outcome (exit, stop, timeout): log line, wake marker, toast. */
+function emitBgExit(entry: BgEntry, code: number | null, signal: string | null): void {
+	const durationMs = Date.now() - entry.startedAt;
+	const reason = entry.timedOut ? "timed out" : entry.stopped ? "stopped" : "exited";
+	const flat = entry.tail.trim().replace(/\s+/g, " ").slice(-200);
+	appendFileSync(
+		entry.logFile,
+		`[${new Date().toISOString()}] exit code=${code} signal=${signal} ${reason} in ${durationMs}ms\n`,
+	);
+	const codeText = code !== null ? `exit ${code}` : `signal ${signal ?? "unknown"}`;
+	queueWakeEntry({
+		customType: "torus.bg-exit",
+		text: `bg "${entry.name}" ${reason} (${codeText}) in ${formatDuration(durationMs)}${flat.length > 0 ? `: ${flat}` : ""} — log: ${entry.logFile}`,
+		details: {
+			name: entry.name,
+			code,
+			signal,
+			durationMs,
+			reason,
+			stopped: entry.stopped,
+			timedOut: entry.timedOut,
+			tail: flat,
+		},
+	});
+	notifyBg(code === 0 && !entry.stopped && !entry.timedOut ? "done" : "failed", {
+		name: entry.name,
+		exit: code,
+		output: entry.tail,
+		durationMs,
+		stopped: entry.stopped,
+		timedOut: entry.timedOut,
+	});
+}
+
+/** SIGTERM now, SIGKILL after the grace window; both timers die with the child. */
+function killBg(entry: BgEntry): void {
+	entry.stopped = true;
+	if (entry.killTimer !== null) return;
+	entry.child.kill("SIGTERM");
+	entry.killTimer = setTimeout(() => entry.child.kill("SIGKILL"), BG_KILL_GRACE_MS);
+	entry.killTimer.unref();
+}
+
+/**
+ * Spawn one background task: `bash -c command` with stdio appended to the
+ * per-project bg log. Resolves when the child is spawned and registered; the
+ * exit wake fires asynchronously on close. Tests await pendingBgTasks().
+ */
+export function startBgTask(
+	spec: BgStart,
+): { ok: true; pid: number | undefined; logFile: string } | { ok: false; error: string } {
+	const invalid = validateBgName(spec.name);
+	if (invalid) return { ok: false, error: invalid };
+	if (bgTasks().has(spec.name)) {
+		return {
+			ok: false,
+			error: `a bg task named "${spec.name}" is still running — torus_bg_stop it first`,
+		};
+	}
+	if (bgTasks().size >= MAX_BG_TASKS) {
+		return {
+			ok: false,
+			error: `bg task cap reached (${MAX_BG_TASKS}): ${[...bgTasks().keys()].join(", ")} — stop one first`,
+		};
+	}
+	const logDir = bgLogDir();
+	mkdirSync(logDir, { recursive: true });
+	const logFile = path.join(logDir, `${spec.name}.log`);
+	const child = spawn("bash", ["-c", spec.command], {
+		cwd: spec.cwd,
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	let resolveClosed: () => void = () => {};
+	const closePromise = new Promise<void>((resolve) => {
+		resolveClosed = resolve;
+	});
+	const entry: BgEntry = {
+		name: spec.name,
+		command: spec.command,
+		child,
+		startedAt: Date.now(),
+		logFile,
+		tail: "",
+		stopped: false,
+		timedOut: false,
+		timeoutTimer: null,
+		killTimer: null,
+		closePromise,
+	};
+	appendFileSync(
+		logFile,
+		`\n[${new Date().toISOString()}] start pid=${child.pid}: ${spec.command}\n`,
+	);
+	let settled = false;
+	const finish = (code: number | null, signal: string | null) => {
+		if (settled) return;
+		settled = true;
+		if (entry.timeoutTimer !== null) clearTimeout(entry.timeoutTimer);
+		if (entry.killTimer !== null) clearTimeout(entry.killTimer);
+		// The entry holds its name until close, so a successor cannot exist.
+		bgTasks().delete(spec.name);
+		emitBgExit(entry, code, signal);
+		resolveClosed();
+	};
+	child.stdout?.setEncoding("utf8");
+	child.stderr?.setEncoding("utf8");
+	const onChunk = (chunk: string) => {
+		appendFileSync(logFile, chunk);
+		entry.tail = (entry.tail + chunk).slice(-BG_TAIL_CHARS);
+	};
+	child.stdout?.on("data", onChunk);
+	child.stderr?.on("data", onChunk);
+	child.on("error", (err: Error) => {
+		appendFileSync(logFile, `\n[${new Date().toISOString()}] spawn error: ${err.message}\n`);
+		finish(null, null);
+	});
+	child.on("close", (code, signal) => finish(code, signal));
+	if (spec.timeoutSec !== undefined) {
+		entry.timeoutTimer = setTimeout(() => {
+			entry.timedOut = true;
+			killBg(entry);
+		}, spec.timeoutSec * 1000);
+		entry.timeoutTimer.unref();
+	}
+	bgTasks().set(spec.name, entry);
+	return { ok: true, pid: child.pid, logFile };
+}
+
+/** Stop one task by name; the entry lives until close delivers its exit wake. */
+export function stopBgTask(name: string): "stopped" | "missing" {
+	const entry = bgTasks().get(name);
+	if (!entry) return "missing";
+	killBg(entry);
+	return "stopped";
+}
+
+/** Resolve once every running task has closed; test hook. */
+export async function pendingBgTasks(): Promise<void> {
+	await Promise.all([...bgTasks().values()].map((entry) => entry.closePromise));
+}
+
 const monitorTool = defineTool({
 	name: "torus_monitor",
 	label: "Torus Monitor",
@@ -277,11 +467,83 @@ const monitorStopTool = defineTool({
 	},
 });
 
+const bgTool = defineTool({
+	name: "torus_bg",
+	label: "Torus Background Task",
+	description:
+		"Run a shell command once in the background and wake the session when it exits: the exit marker carries the exit code, duration, and an output tail, held by the wake gate while a run is active. Output logs to $TORUS_STATE_DIR/bg/<name>.log. Outlives the turn (no nohup needed), dies with the session. Use for long builds, test suites, image bakes — anything the bash timeout would cut; torus_monitor is the sibling for watching a command on an interval. To wait on the outcome, end the turn rather than polling in-turn.",
+	parameters: Type.Object({
+		name: Type.String({ description: "Short task name ([a-z0-9-])" }),
+		command: Type.String({ description: "Shell command to run once, to completion" }),
+		cwd: Type.Optional(Type.String({ description: "Working directory (default: current)" })),
+		timeoutSec: Type.Optional(
+			Type.Number({
+				minimum: 1,
+				maximum: 86_400,
+				description: "Kill past this (SIGTERM, SIGKILL after 2s); the wake reports a timeout",
+			}),
+		),
+	}),
+	async execute(_toolCallId, params) {
+		if (!knobBoolean("TORUS_BG", "monitor", "bg", true, parseZeroDisables)) {
+			return {
+				content: [{ type: "text", text: "background tasks disabled (TORUS_BG=0)" }],
+				details: toolDetails({ error: "disabled" }),
+				isError: true,
+			};
+		}
+		const started = startBgTask(params);
+		if (!started.ok) {
+			return {
+				content: [{ type: "text", text: started.error }],
+				details: toolDetails({ error: "invalid" }),
+				isError: true,
+			};
+		}
+		return {
+			content: [
+				{
+					type: "text",
+					text: `bg "${params.name}" started (pid ${started.pid ?? "?"}) — log: ${started.logFile}; wakes the session when it exits; end the turn rather than polling: the wake gate holds the exit marker while a run is active`,
+				},
+			],
+			details: toolDetails({ name: params.name, pid: started.pid, logFile: started.logFile }),
+		};
+	},
+});
+
+const bgStopTool = defineTool({
+	name: "torus_bg_stop",
+	label: "Torus Background Task Stop",
+	description:
+		"Stop a running background task by name (SIGTERM, SIGKILL after 2s); its exit marker reports it as stopped",
+	parameters: Type.Object({ name: Type.String() }),
+	async execute(_toolCallId, params) {
+		const outcome = stopBgTask(params.name);
+		return {
+			content: [
+				{
+					type: "text",
+					text:
+						outcome === "stopped"
+							? `bg "${params.name}" stopping (SIGTERM, SIGKILL after 2s) — its exit marker reports it as stopped`
+							: `no bg task named "${params.name}" — finished tasks are gone; the log keeps their output`,
+				},
+			],
+			details: toolDetails({ outcome }),
+			isError: outcome === "missing",
+		};
+	},
+});
+
 export function registerMonitor(pi: ExtensionAPI): void {
 	pi.registerTool(monitorTool);
 	pi.registerTool(monitorStopTool);
+	pi.registerTool(bgTool);
+	pi.registerTool(bgStopTool);
 	pi.on("session_shutdown", () => {
 		for (const name of [...monitors().keys()]) stopMonitor(name);
+		for (const entry of [...bgTasks().values()]) killBg(entry);
 	});
 }
 

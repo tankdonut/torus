@@ -94,6 +94,40 @@ test("monitorToast carries exit status and output tail", () => {
 	assert.equal(changed.transient, false);
 });
 
+test("bgToast carries outcome, duration, and escalation reason", () => {
+	const done = osnotify.bgToast("done", {
+		name: "image",
+		exit: 0,
+		output: "built in 4m",
+		durationMs: 252_000,
+	});
+	assert.equal(done.summary, "torus bg ✓ image exited 0 in 4m 12s");
+	assert.equal(done.body, "built in 4m");
+	assert.equal(done.urgency, "normal");
+	assert.equal(done.expireMs, 8000);
+
+	const timedOut = osnotify.bgToast("failed", {
+		name: "bake",
+		exit: null,
+		output: "",
+		durationMs: 60_000,
+		timedOut: true,
+	});
+	assert.equal(timedOut.summary, "torus bg ✗ bake timed out (signal)");
+	assert.equal(timedOut.body, "(no output)");
+	assert.equal(timedOut.urgency, "critical");
+	assert.equal(timedOut.expireMs, 0);
+
+	const stopped = osnotify.bgToast("failed", {
+		name: "build",
+		exit: 143,
+		output: "ok",
+		durationMs: 5_000,
+		stopped: true,
+	});
+	assert.equal(stopped.summary, "torus bg ✗ build stopped (exit 143)");
+});
+
 test("toastArgs groups under the torus desktop entry and chains replacements", () => {
 	const args = osnotify.toastArgs(osnotify.delegationToast("done", INFO, 1_134_000), 42, true);
 	assert.deepEqual(args.slice(0, 8), [

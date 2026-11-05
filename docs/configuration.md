@@ -56,6 +56,7 @@ Rows carrying a config key also read that key from the [unified config](#the-uni
 | `TORUS_HASHLINE=0` / `TORUS_FMT_CMD` | hashline | Disable anchoring / post-edit formatter command (config: `hashline.enabled` / `hashline.fmtCmd`) |
 | `TORUS_INTERACTIVE=0` | interactive | Disable `interactive_bash` overlay (config: `interactive.enabled`) |
 | `TORUS_MONITOR=0` | monitor | Disable monitors (config: `monitor.enabled`) |
+| `TORUS_BG=0` | monitor | Disable background tasks (config: `monitor.bg`) |
 | `TORUS_STATUSLINE_COST=0` | ui | Disable the session-cost statusline chip (config: `ui.statuslineCost`) |
 | `TORUS_BANNER=0` | ui | Keep pi's built-in startup header instead of the torus banner (config: `ui.banner`) |
 | `TORUS_TITLE_MODEL=provider/model` | session-title | Override the session-title generator model (default: the authed fast default, then the session model; config: `sessionTitle.titleModel`) |
