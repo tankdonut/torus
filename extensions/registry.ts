@@ -755,7 +755,16 @@ export async function startDelegation(
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	// chmod covers a pre-existing directory created with wider perms
 	chmodSync(dir, 0o700);
-	const logFile = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}-${agent}.log`);
+	// The full id makes the name unique by construction: two same-agent
+	// delegations spawned in one fanout tick share a millisecond but never an
+	// id, so logs never interleave and result text read back from a log is
+	// always this run's own final message. The timestamp stays first so
+	// rehydrateFromLogs' reverse sort by recency keeps working; the id is
+	// stripped to filename-safe characters.
+	const logFile = path.join(
+		dir,
+		`${new Date().toISOString().replace(/[:.]/g, "-")}-${id.replace(/[^a-zA-Z0-9_-]/g, "")}-${agent}.log`,
+	);
 	// delegation logs capture tool args — enforce owner-only from birth
 	appendFileSync(logFile, "");
 	chmodSync(logFile, 0o600);

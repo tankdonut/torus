@@ -34,6 +34,42 @@ test("delegation log surface: project dir 0700, log file 0600, steer text redact
 	await registry.finishDelegation(id, true, "done");
 });
 
+test("delegation log names are unique per run: same agent, same millisecond, distinct ids never share a file", async () => {
+	const stamp = `uniq-${Date.now()}`;
+	const first = await registry.startDelegation(
+		`${stamp}-aaaaaaaa`,
+		"tester",
+		"some-model",
+		null,
+		null,
+	);
+	const second = await registry.startDelegation(
+		`${stamp}-bbbbbbbb`,
+		"tester",
+		"some-model",
+		null,
+		null,
+	);
+	const firstBase = path.basename(first.logFile);
+	const secondBase = path.basename(second.logFile);
+	assert.notEqual(
+		first.logFile,
+		second.logFile,
+		"two same-agent runs in the same millisecond must not share a log file",
+	);
+	assert.ok(
+		firstBase.includes(`${stamp}-aaaaaaaa`.slice(0, 8)) &&
+			secondBase.includes(`${stamp}-bbbbbbbb`.slice(0, 8)),
+		"log name must embed the delegation id fragment, making uniqueness hold by construction",
+	);
+	assert.ok(
+		/^\d{4}-\d{2}-\d{2}T/.test(firstBase),
+		"timestamp stays first so rehydrate's reverse sort by recency keeps working",
+	);
+	await registry.finishDelegation(first.id, true, "done");
+	await registry.finishDelegation(second.id, true, "done");
+});
+
 test("startDelegation(cwd) logs into the dispatching project's state dir and tags record + beacon with the child cwd key", async () => {
 	const otherCwd = path.join(HOME, "worktree", "other");
 	const key = projectKeyFor(otherCwd);
