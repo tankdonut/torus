@@ -343,12 +343,25 @@ test("strip: one line — count chip, entity segments with slot numbers, +N over
 		assert.equal(lines.length, 1, "the strip is a single line");
 		const line = lines[0];
 		assert.match(line, /fleet 2/, "count chip carries every running entity");
-		assert.match(line, /1 [·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] @scout/, "delegation segment is slot-numbered");
+		assert.match(line, /1 · @scout idle/, "idle member rests on the dim dot and shows idle");
+		assert.doesNotMatch(line, /@scout \d/, "idle member shows no ticking age");
 		assert.match(line, /[·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] @solo/, "external segment carries no slot number");
-		assert.match(line, /@scout 0s/, "segments show run age");
+		assert.match(line, /@solo 0s/, "plain external segments show run age");
 		assert.doesNotMatch(line, /⧉/, "team badge lives in the browser, not the strip");
 		assert.doesNotMatch(line, /glm/, "model lives in the browser, not the strip");
-		assert.doesNotMatch(line, /idle/, "idle rests on the dim dot instead of a word");
+
+		// Back to work: the clock must resume from the banked active time, not
+		// restart at 0s or continue the wall clock since spawn.
+		registry.updateExternalRun(memberId, {
+			memberStatus: "working",
+			activeSeconds: 90,
+			activeUpdatedAt: Date.now(),
+		});
+		assert.match(
+			strip.render(200)[0],
+			/@scout 1m 3\ds/,
+			"working member's age resumes from banked active time",
+		);
 	} finally {
 		strip.dispose();
 	}

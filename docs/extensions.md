@@ -435,7 +435,7 @@ No tools or commands.
 - **Hooks:** `session_start`: install the `torus-fleet` widget
 - **Interactions:** `registry.ts` + `fleet/theme-kit.ts` (shared presentation kit also used by browser, notify, roster); opens the browser overlay via the shared `FLEET_OPENER` slot (the same path notify's clickable transcript lines use)
 
-Segments are ordered oldest-delegation-first and their numbers match the `alt+N` shortcuts; idle team members rest on a dim dot. Every chip is click-routed in the footer-button style (hover-bolds, accent for the count chip and all-hint): a segment opens that run's detail, the count chip, `+N`, and `alt+t all` open the fleet list. Clicks land only under fullscreen TUI mode: pi's regular inline mode enables no mouse reporting at all. Up to 4 segments fit before the rest fold into `+N`.
+Segments are ordered oldest-delegation-first and their numbers match the `alt+N` shortcuts; idle team members rest on a dim dot and show `idle` in place of their age, which counts active time only, so the clock pauses over idle spells. Every chip is click-routed in the footer-button style (hover-bolds, accent for the count chip and all-hint): a segment opens that run's detail, the count chip, `+N`, and `alt+t all` open the fleet list. Clicks land only under fullscreen TUI mode: pi's regular inline mode enables no mouse reporting at all. Up to 4 segments fit before the rest fold into `+N`.
 
 ### `team`
 

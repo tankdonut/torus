@@ -9,6 +9,7 @@ import {
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	type DelegationRecord,
+	type ExternalRun,
 	externalRunAgeSeconds,
 	FLEET_OPENER,
 	listDelegations,
@@ -65,6 +66,16 @@ function stableRunning(): DelegationRecord[] {
 		.sort((a, b) => a.startedAt - b.startedAt);
 }
 
+/**
+ * A segment's age slot: `idle` while a member rests, else the run's age —
+ * banked active time for runs the registry tracks (so the clock pauses over
+ * idle spells), wall clock for plain delegations.
+ */
+function segmentAge(run: ExternalRun | undefined, startedAt: number): string {
+	if (run?.memberStatus === "idle") return "idle";
+	return formatDuration(run ? externalRunAgeSeconds(run) * 1000 : Date.now() - startedAt);
+}
+
 /** One clickable piece of the strip line: styled text plus what a click opens. */
 interface StripSegment {
 	text: string;
@@ -76,9 +87,11 @@ interface StripSegment {
  * The fleet strip as a single pinned line above the input box: an accent
  * `fleet N` count chip, then one compact segment per running entity (slot
  * number, spinner, entity-colored name, age), then a `+N` overflow chip and
- * the accent `alt+t all` affordance. Every chip is click-routed like the
- * browser footer buttons: a segment opens that run's detail, the rest open
- * the list. Detail (model, tokens, cost) lives in the fleet browser.
+ * the accent `alt+t all` affordance. An idle team member rests on a dim dot
+ * and shows `idle` in place of its age, which counts active time only. Every
+ * chip is click-routed like the browser footer buttons: a segment opens that
+ * run's detail, the rest open the list. Detail (model, tokens, cost) lives in
+ * the fleet browser.
  */
 class FleetStrip implements Component {
 	private tui: TUI;
@@ -145,17 +158,18 @@ class FleetStrip implements Component {
 		const byId = new Map(listExternalRuns().map((r) => [r.id, r] as const));
 		const candidates: StripSegment[] = [];
 		for (const [index, record] of running.entries()) {
+			const run = byId.get(record.id);
 			const name = record.handle
 				? `@${sanitizeRender(record.handle)}`
 				: sanitizeRender(record.agent);
 			candidates.push({
 				text:
 					this.theme.fg("dim", `${index + 1} `) +
-					delegationIcon(this.theme, record.status, byId.get(record.id), this.tick) +
+					delegationIcon(this.theme, record.status, run, this.tick) +
 					" " +
 					this.theme.fg(entityColor(record.handle ?? record.agent), name) +
 					" " +
-					this.theme.fg("dim", formatDuration(Date.now() - record.startedAt)),
+					this.theme.fg("dim", segmentAge(run, record.startedAt)),
 				id: record.id,
 			});
 		}
@@ -167,7 +181,7 @@ class FleetStrip implements Component {
 					" " +
 					this.theme.fg(entityColor(run.handle ?? run.label), name) +
 					" " +
-					this.theme.fg("dim", formatDuration(externalRunAgeSeconds(run) * 1000)),
+					this.theme.fg("dim", segmentAge(run, run.startedAt)),
 				id: run.id,
 			});
 		}
