@@ -8,6 +8,7 @@
 | Build (regenerates stats, copies docs assets) | `npm run site:build` |
 | Regenerate TUI captures (live session, ~cents) | `npm run -w site capture` |
 | Regenerate repo stats only | `node site/scripts/repo-stats.mjs` |
+| Screenshot audit set (both themes × 5 widths) | `node scripts/shots.mjs <outDir> [urls...]` (site workspace; needs `npm run preview -w site` on a port, uses system chromium via `CHROME_BIN`) |
 | Preview built site | `npm run preview -w site` |
 
 ## Layout
@@ -31,4 +32,5 @@
 - The site speaks the TUI's own visual language: mono is the machine voice (wordmark, section labels, stats, commands, captures), sans the explainer's; accent hues and the dark theme's ground come from the committed captures' palette. Captures render with terminal semantics: square frames, no window chrome, lines never wrap (overflow scrolls horizontally under a themed scrollbar), and the head row carries the geometry from `captures.json`.
 - The landing's engine-pin line reads `package.json` `devDependencies` at build time and fails the build if the pin is missing; version strings on pages are never retyped by hand.
 - The pages workflow deploys `site/dist` on every main push and checks out with `fetch-depth: 0` because the build derives stats from git history (`.github/workflows/pages.yml`).
+- Preview must honor the `/torus` base (`npm run preview -w site`, or `npx astro preview`): serving `dist/` at a host root 404s every `/torus/_astro/...` asset, and screenshot or DOM checks against it audit an unstyled page. `astro preview` binds IPv6 loopback (`localhost`, not `127.0.0.1`).
 - Root biome covers `site/src` and `site/scripts` (tabs, double quotes); root `tsc` does not type the site.
