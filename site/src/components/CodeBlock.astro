@@ -20,13 +20,11 @@ const payload = lines.map((line) => line.replace(/^\$\s+/, "")).join("\n");
 
 <figure class="codeblock">
 	<div class="frame">
-		<div class="head" aria-hidden="true">
+		<div class="head">
 			<span class="head-title">{title ?? "shell"}</span>
-		</div>
-		<div class="rows">
-			<pre><code>{lines.map((line, index) => `${index > 0 ? "\n" : ""}${line}`)}</code></pre>
 			<button class="copy" type="button" data-copy={payload}>copy</button>
 		</div>
+		<pre><code>{lines.map((line, index) => `${index > 0 ? "\n" : ""}${line}`)}</code></pre>
 	</div>
 </figure>
 
@@ -40,6 +38,7 @@ const payload = lines.map((line) => line.replace(/^\$\s+/, "")).join("\n");
 	.head {
 		display: flex;
 		align-items: center;
+		gap: calc(var(--spacing) * 3);
 		padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
 		border-bottom: 1px solid var(--color-border);
 	}
@@ -50,16 +49,8 @@ const payload = lines.map((line) => line.replace(/^\$\s+/, "")).join("\n");
 		color: var(--color-muted);
 	}
 
-	.rows {
-		display: flex;
-		align-items: baseline;
-		gap: calc(var(--spacing) * 3);
-	}
-
 	.copy {
-		flex: none;
-		align-self: center;
-		margin: calc(var(--spacing) * 2) calc(var(--spacing) * 3) calc(var(--spacing) * 2) auto;
+		margin-left: auto;
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		color: var(--color-text);
@@ -79,25 +70,29 @@ const payload = lines.map((line) => line.replace(/^\$\s+/, "")).join("\n");
 		border-color: color-mix(in srgb, var(--color-green) 45%, transparent);
 	}
 
-	.rows pre {
+	.frame pre {
 		margin: 0;
-		flex: 1;
-		min-width: 0;
 		padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
 		font-family: var(--font-mono);
 		font-size: var(--text-small);
 		line-height: 1.6;
 		background: var(--color-surface);
 		border: none;
-		/* Commands wrap rather than clip: the hero install line is longer than
-	 * its column at every breakpoint below desktop. */
+		/* The pre owns the full frame width (the copy chip lives in the
+		 * head row), so a long token fits whole instead of splitting
+		 * beside a flex sibling. Commands wrap rather than clip below
+		 * desktop; break-word wraps at spaces first and splits a token
+		 * only when it alone exceeds the line. */
 		white-space: pre-wrap;
-		overflow-wrap: anywhere;
+		overflow-wrap: break-word;
 	}
 
 	@media (width <= 40rem) {
-		.rows pre {
+		.frame pre {
 			padding-inline: calc(var(--spacing) * 3);
+			/* One step down keeps the longest install token (39ch) whole on a
+			 * 390px screen instead of splitting it. */
+			font-size: 0.8125rem;
 		}
 	}
 </style>

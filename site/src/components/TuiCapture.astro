@@ -181,14 +181,24 @@ const rendered = lines
 	}
 
 	/* Dark theme: the capture ground equals the page ground, so the frame needs
-	 * a visible edge and a lighter head panel to read as an object. */
+	 * a visible edge and a lighter head panel to read as an object. Keyed off
+	 * both the system preference and the visitor's pinned theme, like the
+	 * page tokens in global.css (a pinned dark theme must not lose the edge). */
 	@media (prefers-color-scheme: dark) {
-		.frame {
+		:global(html:not([data-theme="light"])) .frame {
 			border-color: #343444;
 		}
 
-		.head {
+		:global(html:not([data-theme="light"])) .head {
 			background: #1a1a22;
 		}
+	}
+
+	:global(html[data-theme="dark"]) .frame {
+		border-color: #343444;
+	}
+
+	:global(html[data-theme="dark"]) .head {
+		background: #1a1a22;
 	}
 </style>

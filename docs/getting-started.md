@@ -32,7 +32,7 @@ docker run --rm -it -v "$PWD:/workspace" ghcr.io/tankdonut/torus
 
 ```sh
 git clone https://github.com/tankdonut/torus.git && cd torus
-./make.sh npmrc      # one-time: writes the dev-only .npmrc (agents are blocked from writing it; it never ships)
+./make.sh npmrc      # one-time: dev-only .npmrc (agents are blocked; it never ships)
 npm install
 ./runtime/bin/torus.mjs
 ```

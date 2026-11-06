@@ -68,4 +68,13 @@ const segments = [
 	.label {
 		color: var(--color-muted);
 	}
+
+	/* Once the strip wraps, the joining dots stop joining: a line that starts
+	 * with "· " reads as an orphan, so narrow screens drop the separators and
+	 * let the segments stack as plain facts. */
+	@media (width <= 30rem) {
+		.fact + .fact::before {
+			content: none;
+		}
+	}
 </style>

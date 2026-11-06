@@ -108,10 +108,17 @@ a {
 	text-decoration: underline;
 	text-decoration-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
 	text-underline-offset: 0.2em;
+	/* Feedback motion: the underline draws (color deepens, offset rises) on
+	 hover; entrances own the heavier transforms. */
+	transition:
+		color 0.15s ease,
+		text-decoration-color 0.15s ease,
+		text-underline-offset 0.15s ease;
 }
 
 a:hover {
 	text-decoration-color: currentColor;
+	text-underline-offset: 0.25em;
 }
 
 header a,
@@ -299,6 +306,8 @@ code {
 	font-size: 0.875em;
 	background: var(--color-surface);
 	padding: 0.1em 0.35em;
+	/* A chip is a token: it wraps as a unit, never mid-token at a hyphen. */
+	white-space: nowrap;
 }
 
 pre {
@@ -313,6 +322,9 @@ pre code {
 	background: none;
 	padding: 0;
 	font-size: inherit;
+	/* Fences keep the pre's line semantics; the chip rule above is for
+	 * inline code only. */
+	white-space: inherit;
 }
 
 /* Markdown fences (rehype plugin in lib/code-copy.mjs) carry the same copy

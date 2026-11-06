@@ -8,7 +8,7 @@ const entries = await getCollection("docs");
 
 const listing: { id: string; description: string }[] = [
 	{ id: "docs/getting-started.md", description: "Install torus, run your first session, and delegate your first task: the four install paths and the permission model." },
-	{ id: "docs/configuration.md", description: "Every user-facing knob in one place: config.json sections, environment variables, file policy, and the inspectors that show what's effective." },
+	{ id: "docs/configuration.md", description: "Every user-facing knob in one place: config.json sections, environment variables, file policy, and the inspectors that show what’s effective." },
 	{ id: "docs/extensions.md", description: "Every extension, tool, slash command, and environment variable in the harness, cataloged by manifest entry." },
 	{ id: "docs/writing-agents.md", description: "Authoring roster agents: frontmatter schema, prompt markers, body skeleton, and the checklist for adding one." },
 	{ id: "docs/skills.md", description: "The Agent Skills standard the skills directory follows, and how skills reach delegated children." },
@@ -53,6 +53,10 @@ const rows = listing.flatMap(({ id, description }) => {
 		list-style: none;
 		margin: 0;
 		padding: 0;
+		/* The wide container is for code and tables; prose ink keeps the
+		 * 45-75ch band (~560px at the description font; 68ch here would
+		 * resolve against the larger body font and land ~90ch). */
+		max-width: 35rem;
 	}
 	.docs-index li {
 		padding: 1rem 0;
