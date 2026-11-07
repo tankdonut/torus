@@ -69,6 +69,7 @@ import {
 	updateDelegation,
 } from "../registry.js";
 import { RpcChild } from "../rpc.js";
+import { findSessionFile } from "../sessions/index.js";
 import { queueWakeEntry, wakeGateAgentSettled, wakeGateAgentStart } from "../wake-gate.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
@@ -773,6 +774,95 @@ export interface BackgroundRunDescriptor {
 	start: () => Promise<DelegationOutcome>;
 }
 
+/**
+ * Delegation ids this module instance is driving, filled at spawn. A /reload
+ * replaces the roster module instance, and with it every run's driving
+ * closure — from the new instance's view all running records are undriven,
+ * which is what the reconciler below keys on. Finished records never consult
+ * the set (their status already excludes them), so ids need no removal.
+ */
+const drivenDelegations = new Set<string>();
+
+/** Test accessor for the driven set. */
+export function _drivenDelegationsForTesting(): Set<string> {
+	return drivenDelegations;
+}
+
+/**
+ * Fold one child session transcript into a tally through the shared engine
+ * reducer. Returns null when the transcript is missing or unreadable.
+ */
+function childTranscriptTally(sessionId: string): EngineTally | null {
+	const file = findSessionFile(sessionId);
+	if (file === null) return null;
+	let raw: string;
+	try {
+		raw = readFileSync(file, "utf8");
+	} catch {
+		return null;
+	}
+	const tally: EngineTally = {
+		turns: 0,
+		tokensIn: 0,
+		tokensOut: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: 0,
+		text: "",
+	};
+	for (const line of raw.split("\n")) {
+		if (line === "") continue;
+		let entry: { type?: string; message?: unknown };
+		try {
+			entry = JSON.parse(line) as { type?: string; message?: unknown };
+		} catch {
+			continue;
+		}
+		if (entry.type !== "message") continue;
+		reduceEngineEvent({ type: "message_end", message: entry.message }, tally);
+	}
+	return tally;
+}
+
+/**
+ * Reconcile running records this instance does not drive — after a /reload
+ * their spawn-time closure is gone, so nothing updates them and their spend
+ * would never fold. Reparses each child's session transcript (the
+ * authoritative usage record) and pushes an absolute snapshot through
+ * updateDelegation; snapshots are absolute, so the fold is idempotent, and a
+ * no-change pass skips updateDelegation entirely to keep duplicate turn
+ * lines out of the delegation log. Runs at session_start and turn_start: an
+ * idle background run's final cost lands on the next interaction boundary.
+ * Records stay running — finishing them needs the child's pid, which the
+ * record does not carry (a separate gap).
+ */
+export function reconcileOrphanedDelegations(): void {
+	for (const record of listDelegations()) {
+		if (record.status !== "running" || drivenDelegations.has(record.id)) continue;
+		if (record.sessionId === null) continue;
+		const tally = childTranscriptTally(record.sessionId);
+		if (tally === null) continue;
+		if (
+			record.turns === tally.turns &&
+			record.tokensIn === tally.tokensIn &&
+			record.tokensOut === tally.tokensOut &&
+			record.cost === tally.cost
+		)
+			continue;
+		updateDelegation(record.id, {
+			text: tally.text,
+			turns: tally.turns,
+			usage: {
+				input: tally.tokensIn,
+				output: tally.tokensOut,
+				cacheRead: tally.cacheRead,
+				cacheWrite: tally.cacheWrite,
+				cost: tally.cost,
+			},
+		});
+	}
+}
+
 /** Summary cap for a completion wake: the marker is context, torus_results carries the full tail. */
 const BACKGROUND_SUMMARY_CAP = 4000;
 
@@ -869,6 +959,7 @@ async function runAcpDelegation(
 	const delegationId = randomUUID();
 	const modelLabel = `acp/${agentName}`;
 	await startDelegation(delegationId, agentName, modelLabel, parentSession, handle);
+	drivenDelegations.add(delegationId);
 	const announcement = announceText(announce, task);
 	if (announcement !== null) {
 		emitTorusCustom(
@@ -1098,6 +1189,7 @@ export async function runDelegation(
 	const dir = await mkdtemp(path.join(tmpdir(), `torus-${agent.name}-`));
 	const delegationId = randomUUID();
 	await startDelegation(delegationId, agent.name, firstModel, parentSession, handle, workingDir);
+	drivenDelegations.add(delegationId);
 	// Batch callers (fan-out, teams) pass announce=false and emit one combined
 	// marker instead of N per-run events staggering across turn boundaries.
 	const announcement = announceText(announce, task);
@@ -1754,6 +1846,7 @@ export function registerRoster(pi: ExtensionAPI): void {
 		const sessionId = ctx.sessionManager.getSessionId();
 		setCurrentSession(sessionId);
 		rehydrateFromLogs(sessionId);
+		reconcileOrphanedDelegations();
 		// Stale-scratch sweep is best-effort — it must never break session start.
 		try {
 			const retentionDays = knobNumber(
@@ -1774,6 +1867,10 @@ export function registerRoster(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", () => {
 		void registryShutdown();
+	});
+
+	pi.on("turn_start", () => {
+		reconcileOrphanedDelegations();
 	});
 
 	pi.registerCommand("roster", {

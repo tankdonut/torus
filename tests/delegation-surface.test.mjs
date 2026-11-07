@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -181,6 +181,7 @@ writeFileSync(
 chmodSync(HANG_ENGINE, 0o755);
 
 const registry = await import("../extensions/registry.ts");
+const { childSessionsRoot } = await import("../extensions/fsutil.ts");
 const roster = await import("../extensions/roster/index.ts");
 const team = await import("../extensions/team/index.ts");
 const ui = await import("../extensions/ui/index.ts");
@@ -1150,6 +1151,62 @@ test("engine-computed cache and cost ride the delegation pipeline end to end", a
 		"delegation log turn line carries the dollar segment",
 	);
 	registry.setCustomSender(() => {});
+});
+
+test("orphaned running delegations reconcile from their child transcript", async () => {
+	registry.resetRegistryForTesting();
+	roster._drivenDelegationsForTesting().clear();
+	// a run the current module instance does not drive (a /reload orphaned it)
+	// with two completed turns in its child session transcript
+	await registry.startDelegation("orphan-1", "builder", "m", "sess-orphan", null);
+	registry.attachSessionId("orphan-1", "child-sess-orphan-1");
+	const transcriptDir = childSessionsRoot();
+	mkdirSync(transcriptDir, { recursive: true });
+	const turn = (text, total) =>
+		JSON.stringify({
+			type: "message",
+			id: `m-${text}`,
+			parentId: null,
+			timestamp: new Date().toISOString(),
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text }],
+				usage: { input: 10, output: 5, cost: { total } },
+				stopReason: "stop",
+			},
+		});
+	writeFileSync(
+		path.join(transcriptDir, "child-sess-orphan-1.jsonl"),
+		`${turn("first", 0.03)}\n${turn("second", 0)}\n`,
+		"utf8",
+	);
+
+	roster.reconcileOrphanedDelegations();
+	let record = registry.listDelegations().find((r) => r.id === "orphan-1");
+	assert.equal(record.turns, 2, "orphan folds its transcript turns");
+	assert.equal(record.tokensIn, 20, "orphan folds its transcript tokens");
+	assert.equal(record.cost, 0.03, "orphan folds its transcript cost");
+
+	// a no-change pass appends nothing to the delegation log
+	const log = readFileSync(record.logFile, "utf8");
+	roster.reconcileOrphanedDelegations();
+	record = registry.listDelegations().find((r) => r.id === "orphan-1");
+	assert.equal(
+		readFileSync(record.logFile, "utf8"),
+		log,
+		"no-change pass writes no duplicate turn line",
+	);
+
+	// driven records are left to their live driver
+	await registry.startDelegation("driven-1", "builder", "m", "sess-orphan", null);
+	registry.attachSessionId("driven-1", "child-sess-orphan-1");
+	roster._drivenDelegationsForTesting().add("driven-1");
+	roster.reconcileOrphanedDelegations();
+	const driven = registry.listDelegations().find((r) => r.id === "driven-1");
+	assert.equal(driven.cost, 0, "driven records are not reconciled");
+
+	roster._drivenDelegationsForTesting().clear();
+	registry.resetRegistryForTesting();
 });
 
 test("live-captured RPC usage shape folds cost into snapshots, records, and log lines", async () => {
