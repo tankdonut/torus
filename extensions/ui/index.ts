@@ -119,9 +119,18 @@ function installLspStatusAbsorb(ui: ExtensionContext["ui"]): void {
  * The torus statusline: every chip on wrapping rows instead of the engine
  * footer's single truncated line. Chips render sorted by key (the order the
  * engine's footer used), greedily filled at the render width, capped at two
- * rows so a chip flood cannot squeeze the editor.
+ * rows so a chip flood cannot squeeze the editor. Chip boundaries carry the
+ * same dim " · " the composite torus chip joins its segments with, so the
+ * whole strip reads as one series instead of dots collapsing into spaces
+ * after the composite's last segment.
  */
 class TorusStatusline implements Component {
+	private readonly sep: string;
+
+	constructor(sep: string) {
+		this.sep = sep;
+	}
+
 	render(width: number): string[] {
 		const chips = [...chipsStore().entries()]
 			.sort(([a], [b]) => a.localeCompare(b))
@@ -131,7 +140,7 @@ class TorusStatusline implements Component {
 		let row = "";
 		for (const chip of chips) {
 			const piece = truncateToWidth(chip, width);
-			const candidate = row === "" ? piece : `${row} ${piece}`;
+			const candidate = row === "" ? piece : `${row}${this.sep}${piece}`;
 			if (row === "" || visibleWidth(candidate) <= width) {
 				row = candidate;
 			} else {
@@ -147,9 +156,12 @@ class TorusStatusline implements Component {
 	invalidate(): void {}
 }
 
-/** The statusline component factory; session_start mounts it and tests drive it directly. */
-export function createTorusStatusline(): Component {
-	return new TorusStatusline();
+/**
+ * The statusline component factory; session_start mounts it with the live
+ * theme and tests drive it directly (no painter → plain separator).
+ */
+export function createTorusStatusline(painter?: StatusPainter): Component {
+	return new TorusStatusline(painter ? painter.fg("dim", " · ") : " · ");
 }
 
 type AppTheme = ExtensionContext["ui"]["theme"];
@@ -185,7 +197,7 @@ function paintSessionCost(ctx: ExtensionContext): void {
 	if (statuslineCostSuppressed()) return;
 	const tally = sessionCostTallies.get(sessionCostId(ctx));
 	const cost = tally ? formatCost(tally.cost, tally.tokensIn + tally.tokensOut > 0) : "";
-	setTorusChip(COST_STATUS_KEY, cost === "" ? undefined : `fleet:${cost}`);
+	setTorusChip(COST_STATUS_KEY, cost === "" ? undefined : `cost:${cost}`);
 }
 
 /** Current model / thinking effort, seeded from ctx and kept fresh via events. */
@@ -627,9 +639,9 @@ export function registerUi(pi: ExtensionAPI): void {
 		refreshToruStatus(ctx);
 		// a fresh session has spent nothing yet — drop any chip from the prior one
 		paintSessionCost(ctx);
-		ctx.ui.setWidget(STATUSLINE_WIDGET_KEY, (tui, _theme) => {
+		ctx.ui.setWidget(STATUSLINE_WIDGET_KEY, (tui, theme) => {
 			(globalThis as Record<symbol, unknown>)[CHIPS_REPAINT_KEY] = () => tui.requestRender();
-			return createTorusStatusline();
+			return createTorusStatusline(theme);
 		});
 		// Re-register the fleet strip after the chip rows: widget insertion
 		// order is registration order, and the fleet extension registers

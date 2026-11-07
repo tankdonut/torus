@@ -236,7 +236,7 @@ test("statusline cost chip: message_end costs accumulate via the shared tally re
 
 	assert.equal(
 		torusChips().get(COST_STATUS_KEY),
-		"fleet:$0.0350",
+		"cost:$0.0350",
 		"costs sum across message_end events",
 	);
 });
@@ -270,7 +270,7 @@ test("statusline cost chip: tokens without cost render $0; nothing spent keeps t
 	assistantEnd(mkCtx("sess-cost-zero"), { input: 10, output: 4 });
 	assert.equal(
 		torusChips().get(COST_STATUS_KEY),
-		"fleet:$0",
+		"cost:$0",
 		"zero cost with tokens spent renders $0",
 	);
 
@@ -587,7 +587,7 @@ test("torus statusline wraps chips onto rows instead of truncating the line", ()
 	const line = createTorusStatusline();
 	torusChips().clear();
 	setTorusChip("torus", "torus · leader · glm-4.7 · high · zai|opencode-go · perm:default");
-	setTorusChip("torus:cost", "fleet:$0.0147");
+	setTorusChip("torus:cost", "cost:$0.0147");
 	setTorusChip("torus:sandbox", "sbx:off");
 	setTorusChip("torus:worktree", "wt:torus/feat-x");
 
@@ -596,10 +596,43 @@ test("torus statusline wraps chips onto rows instead of truncating the line", ()
 	assert.match(rows[0], /perm:default/);
 	assert.match(rows[1], /sbx:off/, "trailing chips survive instead of being ellipsized away");
 	assert.match(rows[1], /wt:torus\/feat-x/);
+	for (const row of rows) {
+		assert.ok(!row.startsWith("·"), "wrapped rows must not open with a separator");
+		assert.ok(!row.endsWith("·"), "wrapped rows must not end with a dangling separator");
+	}
 
-	assert.equal(line.render(400).length, 1, "wide terminals keep one row");
+	const wide = line.render(400);
+	assert.equal(wide.length, 1, "wide terminals keep one row");
+	assert.ok(wide[0].includes("perm:default · cost:"), "chip boundaries need the separator too");
 	for (const key of ["torus", "torus:cost", "torus:sandbox", "torus:worktree"]) {
 		setTorusChip(key, undefined);
 	}
 	assert.deepEqual(line.render(400), [], "no chips renders nothing");
+});
+
+test("statusline chip boundaries carry the same dim dot as the composite chip", () => {
+	const painter = {
+		fg: (color, text) => `<${color}>${text}</${color}>`,
+		bold: (text) => `*${text}*`,
+	};
+	const line = createTorusStatusline(painter);
+	torusChips().clear();
+	setTorusChip("torus", "torus · perm:auto · mcp:2 · lsp:2");
+	setTorusChip("torus:cost", "cost:$0.01");
+
+	const [row] = line.render(200);
+	assert.ok(
+		row.includes("lsp:2<dim> · </dim>cost:"),
+		`composite→chip boundary must use the dim separator, got: ${row}`,
+	);
+
+	torusChips().set("torus:cost", "cost:$0.01");
+	const narrow = line.render(36);
+	assert.equal(narrow.length, 2, "narrow width wraps the cost chip to its own row");
+	assert.ok(
+		narrow[1].startsWith("cost:"),
+		"wrapped row must open with the chip, not the separator",
+	);
+	assert.ok(narrow[0].endsWith("lsp:2"), "row break must not leave a dangling separator");
+	torusChips().clear();
 });
