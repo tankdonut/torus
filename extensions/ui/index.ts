@@ -27,7 +27,12 @@ import { formatCost } from "../fsutil.js";
 import { connectedServerCount, mcpStatusText } from "../mcp/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { providerAvailabilities } from "../providers/index.js";
-import { sessionPersona } from "../registry.js";
+import {
+	type DelegationRecord,
+	onDelegationUsageChange,
+	sessionPersona,
+	sharedState,
+} from "../registry.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
@@ -190,14 +195,60 @@ function statuslineCostSuppressed(): boolean {
 }
 
 /**
+ * Fleet spend per session: every registry run the session dispatched
+ * (delegations, team members), folded per-record as a cost delta because
+ * finished records evict from the registry — once a delta is folded the
+ * total stands even after the record is gone. Symbol.for shared state for
+ * the same reason the chip store is one: every ui module instance must see
+ * the same numbers.
+ */
+const FLEET_SPEND_KEY = Symbol.for("torus.statusline.fleet-spend.v1");
+type FleetSpendState = Map<string, { spend: number; seen: Map<string, number> }>;
+
+function fleetSpendStore(): FleetSpendState {
+	return sharedState(FLEET_SPEND_KEY, () => new Map());
+}
+
+/** Fold one usage-bearing record update into its parent session's fleet total. */
+function foldFleetRecord(record: DelegationRecord): void {
+	const parent = record.parentSession;
+	if (parent === null) return;
+	const store = fleetSpendStore();
+	const bucket = store.get(parent) ?? { spend: 0, seen: new Map() };
+	store.set(parent, bucket);
+	bucket.spend += record.cost - (bucket.seen.get(record.id) ?? 0);
+	// terminal records keep their seen entry forever: a second notification of
+	// the same finish (multiple observers, a re-fired event) then folds zero
+	// instead of re-adding the full cost. Entries are one id per finished run,
+	// so the map stays trivially small.
+	bucket.seen.set(record.id, record.cost);
+}
+
+function fleetSpendFor(sessionId: string): number {
+	return fleetSpendStore().get(sessionId)?.spend ?? 0;
+}
+
+/**
  * Render the session-cost chip for ctx's session. formatCost yields "" when
  * nothing measurable happened — keep the entry absent rather than blank.
+ * Registry spend dispatched by this session (delegations, team members)
+ * appends as a warning-colored `+$fleet` suffix: `cost:$own+$fleet`, or a
+ * bare `cost:+$fleet` when the session itself has spent nothing yet.
  */
 function paintSessionCost(ctx: ExtensionContext): void {
 	if (statuslineCostSuppressed()) return;
-	const tally = sessionCostTallies.get(sessionCostId(ctx));
+	const id = sessionCostId(ctx);
+	const tally = sessionCostTallies.get(id);
 	const cost = tally ? formatCost(tally.cost, tally.tokensIn + tally.tokensOut > 0) : "";
-	setTorusChip(COST_STATUS_KEY, cost === "" ? undefined : `cost:${cost}`);
+	const fleet = fleetSpendFor(id);
+	const fleetCost = fleet > 0 ? formatCost(fleet, true) : "";
+	if (cost === "" && fleetCost === "") {
+		setTorusChip(COST_STATUS_KEY, undefined);
+		return;
+	}
+	const plus = `+${fleetCost}`;
+	const suffix = fleetCost === "" ? "" : ctx.ui.theme ? ctx.ui.theme.fg("warning", plus) : plus;
+	setTorusChip(COST_STATUS_KEY, `cost:${cost}${suffix}`);
 }
 
 /**
@@ -628,6 +679,14 @@ function installCursorBlinkWidget(ctx: ExtensionContext): void {
 }
 
 export function registerUi(pi: ExtensionAPI): void {
+	// fleet spend rides delegation record updates: fold each into the
+	// session-keyed total and repaint when a live ctx exists (module-level
+	// subscribe; the store itself is shared so any instance's fold counts)
+	onDelegationUsageChange((record) => {
+		foldFleetRecord(record);
+		if (ctxForStatusRefresh) paintSessionCost(ctxForStatusRefresh);
+	});
+
 	const refreshMcp = () => {
 		const registered = pi.getMcpServers().map((server) => server.name);
 		mcpCounts = {

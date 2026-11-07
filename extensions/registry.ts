@@ -167,6 +167,34 @@ export function sharedState<T>(key: symbol, init: () => T): T {
 const REGISTRY_KEY = Symbol.for("torus.delegation-registry");
 const registry = sharedState(REGISTRY_KEY, () => new Map<string, DelegationRecord>());
 
+const OBSERVERS_KEY = Symbol.for("torus.delegation-observers");
+const usageObservers = sharedState(
+	OBSERVERS_KEY,
+	() => new Set<(record: DelegationRecord) => void>(),
+);
+
+/**
+ * Subscribe to usage-bearing delegation record changes: every per-turn
+ * updateDelegation, every finishDelegation, and every rehydrated record. The
+ * observer receives the record after mutation, so record.cost is the run's
+ * running total (final on finish/rehydrate). Returns an unsubscribe.
+ */
+export function onDelegationUsageChange(observer: (record: DelegationRecord) => void): () => void {
+	usageObservers.add(observer);
+	return () => {
+		usageObservers.delete(observer);
+	};
+}
+
+/** Observer throws must never break a delegation's bookkeeping. */
+function notifyUsageChange(record: DelegationRecord): void {
+	for (const observer of usageObservers) {
+		try {
+			observer(record);
+		} catch {}
+	}
+}
+
 const CONTROLS_KEY = Symbol.for("torus.delegation-controls");
 const controls = sharedState(CONTROLS_KEY, () => new Map<string, DelegationControl>());
 
@@ -889,6 +917,7 @@ export function updateDelegation(
 		record.logFile,
 		`\n--- turn ${snapshot.turns} (${snapshot.usage.input}/${snapshot.usage.output} tok${cost ? ` · ${cost}` : ""}) ---\n${indentChildText(snapshot.text)}\n`,
 	);
+	notifyUsageChange(record);
 	return record;
 }
 
@@ -959,6 +988,9 @@ export async function finishDelegation(
 			late?.notificationId ?? undefined,
 		);
 	}
+	// notify before eviction: the record object carries the final cost even
+	// once evictFinishedRecords drops it from the registry
+	notifyUsageChange(record);
 	evictFinishedRecords();
 	await killPane(paneId);
 	return record;
@@ -1112,6 +1144,7 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 			paneId: null,
 			...(raw.includes("<torus:stop-requested ") ? { stopRequested: true } : {}),
 		});
+		notifyUsageChange(registry.get(id) as DelegationRecord);
 		count += 1;
 	}
 }

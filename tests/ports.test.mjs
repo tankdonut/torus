@@ -25,6 +25,7 @@ const {
 } = await import("../extensions/ui/index.ts");
 const { goalChipFor } = await import("../extensions/goal/index.ts");
 const { AGENTS } = await import("../extensions/roster/index.ts");
+const registry = await import("../extensions/registry.ts");
 const { setSessionPersona } = await import("../extensions/registry.js");
 
 test("persona colors: every roster agent has a distinct RGB assignment", () => {
@@ -305,6 +306,77 @@ test("statusline cost chip: session_start seeds the tally from the session entri
 		ctx,
 	);
 	assert.equal(torusChips().get(COST_STATUS_KEY), "cost:$0.0350", "seeded past + live turn sum");
+});
+
+test("statusline cost chip: registry spend appends as a colored +fleet suffix", async () => {
+	const handlers = {};
+	registerUi({
+		on: (event, handler) => (handlers[event] = handler),
+		getMcpServers: () => [],
+		getActiveTools: () => [],
+	});
+	registry.resetRegistryForTesting();
+	torusChips().clear();
+	const ctx = {
+		ui: { setWidget: () => {} },
+		sessionManager: { getSessionId: () => "sess-fleet" },
+	};
+	await registry.startDelegation("fleet-run-1", "builder", "m", "sess-fleet", null);
+	registry.updateDelegation("fleet-run-1", {
+		text: "working",
+		turns: 1,
+		usage: { input: 10, output: 5, cost: 0.03 },
+	});
+	const ownTurn = (total) =>
+		handlers["message_end"](
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "x" }],
+					usage: { input: 100, output: 40, cost: { total } },
+				},
+			},
+			ctx,
+		);
+
+	ownTurn(0.02);
+	assert.equal(
+		torusChips().get(COST_STATUS_KEY),
+		"cost:$0.0200+$0.0300",
+		"delegation spend folds in as the fleet suffix",
+	);
+
+	// finishing the run keeps the folded total; registry eviction cannot undo it
+	await registry.finishDelegation("fleet-run-1", true, "done", null, { toast: false });
+	ownTurn(0.005);
+	assert.equal(
+		torusChips().get(COST_STATUS_KEY),
+		"cost:$0.0250+$0.0300",
+		"finished run's spend stays folded",
+	);
+
+	// with a theme the fleet suffix rides warning color; own spend stays plain
+	const themed = {
+		ui: {
+			setWidget: () => {},
+			theme: { fg: (color, text) => `<${color}>${text}</${color}>`, bold: (t) => t },
+		},
+		sessionManager: ctx.sessionManager,
+	};
+	handlers["message_end"](
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "y" }],
+				usage: { input: 1, output: 1, cost: { total: 0.001 } },
+			},
+		},
+		themed,
+	);
+	assert.equal(torusChips().get(COST_STATUS_KEY), "cost:$0.0260<warning>+$0.0300</warning>");
+	registry.resetRegistryForTesting();
 });
 
 test("statusline cost chip: tokens without cost render $0; nothing spent keeps the chip absent", () => {

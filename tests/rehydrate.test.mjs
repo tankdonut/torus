@@ -63,6 +63,29 @@ test("rehydrates records from the log format: status, session, turns, tokens, la
 	assert.ok(a.text.includes("final answer text"), `text tail wrong: ${a.text}`);
 });
 
+test("onDelegationUsageChange fires for rehydrated records with their logged cost", () => {
+	registry.resetRegistryForTesting();
+	mkdirSync(PROJECT_LOGS, { recursive: true });
+	const file = path.join(PROJECT_LOGS, `rehy-${STAMP}-obs.log`);
+	writeFileSync(
+		file,
+		[
+			'<torus:start agent="build" model="zai/glm-5.3" ts="2026-09-30T00:00:00.000Z" parent="parent-obs" />',
+			"--- turn 2 (120/480 tok · $0.0450) ---",
+			"did the thing",
+			'<torus:done session="sess-obs" ts="2026-09-30T00:01:00.000Z" />',
+		].join("\n") + "\n",
+		"utf8",
+	);
+	const seen = [];
+	const unsubscribe = registry.onDelegationUsageChange((record) => seen.push(record));
+	registry.rehydrateFromLogs("parent-obs");
+	unsubscribe();
+	const record = seen.find((r) => r.parentSession === "parent-obs");
+	assert.ok(record, "rehydrate did not notify the usage observer");
+	assert.equal(record.cost, 0.045, "rehydrated record must carry its logged cost");
+});
+
 test("parent-session filter: only that session's records load", () => {
 	registry.resetRegistryForTesting();
 	registry.rehydrateFromLogs("parent-1");
