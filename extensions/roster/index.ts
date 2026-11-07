@@ -55,6 +55,7 @@ import {
 	emitTorusCustom,
 	finishDelegation,
 	listDelegations,
+	pidAlive,
 	RECORD_TEXT_CAP,
 	readFullRecordText,
 	redactSecrets,
@@ -70,7 +71,12 @@ import {
 } from "../registry.js";
 import { RpcChild } from "../rpc.js";
 import { findSessionFile } from "../sessions/index.js";
-import { queueWakeEntry, wakeGateAgentSettled, wakeGateAgentStart } from "../wake-gate.js";
+import {
+	drainWakeSpool,
+	queueWakeEntry,
+	wakeGateAgentSettled,
+	wakeGateAgentStart,
+} from "../wake-gate.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin", "win32"],
@@ -439,7 +445,11 @@ async function runEngineRpc(
 	task: string,
 	onTurn?: (snapshot: DelegationSnapshot) => void,
 	onAction?: (line: string) => void,
-	onControl?: (control: { stop: () => void; steer: (text: string) => boolean }) => void,
+	onControl?: (control: {
+		stop: () => void;
+		steer: (text: string) => boolean;
+		pid?: number;
+	}) => void,
 	onSession?: (sessionId: string) => void,
 ): Promise<SpawnResult> {
 	const engineBin = resolveEngineBin();
@@ -481,6 +491,7 @@ async function runEngineRpc(
 	});
 	onControl?.({
 		stop: () => child.kill(),
+		pid: child.pid,
 		steer: (text) => {
 			if (!child.steerable) {
 				onAction?.("~ steer FAILED child not accepting input");
@@ -537,7 +548,7 @@ async function runEngineJson(
 	signal: AbortSignal | undefined,
 	onTurn?: (snapshot: DelegationSnapshot) => void,
 	onAction?: (line: string) => void,
-	onSpawned?: (stop: () => void) => void,
+	onSpawned?: (stop: () => void, pid: number | undefined) => void,
 	onSession?: (sessionId: string) => void,
 ): Promise<SpawnResult> {
 	const engineBin = resolveEngineBin();
@@ -594,7 +605,7 @@ async function runEngineJson(
 			stdio: ["ignore", "pipe", "pipe"],
 			env: engineChildEnv(),
 		});
-		onSpawned?.(() => child.kill("SIGTERM"));
+		onSpawned?.(() => child.kill("SIGTERM"), child.pid);
 		let buffer = "";
 		const stdoutDecoder = new StringDecoder("utf8");
 		const stderrDecoder = new StringDecoder("utf8");
@@ -833,33 +844,54 @@ function childTranscriptTally(sessionId: string): EngineTally | null {
  * no-change pass skips updateDelegation entirely to keep duplicate turn
  * lines out of the delegation log. Runs at session_start and turn_start: an
  * idle background run's final cost lands on the next interaction boundary.
- * Records stay running — finishing them needs the child's pid, which the
- * record does not carry (a separate gap).
+ *
+ * A record whose child pid is recorded and dead can make no progress: it is
+ * terminalized from its transcript (failed, spend folded, end tag written)
+ * so the fleet stops rendering orphaned runs as live. A live child keeps the
+ * record running — either a closure in another module instance drives it or
+ * it is a crash orphan still at work.
  */
-export function reconcileOrphanedDelegations(): void {
+export async function reconcileOrphanedDelegations(): Promise<void> {
 	for (const record of listDelegations()) {
 		if (record.status !== "running" || drivenDelegations.has(record.id)) continue;
 		if (record.sessionId === null) continue;
 		const tally = childTranscriptTally(record.sessionId);
 		if (tally === null) continue;
+		const dead = record.childPid !== undefined && !pidAlive(record.childPid);
 		if (
+			!dead &&
 			record.turns === tally.turns &&
 			record.tokensIn === tally.tokensIn &&
 			record.tokensOut === tally.tokensOut &&
 			record.cost === tally.cost
 		)
 			continue;
-		updateDelegation(record.id, {
-			text: tally.text,
-			turns: tally.turns,
-			usage: {
-				input: tally.tokensIn,
-				output: tally.tokensOut,
-				cacheRead: tally.cacheRead,
-				cacheWrite: tally.cacheWrite,
-				cost: tally.cost,
-			},
-		});
+		if (
+			record.turns !== tally.turns ||
+			record.tokensIn !== tally.tokensIn ||
+			record.tokensOut !== tally.tokensOut ||
+			record.cost !== tally.cost
+		) {
+			updateDelegation(record.id, {
+				text: tally.text,
+				turns: tally.turns,
+				usage: {
+					input: tally.tokensIn,
+					output: tally.tokensOut,
+					cacheRead: tally.cacheRead,
+					cacheWrite: tally.cacheWrite,
+					cost: tally.cost,
+				},
+			});
+		}
+		if (!dead) continue;
+		await finishDelegation(
+			record.id,
+			false,
+			`${tally.text}${tally.text ? "\n" : ""}[orphaned: the driving session ended and child pid ${record.childPid} is gone; finalized from its transcript]`,
+			record.sessionId,
+			{ toast: false },
+		);
 	}
 }
 
@@ -978,7 +1010,11 @@ async function runAcpDelegation(
 			onAction: onActionWrapped,
 			onSession: (sessionId) => attachSessionId(delegationId, sessionId),
 			onControl: (control) =>
-				attachControl(delegationId, { stop: control.stop, steer: () => false }),
+				attachControl(delegationId, {
+					stop: control.stop,
+					steer: () => false,
+					...(control.pid !== undefined ? { pid: control.pid } : {}),
+				}),
 		});
 		const text = run.ok
 			? run.finalText
@@ -1260,10 +1296,11 @@ export async function runDelegation(
 						stopController.signal,
 						onTurnWrapped,
 						onActionWrapped,
-						() =>
+						(_stop, pid) =>
 							attachControl(delegationId, {
 								stop: () => stopController.abort(),
 								steer: () => false,
+								...(pid !== undefined ? { pid } : {}),
 							}),
 						(sessionId) => attachSessionId(delegationId, sessionId),
 					);
@@ -1846,7 +1883,8 @@ export function registerRoster(pi: ExtensionAPI): void {
 		const sessionId = ctx.sessionManager.getSessionId();
 		setCurrentSession(sessionId);
 		rehydrateFromLogs(sessionId);
-		reconcileOrphanedDelegations();
+		void reconcileOrphanedDelegations();
+		drainWakeSpool(sessionId);
 		// Stale-scratch sweep is best-effort — it must never break session start.
 		try {
 			const retentionDays = knobNumber(
@@ -1870,7 +1908,7 @@ export function registerRoster(pi: ExtensionAPI): void {
 	});
 
 	pi.on("turn_start", () => {
-		reconcileOrphanedDelegations();
+		void reconcileOrphanedDelegations();
 	});
 
 	pi.registerCommand("roster", {

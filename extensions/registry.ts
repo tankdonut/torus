@@ -52,6 +52,13 @@ export interface DelegationRecord {
 	/** Project key (state-dir identity) of the cwd the delegation runs in — informational; the log itself lives in the dispatching session's state dir. */
 	project: string;
 	paneId: string | null;
+	/**
+	 * Pid of the run's child process (engine RPC/JSON child, ACP client) when
+	 * known — the liveness key for orphan reconciliation and rehydration: an
+	 * undriven running record whose child is dead is terminalized from its
+	 * transcript, one whose child still lives stays running truthfully.
+	 */
+	childPid?: number;
 	/** Set when the operator stops the run from the fleet view; the run settles failed but its outcome reports interrupted. */
 	stopRequested?: boolean;
 }
@@ -283,10 +290,27 @@ export interface DelegationControl {
 	stop: () => void;
 	/** @returns true when the steer reached a live child; false when it is a no-op stub. */
 	steer: (text: string) => boolean;
+	/** Child process pid when the control's creator holds the process; recorded on the delegation record and log. */
+	pid?: number;
 }
 
 export function attachControl(id: string, control: DelegationControl): void {
 	controls.set(id, control);
+	if (typeof control.pid === "number") attachChildPid(id, control.pid);
+}
+
+/**
+ * Record the run's child pid: set on the record, appended to the log as a
+ * <torus:pid> tag (rehydrateFromLogs parses it back), and carried on run
+ * beacons. A chain walk's model fallbacks respawn children, so a later attach
+ * with a different pid replaces the record's value and appends a second tag —
+ * rehydrate keeps the last one.
+ */
+export function attachChildPid(id: string, pid: number): void {
+	const record = registry.get(id);
+	if (!record || record.childPid === pid) return;
+	record.childPid = pid;
+	appendFileSync(record.logFile, `\n<torus:pid pid="${pid}" ts="${new Date().toISOString()}" />\n`);
 }
 
 export function stopDelegation(id: string): boolean {
@@ -416,6 +440,8 @@ interface RunBeacon {
 	status: "running" | "done" | "failed";
 	startedAt: number;
 	pid: number;
+	/** Child process pid when known; the writer pid above stays the ownership key. */
+	childPid?: number;
 	uid?: number;
 	parentSession: string | null;
 	sessionId: string | null;
@@ -482,7 +508,7 @@ function pruneRunBeacons(now: number): void {
 	} catch {}
 }
 
-function pidAlive(pid: number): boolean {
+export function pidAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
 		return true;
@@ -874,7 +900,15 @@ export function appendAction(id: string, line: string): void {
 
 export function attachSessionId(id: string, sessionId: string): void {
 	const record = registry.get(id);
-	if (record && !record.sessionId) record.sessionId = sessionId;
+	if (!record || record.sessionId) return;
+	record.sessionId = sessionId;
+	// Persisted as a log tag so rehydrateFromLogs can recover the child session
+	// for an un-ended log (end tags carry it, but an orphaned run never writes
+	// one — and spend folding keys on the transcript it names).
+	appendFileSync(
+		record.logFile,
+		`\n<torus:session id="${escapeAttr(sessionId)}" ts="${new Date().toISOString()}" />\n`,
+	);
 }
 
 export function updateDelegation(
@@ -907,6 +941,7 @@ export function updateDelegation(
 		status: "running",
 		startedAt: record.startedAt,
 		pid: process.pid,
+		...(record.childPid !== undefined ? { childPid: record.childPid } : {}),
 		parentSession: record.parentSession,
 		sessionId: record.sessionId,
 		project: record.project,
@@ -964,6 +999,7 @@ export async function finishDelegation(
 		status: record.status,
 		startedAt: record.startedAt,
 		pid: process.pid,
+		...(record.childPid !== undefined ? { childPid: record.childPid } : {}),
 		parentSession: record.parentSession,
 		sessionId,
 		project: record.project,
@@ -1107,6 +1143,12 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 			cost = Number.isFinite(loggedCost) ? loggedCost : 0;
 		}
 		const fullText = parseLastTurnText(raw);
+		// Chain-walk fallbacks append one <torus:pid> per respawned child; the
+		// last tag is the live child, and it is the liveness key for the status
+		// below and for reconcileOrphanedDelegations after this process dies.
+		const pidTags = [...raw.matchAll(/^<torus:pid pid="(\d+)"[^>]*\/>/gm)];
+		const childPid = pidTags.length > 0 ? Number(pidTags[pidTags.length - 1]?.[1]) : null;
+		const sessionTag = raw.match(/^<torus:session id="([^"]*)"[^>]*\/>/m);
 		let startedAt = Date.parse(start.groups.ts);
 		if (!Number.isFinite(startedAt)) {
 			try {
@@ -1127,7 +1169,9 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 					: "failed"
 				: beacon?.status === "done" || beacon?.status === "failed"
 					? beacon.status
-					: "failed",
+					: childPid !== null && pidAlive(childPid)
+						? "running"
+						: "failed",
 			startedAt,
 			turns,
 			tokensIn,
@@ -1138,10 +1182,11 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 			text: (fullText ?? "").slice(0, RECORD_TEXT_CAP),
 			textTruncated: fullText !== null && fullText.length > RECORD_TEXT_CAP,
 			logFile,
-			sessionId: end?.groups.session ?? null,
+			sessionId: end?.groups.session ?? sessionTag?.[1] ?? null,
 			parentSession,
 			project: projectKeyFor(process.cwd()),
 			paneId: null,
+			...(childPid !== null ? { childPid } : {}),
 			...(raw.includes("<torus:stop-requested ") ? { stopRequested: true } : {}),
 		});
 		notifyUsageChange(registry.get(id) as DelegationRecord);

@@ -181,6 +181,11 @@ export class AcpChild {
 	readonly exited: Promise<number>;
 	stderrText = "";
 
+	/** Child pid — the delegation record's liveness key for orphan reconciliation. */
+	get pid(): number | undefined {
+		return this.proc.pid;
+	}
+
 	constructor(
 		command: string,
 		args: string[],
@@ -323,7 +328,7 @@ export interface AcpRunResult {
 export interface AcpRunHooks {
 	onAction?: (line: string) => void;
 	onSession?: (sessionId: string) => void;
-	onControl?: (control: { stop: () => void }) => void;
+	onControl?: (control: { stop: () => void; pid?: number }) => void;
 }
 
 /**
@@ -416,6 +421,7 @@ export async function runAcpAgent(
 	});
 
 	hooks.onControl?.({
+		pid: child.pid,
 		stop: () => {
 			stopped = true;
 			child.kill();

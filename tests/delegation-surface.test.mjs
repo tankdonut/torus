@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -1181,7 +1182,7 @@ test("orphaned running delegations reconcile from their child transcript", async
 		"utf8",
 	);
 
-	roster.reconcileOrphanedDelegations();
+	await roster.reconcileOrphanedDelegations();
 	let record = registry.listDelegations().find((r) => r.id === "orphan-1");
 	assert.equal(record.turns, 2, "orphan folds its transcript turns");
 	assert.equal(record.tokensIn, 20, "orphan folds its transcript tokens");
@@ -1189,7 +1190,7 @@ test("orphaned running delegations reconcile from their child transcript", async
 
 	// a no-change pass appends nothing to the delegation log
 	const log = readFileSync(record.logFile, "utf8");
-	roster.reconcileOrphanedDelegations();
+	await roster.reconcileOrphanedDelegations();
 	record = registry.listDelegations().find((r) => r.id === "orphan-1");
 	assert.equal(
 		readFileSync(record.logFile, "utf8"),
@@ -1201,11 +1202,141 @@ test("orphaned running delegations reconcile from their child transcript", async
 	await registry.startDelegation("driven-1", "builder", "m", "sess-orphan", null);
 	registry.attachSessionId("driven-1", "child-sess-orphan-1");
 	roster._drivenDelegationsForTesting().add("driven-1");
-	roster.reconcileOrphanedDelegations();
+	await roster.reconcileOrphanedDelegations();
 	const driven = registry.listDelegations().find((r) => r.id === "driven-1");
 	assert.equal(driven.cost, 0, "driven records are not reconciled");
 
 	roster._drivenDelegationsForTesting().clear();
+	registry.resetRegistryForTesting();
+});
+
+/** Spawn a process that exits immediately and return its (now dead) pid. */
+async function exitedPid() {
+	const child = spawn(process.execPath, ["-e", ""]);
+	await new Promise((resolve) => child.on("close", resolve));
+	return child.pid;
+}
+
+test("orphaned delegations terminalize when their recorded child pid is dead", async () => {
+	registry.resetRegistryForTesting();
+	roster._drivenDelegationsForTesting().clear();
+	const transcriptDir = childSessionsRoot();
+	mkdirSync(transcriptDir, { recursive: true });
+	const turn = (text, total) =>
+		JSON.stringify({
+			type: "message",
+			id: `m-${text}`,
+			parentId: null,
+			timestamp: new Date().toISOString(),
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text }],
+				usage: { input: 10, output: 5, cost: { total } },
+				stopReason: "stop",
+			},
+		});
+
+	// dead child: spend folds, then the record terminalizes failed with an end tag
+	const dead = await exitedPid();
+	await registry.startDelegation("orphan-dead", "builder", "m", "sess-o2", null);
+	registry.attachSessionId("orphan-dead", "child-sess-o2");
+	registry.attachChildPid("orphan-dead", dead);
+	writeFileSync(
+		path.join(transcriptDir, "child-sess-o2.jsonl"),
+		`${turn("first", 0.03)}\n`,
+		"utf8",
+	);
+	await roster.reconcileOrphanedDelegations();
+	let deadRecord = registry.listDelegations().find((r) => r.id === "orphan-dead");
+	assert.equal(deadRecord.status, "failed", "dead child terminalizes as failed");
+	assert.equal(deadRecord.turns, 1, "spend folds before the finalize");
+	assert.match(deadRecord.text, /\[orphaned: .*child pid \d+ .*finalized from its transcript\]/);
+	assert.match(
+		readFileSync(deadRecord.logFile, "utf8"),
+		/<torus:failed /,
+		"end tag lands in the log",
+	);
+	await roster.reconcileOrphanedDelegations();
+	deadRecord = registry.listDelegations().find((r) => r.id === "orphan-dead");
+	assert.equal(
+		readFileSync(deadRecord.logFile, "utf8").match(/<torus:failed /g)?.length,
+		1,
+		"a terminalized record is skipped on later passes",
+	);
+
+	// live child: spend folds, record truthfully stays running
+	await registry.startDelegation("orphan-live", "builder", "m", "sess-o2", null);
+	registry.attachSessionId("orphan-live", "child-sess-o3");
+	registry.attachChildPid("orphan-live", process.pid);
+	writeFileSync(
+		path.join(transcriptDir, "child-sess-o3.jsonl"),
+		`${turn("first", 0.03)}\n${turn("second", 0)}\n`,
+		"utf8",
+	);
+	await roster.reconcileOrphanedDelegations();
+	const liveRecord = registry.listDelegations().find((r) => r.id === "orphan-live");
+	assert.equal(liveRecord.status, "running", "live child keeps the record running");
+	assert.equal(liveRecord.turns, 2, "live child spend still folds");
+
+	roster._drivenDelegationsForTesting().clear();
+	registry.resetRegistryForTesting();
+});
+
+test("attachControl persists child pid and session tags in the delegation log", async () => {
+	registry.resetRegistryForTesting();
+	await registry.startDelegation("tags-1", "builder", "m", null, null);
+	registry.attachControl("tags-1", { stop: () => {}, steer: () => false, pid: 4242 });
+	const record = registry.listDelegations().find((r) => r.id === "tags-1");
+	assert.equal(record.childPid, 4242);
+	assert.match(readFileSync(record.logFile, "utf8"), /<torus:pid pid="4242"/);
+	registry.attachSessionId("tags-1", "sess-tags-1");
+	assert.match(readFileSync(record.logFile, "utf8"), /<torus:session id="sess-tags-1"/);
+
+	// same-pid re-attach and a repeat session attach write no duplicate tags
+	registry.attachControl("tags-1", { stop: () => {}, steer: () => false, pid: 4242 });
+	registry.attachSessionId("tags-1", "sess-tags-1");
+	const log = readFileSync(record.logFile, "utf8");
+	assert.equal(log.match(/<torus:pid /g)?.length, 1);
+	assert.equal(log.match(/<torus:session /g)?.length, 1);
+
+	// a respawned child (chain-walk fallback) replaces the pid with a second tag
+	registry.attachControl("tags-1", { stop: () => {}, steer: () => false, pid: 4243 });
+	assert.equal(record.childPid, 4243);
+	assert.equal(readFileSync(record.logFile, "utf8").match(/<torus:pid /g)?.length, 2);
+	registry.resetRegistryForTesting();
+});
+
+test("rehydrate: un-ended runs with a dead child read failed, live ones stay running", async () => {
+	registry.resetRegistryForTesting();
+	const dead = await exitedPid();
+	await registry.startDelegation("rehy-dead", "builder", "m", "sess-rehy", null);
+	registry.attachSessionId("rehy-dead", "child-rehy-dead");
+	registry.attachChildPid("rehy-dead", dead);
+	registry.updateDelegation("rehy-dead", {
+		text: "partial work",
+		turns: 1,
+		usage: { input: 10, output: 5 },
+	});
+	await registry.startDelegation("rehy-live", "builder", "m", "sess-rehy", null);
+	registry.attachSessionId("rehy-live", "child-rehy-live");
+	registry.attachChildPid("rehy-live", process.pid);
+	registry.updateDelegation("rehy-live", {
+		text: "still going",
+		turns: 1,
+		usage: { input: 7, output: 3 },
+	});
+
+	registry.resetRegistryForTesting();
+	registry.rehydrateFromLogs("sess-rehy");
+	const records = registry.listDelegations();
+	const deadRec = records.find((r) => r.id.includes("rehy-dead"));
+	const liveRec = records.find((r) => r.id.includes("rehy-live"));
+	assert.ok(deadRec && liveRec, "both un-ended logs rehydrate");
+	assert.equal(deadRec.status, "failed", "dead child reads failed");
+	assert.equal(deadRec.sessionId, "child-rehy-dead", "session tag recovers the child session");
+	assert.equal(deadRec.childPid, dead);
+	assert.equal(liveRec.status, "running", "live child reads running");
+	assert.equal(liveRec.sessionId, "child-rehy-live");
 	registry.resetRegistryForTesting();
 });
 

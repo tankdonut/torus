@@ -42,6 +42,11 @@ export class RpcChild {
 		return this.buffer.length;
 	}
 
+	/** Child pid — the delegation record's liveness key for orphan reconciliation. */
+	get pid(): number | undefined {
+		return this.proc.pid;
+	}
+
 	private readonly events: RpcEvents;
 	private readonly stdoutDecoder = new StringDecoder("utf8");
 	private readonly stderrDecoder = new StringDecoder("utf8");
