@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.23.0](https://github.com/tankdonut/torus/compare/v0.22.0...v0.23.0) (2026-11-07)
+
+
+### Features
+
+* **extensions/ui:** seed the session-cost chip from session entries ([387b4a3](https://github.com/tankdonut/torus/commit/387b4a35e2d55aebc37017981000ffc9f59a776a))
+* **extensions:** fold delegation spend into the session cost chip ([f09658a](https://github.com/tankdonut/torus/commit/f09658a2d0742083ac140817a5b3de2dbb299b0c))
+* **site:** apply the refreshed site-design method to the docsite ([119a839](https://github.com/tankdonut/torus/commit/119a8395ea2d71a32c4e7b0f6200fcc3ecc78523))
+
+
+### Bug Fixes
+
+* **extensions/fleet:** pause the strip clock while a team member idles ([bde6a65](https://github.com/tankdonut/torus/commit/bde6a65d9d067e7d81ca27da79d4381235a534b3))
+* **extensions/roster:** reconcile delegation spend after a reload ([822b735](https://github.com/tankdonut/torus/commit/822b735c36a93f7b743160b90191808dfc6f35c4))
+* **extensions/ui:** unify chip separators and rename fleet: to cost: ([d6703c5](https://github.com/tankdonut/torus/commit/d6703c5b6188e9b708667767dd8dc5f3960b0721))
+
 ## [0.22.0](https://github.com/tankdonut/torus/compare/v0.21.0...v0.22.0) (2026-11-05)
 
 
