@@ -241,6 +241,72 @@ test("statusline cost chip: message_end costs accumulate via the shared tally re
 	);
 });
 
+test("statusline cost chip: session_start seeds the tally from the session entries", () => {
+	const handlers = {};
+	registerUi({
+		on: (event, handler) => (handlers[event] = handler),
+		getMcpServers: () => [],
+		getActiveTools: () => [],
+	});
+	torusChips().clear();
+	const usage = (total) => ({ input: 100, output: 40, cost: { total } });
+	const entries = [
+		{ type: "session", id: "s0", parentId: null },
+		{
+			type: "message",
+			id: "m1",
+			parentId: "s0",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "a" }],
+				usage: usage(0.02),
+				stopReason: "stop",
+			},
+		},
+		{
+			type: "message",
+			id: "m2",
+			parentId: "m1",
+			message: { role: "user", content: [{ type: "text", text: "?" }] },
+		},
+		{
+			type: "message",
+			id: "m3",
+			parentId: "m2",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "b" }],
+				usage: usage(0.01),
+				stopReason: "stop",
+			},
+		},
+	];
+	const ctx = {
+		ui: { setWidget: () => {} },
+		sessionManager: { getSessionId: () => "sess-seed", getEntries: () => entries },
+	};
+	handlers["session_start"]({ type: "session_start", reason: "resume" }, ctx);
+	assert.equal(
+		torusChips().get(COST_STATUS_KEY),
+		"cost:$0.0300",
+		"resumed session seeds past spend from its entries",
+	);
+
+	// a live turn adds on top of the seed instead of restarting the tally
+	handlers["message_end"](
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "c" }],
+				usage: usage(0.005),
+			},
+		},
+		ctx,
+	);
+	assert.equal(torusChips().get(COST_STATUS_KEY), "cost:$0.0350", "seeded past + live turn sum");
+});
+
 test("statusline cost chip: tokens without cost render $0; nothing spent keeps the chip absent", () => {
 	const handlers = {};
 	registerUi({

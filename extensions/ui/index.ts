@@ -200,6 +200,34 @@ function paintSessionCost(ctx: ExtensionContext): void {
 	setTorusChip(COST_STATUS_KEY, cost === "" ? undefined : `cost:${cost}`);
 }
 
+/**
+ * Seed the session-cost tally from the session's own entries so a resumed
+ * session keeps the spend its earlier engine process recorded: the live
+ * tally only ever sees message_end events, so without seeding every restart
+ * resets the chip to absent until a new turn completes. Runs only when no
+ * tally exists yet (an in-process tally is always at least as fresh as the
+ * entry list) and folds assistant messages through the same reducer
+ * message_end uses, so both halves of a resumed session total identically.
+ */
+function seedSessionCost(ctx: ExtensionContext): void {
+	if (statuslineCostSuppressed()) return;
+	const id = sessionCostId(ctx);
+	if (id === "" || sessionCostTallies.has(id)) return;
+	let entries: ReturnType<NonNullable<ExtensionContext["sessionManager"]>["getEntries"]>;
+	try {
+		entries = ctx.sessionManager?.getEntries() ?? [];
+	} catch {
+		// a session manager without getEntries (fakes, partial surfaces) has nothing to seed
+		return;
+	}
+	const tally = freshSessionTally();
+	for (const entry of entries) {
+		if (entry.type !== "message") continue;
+		reduceEngineEvent({ type: "message_end", message: entry.message }, tally);
+	}
+	sessionCostTallies.set(id, tally);
+}
+
 /** Current model / thinking effort, seeded from ctx and kept fresh via events. */
 let currentModel: string | undefined;
 let currentEffort: string | undefined;
@@ -637,7 +665,9 @@ export function registerUi(pi: ExtensionAPI): void {
 		refreshMcp();
 		pollMcpUntilSettled(ctx);
 		refreshToruStatus(ctx);
-		// a fresh session has spent nothing yet — drop any chip from the prior one
+		// a fresh session has spent nothing yet — drop any chip from the prior one;
+		// a resumed one seeds its past spend from the session entries first
+		seedSessionCost(ctx);
 		paintSessionCost(ctx);
 		ctx.ui.setWidget(STATUSLINE_WIDGET_KEY, (tui, theme) => {
 			(globalThis as Record<symbol, unknown>)[CHIPS_REPAINT_KEY] = () => tui.requestRender();
