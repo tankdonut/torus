@@ -212,7 +212,7 @@ const fanoutTool = defineTool({
 						{
 							type: "text",
 							text: withWarning(
-								`background fan-out started — ${params.runs.length} runs: ${runLabels}. Completions arrive as torus.delegation-result markers (batched with other pending wakes when busy); read the full output with torus_results.`,
+								`background fan-out started — ${params.runs.length} runs: ${runLabels}. You'll be woken as each run finishes or fails: results arrive as torus.delegation-result wake markers (batched with other pending wakes when busy). Don't poll or wait for them — end the turn or keep working, then read the full output with torus_results.`,
 								capWarning,
 							),
 						},
@@ -577,7 +577,7 @@ const chainTool = defineTool({
 								.map((s) => s.agent)
 								.join(
 									" → ",
-								)}. The final outcome arrives as one torus.delegation-result marker (batched with other pending wakes when busy); read the full output with torus_results.`,
+								)}. You'll be woken when the chain finishes or fails: the final outcome arrives as one torus.delegation-result wake marker (batched with other pending wakes when busy). Don't poll or wait for it — end the turn or keep working, then read the full output with torus_results.`,
 						},
 					],
 					details: {

@@ -1610,7 +1610,7 @@ const delegateTool = defineTool({
 						{
 							type: "text",
 							text: withWarning(
-								`background delegation started — ${label} (${params.agent})${record ? ` · id ${record.id}` : ""}. Completion arrives as a torus.delegation-result marker (batched with other pending wakes when busy); read the full output with torus_results.`,
+								`background delegation started — ${label} (${params.agent})${record ? ` · id ${record.id}` : ""}. You'll be woken when the run finishes or fails: the result arrives as a torus.delegation-result wake marker (batched with other pending wakes when busy). Don't poll or wait for it — end the turn or keep working, then read the full output with torus_results.`,
 								capWarning,
 							),
 						},
