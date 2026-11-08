@@ -7,6 +7,7 @@ const {
 	DETACH_KEY,
 	PtyOverlay,
 	buildPtyCommand,
+	childEnv,
 	createTerm,
 	headlessRun,
 	isDetachKey,
@@ -115,6 +116,16 @@ test("termTail trims outer blank rows and caps the character budget", async () =
 	term.dispose();
 });
 
+test("emulator answers device queries with an inline cursor report", async () => {
+	const term = createTerm(24, 80);
+	const responses = [];
+	term.onData((data) => responses.push(data));
+	term.write("\x1b[6n");
+	await settleTerm(term);
+	assert.ok(responses.some((data) => /^\x1b\[\d+;\d+R$/.test(data)));
+	term.dispose();
+});
+
 test("headlessRun: simple command under script PTY", async () => {
 	const run = await headlessRun("printf torus-interactive-ok", 30_000);
 	assert.equal(run.timedOut, false);
@@ -152,13 +163,25 @@ test("isDetachKey matches legacy and kitty encodings of ctrl-]", () => {
 	assert.equal(isDetachKey("x"), false);
 });
 
-test("buildPtyCommand prepends a winsize when known", () => {
+test("buildPtyCommand always sets a winsize, falling back to 24x80", () => {
 	assert.equal(
 		buildPtyCommand("gh auth login", 40, 120),
 		"stty rows 40 cols 120 2>/dev/null; gh auth login",
 	);
-	assert.equal(buildPtyCommand("gh auth login", null, 120), "gh auth login");
-	assert.equal(buildPtyCommand("gh auth login", 40, null), "gh auth login");
+	assert.equal(
+		buildPtyCommand("gh auth login", null, 120),
+		"stty rows 24 cols 120 2>/dev/null; gh auth login",
+	);
+	assert.equal(
+		buildPtyCommand("gh auth login", null, null),
+		"stty rows 24 cols 80 2>/dev/null; gh auth login",
+	);
+});
+
+test("childEnv sets NO_COLOR and a deterministic TERM", () => {
+	const env = childEnv();
+	assert.equal(env.NO_COLOR, "1");
+	assert.equal(env.TERM, "xterm-256color");
 });
 
 test("PtyOverlay: streams emulated output, forwards raw input, detach returns tail", async () => {
@@ -198,6 +221,15 @@ test("PtyOverlay: unwraps bracketed paste before forwarding", () => {
 	assert.deepEqual(written, ["ghp_AbCdEf"]);
 	overlay.handleInput("\r");
 	assert.deepEqual(written, ["ghp_AbCdEf", "\r"]);
+	overlay.dispose();
+});
+
+test("PtyOverlay: emulator query responses are forwarded to the child", async () => {
+	const { child, written } = stubChild();
+	const { overlay } = mountOverlay(child);
+	child.stdout.emit("data", Buffer.from("probe\x1b[6n"));
+	await tick();
+	assert.ok(written.some((data) => /^\x1b\[\d+;\d+R$/.test(data)));
 	overlay.dispose();
 });
 

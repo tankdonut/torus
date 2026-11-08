@@ -56,6 +56,7 @@ Rows carrying a config key also read that key from the [unified config](#the-uni
 | `TORUS_GUARDS=0` / `TORUS_MAX_TOOL_OUTPUT` | guards | Disable guards / output truncation cap (default 16000) (config: `guards.enabled` / `guards.maxToolOutput`) |
 | `TORUS_HASHLINE=0` / `TORUS_FMT_CMD` | hashline | Disable anchoring / post-edit formatter command (config: `hashline.enabled` / `hashline.fmtCmd`) |
 | `TORUS_INTERACTIVE=0` | interactive | Disable `interactive_bash` overlay (config: `interactive.enabled`) |
+| `TORUS_INTERACTIVE_DEBUG=<path>` | interactive | Append raw PTY chunks, emulator query responses, and child exit to a file (`interactive_bash` diagnostics for stalled flows) |
 | `TORUS_MONITOR=0` | monitor | Disable monitors (config: `monitor.enabled`) |
 | `TORUS_BG=0` | monitor | Disable background tasks (config: `monitor.bg`) |
 | `TORUS_STATUSLINE_COST=0` | ui | Disable the session-cost statusline chip (config: `ui.statuslineCost`) |

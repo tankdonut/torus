@@ -12,10 +12,12 @@
  * forwarded to the child (user takeover); ctrl-] detaches; child exit holds
  * the final frame briefly (any key closes it early), then returns the
  * captured tail. Bracketed-paste markers are
- * unwrapped before forwarding, the PTY gets a real winsize, and children run
- * with NO_COLOR=1 so prompt frameworks do not interrogate the terminal
- * (queries like OSC 11 or CSI cursor probes cannot be answered through the
- * pipes and stall flows such as `gh auth login --web`). Headless contexts
+ * unwrapped before forwarding, the PTY always gets a winsize (script leaves
+ * it 0x0 when its own stdin is a pipe), and children run with NO_COLOR=1
+ * and TERM=xterm-256color so programs see a known terminal. Query responses
+ * the emulator generates (DSR cursor reports, DA1) are written back to the
+ * child, so flows that block on the answer — `gh auth login --web` over an
+ * ssh hop — do not stall. Headless contexts
  * run the same command to completion via spawnSync and read the same
  * emulator. Line-oriented programs (REPLs, prompts, pagers, progress bars)
  * render correctly; full-screen apps (vim, htop) still garble — the
@@ -24,6 +26,7 @@
  */
 
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
 import { Type } from "@earendil-works/pi-ai";
 import {
 	defineTool,
@@ -52,6 +55,18 @@ const DEFAULT_TIMEOUT_S = 600;
 const MAX_TIMEOUT_S = 3_600;
 
 const liveChildren = new Set<ChildProcess>();
+
+const DEBUG_PATH = process.env["TORUS_INTERACTIVE_DEBUG"];
+
+/** Best-effort diagnostic sink for TORUS_INTERACTIVE_DEBUG; failures are ignored by design. */
+function debugAppend(kind: string, text: string): void {
+	if (DEBUG_PATH === undefined) return;
+	try {
+		appendFileSync(DEBUG_PATH, `${kind} ${JSON.stringify(text)}\n`);
+	} catch {
+		// A diagnostic sink must never break the interactive run it observes.
+	}
+}
 
 /** Bracketed-paste markers: pi-tui re-wraps pastes for editor components. */
 const PASTE_MARKER = /\x1b\[20[01]~/g;
@@ -133,10 +148,20 @@ export function isDetachKey(data: string): boolean {
 	return data === DETACH_KEY || KITTY_DETACH.test(data);
 }
 
-/** Give the PTY a real winsize so children skip cursor-probe size detection. */
+/**
+ * Child env: NO_COLOR keeps prompt frameworks from probing the terminal,
+ * and TERM states the emulator's actual identity (what the headless xterm speaks).
+ */
+export function childEnv(): NodeJS.ProcessEnv {
+	return { ...process.env, NO_COLOR: "1", TERM: "xterm-256color" };
+}
+
+/**
+ * Always stty a winsize onto the PTY: script leaves it 0x0 when its own
+ * stdin is a pipe, and a 0-row terminal breaks bottom-of-screen redraws outright.
+ */
 export function buildPtyCommand(command: string, rows: number | null, cols: number | null): string {
-	if (!rows || !cols) return command;
-	return `stty rows ${rows} cols ${cols} 2>/dev/null; ${command}`;
+	return `stty rows ${rows ?? 24} cols ${cols ?? 80} 2>/dev/null; ${command}`;
 }
 
 export class PtyOverlay implements Component {
@@ -171,12 +196,23 @@ export class PtyOverlay implements Component {
 		this.child = child;
 		this.command = command;
 		this.term = createTerm(rows, cols);
+		debugAppend("start", this.command);
+		// Emulator-origin only: user input goes straight to the child in
+		// handleInput, never through the emulator, so nothing written here can
+		// loop back through onData — no echo path exists by construction.
+		this.term.onData((response) => {
+			debugAppend("resp", response);
+			if (this.child.stdin?.writable) this.child.stdin.write(response);
+		});
 		this.onData = (chunk) => {
-			this.term.write(chunk.toString("utf8"));
+			const text = chunk.toString("utf8");
+			debugAppend("stdout", text);
+			this.term.write(text);
 			this.tui.requestRender();
 		};
 		this.onExit = (code) => {
 			this.finished = true;
+			debugAppend("exit", String(code));
 			this.term.write(`\r\n[torus] child exited (${code})\r\n`);
 			this.tui.requestRender();
 			// Hold the final frame so the user can read it; any keypress closes early.
@@ -251,11 +287,11 @@ export async function headlessRun(
 	command: string,
 	timeoutMs: number,
 ): Promise<{ ok: boolean; text: string; timedOut: boolean }> {
-	const result = spawnSync("script", ["-qec", command, "/dev/null"], {
+	const result = spawnSync("script", ["-qec", buildPtyCommand(command, 24, 80), "/dev/null"], {
 		timeout: timeoutMs,
 		encoding: "utf8",
 		maxBuffer: 4 * 1024 * 1024,
-		env: { ...process.env, NO_COLOR: "1" },
+		env: childEnv(),
 	});
 	const timedOut = result.error?.name === "TimeoutError";
 	const term = createTerm(24, 80);
@@ -301,7 +337,7 @@ const interactiveBashTool = defineTool({
 			["-qec", buildPtyCommand(params.command, rows, cols), "/dev/null"],
 			{
 				stdio: ["pipe", "pipe", "pipe"],
-				env: { ...process.env, NO_COLOR: "1" },
+				env: childEnv(),
 			},
 		);
 		liveChildren.add(child);
