@@ -26,7 +26,7 @@
 
 - `src/tui/<theme>/*.ans` (one set per engine theme, dark and light) and `src/tui/captures.json` are generated: never hand-edit; the landing's numbers must stay machine-derived (`AGENTS.md` root rule, enforced here by the two scripts). `src/stats/repo.json` is likewise generated and untracked; prebuild and predev recreate it.
 - `capture-tui.mjs` redacts the operator's home and repo paths before writing captures; keep the redaction intact when touching the script (history has been rewritten once to purge a leak).
-- `capture-tui.mjs` boots the real engine once per theme, pinned with `--use-theme`: needs repo-root `npm install`, provider credentials, and tmux; costs a few cents per theme; `TORUS_DREAMING=0` keeps scenes deterministic.
+- `capture-tui.mjs` boots the real engine and captures each theme in its own pass (the theme flips by rewriting the agent settings' theme key, saved and restored around the run, plus `/reload`): needs repo-root `npm install`, provider credentials, and tmux; costs a few cents; `TORUS_DREAMING=0` keeps scenes deterministic.
 - Driving the TUI via tmux: keys must be `M-t`/`M-1`, never `Alt+t`/`Alt+1` (tmux types the latter literally into the chat editor).
 - Terminal figures on the landing are captures of real sessions, not mockups: every scene ships as a dark and a light capture, and the figure shows the variant matching the site theme; keep it that way when editing copy or components.
 - A change that reshapes a captured surface (statusline, fleet browser, editor chrome, theme palette) re-runs `npm run -w site capture` in the same PR and commits both variants; a stale capture is a lying screenshot.
