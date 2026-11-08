@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.23.0](https://github.com/tankdonut/torus/compare/v0.22.0...v0.23.0) (2026-11-08)
+
+
+### Features
+
+* **extensions/interactive:** hold the final frame briefly after child exit ([de3a748](https://github.com/tankdonut/torus/commit/de3a748fd44f5256907b9f1381e68744666d7744))
+* **extensions/interactive:** interpret PTY output with a headless xterm emulator ([56ec8f6](https://github.com/tankdonut/torus/commit/56ec8f603959d66b63332ad4c265d690c8b8e58d))
+* **extensions/ui:** seed the session-cost chip from session entries ([387b4a3](https://github.com/tankdonut/torus/commit/387b4a35e2d55aebc37017981000ffc9f59a776a))
+* **extensions:** background delegation echoes say the session wakes on completion ([3f4f6af](https://github.com/tankdonut/torus/commit/3f4f6af11be68987c04d16c0905c81b6c1891ecb))
+* **extensions:** fold delegation spend into the session cost chip ([f09658a](https://github.com/tankdonut/torus/commit/f09658a2d0742083ac140817a5b3de2dbb299b0c))
+* **extensions:** terminalize orphaned delegations and spool undelivered wakes ([eb13432](https://github.com/tankdonut/torus/commit/eb13432a77c6a13034a1a07b1f0640506b2d86ef))
+* **site:** apply the refreshed site-design method to the docsite ([119a839](https://github.com/tankdonut/torus/commit/119a8395ea2d71a32c4e7b0f6200fcc3ecc78523))
+* **site:** open dark by default with theme-aware terminal objects ([52db1cc](https://github.com/tankdonut/torus/commit/52db1cc7c2b959e8e5f851cfa4f492e241caadc0))
+
+
+### Bug Fixes
+
+* **extensions/fleet:** pause the strip clock while a team member idles ([bde6a65](https://github.com/tankdonut/torus/commit/bde6a65d9d067e7d81ca27da79d4381235a534b3))
+* **extensions/interactive:** answer terminal queries and pin child terminal identity ([5323a0c](https://github.com/tankdonut/torus/commit/5323a0c61384b549435bd3870b4ced63089fcb78))
+* **extensions/persona-theme:** resolve the base theme instance from the live theme's name ([1c60fec](https://github.com/tankdonut/torus/commit/1c60fecc441ad04ace0bac3a259f90b1aa2dfce7))
+* **extensions/roster:** reconcile delegation spend after a reload ([822b735](https://github.com/tankdonut/torus/commit/822b735c36a93f7b743160b90191808dfc6f35c4))
+* **extensions/ui:** unify chip separators and rename fleet: to cost: ([d6703c5](https://github.com/tankdonut/torus/commit/d6703c5b6188e9b708667767dd8dc5f3960b0721))
+* **extensions:** survive session rebinds in statusline and cursor timers ([b70042e](https://github.com/tankdonut/torus/commit/b70042eedc421cdffb55a9a3e7af90029b1cb0f1))
+* **site:** recapture both theme variants at the pinned engine pane width ([d221558](https://github.com/tankdonut/torus/commit/d221558aaca67fe44acb414e010e46e004beccca))
+
 ## [0.22.0](https://github.com/tankdonut/torus/compare/v0.21.0...v0.22.0) (2026-11-05)
 
 
