@@ -9,8 +9,9 @@
  * piling up, and escape sequences split across chunk boundaries parse
  * correctly because the emulator is stateful. In the TUI the output streams
  * into a bottom dialog that replaces the chat editor — raw keystrokes are
- * forwarded to the child (user takeover); ctrl-] detaches; child exit
- * auto-completes and returns the captured tail. Bracketed-paste markers are
+ * forwarded to the child (user takeover); ctrl-] detaches; child exit holds
+ * the final frame briefly (any key closes it early), then returns the
+ * captured tail. Bracketed-paste markers are
  * unwrapped before forwarding, the PTY gets a real winsize, and children run
  * with NO_COLOR=1 so prompt frameworks do not interrogate the terminal
  * (queries like OSC 11 or CSI cursor probes cannot be answered through the
@@ -45,6 +46,7 @@ export const DETACH_KEY = "\x1d";
 const SCROLLBACK_LINES = 1_000;
 const RENDER_TAIL_CHARS = 4_000;
 const TERM_SETTLE_MS = 10;
+const EXIT_DWELL_MS = 1_500;
 const RENDER_TAIL_LINES = 16;
 const DEFAULT_TIMEOUT_S = 600;
 const MAX_TIMEOUT_S = 3_600;
@@ -148,6 +150,7 @@ export class PtyOverlay implements Component {
 	private reported = false;
 	private closed = false;
 	private killTimer: ReturnType<typeof setTimeout> | null = null;
+	private dwellTimer: ReturnType<typeof setTimeout> | null = null;
 	private onData: (chunk: Buffer) => void;
 	private onExit: (code: number | null) => void;
 
@@ -160,6 +163,7 @@ export class PtyOverlay implements Component {
 		timeoutMs: number,
 		rows: number,
 		cols: number,
+		exitDwellMs: number = EXIT_DWELL_MS,
 	) {
 		this.tui = tui;
 		this.theme = theme;
@@ -174,8 +178,9 @@ export class PtyOverlay implements Component {
 		this.onExit = (code) => {
 			this.finished = true;
 			this.term.write(`\r\n[torus] child exited (${code})\r\n`);
-			this.complete();
 			this.tui.requestRender();
+			// Hold the final frame so the user can read it; any keypress closes early.
+			this.dwellTimer = setTimeout(() => this.complete(), exitDwellMs);
 		};
 		this.killTimer = setTimeout(() => {
 			this.term.write(`\r\n[torus] timed out after ${Math.round(timeoutMs / 1000)}s\r\n`);
@@ -196,6 +201,7 @@ export class PtyOverlay implements Component {
 		if (this.closed) return;
 		this.closed = true;
 		if (this.killTimer) clearTimeout(this.killTimer);
+		if (this.dwellTimer) clearTimeout(this.dwellTimer);
 		this.child.stdout?.off("data", this.onData);
 		this.child.off("exit", this.onExit);
 	}
@@ -232,7 +238,8 @@ export class PtyOverlay implements Component {
 		const state = this.finished
 			? this.theme.fg("success", "exited")
 			: this.theme.fg("warning", "live");
-		const header = `${this.theme.fg("toolTitle", "tty")} ${this.theme.fg("accent", preview)} ${state} ${this.theme.fg("dim", "· type to interact · ctrl-] detach")}`;
+		const hint = this.finished ? "any key closes" : "type to interact";
+		const header = `${this.theme.fg("toolTitle", "tty")} ${this.theme.fg("accent", preview)} ${state} ${this.theme.fg("dim", `· ${hint} · ctrl-] detach`)}`;
 		const tail = tailLines(this.term, RENDER_TAIL_LINES).map((line) =>
 			truncateToWidth(line, Math.max(1, width - 2)),
 		);

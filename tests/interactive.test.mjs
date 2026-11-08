@@ -42,7 +42,7 @@ function stubChild() {
 	return { child, written };
 }
 
-function mountOverlay(child, timeoutMs = 60_000) {
+function mountOverlay(child, timeoutMs = 60_000, exitDwellMs = 25) {
 	let resolveDone;
 	const donePromise = new Promise((resolve) => {
 		resolveDone = resolve;
@@ -56,6 +56,7 @@ function mountOverlay(child, timeoutMs = 60_000) {
 		timeoutMs,
 		24,
 		80,
+		exitDwellMs,
 	);
 	return { overlay, donePromise };
 }
@@ -210,12 +211,33 @@ test("PtyOverlay: kitty-encoded ctrl-] detaches", async () => {
 	assert.deepEqual(written, []);
 });
 
-test("PtyOverlay: child exit auto-completes with exit note", async () => {
+test("PtyOverlay: exit dwell holds the frame, then completes with the tail", async () => {
 	const { child } = stubChild();
-	const { donePromise } = mountOverlay(child);
+	const { donePromise } = mountOverlay(child, 60_000, 40);
+	let settled = false;
+	donePromise.then(() => {
+		settled = true;
+	});
 	child.stdout.emit("data", Buffer.from("bye"));
 	child.emit("exit", 0);
+	await tick(10);
+	assert.equal(settled, false);
 	const resolved = await donePromise;
+	assert.match(resolved, /child exited \(0\)/);
+});
+
+test("PtyOverlay: any key after exit closes before the dwell elapses", async () => {
+	const { child } = stubChild();
+	const { overlay, donePromise } = mountOverlay(child, 60_000, 5_000);
+	child.stdout.emit("data", Buffer.from("bye"));
+	child.emit("exit", 0);
+	await tick(20);
+	const lines = overlay.render(80);
+	assert.ok(lines.some((line) => line.includes("any key closes")));
+	assert.ok(lines.some((line) => line.includes("exited")));
+	overlay.handleInput("x");
+	const resolved = await donePromise;
+	assert.match(resolved, /bye/);
 	assert.match(resolved, /child exited \(0\)/);
 });
 
