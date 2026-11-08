@@ -7,6 +7,9 @@
  * a plain-object reconstruction whose proto-clones fail that check), so the
  * override is cloned from a REAL instance loaded by name — class methods
  * keep their constructor state and the border re-derives on every switch.
+ * The name comes from the LIVE theme, never settings.json: a boot-time
+ * override (--use-theme light for site captures) or an in-session /settings
+ * switch must survive this re-apply.
  *
  * Application is deferred to the next macrotask: the TUI's session-rebind
  * flow (/resume, /new, /fork, /reload) runs themeController.applyFromSettings()
@@ -15,9 +18,7 @@
  * Timer FIFO keeps last-call-wins for rapid persona switches.
  */
 
-import { appendFileSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
+import { appendFileSync } from "node:fs";
 import { type ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { PERSONA_COLORS, personaFg } from "./ui/index.js";
 
@@ -31,22 +32,20 @@ interface ThemeUI {
 
 let baseTheme: AppTheme | null = null;
 
-function currentThemeName(): string {
-	try {
-		const settings = JSON.parse(
-			readFileSync(path.join(homedir(), ".pi", "agent", "settings.json"), "utf8"),
-		) as { theme?: string };
-		if (typeof settings.theme === "string" && settings.theme.length > 0) return settings.theme;
-	} catch {
-		// unreadable settings — fall through to the system default
-	}
-	return "system";
-}
-
 function themedInstance(ui: ThemeUI): AppTheme | null {
 	if (baseTheme instanceof Theme) return baseTheme;
-	const byName = ui.getTheme?.(currentThemeName());
-	return byName instanceof Theme ? (byName as AppTheme) : null;
+	// Prefer the live theme's own name: it reflects --use-theme boots and
+	// /settings switches, and stays correct when the live object is a
+	// plain-object reconstruction of a custom theme. When the name does not
+	// resolve to a genuine instance (the built-in "system" theme is built,
+	// not loaded), no clone is possible and the live theme keeps rendering —
+	// imposing the settings theme here would clobber the override.
+	const name = ui.theme?.name;
+	if (typeof name === "string" && name.length > 0) {
+		const byName = ui.getTheme?.(name);
+		if (byName instanceof Theme) return byName as AppTheme;
+	}
+	return null;
 }
 
 export function applyPersonaTheme(ctx: ExtensionContext, persona: string | null): void {

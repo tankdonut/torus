@@ -26,12 +26,17 @@ const realTheme = new Theme(
 	{ muted: "#888888", text: "#ffffff", thinkingXhigh: "#aaaaaa" },
 	{ selectedBg: "#222222" },
 	"dark",
+	// Engine-loaded themes always carry their name (theme-controller passes
+	// options.name); persona-theme resolves its base instance from it.
+	{ name: "dark" },
 );
 const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 function makeUi() {
 	const calls = [];
-	let current = { live: "plain-object reconstruction" };
+	// The live theme carries its name (real ones do); persona-theme resolves
+	// its base instance from that name, never from settings.json.
+	let current = { name: "dark", live: "plain-object reconstruction" };
 	return {
 		calls,
 		ctx: {
@@ -93,6 +98,54 @@ test("rapid persona switches keep last-call-wins order (timer FIFO)", async () =
 	await tick();
 	assert.equal(calls.length, 2);
 	assert.equal(calls[1].getThinkingBorderColor("thinking")("x"), personaFg("looker", "x"));
+});
+
+test("base-instance resolution follows the live theme's name, not settings", async () => {
+	const lightTheme = new Theme(
+		{ muted: "#777777", text: "#222222", thinkingXhigh: "#555555" },
+		{ selectedBg: "#eeeeee" },
+		"dark",
+		{ name: "light" },
+	);
+	const calls = [];
+	let current = { name: "light", live: "plain-object reconstruction" };
+	const ctx = {
+		ui: {
+			get theme() {
+				return current;
+			},
+			getTheme: (name) => (name === "light" ? lightTheme : realTheme),
+			setTheme: (t) => {
+				current = t;
+				calls.push(t);
+				return { success: true };
+			},
+		},
+	};
+	applyPersonaTheme(ctx, "builder");
+	await tick();
+	assert.equal(calls.length, 1);
+	// The override derives from the live (light) instance: a --use-theme boot
+	// must survive the persona re-apply instead of flipping to settings.json.
+	assert.equal(Object.getPrototypeOf(calls[0]), lightTheme);
+
+	// A live theme with no resolvable name leaves the live theme rendering.
+	const nameless = [];
+	const bareCtx = {
+		ui: {
+			get theme() {
+				return { live: "nameless reconstruction" };
+			},
+			getTheme: () => undefined,
+			setTheme: (t) => {
+				nameless.push(t);
+				return { success: true };
+			},
+		},
+	};
+	applyPersonaTheme(bareCtx, "builder");
+	await tick();
+	assert.equal(nameless.length, 0);
 });
 
 // Per-project persona state: writes land under TORUS_HOME/state/--<cwd>--/persona/,
