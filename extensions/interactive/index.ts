@@ -2,19 +2,24 @@
  * torus — interactive_bash.
  *
  * Runs a command under a real PTY via `script -qec <cmd> /dev/null` (zero
- * deps: the child gets a TTY, torus holds the pipes). In the TUI the output
- * streams into a bottom dialog that replaces the chat editor — raw
- * keystrokes are forwarded to the child (user takeover); ctrl-] detaches;
- * child exit auto-completes and returns the captured tail. Terminal control
- * sequences are stripped from the stream, bracketed-paste markers are
+ * pty deps: the child gets a TTY, torus holds the pipes). Child output is
+ * interpreted by a headless xterm emulator (@xterm/headless): cursor-motion
+ * redraws — apt-style carriage-return progress, erase-line prompt repaints,
+ * spinner multi-line rewrites — collapse to their final text instead of
+ * piling up, and escape sequences split across chunk boundaries parse
+ * correctly because the emulator is stateful. In the TUI the output streams
+ * into a bottom dialog that replaces the chat editor — raw keystrokes are
+ * forwarded to the child (user takeover); ctrl-] detaches; child exit
+ * auto-completes and returns the captured tail. Bracketed-paste markers are
  * unwrapped before forwarding, the PTY gets a real winsize, and children run
  * with NO_COLOR=1 so prompt frameworks do not interrogate the terminal
  * (queries like OSC 11 or CSI cursor probes cannot be answered through the
  * pipes and stall flows such as `gh auth login --web`). Headless contexts
- * run the same command to completion via spawnSync. Line-oriented programs
- * (REPLs, prompts, pagers) render correctly; full-screen apps (vim, htop)
- * garble — use tmux for those. TORUS_INTERACTIVE=0 disables. Parent
- * sessions only.
+ * run the same command to completion via spawnSync and read the same
+ * emulator. Line-oriented programs (REPLs, prompts, pagers, progress bars)
+ * render correctly; full-screen apps (vim, htop) still garble — the
+ * emulator is a scrollback model, not a viewport; use tmux for those.
+ * TORUS_INTERACTIVE=0 disables. Parent sessions only.
  */
 
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
@@ -25,6 +30,8 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
+import type { ITerminalInitOnlyOptions, ITerminalOptions, Terminal } from "@xterm/headless";
+import * as xtermHeadless from "@xterm/headless";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
@@ -35,8 +42,9 @@ export const PLATFORM_SUPPORT: PlatformSupport = {
 };
 
 export const DETACH_KEY = "\x1d";
-const RING_BYTE_CAP = 64_000;
+const SCROLLBACK_LINES = 1_000;
 const RENDER_TAIL_CHARS = 4_000;
+const TERM_SETTLE_MS = 10;
 const RENDER_TAIL_LINES = 16;
 const DEFAULT_TIMEOUT_S = 600;
 const MAX_TIMEOUT_S = 3_600;
@@ -47,22 +55,70 @@ const liveChildren = new Set<ChildProcess>();
 const PASTE_MARKER = /\x1b\[20[01]~/g;
 /** Kitty keyboard protocol encoding of ctrl-] (press and repeat events). */
 const KITTY_DETACH = /^\x1b\[29;5(:\d)?u$/;
-const CONTROL_SEQUENCES = [
-	/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, // OSC (incl. unterminated tail)
-	/\x1b[PX^_][^\x1b]*(?:\x1b\\)?/g, // DCS/SOS/PM/APC
-	/\x1b\[[0-9:;<=>?]*[!-/]*[@-~]/g, // CSI
-	/\x1b[()*+][0-9A-Za-z]?/g, // charset designators, e.g. ESC(B
-	/\x1b[\x30-\x7e]/g, // two-char escapes (ESC7, ESC8, ESC=, ...)
-	/[\x00-\x08\x0b-\x1f\x7f]/g, // remaining C0 (keeps \t and \n)
-];
+/**
+ * The CJS build exposes Terminal only on `default` under Node ESM (no
+ * exports map, no lexer-detectable named exports); bundlers and a future
+ * exports map see it as a named export. Accept both shapes.
+ */
+const TerminalCtor: new (options?: ITerminalOptions & ITerminalInitOnlyOptions) => Terminal =
+	(
+		xtermHeadless as unknown as {
+			default?: {
+				Terminal: new (options?: ITerminalOptions & ITerminalInitOnlyOptions) => Terminal;
+			};
+		}
+	).default?.Terminal ?? xtermHeadless.Terminal;
 
-/** Strip OSC/DCS/CSI/escape/C0 control sequences from PTY output. */
-export function stripTerminalControls(chunk: string): string {
-	let out = chunk;
-	for (const pattern of CONTROL_SEQUENCES) {
-		out = out.replace(pattern, "");
+/** Headless xterm sized to the PTY it mirrors; allowProposedApi unlocks buffer access. */
+export function createTerm(rows: number, cols: number): Terminal {
+	return new TerminalCtor({
+		allowProposedApi: true,
+		scrollback: SCROLLBACK_LINES,
+		rows: Math.max(1, rows),
+		cols: Math.max(1, cols),
+	});
+}
+
+/** The emulator flushes queued writes on a timer; wait one settle tick before reading. */
+export function settleTerm(_term: Terminal, ms = TERM_SETTLE_MS): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** The last `count` written rows as plain text, right-trimmed; rows below the cursor count when painted. */
+function tailLines(term: Terminal, count: number): string[] {
+	const buffer = term.buffer.active;
+	const cursorAbs = buffer.baseY + buffer.cursorY;
+	let end = cursorAbs + 1;
+	for (let i = buffer.length - 1; i > cursorAbs; i--) {
+		if ((buffer.getLine(i)?.translateToString(true) ?? "") !== "") {
+			end = i + 1;
+			break;
+		}
 	}
-	return out;
+	const first = Math.max(0, end - Math.max(1, count));
+	const lines: string[] = [];
+	for (let i = first; i < end; i++) {
+		lines.push(buffer.getLine(i)?.translateToString(true) ?? "");
+	}
+	return lines;
+}
+
+/** Buffer tail as joined text: at most `chars` characters, outer blank rows trimmed. */
+export function termTail(term: Terminal, chars = RENDER_TAIL_CHARS): string {
+	const all = tailLines(term, term.buffer.active.length);
+	const picked: string[] = [];
+	let budget = chars;
+	for (let i = all.length - 1; i >= 0; i--) {
+		const line = all[i] ?? "";
+		const cost = line.length + 1;
+		if (cost > budget && picked.length > 0) break;
+		picked.unshift(line);
+		budget -= cost;
+		if (budget <= 0) break;
+	}
+	while (picked.length > 0 && picked[0] === "") picked.shift();
+	while (picked.length > 0 && picked[picked.length - 1] === "") picked.pop();
+	return picked.join("\n");
 }
 
 /** Unwrap bracketed-paste markers before forwarding input to the child. */
@@ -81,24 +137,15 @@ export function buildPtyCommand(command: string, rows: number | null, cols: numb
 	return `stty rows ${rows} cols ${cols} 2>/dev/null; ${command}`;
 }
 
-export function capRing(ring: string, incoming: string): string {
-	const next = ring + incoming;
-	if (next.length <= RING_BYTE_CAP) return next;
-	return next.slice(next.length - RING_BYTE_CAP);
-}
-
-export function ringTail(ring: string, chars = RENDER_TAIL_CHARS): string {
-	return ring.length <= chars ? ring : ring.slice(ring.length - chars);
-}
-
 export class PtyOverlay implements Component {
 	private tui: TUI;
 	private theme: ExtensionContext["ui"]["theme"];
 	private done: (result: string) => void;
 	private child: ChildProcess;
 	private command: string;
-	private ring = "";
+	private term: Terminal;
 	private finished = false;
+	private reported = false;
 	private closed = false;
 	private killTimer: ReturnType<typeof setTimeout> | null = null;
 	private onData: (chunk: Buffer) => void;
@@ -111,27 +158,27 @@ export class PtyOverlay implements Component {
 		child: ChildProcess,
 		command: string,
 		timeoutMs: number,
+		rows: number,
+		cols: number,
 	) {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
 		this.child = child;
 		this.command = command;
+		this.term = createTerm(rows, cols);
 		this.onData = (chunk) => {
-			this.ring = capRing(this.ring, stripTerminalControls(chunk.toString("utf8")));
+			this.term.write(chunk.toString("utf8"));
 			this.tui.requestRender();
 		};
 		this.onExit = (code) => {
 			this.finished = true;
-			this.ring = capRing(this.ring, `\n[torus] child exited (${code})\n`);
+			this.term.write(`\r\n[torus] child exited (${code})\r\n`);
 			this.complete();
 			this.tui.requestRender();
 		};
 		this.killTimer = setTimeout(() => {
-			this.ring = capRing(
-				this.ring,
-				`\n[torus] timed out after ${Math.round(timeoutMs / 1000)}s\n`,
-			);
+			this.term.write(`\r\n[torus] timed out after ${Math.round(timeoutMs / 1000)}s\r\n`);
 			this.tui.requestRender();
 			if (!this.child.killed) this.child.kill("SIGTERM");
 		}, timeoutMs);
@@ -156,7 +203,12 @@ export class PtyOverlay implements Component {
 	private complete(): void {
 		if (this.closed) return;
 		this.teardown();
-		this.done(ringTail(this.ring));
+		// Reads wait one settle tick so the final output and exit note flush in.
+		setTimeout(() => {
+			if (this.reported) return;
+			this.reported = true;
+			this.done(termTail(this.term));
+		}, TERM_SETTLE_MS);
 	}
 
 	handleInput(data: string): void {
@@ -181,18 +233,17 @@ export class PtyOverlay implements Component {
 			? this.theme.fg("success", "exited")
 			: this.theme.fg("warning", "live");
 		const header = `${this.theme.fg("toolTitle", "tty")} ${this.theme.fg("accent", preview)} ${state} ${this.theme.fg("dim", "· type to interact · ctrl-] detach")}`;
-		const tail = ringTail(this.ring)
-			.split("\n")
-			.slice(-RENDER_TAIL_LINES)
-			.map((line) => truncateToWidth(line, Math.max(1, width - 2)));
+		const tail = tailLines(this.term, RENDER_TAIL_LINES).map((line) =>
+			truncateToWidth(line, Math.max(1, width - 2)),
+		);
 		return [rule, truncateToWidth(header, Math.max(1, width)), rule, ...tail, rule, ""];
 	}
 }
 
-export function headlessRun(
+export async function headlessRun(
 	command: string,
 	timeoutMs: number,
-): { ok: boolean; text: string; timedOut: boolean } {
+): Promise<{ ok: boolean; text: string; timedOut: boolean }> {
 	const result = spawnSync("script", ["-qec", command, "/dev/null"], {
 		timeout: timeoutMs,
 		encoding: "utf8",
@@ -200,7 +251,10 @@ export function headlessRun(
 		env: { ...process.env, NO_COLOR: "1" },
 	});
 	const timedOut = result.error?.name === "TimeoutError";
-	const output = stripTerminalControls(`${result.stdout ?? ""}${result.stderr ?? ""}`).trim();
+	const term = createTerm(24, 80);
+	term.write(`${result.stdout ?? ""}${result.stderr ?? ""}`);
+	await settleTerm(term);
+	const output = termTail(term).trim();
 	return {
 		ok: !timedOut && result.status === 0,
 		text: output || (timedOut ? "(timed out)" : `(no output; exit ${result.status ?? "?"})`),
@@ -212,7 +266,7 @@ const interactiveBashTool = defineTool({
 	name: "interactive_bash",
 	label: "Interactive Bash",
 	description:
-		"Run a command that needs INTERACTIVE input (password prompts, REPLs, package-manager confirmations) under a real PTY. In the TUI the user types directly into the program; ctrl-] detaches and returns the captured output. Line-oriented programs render correctly; full-screen apps (vim/htop) do not — use bash for those. Non-interactive commands should use plain bash.",
+		"Run a command that needs INTERACTIVE input (password prompts, REPLs, package-manager confirmations) under a real PTY. Output is interpreted by a headless terminal emulator, so progress-bar redraws and prompt repaints collapse to their final text. In the TUI the user types directly into the program; ctrl-] detaches and returns the captured output. Line-oriented programs render correctly; full-screen apps (vim/htop) do not — use bash for those. Non-interactive commands should use plain bash.",
 	parameters: Type.Object({
 		command: Type.String({ description: "Shell command to run interactively" }),
 		timeout: Type.Optional(
@@ -224,7 +278,7 @@ const interactiveBashTool = defineTool({
 		const timeoutMs = timeoutS * 1000;
 
 		if (!ctx.hasUI) {
-			const run = headlessRun(params.command, timeoutMs);
+			const run = await headlessRun(params.command, timeoutMs);
 			return {
 				content: [{ type: "text", text: run.text }],
 				details: { interactive: false, ok: run.ok, timedOut: run.timedOut },
@@ -248,7 +302,16 @@ const interactiveBashTool = defineTool({
 		try {
 			const tail = await ctx.ui.custom<string>(
 				(tui, theme, _keybindings, done) =>
-					new PtyOverlay(tui, theme, done, child, params.command, timeoutMs),
+					new PtyOverlay(
+						tui,
+						theme,
+						done,
+						child,
+						params.command,
+						timeoutMs,
+						rows ?? 24,
+						cols ?? 80,
+					),
 			);
 			return {
 				content: [{ type: "text", text: tail.trim() || "(no output)" }],

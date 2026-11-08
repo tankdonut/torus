@@ -1,59 +1,138 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
 
-const { DETACH_KEY, capRing, ringTail, headlessRun } = await import(
-	"../extensions/interactive/index.ts"
-);
-const { PtyOverlay, buildPtyCommand, isDetachKey, stripTerminalControls, unwrapPaste } =
-	await import("../extensions/interactive/index.ts");
+const {
+	DETACH_KEY,
+	PtyOverlay,
+	buildPtyCommand,
+	createTerm,
+	headlessRun,
+	isDetachKey,
+	settleTerm,
+	termTail,
+	unwrapPaste,
+} = await import("../extensions/interactive/index.ts");
 
-test("capRing keeps the tail under the byte cap", () => {
-	const big = "x".repeat(70_000);
-	const capped = capRing("", big);
-	assert.equal(capped.length, 64_000);
-	assert.ok(capped.startsWith("x"));
-	const withMark = capRing(capped, "TAIL");
-	assert.ok(withMark.endsWith("TAIL"));
+const tick = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function stubTheme() {
+	return {
+		fg: (_color, text) => text,
+	};
+}
+
+function stubTui() {
+	return { requestRender: () => {} };
+}
+
+function stubChild() {
+	const stdout = new EventEmitter();
+	const written = [];
+	const child = new EventEmitter();
+	child.stdout = stdout;
+	child.killed = false;
+	child.kill = (_signal) => {
+		child.killed = true;
+		child.emit("exit", null);
+		return true;
+	};
+	child.stdin = { writable: true, write: (data) => written.push(data) };
+	return { child, written };
+}
+
+function mountOverlay(child, timeoutMs = 60_000) {
+	let resolveDone;
+	const donePromise = new Promise((resolve) => {
+		resolveDone = resolve;
+	});
+	const overlay = new PtyOverlay(
+		stubTui(),
+		stubTheme(),
+		(tail) => resolveDone(tail),
+		child,
+		"python3 -i",
+		timeoutMs,
+		24,
+		80,
+	);
+	return { overlay, donePromise };
+}
+
+test("emulator: carriage-return progress redraws collapse to final text", async () => {
+	const term = createTerm(24, 80);
+	term.write(
+		"Reading package lists... 0%\rReading package lists... 47%\rReading package lists... Done\r\n",
+	);
+	await settleTerm(term);
+	const tail = termTail(term);
+	assert.match(tail, /Reading package lists\.\.\. Done/);
+	assert.doesNotMatch(tail, /0%|47%/);
+	term.dispose();
 });
 
-test("ringTail returns the requested suffix", () => {
-	const ring = "0123456789";
-	assert.equal(ringTail(ring, 4), "6789");
-	assert.equal(ringTail(ring, 100), ring);
+test("emulator: erase-line prompt repaint replaces the question", async () => {
+	const term = createTerm(24, 80);
+	term.write("? Authenticate Git with your GitHub credentials? (Y/n)");
+	term.write("\r\x1b[2K? Authenticate Git with your GitHub credentials? Yes\r\n");
+	await settleTerm(term);
+	const tail = termTail(term);
+	assert.match(tail, /credentials\? Yes/);
+	assert.doesNotMatch(tail, /\(Y\/n\)/);
+	term.dispose();
 });
 
-test("headlessRun: simple command under script PTY", () => {
-	const run = headlessRun("printf torus-interactive-ok", 30_000);
+test("emulator: escape sequences split across chunks parse correctly", async () => {
+	const term = createTerm(24, 80);
+	term.write("spin\x1b[");
+	term.write("Kdone\r\n");
+	await settleTerm(term);
+	assert.equal(termTail(term), "spindone");
+	term.dispose();
+});
+
+test("emulator: cursor-up rewrites rewrite the addressed row", async () => {
+	const term = createTerm(24, 80);
+	term.write("line1\r\nline2\r\nline3\r\n");
+	term.write("\x1b[2A\x1b[Krewrote");
+	await settleTerm(term);
+	assert.deepEqual(termTail(term).split("\n"), ["line1", "rewrote", "line3"]);
+	term.dispose();
+});
+
+test("termTail trims outer blank rows and caps the character budget", async () => {
+	const term = createTerm(24, 80);
+	term.write("\r\n\r\npayload\r\n\r\n");
+	await settleTerm(term);
+	assert.equal(termTail(term), "payload");
+	term.write(`${"x".repeat(10_000)}END\r\n`);
+	await settleTerm(term);
+	const capped = termTail(term);
+	assert.ok(capped.length <= 4_001, `tail too long: ${capped.length}`);
+	assert.ok(capped.endsWith("END"));
+	term.dispose();
+});
+
+test("headlessRun: simple command under script PTY", async () => {
+	const run = await headlessRun("printf torus-interactive-ok", 30_000);
 	assert.equal(run.timedOut, false);
 	assert.equal(run.ok, true);
 	assert.match(run.text, /torus-interactive-ok/);
 });
 
-test("headlessRun: failing command reports not-ok", () => {
-	const run = headlessRun("exit 3", 30_000);
+test("headlessRun: failing command reports not-ok", async () => {
+	const run = await headlessRun("exit 3", 30_000);
 	assert.equal(run.ok, false);
 	assert.equal(run.timedOut, false);
 });
 
-test("headlessRun: control sequences are stripped from output", () => {
-	const run = headlessRun("printf 'A\\033[31mRED\\033[0mB\\007'", 30_000);
+test("headlessRun: colors are consumed and CR progress collapses", async () => {
+	const run = await headlessRun("printf 'A\\033[31mRED\\033[0mB\\007'", 30_000);
 	assert.equal(run.ok, true);
 	assert.equal(run.text, "AREDB");
-});
-
-test("stripTerminalControls removes escape and C0 sequences", () => {
-	assert.equal(stripTerminalControls("\x1b[31mRED\x1b[0m"), "RED");
-	assert.equal(stripTerminalControls("\x1b[?25lhidden\x1b[?25h"), "hidden");
-	assert.equal(stripTerminalControls("\x1b]11;?\x1b\\query"), "query");
-	assert.equal(stripTerminalControls("before\x1b]0;title\x07after"), "beforeafter");
-	assert.equal(stripTerminalControls("save\x1b7restore\x1b8"), "saverestore");
-	assert.equal(stripTerminalControls("bell\x07gone"), "bellgone");
-	assert.equal(stripTerminalControls("spin\rdone"), "spindone");
-	assert.equal(stripTerminalControls("keep\ttab\nline"), "keep\ttab\nline");
-	assert.equal(stripTerminalControls("charset\x1b(Bdone"), "charsetdone");
-	const ghLike = "\x1b[0;33m!\x1b[0m First copy\x1b[6n";
-	assert.equal(stripTerminalControls(ghLike), "! First copy");
+	const progress = await headlessRun("printf 'fetch... 0%%\\rfetch... Done\\n'", 30_000);
+	assert.equal(progress.text, "fetch... Done");
 });
 
 test("unwrapPaste strips bracketed-paste markers only", () => {
@@ -81,70 +160,39 @@ test("buildPtyCommand prepends a winsize when known", () => {
 	assert.equal(buildPtyCommand("gh auth login", 40, null), "gh auth login");
 });
 
-function stubTheme() {
-	return {
-		fg: (_color, text) => text,
-	};
-}
-
-function stubTui() {
-	const renders = [];
-	return { requestRender: () => renders.push(1), renders };
-}
-
-function stubChild() {
-	const stdout = new EventEmitter();
-	const written = [];
-	const child = new EventEmitter();
-	child.stdout = stdout;
-	child.killed = false;
-	child.kill = (_signal) => {
-		child.killed = true;
-		child.emit("exit", null);
-		return true;
-	};
-	child.stdin = { writable: true, write: (data) => written.push(data) };
-	return { child, written };
-}
-
-function makeOverlay(child, done, timeoutMs = 60_000) {
-	return new PtyOverlay(stubTui(), stubTheme(), done, child, "python3 -i", timeoutMs);
-}
-
-test("PtyOverlay: streams output, forwards raw input, detach returns tail", async () => {
+test("PtyOverlay: streams emulated output, forwards raw input, detach returns tail", async () => {
 	const { child, written } = stubChild();
-	let resolved;
-	const overlay = makeOverlay(child, (tail) => {
-		resolved = tail;
-	});
+	const { overlay, donePromise } = mountOverlay(child);
 
 	child.stdout.emit("data", Buffer.from("Python 3.12 REPL\n>>> "));
 	overlay.handleInput("print(1+1)\n");
 	assert.deepEqual(written, ["print(1+1)\n"]);
 
 	overlay.handleInput(DETACH_KEY);
-	assert.match(resolved ?? "", /REPL/);
-	assert.match(resolved ?? "", />>>/);
-
-	const lines = overlay.render(80);
-	assert.ok(lines.some((line) => line.includes("tty")));
+	const resolved = await donePromise;
+	assert.match(resolved, /REPL/);
+	assert.match(resolved, />>>/);
 });
 
-test("PtyOverlay: render contains no control sequences", () => {
+test("PtyOverlay: render shows emulated repaint without control sequences", async () => {
 	const { child } = stubChild();
-	const overlay = makeOverlay(child, () => {});
+	const { overlay } = mountOverlay(child);
 	child.stdout.emit("data", Buffer.from("\x1b[31mred\x1b[0m \x1b]11;?\x1b\\\x1b[6n\x07plain\r\n"));
+	child.stdout.emit("data", Buffer.from("progress 10%\rprogress done\r\n"));
+	await tick();
 	const lines = overlay.render(80);
 	for (const line of lines) {
 		assert.ok(!/\x1b|\x07/.test(line), `control chars leaked: ${JSON.stringify(line)}`);
 	}
 	assert.ok(lines.some((line) => line.includes("red plain")));
+	assert.ok(lines.some((line) => line.includes("progress done")));
+	assert.ok(!lines.some((line) => line.includes("10%")));
 	overlay.dispose();
 });
 
 test("PtyOverlay: unwraps bracketed paste before forwarding", () => {
 	const { child, written } = stubChild();
-	const overlay = makeOverlay(child, () => {});
+	const { overlay } = mountOverlay(child);
 	overlay.handleInput("\x1b[200~ghp_AbCdEf\x1b[201~");
 	assert.deepEqual(written, ["ghp_AbCdEf"]);
 	overlay.handleInput("\r");
@@ -152,41 +200,67 @@ test("PtyOverlay: unwraps bracketed paste before forwarding", () => {
 	overlay.dispose();
 });
 
-test("PtyOverlay: kitty-encoded ctrl-] detaches", () => {
+test("PtyOverlay: kitty-encoded ctrl-] detaches", async () => {
 	const { child, written } = stubChild();
-	let resolved;
-	const overlay = makeOverlay(child, (tail) => {
-		resolved = tail;
-	});
+	const { overlay, donePromise } = mountOverlay(child);
 	child.stdout.emit("data", Buffer.from("output"));
 	overlay.handleInput("\x1b[29;5u");
-	assert.match(resolved ?? "", /output/);
+	const resolved = await donePromise;
+	assert.match(resolved, /output/);
 	assert.deepEqual(written, []);
 });
 
-test("PtyOverlay: child exit auto-completes with exit note", () => {
+test("PtyOverlay: child exit auto-completes with exit note", async () => {
 	const { child } = stubChild();
-	let resolved;
-	makeOverlay(child, (tail) => {
-		resolved = tail;
-	});
+	const { donePromise } = mountOverlay(child);
 	child.stdout.emit("data", Buffer.from("bye"));
 	child.emit("exit", 0);
-	assert.match(resolved ?? "", /child exited \(0\)/);
+	const resolved = await donePromise;
+	assert.match(resolved, /child exited \(0\)/);
 });
 
 test("PtyOverlay: timeout notes the reason and kills the child", async () => {
 	const { child } = stubChild();
-	let resolved;
-	makeOverlay(
-		child,
-		(tail) => {
-			resolved = tail;
-		},
-		5,
-	);
-	await new Promise((resolve) => setTimeout(resolve, 40));
+	const { donePromise } = mountOverlay(child, 5);
+	await tick(40);
 	assert.ok(child.killed);
-	assert.match(resolved ?? "", /timed out after 0s/);
-	assert.match(resolved ?? "", /child exited \(null\)/);
+	const resolved = await donePromise;
+	assert.match(resolved, /timed out after 0s/);
+	assert.match(resolved, /child exited \(null\)/);
+});
+
+test("PtyOverlay: survey-style Y/n prompt round-trip under a real PTY", {
+	timeout: 30_000,
+}, async () => {
+	const program = [
+		"bash -c '",
+		'printf "? Authenticate Git with your GitHub credentials? (Y/n) "',
+		"while :; do",
+		"  IFS= read -rsn1 KEY",
+		'  case "$KEY" in',
+		'    y|Y) printf "\\r\\033[2K? Authenticate Git with your GitHub credentials? \\033[32mY\\033[0mes\\r\\n"; exit 0 ;;',
+		"    *) exit 9 ;;",
+		"  esac",
+		"done",
+		"'",
+	].join("\n");
+	const child = spawn("script", ["-qec", buildPtyCommand(program, 24, 120), "/dev/null"], {
+		stdio: ["pipe", "pipe", "pipe"],
+		env: { ...process.env, NO_COLOR: "1" },
+	});
+	const { overlay, donePromise } = mountOverlay(child);
+	let sawPrompt = false;
+	for (let i = 0; i < 50 && !sawPrompt; i++) {
+		await tick(100);
+		sawPrompt = overlay
+			.render(120)
+			.slice(3, -2)
+			.some((line) => line.includes("(Y/n)"));
+	}
+	assert.ok(sawPrompt, "prompt never rendered");
+	overlay.handleInput("y");
+	const resolved = await donePromise;
+	assert.match(resolved, /credentials\? Yes/);
+	assert.doesNotMatch(resolved, /\(Y\/n\)/);
+	assert.match(resolved, /child exited \(0\)/);
 });
