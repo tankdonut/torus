@@ -38,14 +38,26 @@ for (const url of urls) {
 				reducedMotion: "reduce",
 				colorScheme: theme,
 			});
+			// Pin the theme through the site's own storage path so the head
+			// script applies it before first paint. Pinning after load leaves
+			// below-fold subtrees serving stale inherited colors until a later
+			// restyle, and a fullPage shot paints exactly that stale state (seen
+			// as phantom dark ink on the light page); born-in-theme rendering has
+			// no race.
+			await ctx.addInitScript((t) => {
+				try {
+					localStorage.setItem("torus-theme", t);
+				} catch {}
+			}, theme);
 			const page = await ctx.newPage();
 			await page.goto(url, { waitUntil: "networkidle" });
-			// Pin the theme so the shot matches the emulated scheme even if the
-			// system preference disagrees; reveal rules never hide content under
-			// reduced motion, so fullPage needs no scroll prepass.
-			await page.evaluate((t) => {
-				document.documentElement.dataset.theme = t;
-			}, theme);
+			// Force the settled reveal state: IntersectionObserver timing and
+			// the staggered segment boot must never decide what an audit shot
+			// shows; the class change also restyles every reveal subtree ahead of
+			// the fullPage paint.
+			await page.evaluate(() => {
+				for (const el of document.querySelectorAll("[data-reveal]")) el.classList.add("is-visible");
+			});
 			await page.waitForTimeout(150);
 			await page.screenshot({ path: `${outDir}/${name}-${w}x${h}-${theme}.png`, fullPage: true });
 			await ctx.close();
