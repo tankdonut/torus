@@ -19,6 +19,16 @@ export default defineConfig({
 	output: "static",
 	integrations: [sitemap()],
 	markdown: {
+		// Dual shiki themes: the dark palette is the inline default (the site
+		// defaults dark, so fences need no override there) and light ships as
+		// --shiki-light vars that global.css swaps in under a pinned light theme.
+		shikiConfig: {
+			themes: {
+				light: "github-light",
+				dark: "github-dark",
+			},
+			defaultColor: "dark",
+		},
 		// Astro 7's default satteri processor cannot run function-form rehype
 		// plugins (its visitor API is incompatible with rehype-slug), so the site
 		// pins the classic unified pipeline from @astrojs/markdown-remark.

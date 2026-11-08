@@ -3,10 +3,11 @@ import { cropLines, parseAnsiScreen } from "../lib/ansi.mjs";
 import capturesMeta from "../tui/captures.json";
 
 /**
- * Renders a real TUI capture (site/src/tui/<scene>.ans, produced by
- * scripts/capture-tui.mjs from a live session) as colored HTML. Captures are
- * screenshots, not adaptive UI: the palette is the terminal's own, so the
- * block keeps a fixed dark background in both site themes.
+ * Renders real TUI captures (site/src/tui/<variant>/<scene>.ans, produced by
+ * scripts/capture-tui.mjs from live sessions) as colored HTML. Each figure
+ * carries both variants — the same scenes captured under the engine's dark
+ * and light themes — and CSS shows the one matching the site theme, so the
+ * terminal objects follow the header toggle instead of staying dark.
  *
  * Framing discipline: square corners, no window chrome, no device frame. A
  * real capture does not need to be dressed as a fake terminal window; the
@@ -14,7 +15,7 @@ import capturesMeta from "../tui/captures.json";
  *
  * Line semantics are the terminal's own: lines never wrap; content wider
  * than the frame scrolls horizontally under a themed scrollbar, and the
- * head row carries the capture geometry from captures.json. A wrapped
+ * head row carries the geometry from captures.json. A wrapped
  * capture would fake content the session never showed.
  */
 
@@ -34,22 +35,38 @@ interface Props {
 
 const { scene, title, caption, keepLast, from, to } = Astro.props;
 
-const captures = import.meta.glob("../tui/*.ans", { query: "?raw", import: "default", eager: true });
-const raw = captures[`../tui/${scene}.ans`];
-if (typeof raw !== "string") {
-	throw new Error(`TUI capture "${scene}" is missing; run npm run -w site capture`);
+const captures = import.meta.glob("../tui/*/*.ans", { query: "?raw", import: "default", eager: true });
+
+// Terminal ground/ink per capture variant: SGR runs without explicit colors
+// (and inverse-video fallbacks) resolve against these, matching the theme
+// the pane was captured under. Keep in sync with the --term-* values in
+// global.css.
+const VARIANT_DEFAULTS = {
+	dark: { fg: "#cfd6dd", bg: "#101216" },
+	light: { fg: "#3b3f41", bg: "#f6f7f9" },
+} as const;
+type Variant = keyof typeof VARIANT_DEFAULTS;
+
+function variantLines(scene: string, variant: Variant) {
+	const raw = captures[`../tui/${variant}/${scene}.ans`];
+	if (typeof raw !== "string") {
+		throw new Error(`TUI capture "${variant}/${scene}" is missing; run npm run -w site capture`);
+	}
+	return { raw, lines: cropLines(parseAnsiScreen(raw), { keepLast, from, to }) };
 }
-const lines = cropLines(parseAnsiScreen(raw), { keepLast, from, to });
+
+const variants = {
+	dark: variantLines(scene, "dark"),
+	light: variantLines(scene, "light"),
+} as const;
 const [captureWidth, captureHeight] = capturesMeta.geometry;
-const fullHeight = parseAnsiScreen(raw).length;
+const fullHeight = parseAnsiScreen(variants.dark.raw).length;
 const geometry = `${captureWidth}×${captureHeight}`;
 
-const defaultFg = "#cfd6dd";
-
-const spanStyle = (run: Record<string, unknown>): string => {
+const spanStyle = (run: Record<string, unknown>, defaults: { fg: string; bg: string }): string => {
 	const parts: string[] = [];
 	const fg = run.inverse ? (run.bg ?? "#101216") : run.fg;
-	const bg = run.inverse ? (run.fg ?? defaultFg) : run.bg;
+	const bg = run.inverse ? (run.fg ?? defaults.fg) : run.bg;
 	if (fg !== undefined) parts.push(`color:${fg}`);
 	if (bg !== undefined) parts.push(`background:${bg}`);
 	if (run.bold) parts.push("font-weight:700");
@@ -64,29 +81,31 @@ const spanStyle = (run: Record<string, unknown>): string => {
 const escapeHtml = (text: string) =>
 	text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
-const rendered = lines
-	.map((line) =>
-		line
-			.map((run) => {
-				const style = spanStyle(run);
-				return style === ""
-					? escapeHtml(run.text)
-					: `<span style="${style}">${escapeHtml(run.text)}</span>`;
-			})
-			.join("")
-			.replace(/\s+$/, ""),
-	)
-	.join("\n");
+const rendered = (variant: Variant) =>
+	variants[variant].lines
+		.map((line) =>
+			line
+				.map((run) => {
+					const style = spanStyle(run, VARIANT_DEFAULTS[variant]);
+					return style === ""
+						? escapeHtml(run.text)
+						: `<span style="${style}">${escapeHtml(run.text)}</span>`;
+				})
+				.join("")
+				.replace(/\s+$/, ""),
+		)
+		.join("\n");
 ---
 
 <figure class="tui">
 	<div class="frame">
 		<div class="head" aria-hidden="true">
 			{title ? <span class="head-title">{title}</span> : <span class="head-title">{scene}</span>}
-			<span class="geometry">{geometry}{lines.length !== fullHeight ? " · crop" : ""}</span>
+			<span class="geometry">{geometry}{variants.dark.lines.length !== fullHeight ? " · crop" : ""}</span>
 			<span class="live"><span class="pulse"></span>live capture</span>
 		</div>
-		<pre set:html={rendered} />
+		<pre class="capture capture-dark" set:html={rendered("dark")} />
+		<pre class="capture capture-light" set:html={rendered("light")} />
 	</div>
 	{caption ? <figcaption>{caption}</figcaption> : null}
 </figure>
@@ -97,11 +116,11 @@ const rendered = lines
 	}
 
 	.frame {
-		border: 1px solid var(--term-border);
+		border: 1px solid var(--term-border-strong);
 		overflow: hidden;
 		background: var(--term-bg);
 		/* One uniform width for every capture, like a stack of same-sized
-		 * screenshots; narrower content letterboxes against the dark bg. */
+		 * screenshots; narrower content letterboxes against the capture ground. */
 		width: 100%;
 	}
 
@@ -112,7 +131,7 @@ const rendered = lines
 		gap: calc(var(--spacing) * 1) calc(var(--spacing) * 2);
 		padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
 		border-bottom: 1px solid var(--term-border);
-		background: var(--term-panel);
+		background: var(--term-panel-raised);
 	}
 
 	/* Segments never break mid-phrase; the row wraps as whole segments on
@@ -127,8 +146,7 @@ const rendered = lines
 	}
 
 	/* Amber is the TUI's running-agent color; the live mark spends it on the
-	 * one thing that is actually running. The head panel is dark in both site
-	 * themes, so the mark pins the in-terminal amber value. */
+	 * one thing that is actually running, at each theme's in-terminal value. */
 	.live {
 		margin-left: auto;
 		display: inline-flex;
@@ -136,14 +154,14 @@ const rendered = lines
 		gap: 0.45em;
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
-		color: #cd9a22;
+		color: var(--term-amber);
 	}
 
 	.pulse {
 		width: 7px;
 		height: 7px;
 		border-radius: 50%;
-		background: #cd9a22;
+		background: var(--term-amber);
 	}
 
 	pre {
@@ -151,7 +169,7 @@ const rendered = lines
 		padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
 		overflow-x: auto;
 		scrollbar-width: thin;
-		scrollbar-color: #3d3d4d transparent;
+		scrollbar-color: var(--term-scrollbar) transparent;
 		font-family: var(--font-mono);
 		font-size: 0.875rem;
 		line-height: 1.5;
@@ -173,32 +191,25 @@ const rendered = lines
 	}
 
 	pre::-webkit-scrollbar-thumb {
-		background: #3d3d4d;
+		background: var(--term-scrollbar);
 	}
 
 	pre::-webkit-scrollbar-track {
 		background: transparent;
 	}
 
-	/* Dark theme: the capture ground equals the page ground, so the frame needs
-	 * a visible edge and a lighter head panel to read as an object. Keyed off
-	 * both the system preference and the visitor's pinned theme, like the
-	 * page tokens in global.css (a pinned dark theme must not lose the edge). */
-	@media (prefers-color-scheme: dark) {
-		:global(html:not([data-theme="light"])) .frame {
-			border-color: #343444;
-		}
-
-		:global(html:not([data-theme="light"])) .head {
-			background: #1a1a22;
-		}
+	/* Each figure ships both captures; CSS shows the one matching the site
+	 * theme (dark default). display, not visibility: the hidden variant must
+	 * not stack its own scrollbar under the visible one. */
+	.capture-light {
+		display: none;
 	}
 
-	:global(html[data-theme="dark"]) .frame {
-		border-color: #343444;
+	:global(html[data-theme="light"]) .capture-light {
+		display: block;
 	}
 
-	:global(html[data-theme="dark"]) .head {
-		background: #1a1a22;
+	:global(html[data-theme="light"]) .capture-dark {
+		display: none;
 	}
 </style>

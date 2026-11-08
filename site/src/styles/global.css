@@ -1,25 +1,33 @@
 :root {
-	/* Light theme: paper ground, dark terminal objects. Accent hues are the
-	 * TUI's own (cyan/violet/amber from the committed captures), darkened to
-	 * hold contrast on paper. */
-	--color-bg: #f8f8f7;
-	--color-surface: #eeefec;
-	--color-surface-2: #e4e5e1;
-	--color-text: #16161a;
-	--color-muted: #616169;
-	--color-accent: #1f7a89;
-	--color-accent-soft: color-mix(in srgb, #1f7a89 14%, transparent);
-	--color-amber: #8a620f;
-	--color-violet: #6f5cae;
-	--color-green: #2e7d51;
-	--color-border: #d8d9d4;
-	/* The terminal blocks keep the TUI's own palette in both themes. */
+	/* Dark is the site's default: the terminal's own world, not an inversion.
+	 * The page ground is the TUI background, panels are the TUI's pane color,
+	 * and the accents sit at their in-terminal values. Light is the visitor's
+	 * opt-in (the header toggle), reached only through [data-theme="light"] —
+	 * there is no prefers-color-scheme branch anymore, so an unpinned visit
+	 * opens dark regardless of the system scheme. */
+	--color-bg: #101216;
+	--color-surface: #16161c;
+	--color-surface-2: #1d1d25;
+	--color-text: #d6dbe1;
+	--color-muted: #8b939c;
+	--color-accent: #56b6c2;
+	--color-accent-soft: color-mix(in srgb, #56b6c2 18%, transparent);
+	--color-amber: #cd9a22;
+	--color-violet: #a798d7;
+	--color-green: #68b78d;
+	--color-border: #26262e;
+	/* The terminal blocks speak the captures' palette per theme: these are the
+	 * dark-capture values (ground, panels, scrollbar, amber live mark); the
+	 * light block below carries the light-capture equivalents. */
 	--term-bg: #101216;
 	--term-panel: #16161c;
+	--term-panel-raised: #1a1a22;
 	--term-border: #26262e;
+	--term-border-strong: #343444;
 	--term-ink: #cfd6dd;
 	--term-muted: #7e8892;
-	--term-green: #68b78d;
+	--term-amber: #cd9a22;
+	--term-scrollbar: #3d3d4d;
 	--font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
 	--font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
 	--spacing: 0.25rem;
@@ -33,40 +41,30 @@
 	--text-mono-label: 0.8125rem;
 }
 
-/* Dark theme is the terminal's own world, not an inversion: the page
- * ground is the TUI background, panels are the TUI's pane color, and
- * the accents sit at their in-terminal values. Two selectors reach it:
- * the system preference (still honored with scripts off) unless the
- * visitor pinned light, and the visitor's pinned choice. The pinned
- * block below repeats the media block verbatim — keep them identical. */
-@media (prefers-color-scheme: dark) {
-	:root:not([data-theme="light"]) {
-		--color-bg: #101216;
-		--color-surface: #16161c;
-		--color-surface-2: #1d1d25;
-		--color-text: #d6dbe1;
-		--color-muted: #8b939c;
-		--color-accent: #56b6c2;
-		--color-accent-soft: color-mix(in srgb, #56b6c2 18%, transparent);
-		--color-amber: #cd9a22;
-		--color-violet: #a798d7;
-		--color-green: #68b78d;
-		--color-border: #26262e;
-	}
-}
-
-:root[data-theme="dark"] {
-	--color-bg: #101216;
-	--color-surface: #16161c;
-	--color-surface-2: #1d1d25;
-	--color-text: #d6dbe1;
-	--color-muted: #8b939c;
-	--color-accent: #56b6c2;
-	--color-accent-soft: color-mix(in srgb, #56b6c2 18%, transparent);
-	--color-amber: #cd9a22;
-	--color-violet: #a798d7;
-	--color-green: #68b78d;
-	--color-border: #26262e;
+/* Light theme: paper ground with the TUI's accent hues darkened to hold
+ * contrast, and terminal objects rendered as light panels (the light-theme
+ * captures' palette). One selector reaches it: the visitor's pinned choice. */
+:root[data-theme="light"] {
+	--color-bg: #f8f8f7;
+	--color-surface: #eeefec;
+	--color-surface-2: #e4e5e1;
+	--color-text: #16161a;
+	--color-muted: #616169;
+	--color-accent: #1f7a89;
+	--color-accent-soft: color-mix(in srgb, #1f7a89 14%, transparent);
+	--color-amber: #8a620f;
+	--color-violet: #6f5cae;
+	--color-green: #2e7d51;
+	--color-border: #d8d9d4;
+	--term-bg: #f6f7f9;
+	--term-panel: #eceef2;
+	--term-panel-raised: #e5e8ee;
+	--term-border: #c9cdd6;
+	--term-border-strong: #879095;
+	--term-ink: #3b3f41;
+	--term-muted: #677176;
+	--term-amber: #8f6802;
+	--term-scrollbar: #b6bcc8;
 }
 
 :root[data-theme="dark"] {
@@ -82,7 +80,7 @@
 }
 
 html {
-	color-scheme: light dark;
+	color-scheme: dark;
 	scrollbar-color: var(--color-muted) transparent;
 }
 
@@ -331,8 +329,9 @@ pre code {
    button CodeBlock renders in flow; here it pins to the fence's corner,
    outside the pre so the pre's horizontal scroll never carries it away. The
    wrapper takes the standard figure rhythm above; the pre inside loses its
-   browser margin so the two don't stack. Shiki paints fences dark in both
-   themes, so the button speaks the terminal palette, not the page theme. */
+   browser margin so the two don't stack. Shiki paints fences per site theme
+   (dual themes below), so the button speaks the page palette like
+   CodeBlock's own. */
 .code-fence {
 	position: relative;
 }
@@ -347,21 +346,33 @@ pre code {
 	inset-inline-end: calc(var(--spacing) * 3);
 	font-family: var(--font-mono);
 	font-size: 0.75rem;
-	color: var(--term-muted);
-	background: var(--term-panel);
-	border: 1px solid var(--term-border);
+	color: var(--color-text);
+	background: var(--color-bg);
+	border: 1px solid var(--color-border);
 	padding: 0.05rem 0.6rem;
 	cursor: pointer;
 }
 
 .code-fence .copy:hover {
-	color: var(--term-ink);
-	border-color: var(--term-muted);
+	border-color: var(--color-muted);
 }
 
 .code-fence .copy[data-copied] {
-	color: var(--term-green);
-	border-color: color-mix(in srgb, var(--term-green) 45%, transparent);
+	color: var(--color-green);
+	border-color: color-mix(in srgb, var(--color-green) 45%, transparent);
+}
+
+/* Dual Shiki themes (astro.config.mjs): the dark palette is the inline
+   default — the site defaults dark, so fences need no override there — and
+   light ships as --shiki-light custom properties this rule swaps in under a
+   pinned light theme. The !important is the standard escape over shiki's
+   inline styles. */
+html[data-theme="light"] .astro-code,
+html[data-theme="light"] .astro-code span {
+	/* biome-ignore lint/complexity/noImportantStyles: shiki paints tokens with inline styles; beating them requires !important */
+	color: var(--shiki-light) !important;
+	/* biome-ignore lint/complexity/noImportantStyles: shiki paints tokens with inline styles; beating them requires !important */
+	background-color: var(--shiki-light-bg) !important;
 }
 
 :focus-visible {

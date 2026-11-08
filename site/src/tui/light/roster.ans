@@ -1,0 +1,32 @@
+ [1m[38;2;143;104;2mUpdate Available[0m
+ [38;2;103;113;118mNew version 1.5.0 is available. Run [38;2;116;89;180mpi update[39m
+ [38;2;103;113;118mChangelog: [38;2;116;89;180mhttps://pi.dev/changelog[39m
+[38;2;143;104;2m───────────────────────────────────────────────────────────────────────────────────────────
+
+[39m [38;2;135;144;149mproviders: zai=true opencode-go=true
+[39m [38;2;135;144;149mbuilder: Executes one self-contained implementation task: code, tests, verification, no
+[39m [38;2;135;144;149mdelegation. Dispatch for build tasks with exact files, acceptance commands, and QA
+[39m [38;2;135;144;149mevidence; not for review or research. [chain=primary -> zai/glm-5.3]
+[39m [38;2;135;144;149mcritic: design-side plan critic: self-containment, YAGNI, reuse; fresh eyes, never agrees
+[39m [38;2;135;144;149mby default [chain=primary -> zai/glm-5.3]
+[39m [38;2;135;144;149mdreamer: Read-only memory distiller: reads logs and the torus memory store, returns
+[39m [38;2;135;144;149mstructured entry/delete/profile proposals; never writes [chain=fast -> zai/glm-5.3-flash]
+[39m [38;2;135;144;149mexplorer: Cheap contextual codebase grep (fast model) [chain=fast -> zai/glm-5.3-flash]
+[39m [38;2;135;144;149mlibrarian: External-reference researcher: remote repos, official docs, library internals,
+[39m [38;2;135;144;149mOSS usage examples (MCP context7 + grep_app; gh/git/curl via bash) [chain=fast ->
+[39m [38;2;135;144;149mzai/glm-5.3-flash]
+[39m [38;2;135;144;149mlooker: Vision specialist: answers questions about screenshots, diagrams, and UI captures
+[39m [38;2;135;144;149m(image-capable flash model). Dispatch whenever a question depends on seeing an image.
+[39m [38;2;135;144;149m[chain=fast -> zai/glm-5.3-flash]
+[39m [38;2;135;144;149mreviewer: Practical adversarial reviewer: plans, docs, code, work descriptions;
+[39m [38;2;135;144;149mblocker-finder, not perfectionist [chain=primary -> zai/glm-5.3]
+[39m [38;2;135;144;149mconcurrency caps (max parallel runs per model, provider account-level): zai/glm-5.3=5,
+[39m [38;2;135;144;149mzai/glm-5.3-flash=50, opencode-go/glm-5.3-flash=uncapped[39m
+
+[1m[38;2;116;89;180mtorus[0m[38;2;135;144;149m · [38;2;86;182;194mleader[38;2;135;144;149m · [38;2;86;182;194mglm-5.3[38;2;135;144;149m · [38;2;86;182;194mhigh[38;2;135;144;149m · zai|opencode-go · perm:default · [38;2;51;126;88mmcp:2[38;2;135;144;149m · [39msbx:off
+
+[38;2;86;182;194m───────────────────────────────────────────────────────────────────────────────────────────
+[7m[39m [0m
+[38;2;86;182;194m───────────────────────────────────────────────────────────────────────────────────────────
+[38;2;135;144;149m~/torus (main)[39m
+[38;2;135;144;149m0.0%/1.0M (auto)                                                       (zai) glm-5.3 • high

@@ -3,14 +3,16 @@
  *
  * Boots the actual torus TUI inside a fixed-geometry tmux session, delegates a
  * small task to an explorer agent, and snapshots the panes (with SGR colors)
- * as the run progresses. The .ans files plus captures.json are committed, so
- * this only needs a re-run when a surface changes:
+ * as the run progresses. The whole scene flow runs twice, once per engine
+ * theme (dark and light), writing src/tui/<theme>/*.ans plus a captures.json
+ * manifest, all committed; this only needs a re-run when a surface changes:
  *
  *     npm run -w site capture
  *
- * Costs a few cents: the explorer dispatch runs on a flash-tier model and the
- * lead session takes no model turns (slash dispatches are direct tool calls).
- * TORUS_DREAMING=0 keeps the idle dreamer from spawning mid-capture.
+ * Costs a few cents per theme: the explorer dispatch runs on a flash-tier
+ * model and the lead session takes no model turns (slash dispatches are
+ * direct tool calls). TORUS_DREAMING=0 keeps the idle dreamer from spawning
+ * mid-capture.
  */
 
 import { spawnSync } from "node:child_process";
@@ -21,7 +23,7 @@ import { fileURLToPath } from "node:url";
 
 const siteRoot = fileURLToPath(new URL("../", import.meta.url));
 const repoRoot = resolve(siteRoot, "..");
-const outDir = resolve(siteRoot, "src", "tui");
+const tuiRoot = resolve(siteRoot, "src", "tui");
 
 const SESSION = "torus-site-capture";
 const WIDTH = 140;
@@ -62,7 +64,7 @@ const redact = (text) => {
 	for (const [from, to] of REDACTIONS) out = out.replaceAll(from, to);
 	return out;
 };
-const capture = (pane, name) => {
+const capture = (pane, name, outDir) => {
 	const colored = tmux(["capture-pane", "-e", "-p", "-t", pane]);
 	if (colored.status !== 0) throw new Error(`capture failed for ${name}`);
 	writeFileSync(resolve(outDir, `${name}.ans`), redact(colored.stdout));
@@ -101,31 +103,41 @@ function teardown(stateDir, success) {
 	}
 }
 
-mkdirSync(outDir, { recursive: true });
-tmux(["kill-session", "-t", SESSION]);
+const THEMES = ["dark", "light"];
+let stateDir = "";
 
-if (run("test -d node_modules/@earendil-works/pi-coding-agent").status !== 0) {
-	console.error("site: engine missing; run npm install at the repo root first");
-	process.exit(1);
-}
+/**
+ * Boots the TUI under one engine theme and captures every scene into
+ * src/tui/<theme>/. The theme is pinned with --use-theme so both passes are
+ * deterministic regardless of the operator's settings; the TUI draws its
+ * colors through the engine's theme roles, so the light pass is a real
+ * light session, not a recolor. Two sessions per theme: the dispatch flow,
+ * then the team flow (the dispatch session's deferred result turn owns the
+ * lead, so the team message would queue behind it).
+ */
+function runScenes(theme) {
+	const outDir = resolve(tuiRoot, theme);
+	mkdirSync(outDir, { recursive: true });
+	tmux(["kill-session", "-t", SESSION]);
 
-let stateDir = mkdtempSync(resolve(tmpdir(), "torus-site-capture-"));
-tmux([
-	"new-session",
-	"-d",
-	"-s",
-	SESSION,
-	"-x",
-	String(WIDTH),
-	"-y",
-	String(HEIGHT),
-	"-c",
-	repoRoot,
-	`env TORUS_STATE_DIR=${stateDir} TORUS_DREAMING=0 ./runtime/bin/torus.mjs`,
-]);
+	const boot = () => {
+		stateDir = mkdtempSync(resolve(tmpdir(), "torus-site-capture-"));
+		tmux([
+			"new-session",
+			"-d",
+			"-s",
+			SESSION,
+			"-x",
+			String(WIDTH),
+			"-y",
+			String(HEIGHT),
+			"-c",
+			repoRoot,
+			`env TORUS_STATE_DIR=${stateDir} TORUS_DREAMING=0 ./runtime/bin/torus.mjs --use-theme ${theme}`,
+		]);
+	};
 
-let ok = false;
-try {
+	boot();
 	waitFor(`${SESSION}.0`, "torus · leader", 60_000, "TUI boot (statusline)");
 
 	// The roster scene is stateless; capture it before any dispatch or fleet
@@ -137,7 +149,7 @@ try {
 	tmux(["send-keys", "-t", `${SESSION}.0`, "/roster", "Enter"]);
 	waitFor(`${SESSION}.0`, "concurrency caps", 20_000, "roster output");
 	sleep(1000);
-	capture(`${SESSION}.0`, "roster");
+	capture(`${SESSION}.0`, "roster", outDir);
 	tmux(["resize-window", "-t", SESSION, "-x", String(WIDTH)]);
 	sleep(1500);
 
@@ -146,7 +158,7 @@ try {
 	tmux(["send-keys", "-t", `${SESSION}.0`, `/explorer ${DISPATCH}`, "Enter"]);
 	waitFor(`${SESSION}.0`, "alt+t all", 30_000, "fleet strip after dispatch");
 	sleep(2000);
-	capture(`${SESSION}.0`, "statusline-fleet");
+	capture(`${SESSION}.0`, "statusline-fleet", outDir);
 
 	tmux(["send-keys", "-t", `${SESSION}.0`, "Escape"]);
 	sleep(600);
@@ -156,7 +168,7 @@ try {
 	tmux(["send-keys", "-t", `${SESSION}.0`, "M-t"]);
 	waitFor(`${SESSION}.0`, "❯", 10_000, "fleet browser list");
 	sleep(1500);
-	capture(`${SESSION}.0`, "fleet-list");
+	capture(`${SESSION}.0`, "fleet-list", outDir);
 
 	// M-1 is the strip slot shortcut: it opens the first running agent's
 	// detail directly. The detail head truncates at the pane width, so the
@@ -184,29 +196,14 @@ try {
 		);
 		throw new Error("fleet detail view");
 	}
-	capture(`${SESSION}.0`, "fleet-detail");
+	capture(`${SESSION}.0`, "fleet-detail", outDir);
 
 	// Let the dispatch settle before teardown so the child exits cleanly.
 	const deadline = Date.now() + 240_000;
 	while (delegationPane() && Date.now() < deadline) sleep(3000);
 	teardown(stateDir, true);
 
-	// Team mode runs in a fresh session: in the dispatch session the explorer's
-	// deferred result turn owns the lead, and the team message queues behind it.
-	stateDir = mkdtempSync(resolve(tmpdir(), "torus-site-capture-"));
-	tmux([
-		"new-session",
-		"-d",
-		"-s",
-		SESSION,
-		"-x",
-		String(WIDTH),
-		"-y",
-		String(HEIGHT),
-		"-c",
-		repoRoot,
-		`env TORUS_STATE_DIR=${stateDir} TORUS_DREAMING=0 ./runtime/bin/torus.mjs`,
-	]);
+	boot();
 	waitFor(`${SESSION}.0`, "torus · leader", 60_000, "TUI boot (team session)");
 	tmux(["send-keys", "-t", `${SESSION}.0`, TEAM_MESSAGE, "Enter"]);
 	// The strip carries member rows once they run; its permanent "alt+t all"
@@ -232,16 +229,30 @@ try {
 		throw error;
 	}
 	sleep(4000);
-	capture(`${SESSION}.0`, "team");
+	capture(`${SESSION}.0`, "team", outDir);
 	tmux(["send-keys", "-t", `${SESSION}.0`, "Escape"]);
 	sleep(600);
+	teardown(stateDir, true);
+}
 
+if (run("test -d node_modules/@earendil-works/pi-coding-agent").status !== 0) {
+	console.error("site: engine missing; run npm install at the repo root first");
+	process.exit(1);
+}
+
+let ok = false;
+try {
+	for (const theme of THEMES) {
+		console.log(`site: capturing theme ${theme}`);
+		runScenes(theme);
+	}
 	writeFileSync(
-		resolve(outDir, "captures.json"),
+		resolve(tuiRoot, "captures.json"),
 		`${JSON.stringify(
 			{
 				capturedAt: new Date().toISOString(),
 				geometry: [WIDTH, HEIGHT],
+				themes: THEMES,
 				scenes: ["statusline-fleet", "fleet-list", "fleet-detail", "team", "roster"],
 			},
 			null,
@@ -253,5 +264,6 @@ try {
 } catch (error) {
 	console.error(`site: ${error.message}`);
 } finally {
-	teardown(stateDir, ok);
+	// A completed theme tore itself down; only a failed run leaves a session.
+	if (!ok) teardown(stateDir, false);
 }

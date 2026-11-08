@@ -1,8 +1,12 @@
 {
-	"capturedAt": "2026-11-01T20:51:44.584Z",
+	"capturedAt": "2026-11-08T15:09:27.901Z",
 	"geometry": [
 		140,
 		32
+	],
+	"themes": [
+		"dark",
+		"light"
 	],
 	"scenes": [
 		"statusline-fleet",
