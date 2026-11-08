@@ -244,9 +244,17 @@ export function installCursorBlink(tui: TUI, intervalMs: number = BLINK_INTERVAL
 	if (timer) clearInterval(timer);
 	current = blink;
 	activeTui = tui;
-	timer = setInterval(() => {
-		if (current?.tick()) tui.requestRender();
+	const handle = setInterval(() => {
+		try {
+			if (current?.tick()) tui.requestRender();
+		} catch {
+			// Same hazard as the statusline mcp poll: /reload re-imports this
+			// module and the fresh instance cannot clear this timer; a stale
+			// tui must not crash the engine.
+			clearInterval(handle);
+		}
 	}, intervalMs);
+	timer = handle;
 	// never hold the process (or a test run) open just for the blink
 	timer.unref?.();
 }

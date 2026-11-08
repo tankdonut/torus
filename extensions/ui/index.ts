@@ -454,7 +454,11 @@ export function buildStatus(theme?: StatusPainter): string {
  * all — so any stale cache would paint a model the engine already left.
  */
 export function refreshToruStatus(ctx: ExtensionContext): void {
-	currentModel = ctx.model?.id ?? currentModel;
+	// The "unknown" placeholder is skipped: during rebinds (/reload, /resume)
+	// the live ctx can briefly carry it before the model registry reloads, and
+	// caching it would paint a phantom model chip until the next model_select.
+	const id = ctx.model?.id;
+	if (id !== undefined && id !== "unknown") currentModel = id;
 	currentEffort = ctx.thinkingLevel ?? currentEffort;
 	setTorusChip(STATUS_KEY, buildStatus(ctx.ui.theme));
 }
@@ -707,11 +711,20 @@ export function registerUi(pi: ExtensionAPI): void {
 		stopMcpPoll();
 		const deadline = Date.now() + 30_000;
 		const timer = setInterval(() => {
-			const before = mcpCounts.connected;
-			refreshMcp();
-			if (mcpCounts.connected !== before) refreshToruStatus(ctx);
-			const settled = mcpCounts.registered === 0 || mcpCounts.connected >= mcpCounts.registered;
-			if (settled || Date.now() >= deadline) stopMcpPoll();
+			try {
+				const before = mcpCounts.connected;
+				refreshMcp();
+				if (mcpCounts.connected !== before) refreshToruStatus(ctx);
+				const settled = mcpCounts.registered === 0 || mcpCounts.connected >= mcpCounts.registered;
+				if (settled || Date.now() >= deadline) stopMcpPoll();
+			} catch {
+				// A session replacement (/reload, /resume) re-imports this
+				// module, so the fresh instance's stopMcpPoll can never reach
+				// this timer; if its captured ctx/pi have gone stale, touching
+				// them throws, and a throw escaping a timer callback kills the
+				// engine. Self-destruct instead.
+				stopMcpPoll();
+			}
 		}, 250);
 		// never hold the process (or a test run) open just for this poll
 		timer.unref?.();
@@ -719,7 +732,10 @@ export function registerUi(pi: ExtensionAPI): void {
 	};
 
 	pi.on("session_start", (_event, ctx: ExtensionContext) => {
-		currentModel = ctx.model?.id;
+		// Same placeholder guard as refreshToruStatus: a rebind's session_start
+		// can arrive with the engine's "unknown" model; keep the last real id.
+		const id = ctx.model?.id;
+		if (id !== undefined && id !== "unknown") currentModel = id;
 		currentEffort = ctx.thinkingLevel;
 		refreshMcp();
 		pollMcpUntilSettled(ctx);

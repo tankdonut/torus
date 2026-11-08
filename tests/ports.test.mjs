@@ -774,3 +774,33 @@ test("statusline chip boundaries carry the same dim dot as the composite chip", 
 	assert.ok(narrow[0].endsWith("lsp:2"), "row break must not leave a dangling separator");
 	torusChips().clear();
 });
+
+test("mcp poll: a stale pi/ctx tick clears the timer instead of crashing", async () => {
+	const handlers = {};
+	let stale = false;
+	registerUi({
+		on: (event, handler) => (handlers[event] = handler),
+		// One registered, never-connected server keeps the poll alive past its
+		// first tick; flipping `stale` simulates the engine invalidating the
+		// captured pi after a session replacement (/reload).
+		getMcpServers: () => {
+			if (stale)
+				throw new Error("This extension ctx is stale after session replacement or reload.");
+			return [{ name: "x" }];
+		},
+		getActiveTools: () => [],
+	});
+	const ctx = {
+		ui: { setWidget: () => {} },
+		sessionManager: { getSessionId: () => "sess-mcp-poll" },
+		model: undefined,
+		thinkingLevel: undefined,
+	};
+	handlers["session_start"]({ type: "session_start", reason: "startup" }, ctx);
+	stale = true;
+	// Two poll ticks at the 250ms cadence: the first throws inside the timer
+	// callback and must self-destruct; without the guard the throw escapes a
+	// timer callback and kills the process, and a failed clear throws again
+	// on the second tick.
+	await new Promise((resolve) => setTimeout(resolve, 700));
+});
