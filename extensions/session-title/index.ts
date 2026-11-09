@@ -283,10 +283,6 @@ export function registerSessionTitle(pi: ExtensionAPI): void {
 	pi.registerCommand("rename", {
 		description: "Regenerate the session name from the whole session: /rename [focus hint]",
 		handler: async (args, ctx) => {
-			if (ctx.isIdle() === false) {
-				ctx.ui.notify("rename: wait for the current turn to finish", "error");
-				return;
-			}
 			const brief = renameBrief(
 				ctx.sessionManager.getEntries(),
 				gatherTitleState(ctx.sessionManager.getSessionId()),

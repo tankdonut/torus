@@ -331,15 +331,17 @@ test("/rename brief carries data-only task state, never block instructions", asy
 	);
 });
 
-test("/rename refuses mid-turn and on empty sessions", async () => {
+test("/rename works mid-turn; empty sessions still refuse", async () => {
 	const pi = fakePi();
 	registerSessionTitle(pi);
-	const busy = fakeCtx([msgEntry(USER("hi"))]);
+	const busy = fakeCtx([msgEntry(USER("fix bug")), msgEntry(ASSISTANT("mid-run outcome"))]);
 	busy.isIdle = () => false;
 	await pi.commands.rename.handler("", busy);
-	assert.equal(pi.state.name, undefined);
+	assert.equal(pi.state.name, "Generated session title");
 
+	const emptyPi = fakePi();
+	registerSessionTitle(emptyPi);
 	const empty = fakeCtx([]);
-	await pi.commands.rename.handler("", empty);
-	assert.equal(pi.state.name, undefined);
+	await emptyPi.commands.rename.handler("", empty);
+	assert.equal(emptyPi.state.name, undefined);
 });
