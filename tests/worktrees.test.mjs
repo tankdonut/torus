@@ -254,7 +254,7 @@ test("runGit surfaces failures without throwing", async () => {
 	assert.ok(bad.stderr.length > 0);
 });
 
-test("tool handlers set and clear the torus:worktree statusline chip", async () => {
+test("tool handlers maintain the torus:worktree count chip across worktrees", async () => {
 	const tools = [];
 	// hermetic under delegation children: registration is parent-session-only
 	const ambientChild = process.env["TORUS_ENGINE_CHILD"];
@@ -276,25 +276,49 @@ test("tool handlers set and clear the torus:worktree statusline chip", async () 
 		},
 	};
 
-	const created = await byName.worktree_create.execute(
+	const first = await byName.worktree_create.execute(
 		"t1",
 		{ branch: "feat/chip" },
 		undefined,
 		undefined,
 		ctx,
 	);
-	assert.match(created.content[0].text, /worktree ready/);
-	assert.match(torusChips().get("torus:worktree") ?? "", /feat\/chip/, "chip set after create");
+	assert.match(first.content[0].text, /worktree ready/);
+	assert.equal(torusChips().get("torus:worktree"), "wt:1", "chip counts one after first create");
 
-	const removed = await byName.worktree_remove.execute(
+	const second = await byName.worktree_create.execute(
 		"t2",
+		{ branch: "feat/second" },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.match(second.content[0].text, /worktree ready/);
+	assert.equal(
+		torusChips().get("torus:worktree"),
+		"wt:2",
+		"chip counts every live worktree, not just the last created",
+	);
+
+	const removedOne = await byName.worktree_remove.execute(
+		"t3",
 		{ branch: "feat/chip" },
 		undefined,
 		undefined,
 		ctx,
 	);
-	assert.match(removed.content[0].text, /removed worktree/);
-	assert.equal(torusChips().has("torus:worktree"), false, "chip cleared after remove");
+	assert.match(removedOne.content[0].text, /removed worktree/);
+	assert.equal(torusChips().get("torus:worktree"), "wt:1", "chip decrements after removing one");
+
+	const removedLast = await byName.worktree_remove.execute(
+		"t4",
+		{ branch: "feat/second" },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.match(removedLast.content[0].text, /removed worktree/);
+	assert.equal(torusChips().has("torus:worktree"), false, "chip clears with the last worktree");
 });
 
 test("tool refusals carry isError so the TUI paints them red", async () => {

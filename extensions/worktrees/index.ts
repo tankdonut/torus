@@ -20,13 +20,12 @@
  * whole sequence, reading as a hung TUI. The tool's AbortSignal is
  * threaded through so a stuck git child is cancellable.
  *
- * A "torus:worktree" statusline chip shows the active worktree as
- * "wt:repo/branch" (set by create, cleared when that branch is merged or
- * removed; the repo segment keeps parallel sessions in multiple repos
- * distinguishable). Pure
- * visibility: pi has no session-wide cwd switch, so the chip carries no
- * enter/exit semantics — work in the worktree via absolute paths or
- * torus_delegate's cwd param.
+ * A "torus:worktree" statusline chip counts THIS session's live worktrees as
+ * "wt:N" (create increments; merge without keep, and remove, decrement).
+ * Session-scoped by design: other sessions' worktrees never count, and a
+ * restart starts the count over. Pure visibility: pi has no session-wide cwd
+ * switch, so the chip carries no enter/exit semantics — work in the worktree
+ * via absolute paths or torus_delegate's cwd param.
  *
  * Parent sessions only: registration is skipped when TORUS_ENGINE_CHILD is
  * set (delegation and team-member children spawn with it) — workers execute
@@ -52,18 +51,12 @@ export const PLATFORM_SUPPORT: PlatformSupport = {
 };
 
 const STATUS_KEY = "torus:worktree";
-let activeBranch: string | null = null;
+/** Live worktree branches created by this session; the chip counts them. */
+const sessionBranches = new Set<string>();
 
-function setWorktreeStatus(
-	ctx: ExtensionContext,
-	repo: string | null,
-	branch: string | null,
-): void {
-	activeBranch = branch;
-	setTorusChip(
-		STATUS_KEY,
-		repo && branch ? ctx.ui.theme.fg("warning", `wt:${repo}/${branch}`) : undefined,
-	);
+function refreshWorktreeChip(ctx: ExtensionContext): void {
+	const count = sessionBranches.size;
+	setTorusChip(STATUS_KEY, count > 0 ? ctx.ui.theme.fg("warning", `wt:${count}`) : undefined);
 }
 
 /** Branches become filesystem path segments and git arguments — allowlist strictly. */
@@ -491,7 +484,10 @@ export default function worktreesExtension(pi: ExtensionAPI): void {
 				if (!root)
 					return toolOutput({ ok: false, error: `${ctx.cwd} is not inside a git work tree` });
 				const result = await performCreate(root, params.branch, { ...params, signal });
-				if (result.ok) setWorktreeStatus(ctx, path.basename(root), params.branch);
+				if (result.ok) {
+					sessionBranches.add(params.branch);
+					refreshWorktreeChip(ctx);
+				}
 				return toolOutput(result);
 			},
 		}),
@@ -534,8 +530,9 @@ export default function worktreesExtension(pi: ExtensionAPI): void {
 				if (!root)
 					return toolOutput({ ok: false, error: `${ctx.cwd} is not inside a git work tree` });
 				const result = await performMerge(root, params.branch, { ...params, signal });
-				if (result.ok && activeBranch === params.branch && !params.keep) {
-					setWorktreeStatus(ctx, null, null);
+				if (result.ok) {
+					if (!params.keep) sessionBranches.delete(params.branch);
+					refreshWorktreeChip(ctx);
 				}
 				return toolOutput(result);
 			},
@@ -564,7 +561,10 @@ export default function worktreesExtension(pi: ExtensionAPI): void {
 				if (!root)
 					return toolOutput({ ok: false, error: `${ctx.cwd} is not inside a git work tree` });
 				const result = await performRemove(root, params.branch, { ...params, signal });
-				if (result.ok && activeBranch === params.branch) setWorktreeStatus(ctx, null, null);
+				if (result.ok) {
+					sessionBranches.delete(params.branch);
+					refreshWorktreeChip(ctx);
+				}
 				return toolOutput(result);
 			},
 		}),

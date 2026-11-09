@@ -727,13 +727,13 @@ test("torus statusline wraps chips onto rows instead of truncating the line", ()
 	setTorusChip("torus", "torus · leader · glm-4.7 · high · zai|opencode-go · perm:default");
 	setTorusChip("torus:cost", "cost:$0.0147");
 	setTorusChip("torus:sandbox", "sbx:off");
-	setTorusChip("torus:worktree", "wt:torus/feat-x");
+	setTorusChip("torus:worktree", "wt:2");
 
 	const rows = line.render(70);
 	assert.equal(rows.length, 2, "chips wrap onto a second row at narrow widths");
 	assert.match(rows[0], /perm:default/);
 	assert.match(rows[1], /sbx:off/, "trailing chips survive instead of being ellipsized away");
-	assert.match(rows[1], /wt:torus\/feat-x/);
+	assert.match(rows[1], /wt:2/);
 	for (const row of rows) {
 		assert.ok(!row.startsWith("·"), "wrapped rows must not open with a separator");
 		assert.ok(!row.endsWith("·"), "wrapped rows must not end with a dangling separator");

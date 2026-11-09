@@ -631,7 +631,7 @@ Git-worktree lifecycle under one canonical root outside the repo (`$TORUS_HOME/w
 - **Env:** `TORUS_WORKTREES_ROOT` (root override)
 - **Interactions:** registration is skipped entirely when `TORUS_ENGINE_CHILD=1` (parent sessions only)
 
-A `torus:worktree` statusline chip shows the active worktree as `wt:repo/branch`, so parallel sessions working different repos' worktrees stay distinguishable at a glance.
+A `torus:worktree` statusline chip counts this session's live worktrees as `wt:N` (create increments; merge without `keep` and remove decrement). The count is session-scoped: other sessions' worktrees never appear in it, and branch names stay in the tool output and the fleet view.
 
 ### `exit`
 
