@@ -144,6 +144,8 @@ export function registerGoal(pi: ExtensionAPI): void {
 						`Goal resumed: ${state.goal}\n\nContinue advancing it — recap where it stands from the progress notes first.`,
 						{
 							expandPromptTemplates: false,
+							// deliverAs queues the kick behind an in-flight run (a bare mid-run send throws)
+							deliverAs: "followUp",
 						},
 					);
 				}
@@ -176,6 +178,7 @@ export function registerGoal(pi: ExtensionAPI): void {
 				`Goal set: ${trimmed}\n\nBegin advancing it now — if it is multi-step, state a short plan first.`,
 				{
 					expandPromptTemplates: false,
+					deliverAs: "followUp",
 				},
 			);
 		},
