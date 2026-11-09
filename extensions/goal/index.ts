@@ -84,11 +84,8 @@ function summary(state: GoalState | null): string {
 
 /** Compact statusline chip: active/paused goals only, head truncated to 48 chars. */
 export function goalChipFor(state: GoalState | null): GoalChip | undefined {
-	if (!state || (state.status !== "active" && state.status !== "paused")) return undefined;
-	const collapsed = state.goal.replace(/\s+/g, " ").trim();
-	if (collapsed.length === 0) return undefined;
-	const head = collapsed.length > 48 ? `${collapsed.slice(0, 48)}…` : collapsed;
-	return { head, status: state.status };
+	if (!state || state.goal.trim().length === 0) return undefined;
+	return state.status === "active" || state.status === "paused" ? state.status : undefined;
 }
 
 export function registerGoal(pi: ExtensionAPI): void {

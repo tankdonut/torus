@@ -177,24 +177,15 @@ test("buildStatus: MCP count and goal chip render on the torus line", () => {
 	assert.ok(!bare.includes("mcp"), "MCP segment should drop when none registered");
 	assert.ok(!bare.includes("goal:"), "goal segment should drop when unset");
 
-	setStatusExtras(
-		{ connected: 0, registered: 2 },
-		{ head: "ship the frobnicator", status: "active" },
-	);
+	setStatusExtras({ connected: 0, registered: 2 }, "active");
 	const loaded = buildStatus(fakeTheme);
 	assert.ok(loaded.includes("<warning>mcp:0</warning>"), "down servers should warn");
-	assert.ok(loaded.includes("<warning>goal:ship the frobnicator</warning>"), "active goal chip");
+	assert.ok(loaded.includes("<warning>goal:active</warning>"), "active goal chip");
 
-	setStatusExtras(
-		{ connected: 2, registered: 2 },
-		{ head: "ship the frobnicator", status: "paused" },
-	);
+	setStatusExtras({ connected: 2, registered: 2 }, "paused");
 	const healthy = buildStatus(fakeTheme);
 	assert.ok(healthy.includes("<success>mcp:2</success>"), "connected servers should be success");
-	assert.ok(
-		healthy.includes("<dim>goal:ship the frobnicator</dim>"),
-		"paused goal chip should dim",
-	);
+	assert.ok(healthy.includes("<dim>goal:paused</dim>"), "paused goal chip should dim");
 	setStatusExtras(null, null);
 	setSessionPersona(null);
 });
@@ -478,15 +469,14 @@ test("statusline cost chip: TORUS_STATUSLINE_COST=0 never touches the cost key",
 	}
 });
 
-test("goalChipFor: active/paused heads truncated to 48 chars, complete and empty drop", () => {
-	const long = "x".repeat(60);
-	assert.deepEqual(goalChipFor({ goal: long, status: "active", createdAt: 0, notes: [] }), {
-		head: `${"x".repeat(48)}…`,
-		status: "active",
-	});
+test("goalChipFor: state marker only; complete and empty drop", () => {
 	assert.equal(
-		goalChipFor({ goal: "  multi\nline  goal ", status: "paused", createdAt: 0, notes: [] })?.head,
-		"multi line goal",
+		goalChipFor({ goal: "x".repeat(60), status: "active", createdAt: 0, notes: [] }),
+		"active",
+	);
+	assert.equal(
+		goalChipFor({ goal: "multi\nline goal", status: "paused", createdAt: 0, notes: [] }),
+		"paused",
 	);
 	assert.equal(
 		goalChipFor({ goal: "done thing", status: "complete", createdAt: 0, notes: [] }),

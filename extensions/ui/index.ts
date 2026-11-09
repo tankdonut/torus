@@ -293,11 +293,8 @@ let mcpCounts = { connected: 0, registered: 0 };
  */
 let mcpPollTimer: ReturnType<typeof setInterval> | undefined;
 
-/** Active or paused session goal, pushed by the goal extension; complete/unset drops the segment. */
-export interface GoalChip {
-	head: string;
-	status: "active" | "paused";
-}
+/** Goal state marker pushed by the goal extension; complete/unset drops the segment. */
+export type GoalChip = "active" | "paused";
 let goalChip: GoalChip | undefined;
 
 /**
@@ -439,8 +436,8 @@ export function buildStatus(theme?: StatusPainter): string {
 	if (lsp) segments.push(lsp);
 	if (goalChip) {
 		// state rides the color, not an icon: warning while active, dim while paused
-		const color = goalChip.status === "active" ? "warning" : "dim";
-		const text = `goal:${goalChip.head}`;
+		const color = goalChip === "active" ? "warning" : "dim";
+		const text = `goal:${goalChip}`;
 		segments.push(theme ? theme.fg(color, text) : text);
 	}
 	return segments.join(sep);
