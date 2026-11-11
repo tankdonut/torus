@@ -8,6 +8,9 @@
  *     mailboxes -> blocked; >> delivery, appending tee, and reads stay open)
  *   - write-overwrite guard (near-identical full rewrites -> edit/hashline)
  *   - symlink-escape guard (writes/dumps through a symbolic link -> blocked)
+ *   - foreign-state-key guard (bash or write-tool writes that would create
+ *     or mutate a hand-derived twin of this project's state dir -> blocked;
+ *     $TORUS_STATE_DIR paths, reads, rm, and moves out of a twin stay open)
  *   - error-recovery guidance (structured retry advice appended to failed
  *     edit/bash results instead of raw model flailing)
  *
@@ -29,7 +32,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { isBypassMode } from "../automode/config.js";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
-import { readFileCached, torusHome } from "../fsutil.js";
+import { projectStateDir, readFileCached, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
@@ -129,6 +132,100 @@ export function mailboxMutationBlockReason(command: string, teamsRoot: string): 
 	const target = teamMailboxTarget(command, teamsRoot);
 	if (target === null || !isTeamMailboxMutation(command, teamsRoot)) return null;
 	return `refusing to truncate or delete a team mailbox (${target}): mailboxes are append-only — use >> to deliver mail`;
+}
+
+function foreignStateKeyNote(key: string, canonicalKey: string): string {
+	return `refusing to write under foreign state key ${key} — this project's key is ${canonicalKey} (dots preserved; hand-derived twins split state). Write via $TORUS_STATE_DIR/… paths; reads, rm, and moves out of a twin stay open`;
+}
+
+/** State-root spellings a bash command can carry, as an escaped alternation. */
+function stateRootAlternatives(stateRoot: string): string {
+	return [stateRoot, "~/.torus/state", "$TORUS_HOME/state", "$" + "{TORUS_HOME}/state"]
+		.map(escapeRegExp)
+		.join("|");
+}
+
+/**
+ * Foreign (non-canonical) `--…--` project keys the command references, in
+ * order of appearance. The literal `$TORUS_STATE_DIR` form matches no
+ * spelling here: the shell expands it to this project's canonical root at
+ * run time, so commands built on it are correct by construction.
+ */
+export function referencedForeignStateKeys(
+	command: string,
+	stateRoot: string,
+	canonicalKey: string,
+): string[] {
+	const re = new RegExp(`(?:${stateRootAlternatives(stateRoot)})/(--[^\\s;'"]*--)`, "g");
+	const keys: string[] = [];
+	for (const match of command.matchAll(re)) {
+		const key = match[1];
+		if (key !== undefined && key !== canonicalKey && !keys.includes(key)) keys.push(key);
+	}
+	return keys;
+}
+
+/**
+ * Block reason for a bash command that would create or mutate state under a
+ * foreign `--…--` key — the classic hand-derived twin of this project's dir
+ * (dots dashed: github.com → github-com) — or null when it should proceed.
+ *
+ * Caught write shapes: `mkdir`/`touch`/`tee` with a foreign-key path anywhere
+ * after the verb; `cp`/`mv`/`rsync`/`install`/`ln` with the foreign-key path
+ * as the command's last operand (the destination — a foreign path as a
+ * SOURCE is a move out of a twin and stays open, as does `rm` for cleanup,
+ * and a move into the dotted original of a referenced twin reassembles split
+ * state); `>`/`>>` redirects INTO a foreign-key path (reading FROM one and
+ * redirecting elsewhere reconciles and stays open); `dd of=`; `sed -i`.
+ * Positional matching is heuristic on purpose: like the mailbox and memory
+ * guards, this deterministically kills the common shapes and never blocks
+ * reads or cleanup.
+ */
+export function foreignStateDirBlockReason(
+	command: string,
+	stateRoot: string,
+	canonicalKey: string,
+): string | null {
+	const cmd = command.trim();
+	if (cmd.length === 0) return null;
+	const roots = stateRootAlternatives(stateRoot);
+	const keys = referencedForeignStateKeys(cmd, stateRoot, canonicalKey);
+	// Reunification: when a command carries a dotted key AND its dash-twin,
+	// the dotted one is that project's real dir — moving files INTO it reassembles
+	// split state and stays open (the misfile direction, into the dashed twin,
+	// never benefits from this).
+	const reunified = new Set(
+		keys.filter((key) => key.includes(".") && keys.includes(key.replaceAll(".", "-"))),
+	);
+	for (const key of keys) {
+		if (reunified.has(key)) continue;
+		const target = `(?:${roots})/${escapeRegExp(key)}(?:/[^\\s;&|'"]*)?`;
+		const writes =
+			new RegExp(`\\b(?:mkdir|touch|tee)\\b[^|;&]*${target}`).test(cmd) ||
+			new RegExp(`\\b(?:cp|mv|rsync|install|ln)\\b[^|;&]*${target}\\s*(?:[;&|>]|$)`).test(cmd) ||
+			new RegExp(`(?<![>0-9&])>{1,2}(?![>&])\\s*[^|;&]*${target}`).test(cmd) ||
+			new RegExp(`\\bdd\\b[^|;&]*\\bof=\\s*${target}`).test(cmd) ||
+			new RegExp(`\\bsed\\b[^|;&]*\\s(?:-i|--in-place)\\b[^|;&]*${target}`).test(cmd);
+		if (writes) return foreignStateKeyNote(key, canonicalKey);
+	}
+	return null;
+}
+
+/**
+ * Block reason for a write-tool call whose target sits under a foreign
+ * `--…--` state key, or null. The write tool creates parent directories, so
+ * it can mint a phantom twin by itself; canonical-key paths and paths
+ * outside the state root pass untouched.
+ */
+export function foreignStateWriteReason(target: string): string | null {
+	const stateRoot = path.join(torusHome(), "state");
+	const resolved = path.resolve(target);
+	if (!resolved.startsWith(`${stateRoot}${path.sep}`)) return null;
+	const key = resolved.slice(stateRoot.length + 1).split(path.sep)[0];
+	if (key === undefined || !key.startsWith("--") || !key.endsWith("--")) return null;
+	const canonicalKey = path.basename(projectStateDir());
+	if (key === canonicalKey) return null;
+	return foreignStateKeyNote(key, canonicalKey);
 }
 
 function teamsStateDir(): string {
@@ -269,11 +366,21 @@ export function registerGuards(pi: ExtensionAPI): void {
 					reason: mailboxReason,
 				};
 			}
+			const foreignStateReason = command
+				? foreignStateDirBlockReason(command, teamsStateDir(), path.basename(projectStateDir()))
+				: null;
+			if (foreignStateReason !== null) {
+				return {
+					block: true,
+					reason: foreignStateReason,
+				};
+			}
 		}
 		if ((event as WriteToolCallEvent).toolName === "write") {
 			const input = event.input as { path?: unknown; content?: unknown };
 			if (typeof input.path === "string" && typeof input.content === "string") {
-				const reason = writeBlockReason(input.path, input.content);
+				const reason =
+					writeBlockReason(input.path, input.content) ?? foreignStateWriteReason(input.path);
 				if (reason !== null) {
 					return { block: true, reason };
 				}

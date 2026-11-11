@@ -170,7 +170,9 @@ export function resolvePlan(ref: string): { planPath: string; slug: string } | {
 		.map((file) => file.replace(/\.md$/, ""));
 	if (stems.length === 0) {
 		return {
-			error: `no plans under ${displayPath(dir)} — pass an absolute plan path`,
+			error:
+				misfiledTwinError(trimmed) ??
+				`no plans under ${displayPath(dir)} — pass an absolute plan path`,
 		};
 	}
 	const exact = stems.filter((stem) => stem === trimmed);
@@ -181,7 +183,9 @@ export function resolvePlan(ref: string): { planPath: string; slug: string } | {
 		return { error: `ambiguous plan "${trimmed}" — candidates: ${prefix.join(", ")}` };
 	}
 	return {
-		error: `no plan matches "${trimmed}" — available: ${stems.slice(-8).join(", ") || "(none)"}`,
+		error:
+			misfiledTwinError(trimmed) ??
+			`no plan matches "${trimmed}" — available: ${stems.slice(-8).join(", ") || "(none)"}`,
 	};
 }
 
@@ -199,6 +203,25 @@ function misfiledPlanError(file: string): string | null {
 	const canonical = plansDir();
 	if (file.startsWith(`${canonical}${path.sep}`)) return null;
 	return `plan is filed under a different project state key: ${displayPath(file)} — this project's plans dir is ${displayPath(canonical)}. Hand-derived keys misfile plans; move the file (or pass its stem) instead. $TORUS_STATE_DIR expands to the correct root.`;
+}
+
+/**
+ * Stem resolution misses plans stranded in the classic hand-derived twin of
+ * this project's state dir (dots dashed: github.com → github-com) — the twin
+ * is invisible to every tool, so the stem looks lost. When the requested stem
+ * sits there, name the file and the canonical dir instead of a plain miss so
+ * the caller can move it and retry.
+ */
+function misfiledTwinError(stem: string): string | null {
+	const twinPlans = plansDir().replaceAll(".", "-");
+	const hits = safeReaddir(twinPlans)
+		.filter((file) => file.endsWith(".md"))
+		.map((file) => file.replace(/\.md$/, ""))
+		.filter((twin) => twin === stem || twin.startsWith(stem))
+		.sort();
+	if (hits.length === 0) return null;
+	const listed = hits.map((hit) => `${hit}.md`).join(", ");
+	return `${listed} sits in a phantom twin state dir: ${displayPath(twinPlans)} — move the file under ${displayPath(plansDir())} and retry by stem. Hand-derived keys misfile plans; $TORUS_STATE_DIR expands to the correct root.`;
 }
 
 function planResult(project: string, stem: string): { planPath: string; slug: string } {

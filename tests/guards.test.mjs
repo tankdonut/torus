@@ -4,8 +4,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+// Sandbox the torus home before extensions load: the foreign-state-key tests
+// exercise projectStateDir()/torusHome() against planted keys, never real state.
+process.env.TORUS_HOME = mkdtempSync(path.join(tmpdir(), "torus-guards-"));
+
 const {
 	dumpBlockReason,
+	foreignStateDirBlockReason,
+	foreignStateWriteReason,
 	hasSymlinkInPath,
 	isBareFileDump,
 	isMemoryStoreMutation,
@@ -16,7 +22,88 @@ const {
 	truncateText,
 	writeBlockReason,
 } = await import("../extensions/guards/index.ts");
-const { _readCacheStats } = await import("../extensions/fsutil.ts");
+const { _readCacheStats, projectStateDir } = await import("../extensions/fsutil.ts");
+
+test("foreign state key guard: twin-creating bash writes blocked; env-var paths, reads, and cleanup stay open", () => {
+	const root = path.join(process.env["TORUS_HOME"], "state");
+	const canonical = "--var-home-x-github.com-tankdonut-demo--";
+	const twin = "--var-home-x-github-com-tankdonut-demo--";
+	const block = (cmd) => foreignStateDirBlockReason(cmd, root, canonical);
+	assert.match(block(`mkdir -p ~/.torus/state/${twin}/plans/gates`), /foreign state key/);
+	assert.match(
+		block(`mkdir -p ${root}/${twin}/plans`),
+		/foreign state key/,
+		"absolute spelling caught too",
+	);
+	assert.match(
+		block(`echo verdict > ~/.torus/state/${twin}/plans/gates/x.gate.md`),
+		/\$TORUS_STATE_DIR/,
+		"reason teaches the env-var form",
+	);
+	assert.ok(
+		block(`tee ~/.torus/state/${twin}/plans/x.md <<< body`) !== null,
+		"tee truncating into a twin",
+	);
+	assert.ok(
+		block(`cp $TORUS_STATE_DIR/plans/a.md ~/.torus/state/${twin}/plans/`) !== null,
+		"copy in",
+	);
+	assert.ok(block(`sed -i s/a/b/ ~/.torus/state/${twin}/plans/a.md`) !== null, "in-place edit");
+	assert.equal(
+		block(`mkdir -p $TORUS_STATE_DIR/plans/gates`),
+		null,
+		"env-var literal always correct",
+	);
+	assert.equal(
+		block(`mkdir -p ${root}/${canonical}/plans`),
+		null,
+		"canonical key is this project's",
+	);
+	assert.equal(
+		block(`mv ~/.torus/state/${twin}/plans/a.md $TORUS_STATE_DIR/plans/`),
+		null,
+		"move out reconciles",
+	);
+	assert.equal(block(`cat ~/.torus/state/${twin}/plans/a.md > $TORUS_STATE_DIR/plans/a.md`), null);
+	assert.equal(block(`rm -rf ~/.torus/state/${twin}`), null, "cleanup stays open");
+	assert.equal(block(`ls ${root}`), null);
+});
+
+test("foreign state key guard: reuniting another project's twin with its dotted original stays open", () => {
+	const root = path.join(process.env["TORUS_HOME"], "state");
+	const block = (cmd) =>
+		foreignStateDirBlockReason(cmd, root, "--var-home-x-github.com-tankdonut-torus--");
+	const otherTwin = "--var-home-y-github-com-tankdonut-haf--";
+	const otherReal = "--var-home-y-github.com-tankdonut-haf--";
+	assert.equal(
+		block(`mv ${root}/${otherTwin}/plans/a.md ${root}/${otherReal}/plans/`),
+		null,
+		"dotted original is a legitimate destination",
+	);
+	assert.ok(
+		block(`cp ${root}/${otherReal}/plans/a.md ${root}/${otherTwin}/plans/`) !== null,
+		"the misfile direction into the dashed twin still blocks",
+	);
+});
+
+test("foreign state key guard catches the real incident shape: keys containing s, via every root spelling", () => {
+	const root = path.join(process.env["TORUS_HOME"], "state");
+	const canonical = "--var-home-white-Development-github.com-tankdonut-torus--";
+	const twin = "--var-home-white-Development-github-com-tankdonut-torus--";
+	const block = (cmd) => foreignStateDirBlockReason(cmd, root, canonical);
+	assert.ok(block(`mkdir -p ~/.torus/state/${twin}/plans/gates`) !== null, "tilde spelling");
+	assert.ok(block(`echo v > ${root}/${twin}/plans/gates/x.gate.md`) !== null, "absolute spelling");
+	assert.ok(block(`cp x.md $TORUS_HOME/state/${twin}/plans/`) !== null, "env-home spelling");
+	assert.equal(block(`mkdir -p ${root}/${canonical}/plans`), null);
+});
+
+test("foreignStateWriteReason: write-tool twin targets blocked; canonical and outside pass", () => {
+	const root = path.join(process.env["TORUS_HOME"], "state");
+	const foreign = path.join(root, "--var-phantom-project--", "plans", "p.md");
+	assert.match(foreignStateWriteReason(foreign), /foreign state key/);
+	assert.equal(foreignStateWriteReason(path.join(projectStateDir(), "plans", "p.md")), null);
+	assert.equal(foreignStateWriteReason("/tmp/elsewhere/p.md"), null);
+});
 
 test("truncateText: under cap untouched; over cap keeps head+tail and reports omission", () => {
 	const short = "a".repeat(100);

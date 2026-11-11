@@ -290,6 +290,8 @@ No tools or commands.
 | Bare dumps | Blocks bare `cat`/`head`/`tail`/`less`/`more` of absolute file paths; redirects to the read tool |
 | Full-file rewrites | Blocks near-identical full-file rewrites via write; redirects to `hashline_edit`/edit |
 | Memory-store bash | Blocks bash mutations of the torus memory store (mutating git verbs, `--no-verify`, redirects, file writes); redirects to `torus_remember`/`torus_forget`/`/reflect` |
+| Team mailboxes | Blocks truncating or deleting bash writes against team mailbox files; `>>` delivery, appending tee, and reads stay open |
+| Foreign state keys | Blocks bash and write-tool writes that would create or mutate a hand-derived twin of this project's state key (dots dashed); `$TORUS_STATE_DIR` paths, reads, `rm`, and moves out of a twin stay open |
 | Retry guidance | Appends structured retry guidance to failed edit results and JSON parse failures |
 
 ### `sandbox`

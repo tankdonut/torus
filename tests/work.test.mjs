@@ -186,6 +186,19 @@ test("resolvePlan refuses a plan filed under a foreign project state key", () =>
 	assert.ok(!("error" in resolvePlan(canonical)), "canonical path still binds");
 });
 
+test("resolvePlan by stem names a plan stranded in the dot-dashed twin dir", () => {
+	const twin = projectDir().replaceAll(".", "-");
+	plantPlanIn(path.join(twin, "plans"), "2026-11-11-stranded", "- [ ] 1. A\n");
+	const res = resolvePlan("2026-11-11-stranded");
+	assert.ok("error" in res, "stem must not silently miss a twin-dir plan");
+	assert.match(res.error, /phantom twin state dir/);
+	assert.ok(res.error.includes(path.basename(twin)), `names the twin key: ${res.error}`);
+	assert.ok(res.error.includes("2026-11-11-stranded.md"), `names the stranded file: ${res.error}`);
+	const miss = resolvePlan("never-planted-anywhere");
+	assert.ok("error" in miss);
+	assert.doesNotMatch(miss.error, /phantom twin/);
+});
+
 test("resolvePlan sanitizes hostile slugs to the filesystem-safe charset", () => {
 	const file = plantPlan("2026-10-04 we!rd slug", "- [ ] 1. A\n");
 	const resolved = resolvePlan(file);
