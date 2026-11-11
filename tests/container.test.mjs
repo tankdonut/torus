@@ -198,9 +198,14 @@ test("container: PR validation and publishing are separate jobs with separate gr
 		),
 		"the publish job must be gated to main/tags",
 	);
+	const buildxPins = ciWorkflow.match(/version: v\d+\.\d+\.\d+/g) ?? [];
 	assert.ok(
-		(ciWorkflow.match(/version: v0\.38\.1/g) ?? []).length >= 3,
+		buildxPins.length >= 3,
 		"every buildx setup must pin the version so multi-arch merges keep attestations",
+	);
+	assert.ok(
+		new Set(buildxPins).size === 1,
+		"all buildx setups must pin the same version so multi-arch merges keep attestations",
 	);
 	assert.ok(
 		!ciWorkflow.includes("NODE_VERSION="),
