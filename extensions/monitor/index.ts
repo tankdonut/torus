@@ -88,7 +88,8 @@ function emitMonitorFired(
 	exit: number | null,
 	output: string,
 ): void {
-	const tail = output.trim().replace(/\s+/g, " ").slice(0, 200);
+	const trimmed = output.trim().replace(/\s+/g, " ");
+	const tail = trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
 	const what = reason === "fail" ? "failed" : "output changed";
 	// Delivery goes through the wake gate: held while the agent runs so the
 	// fire joins the next settle flush instead of trickling out of pi's

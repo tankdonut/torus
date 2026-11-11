@@ -83,6 +83,23 @@ test("stopOn fail: non-zero exit fires torus.monitor-fired on the first check", 
 	assert.match(fired.content[0].text, /oops/);
 });
 
+test("stopOn fail: a long output tail truncates forward and is marked", async () => {
+	const customs = captureCustoms();
+	const entry = fakeEntry({
+		name: "long-fail-probe",
+		command: `echo start-marker ${"x".repeat(400)} end-marker; exit 3`,
+		stopOn: "fail",
+	});
+
+	await monitor.runMonitorCheck(entry);
+
+	assert.equal(customs.length, 1);
+	const fired = customs[0].message;
+	assert.match(fired.content[0].text, /: start-marker/);
+	assert.ok(!fired.content[0].text.includes("end-marker"), "keeps the start, not the end");
+	assert.ok(fired.details.tail.endsWith("…"), "a cut tail is marked as truncated");
+});
+
 test("torus_monitor tool fires the transcript marker on its immediate first check", async () => {
 	const customs = captureCustoms();
 	const tools = [];
