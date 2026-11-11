@@ -77,6 +77,22 @@ test("a failing command reports its exit code and stderr tail", async () => {
 	assert.match(fired.details.tail, /boom/);
 });
 
+test("a long bg output wake truncates from the start like the other wakes", async () => {
+	const customs = captureCustoms();
+	monitor.startBgTask({
+		name: "long-build",
+		command: `echo start-marker ${"x".repeat(400)} end-marker`,
+	});
+	await monitor.pendingBgTasks();
+
+	assert.equal(customs.length, 1);
+	const { message: fired } = customs[0];
+	assert.match(fired.content[0].text, /: start-marker/);
+	assert.ok(!fired.content[0].text.includes("end-marker"), "keeps the start, not the end");
+	assert.match(fired.details.tail, /^start-marker/);
+	assert.ok(fired.details.tail.endsWith("…"), "a cut tail is marked as truncated");
+});
+
 test("torus_bg_stop kills a running task and the wake reports it stopped", async () => {
 	const customs = captureCustoms();
 	monitor.startBgTask({ name: "long-task", command: "sleep 30" });

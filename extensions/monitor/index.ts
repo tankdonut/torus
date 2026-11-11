@@ -241,7 +241,10 @@ export function validateBgName(name: string): string | null {
 function emitBgExit(entry: BgEntry, code: number | null, signal: string | null): void {
 	const durationMs = Date.now() - entry.startedAt;
 	const reason = entry.timedOut ? "timed out" : entry.stopped ? "stopped" : "exited";
-	const flat = entry.tail.trim().replace(/\s+/g, " ").slice(-200);
+	// Forward truncation like every other wake (monitor-fired, delegation
+	// summaries): tail-end slices cut mid-word into whatever happened to be last.
+	const trimmedTail = entry.tail.trim().replace(/\s+/g, " ");
+	const flat = trimmedTail.length > 200 ? `${trimmedTail.slice(0, 200)}…` : trimmedTail;
 	appendFileSync(
 		entry.logFile,
 		`[${new Date().toISOString()}] exit code=${code} signal=${signal} ${reason} in ${durationMs}ms\n`,
