@@ -9,13 +9,13 @@
 
 import { spawn } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
-import { Type } from "@earendil-works/pi-ai";
 import {
 	defineTool,
 	type ExtensionAPI,
 	isReadToolResult,
 	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { knobBoolean, knobString, parseZeroDisables } from "../config/knobs.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {

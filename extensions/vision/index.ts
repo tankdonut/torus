@@ -9,8 +9,8 @@
 
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };

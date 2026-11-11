@@ -11,8 +11,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { projectStateDir } from "../fsutil.js";
 import { formatDuration, notifyBg, notifyMonitor } from "../osnotify.js";

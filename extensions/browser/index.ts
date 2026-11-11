@@ -1,4 +1,3 @@
-import { Type } from "@earendil-works/pi-ai";
 import {
 	AssistantMessageComponent,
 	createBashToolDefinition,
@@ -24,6 +23,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import {
 	delegationIcon,
 	entityColor,

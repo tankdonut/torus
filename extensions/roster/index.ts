@@ -20,9 +20,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, loadSkills } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import { type AcpAgentSpec, acpAgents, runAcpAgent } from "../acp/index.js";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import {

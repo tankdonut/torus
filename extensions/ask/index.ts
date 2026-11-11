@@ -12,8 +12,8 @@
  * "custom"/"discuss" options — the dialog appends them.
  */
 
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { installCursorBlink } from "../cursor-blink.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { AskDialog, type AskDialogResult, CHAT_LABEL, CUSTOM_LABEL } from "./dialog.js";

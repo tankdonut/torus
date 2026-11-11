@@ -7,8 +7,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { truncateText } from "../guards/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 

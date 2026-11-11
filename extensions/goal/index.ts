@@ -1,10 +1,10 @@
 import path from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import {
 	defineTool,
 	type ExtensionAPI,
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { projectStateDir, pruneOrphanSessionFiles, readJson, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { currentSessionId, setCurrentSessionId } from "../registry.js";
