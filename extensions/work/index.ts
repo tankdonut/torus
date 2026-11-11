@@ -21,8 +21,8 @@ import {
 	statSync,
 } from "node:fs";
 import path from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { displayPath, projectStateDir, readJson, torusHome, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { currentSessionId } from "../registry.js";

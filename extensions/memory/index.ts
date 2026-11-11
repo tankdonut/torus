@@ -11,8 +11,8 @@ import {
 	writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { parseFrontmatter } from "../frontmatter.js";
 import { readJson, splitList, torusHome, writeJson } from "../fsutil.js";

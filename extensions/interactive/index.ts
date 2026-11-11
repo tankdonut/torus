@@ -27,7 +27,6 @@
 
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { Type } from "@earendil-works/pi-ai";
 import {
 	defineTool,
 	type ExtensionAPI,
@@ -36,6 +35,7 @@ import {
 import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ITerminalInitOnlyOptions, ITerminalOptions, Terminal } from "@xterm/headless";
 import * as xtermHeadless from "@xterm/headless";
+import { Type } from "typebox";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 

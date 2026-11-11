@@ -35,12 +35,12 @@
 import { spawn } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import {
 	defineTool,
 	type ExtensionAPI,
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { projectKey, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { setTorusChip } from "../ui/index.js";

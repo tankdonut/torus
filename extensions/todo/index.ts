@@ -1,12 +1,12 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import {
 	defineTool,
 	type ExtensionAPI,
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import { projectStateDir, pruneOrphanSessionFiles, readJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { sessionFileExists } from "../sessions/index.js";

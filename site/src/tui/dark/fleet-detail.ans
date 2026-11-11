@@ -1,31 +1,31 @@
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[39m[48;2;37;65;49m
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:229-618[39m
+[39m[48;2;37;65;49m [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:229-453[39m
 
 
 
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:721-1250[39m
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:551-710[39m
 
 
-[49m [3m[38;2;150;160;164mI have a few remaining gaps: registry.ts lines ~252-296 (setDelegationModel body and finishDelegation start), ~1042-1095
-[0m [3m[38;2;150;160;164m(RECORD_TEXT_CAP, parseLastTurnText, readFullRecordText, start of rehydrateFromLogs), and ~1100-1246. Also check pidAlive (line 511)
-[0m [3m[38;2;150;160;164mand pruneRunBeacons region. Let me read those small remaining ranges to make the summaries accurate. Actually most of these I can
-[0m [3m[38;2;150;160;164msummarize from what I've seen:[0m
+[49m [3m[38;2;150;160;164mNow I need the remaining portion of registry.ts (lines 711-1260+), covering: startDelegation, appendAction, attachSessionId,
+[0m [3m[38;2;150;160;164mupdateDelegation, setDelegationModel, finishDelegation, RECORD_TEXT_CAP, parseLastTurnText, readFullRecordText, rehydrateFromLogs,
+[0m [3m[38;2;150;160;164mregistryShutdown.[0m
 
- [38;2;167;152;215m- [3m[38;2;150;160;164mpidAlive(pid) — checks if a process with the pid is alive. I saw usage but not implementation; it's safe to summarize as "whether a
-[0m   [3m[38;2;150;160;164mpid has a live process" — but let me quickly read lines 500-600 and 970-1100 and 1095-1250 to be thorough and accurate for
-[0m   [3m[38;2;150;160;164mparseLastTurnText and readFullRecordText and rehydrateFromLogs.[0m
-
- A few remaining ranges in registry.ts to make every summary exact.
+ One more range to cover the tail of registry.ts.
 
 [48;2;37;65;49m
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:500-609[39m
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:711-860[39m
 
 
 
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:970-1099[39m
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:861-1010[39m
+
+
+[49m [3m[38;2;150;160;164mLet me read the last section (1011 to end).[0m
+
+[48;2;37;65;49m
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:1011-1270[39m
 
 
 [38;2;205;154;34m[49m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠙ live[39m [38;2;126;136;142mt4 · 29.7k→771 · $0.0058 · 50s · j/k scroll · g/G ends · [38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[39m
+[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠹ live[39m [38;2;126;136;142mt5 · 30.3k→1.0k · $0.0068 · 50s · j/k scroll · g/G ends · [38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[39m
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

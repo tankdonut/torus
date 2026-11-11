@@ -1,7 +1,7 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { displayPath, formatCost, projectKey, sleep } from "../fsutil.js";
 import { osNotify } from "../osnotify.js";
