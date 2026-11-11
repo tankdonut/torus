@@ -40,7 +40,7 @@ The plan file (checkboxes) + work ledger are the durable state. After any restar
 
 Run the plan's F1–F3; all must pass before completion. Before F1, write one converge row (`work_note`, event: `converge`) synthesizing the waves' evidence (what shipped, what the verification chain proved, residual risks):
 
-1. **F1 review**: delegate to `reviewer` (the plan path plus landed commits); ask for plan-compliance and code-quality verdicts against the plan's constraints and Must-NOT list.
+1. **F1 review**: delegate to `reviewer` (the plan path plus landed commits) for the plan-compliance verdict against the plan's constraints and Must-NOT list. Code quality routes by what the landed range touches, the same conditional the Per wave section applies to worktrees: a range touching code (any non-markdown file) runs the `lens-review` skill over it: fan out its three lenses (security, correctness, test coverage), aggregate, triage, converge under its scoped rule, land the `verified` rows in the ledger. A prose-only range keeps the single reviewer dispatch.
 2. **F2 stopping condition**: exercise it yourself on the real surface; capture the artifact the plan names.
 3. **F3 ideal-state fidelity**: walk every IS row against its recorded evidence; a shortfall becomes a new task appended to the plan (never silently noted) and runs through the same loop.
 
@@ -50,7 +50,7 @@ Tick each F-row in the plan as it passes: `work_complete` gates on them like any
 
 Done means every wave is done or has an explicit, journaled blocker:
 
-1. Final ledger pass: every task's checkbox ticked or explicitly blocked with evidence; every verified verdict carries its verifiedBy (lead or reviewer).
+1. Final ledger pass: every task's checkbox ticked or explicitly blocked with evidence; every verified verdict carries its verifiedBy (lead or reviewer), the F1 lens verdicts included with their rounds.
 2. Call `work_complete` with the summary: it refuses while any task is open (unchecked, not closed-with-gap; the machine gate); fix or journal what it names, then complete.
 3. Report: waves shipped (commit hashes), verification summary, residual risks and blockers.
 4. If the executed plan's Destination carries a `Roadmap:` stamp, offer the user a `torus-roadmap` sync (status roll-up + drift check) before closing the session.
