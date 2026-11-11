@@ -4,14 +4,16 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-// The repo's two review surfaces encode their protocols as load-bearing
+// The repo's review surfaces encode their protocols as load-bearing
 // sentences: the protocol IS the prose. torus-plan-review (the plan gate,
 // adapted from google/elephant-goldfish-model) and lens-review (the landed
-// change-set review loop) both depend on their exact wording.
+// change-set review loop) both depend on their exact wording, and
+// torus-execute routes its final verification through lens-review by name.
 // tests/skills-spec.test.mjs pins the structural contract of every skill;
-// this test pins the sentences both review surfaces' behavior depends on, so
-// an edit that rewords a rule fails loudly instead of silently changing the
-// gate or the review loop. Each pinned substring is copied from the live
+// this test pins the sentences the review surfaces' behavior depends on plus
+// that routing sentence, so an edit that rewords a rule fails loudly instead
+// of silently changing the gate, the review loop, or the wiring between
+// them. Each pinned substring is copied from the live
 // file, which is the authority; if a phrase legitimately changes, update the
 // pin in the same commit and say why in the diff.
 
@@ -19,6 +21,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const skill = readFileSync(path.join(root, "skills", "torus-plan-review", "SKILL.md"), "utf8");
 const planSkill = readFileSync(path.join(root, "skills", "torus-plan", "SKILL.md"), "utf8");
 const lensSkill = readFileSync(path.join(root, "skills", "lens-review", "SKILL.md"), "utf8");
+const executeSkill = readFileSync(path.join(root, "skills", "torus-execute", "SKILL.md"), "utf8");
 
 test("lens protocol sentences cannot drift", () => {
 	assert.ok(
@@ -67,6 +70,17 @@ test("torus-plan wiring reference cannot drift", () => {
 	assert.ok(
 		planSkill.includes("run `torus-plan-review` on the saved plan"),
 		"torus-plan lost the review-gate wiring invocation",
+	);
+});
+
+test("torus-execute F1 wiring reference cannot drift", () => {
+	assert.ok(
+		executeSkill.includes("runs the `lens-review` skill over it"),
+		"torus-execute lost the F1 lens-review routing",
+	);
+	assert.ok(
+		executeSkill.includes("A prose-only range keeps the single reviewer dispatch"),
+		"torus-execute lost the prose-only F1 fallback",
 	);
 });
 
