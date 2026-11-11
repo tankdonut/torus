@@ -165,7 +165,7 @@ jobs:
           node-version-file: .tool-versions
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
         with:
-          version: v0.38.1
+          version: v0.38.2
       - name: Resolve .tool-versions pins for build args
         run: echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
       - name: Build test image (amd64)
@@ -203,7 +203,7 @@ jobs:
           node-version-file: .tool-versions
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
         with:
-          version: v0.38.1
+          version: v0.38.2
       - name: Resolve .tool-versions pins for build args
         run: echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
       - name: Login to GHCR
@@ -262,7 +262,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
         with:
-          version: v0.38.1
+          version: v0.38.2
       - name: Resolve .tool-versions pins for build args
         run: echo "BUN_VERSION=$(awk '$1=="bun"{print $2}' .tool-versions)" >> "$GITHUB_ENV"
       - name: Login to GHCR
