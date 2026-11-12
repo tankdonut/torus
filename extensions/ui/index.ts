@@ -282,6 +282,12 @@ function seedSessionCost(ctx: ExtensionContext): void {
 /** Current model / thinking effort, seeded from ctx and kept fresh via events. */
 let currentModel: string | undefined;
 let currentEffort: string | undefined;
+/**
+ * Provider of the current model, from the engine's Model object (its `id` is
+ * the bare catalog id; the provider is a sibling field). The hook and any
+ * composite "provider/id" string still work via buildStatus's prefix fallback.
+ */
+let currentProvider: string | undefined;
 
 /** MCP connected/registered counts; refreshed on session_start + turn_start and by the settle-poll below. */
 let mcpCounts = { connected: 0, registered: 0 };
@@ -352,6 +358,7 @@ export function personaFg(persona: string, text: string): string {
 export function setStatusModel(model: string | undefined, effort: string | undefined): void {
 	currentModel = model;
 	currentEffort = effort;
+	currentProvider = undefined;
 }
 
 /** Test/interop hook: set the MCP counts and goal chip the statusline renders. */
@@ -385,7 +392,8 @@ export function buildStatus(theme?: StatusPainter): string {
 	// session's current model runs on emphasized — after a chain fallback
 	// (zai → opencode-go) the line shows which leg is live, not just what's
 	// configured.
-	const activeProvider = currentModel?.split("/")[0];
+	const activeProvider =
+		currentProvider ?? (currentModel?.includes("/") ? currentModel.split("/")[0] : undefined);
 	const providerParts = (["zai", "opencode-go"] as const)
 		.filter((p) => available[p])
 		.map((p) =>
@@ -474,7 +482,10 @@ export function refreshToruStatus(ctx: ExtensionContext): void {
 	// the live ctx can briefly carry it before the model registry reloads, and
 	// caching it would paint a phantom model chip until the next model_select.
 	const id = ctx.model?.id;
-	if (id !== undefined && id !== "unknown") currentModel = id;
+	if (id !== undefined && id !== "unknown") {
+		currentModel = id;
+		currentProvider = ctx.model?.provider;
+	}
 	currentEffort = ctx.thinkingLevel ?? currentEffort;
 	setTorusChip(STATUS_KEY, buildStatus(ctx.ui.theme));
 }
@@ -751,7 +762,10 @@ export function registerUi(pi: ExtensionAPI): void {
 		// Same placeholder guard as refreshToruStatus: a rebind's session_start
 		// can arrive with the engine's "unknown" model; keep the last real id.
 		const id = ctx.model?.id;
-		if (id !== undefined && id !== "unknown") currentModel = id;
+		if (id !== undefined && id !== "unknown") {
+			currentModel = id;
+			currentProvider = ctx.model?.provider;
+		}
 		currentEffort = ctx.thinkingLevel;
 		refreshMcp();
 		pollMcpUntilSettled(ctx);
@@ -799,6 +813,7 @@ export function registerUi(pi: ExtensionAPI): void {
 
 	pi.on("model_select", (event, ctx: ExtensionContext) => {
 		currentModel = event.model.id;
+		currentProvider = event.model.provider;
 		refreshToruStatus(ctx);
 	});
 
