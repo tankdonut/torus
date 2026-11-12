@@ -202,7 +202,11 @@ const boot = () => {
 		String(HEIGHT),
 		"-c",
 		repoRoot,
-		`env TORUS_STATE_DIR=${stateDir} TORUS_DREAMING=0 ./runtime/bin/torus.mjs --use-theme dark`,
+		// The capture's statusline must show the provider actually serving
+		// the session: zai's quota is exhausted while this capture was taken,
+		// so the boot pins the model to the chain's fallback leg and the
+		// provider highlight lands on opencode-go.
+		`env TORUS_STATE_DIR=${stateDir} TORUS_DREAMING=0 ./runtime/bin/torus.mjs --use-theme dark --model opencode-go/glm-5.3-flash`,
 	]);
 };
 

@@ -1,31 +1,31 @@
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[39m[48;2;37;65;49m [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/fsutil.ts[38;2;205;154;34m:190-329[39m
+[39m[48;2;33;59;73m
+ [38;2;222;224;225mTask: use grep to list every exported symbol in extensions/fsutil.ts with a one-line summary of each, then do the same for
+[39m [38;2;222;224;225mextensions/registry.ts[39m
+
+
+[49m [38;2;234;127;129mError: 429: {"code":"1310","message":"Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-15 22:52:40"}[39m
+
+ [38;2;234;127;129mError: 429: {"code":"1310","message":"Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-15 22:52:40"}[39m
+
+ [38;2;234;127;129mError: 429: {"code":"1310","message":"Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-15 22:52:40"}[39m
+
+ [38;2;234;127;129mError: 429: {"code":"1310","message":"Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-15 22:52:40"}[39m
 
 
 
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:229-528[39m
-
-
-[49m [3m[38;2;150;160;164mI still need the middle of registry.ts (lines 529-1176) to understand the remaining exported functions:
-[0m [3m[38;2;150;160;164mlistExternalRunsExcludingDelegations (593), listExternalRuns (598), setCurrentSession (626), getCurrentSession (630),
-[0m [3m[38;2;150;160;164mTeamStatus/TeamMemberRecord/TeamRecord (635-648), registerTeam (664), getTeam (668), listTeams (672), dropTeam (676), repoRoot (685),
-[0m [3m[38;2;150;160;164mlistDelegations (700), resetRegistryForTesting (705), startDelegation (800), appendAction (895), attachSessionId (901),
-[0m [3m[38;2;150;160;164mupdateDelegation (914), setDelegationModel (972), finishDelegation (977), RECORD_TEXT_CAP (1042), parseLastTurnText (1062),
-[0m [3m[38;2;150;160;164mreadFullRecordText (1079), rehydrateFromLogs (1095).[0m
-
- [3m[38;2;150;160;164mLet me read lines 529-1180 of registry.ts to see doc comments for these exports.[0m
-
- I have most of registry.ts now; let me read the remaining middle section (lines 529–1180) to capture the doc comments for the rest of
- its exports.
-
-[48;2;37;65;49m
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:529-858[39m
 
 
 
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:859-1188[39m
 
 
-[38;2;205;154;34m[49m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠹ live[39m [38;2;126;136;142mt3 · 31.4k→824 · $0.0056 · 50s · j/k scroll · g/G ends · [38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[39m
+
+
+
+
+
+
+
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠙ live[39m [38;2;126;136;142mt6 · 19.8k→882 · $0.0057 · 50s · j/k scroll · g/G ends · [38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[39m
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
