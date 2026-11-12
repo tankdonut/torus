@@ -77,11 +77,16 @@ test("buildStatus: model and thinking effort are persona-colored and shortened",
 	assert.ok(themed.includes(personaFg("builder", "glm-4.7")), "model not persona-colored");
 	assert.ok(!themed.includes("zai/"), "provider prefix not stripped");
 	assert.ok(themed.includes(personaFg("builder", "high")), "effort not persona-colored");
-	assert.ok(themed.includes("<dim>"), "providers should stay dim");
+	assert.ok(
+		themed.includes("<accent>*zai*</accent>"),
+		"the provider the session model runs on is emphasized",
+	);
+	assert.ok(themed.includes("<dim>opencode-go</dim>"), "idle providers stay dim");
 	setStatusModel(undefined, undefined);
 	const bare = buildStatus(fakeTheme);
 	assert.ok(!bare.includes("glm-4.7"), "model should drop when unset");
 	assert.ok(!bare.includes("high"), "effort should drop when unset");
+	assert.ok(!bare.includes("<accent>*zai*</accent>"), "no model means no provider is emphasized");
 	setSessionPersona(null);
 });
 

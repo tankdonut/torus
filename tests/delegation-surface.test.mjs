@@ -295,6 +295,11 @@ test("successful delegation surfaces its delegationId and finished marker", asyn
 		"engine usage without a cost field renders an explicit $0",
 	);
 	assert.doesNotMatch(bareLog, /NaN/, "no NaN for unpriced runs");
+	assert.doesNotMatch(
+		bareLog,
+		/retrying down-chain/,
+		"a healthy settled run accepts at the chain head without a retry",
+	);
 	registry.setCustomSender(() => {});
 });
 
@@ -362,6 +367,11 @@ test("delegation ending in an engine-signaled model error fails red with the err
 		);
 		assert.equal(outcome.details.turns, 3);
 		assert.equal(
+			outcome.details.model,
+			"opencode-go/glm-5.3-flash",
+			"a settled exit over a dead tail walks down-chain to the last candidate",
+		);
+		assert.equal(
 			outcome.details.error,
 			"fetch failed",
 			"the engine's errorMessage is the surfaced failure text",
@@ -383,6 +393,12 @@ test("delegation ending in an engine-signaled model error fails red with the err
 	assert.ok(record, "registry record exists for the errored run");
 	assert.equal(record.status, "failed", "errored run must be marked failed in the registry");
 	const log = readFileSync(record.logFile, "utf8");
+	assert.match(
+		log,
+		/produced no work \(exit 0\) — retrying down-chain/,
+		"settling is not proof of work: a zero exit over a dead tail retries down-chain",
+	);
+	assert.match(log, /falling back to zai\/glm-5\.3-flash/, "the walk names the next candidate");
 	assert.match(log, /--- turn 2 \(13084\/2050 tok · \$0\.0428\) ---/);
 	assert.match(
 		log,

@@ -381,8 +381,27 @@ function shortModelId(id: string): string {
 export function buildStatus(theme?: StatusPainter): string {
 	const available = providerAvailabilities();
 	const engine = process.env["TORUS_ENGINE"] ?? "pi";
-	const providers =
-		(["zai", "opencode-go"] as const).filter((p) => available[p]).join("|") || "no-keys";
+	// The chip lists every credentialed chain provider, with the provider the
+	// session's current model runs on emphasized — after a chain fallback
+	// (zai → opencode-go) the line shows which leg is live, not just what's
+	// configured.
+	const activeProvider = currentModel?.split("/")[0];
+	const providerParts = (["zai", "opencode-go"] as const)
+		.filter((p) => available[p])
+		.map((p) =>
+			p === activeProvider
+				? theme
+					? theme.fg("accent", theme.bold(p))
+					: p
+				: theme
+					? theme.fg("dim", p)
+					: p,
+		);
+	const providers = providerParts.length
+		? providerParts.join(theme ? theme.fg("dim", "|") : "|")
+		: theme
+			? theme.fg("dim", "no-keys")
+			: "no-keys";
 	const persona = sessionPersona();
 
 	const sep = theme ? theme.fg("dim", " · ") : " · ";
@@ -400,7 +419,7 @@ export function buildStatus(theme?: StatusPainter): string {
 	} else if (modelText) {
 		segments.push(theme ? theme.fg("dim", modelText) : modelText);
 	}
-	segments.push(theme ? theme.fg("dim", providers) : providers);
+	segments.push(providers);
 	// the stock engine is the norm — tag the line only when overridden
 	if (engine !== "pi") {
 		segments.push(theme ? theme.fg("dim", `[${engine}]`) : `[${engine}]`);

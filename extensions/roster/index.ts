@@ -1310,15 +1310,17 @@ export async function runDelegation(
 			// An operator stop from the fleet view ends the walk: retrying a
 			// cancelled run down-chain would respawn it on the next model.
 			if (delegationStopRequested(delegationId)) break;
-			// Turns alone no longer vouch for an attempt: engine-signaled model
-			// errors (the engine already auto-retried and gave up) and a trailing
-			// run of no-progress turns are both dead work, so the turns > 0
-			// acceptance requires a clean tail and no error signal, and the walk
-			// advances down-chain. A zero exit still accepts (the torus:done case)
-			// — the outcome gate below turns that acceptance red instead.
+			// A clean tail vouches for an attempt: engine-signaled model errors
+			// (the engine already auto-retried and gave up) and a trailing run of
+			// no-progress turns are both dead work. Settling alone proves nothing —
+			// the engine settles just as cleanly after auto-retry exhaustion (a
+			// provider 429/5xx storm) — so a zero exit with a dead tail advances
+			// the walk down-chain too; only a healthy tail accepts, and the
+			// outcome gate below still turns any residual doubt red.
 			if (
-				attempt.exitCode === 0 ||
-				(attempt.usage.turns > 0 && attempt.usage.noProgressTail === 0 && !attempt.usage.lastError)
+				attempt.usage.noProgressTail === 0 &&
+				!attempt.usage.lastError &&
+				(attempt.exitCode === 0 || attempt.usage.turns > 0)
 			)
 				break;
 			const isLast = candidate === attemptModels[attemptModels.length - 1];
