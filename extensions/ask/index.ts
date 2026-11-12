@@ -6,9 +6,11 @@
  * between them; options (digits, arrows/j/k), an always-present Custom…
  * free-text row, an always-present "Chat more about this" row, `n` notes
  * attached to the highlighted option, and optional per-option `preview`
- * panes (ASCII mockups, snippets, diagrams). Non-TUI contexts fall back
- * to plain select/input dialogs with the same appended rows; headless
- * contexts get a decide-yourself fallback. Never offer your own "Other"/
+ * panes (ASCII mockups, snippets, diagrams). Questions may set `multi` to
+ * allow any subset of options (space/digits toggle, Enter commits the set);
+ * non-TUI contexts fall back to plain select/input dialogs with the same
+ * appended rows (multi questions degrade to the decide-yourself fallback) and
+ * headless contexts get a decide-yourself fallback. Never offer your own "Other"/
  * "custom"/"discuss" options — the dialog appends them.
  */
 
@@ -30,6 +32,7 @@ interface AskQuestion {
 	question: string;
 	header: string;
 	options: AskOption[];
+	multi?: boolean;
 }
 
 interface QuestionOutcome {
@@ -42,12 +45,18 @@ const askTool = defineTool({
 	name: "torus_ask",
 	label: "Torus Ask",
 	description:
-		'Ask the user structured questions with labeled options (interactive select dialog). The dialog ALWAYS appends a free-text "Custom…" row and a "Chat more about this" row, so never include your own "Other"/"custom"/"discuss" options. Options may carry a short description and a monospace preview (ASCII mockup, code snippet, diagram) shown beside the list when highlighted — use previews to compare layouts or code side by side. If you recommend an option, put it first and suffix the label with "(Recommended)". Use for scope decisions, destructive-action confirmation, or missing critical information. In non-interactive contexts the tool returns the options so you can decide and note the choice.',
+		'Ask the user structured questions with labeled options (interactive select dialog). The dialog ALWAYS appends a free-text "Custom…" row and a "Chat more about this" row, so never include your own "Other"/"custom"/"discuss" options. Options may carry a short description and a monospace preview (ASCII mockup, code snippet, diagram) shown beside the list when highlighted — use previews to compare layouts or code side by side. Set `multi: true` on a question when any subset of the options may be picked (select-all-that-apply); the answer lists the chosen labels. If you recommend an option, put it first and suffix the label with "(Recommended)". Use for scope decisions, destructive-action confirmation, or missing critical information. In non-interactive contexts the tool returns the options so you can decide and note the choice.',
 	parameters: Type.Object({
 		questions: Type.Array(
 			Type.Object({
 				question: Type.String(),
 				header: Type.String({ description: "Very short label (max 30 chars)" }),
+				multi: Type.Optional(
+					Type.Boolean({
+						description:
+							"Multi-select: any subset of options may be chosen; the answer lists the chosen labels",
+					}),
+				),
 				options: Type.Array(
 					Type.Object({
 						label: Type.String(),
@@ -82,7 +91,9 @@ const askTool = defineTool({
 		}
 
 		for (const item of params.questions) {
-			if (!ctx.hasUI) {
+			// ctx.ui.select picks one; multi questions have no non-TUI picker, so they
+			// degrade to the decide-yourself fallback instead of a lossy single pick.
+			if (item.multi || !ctx.hasUI) {
 				outcomes.push({
 					unanswered: unansweredText(
 						item,
@@ -184,7 +195,10 @@ function outcomesFromDialog(items: AskQuestion[], result: AskDialogResult): Ques
 }
 
 function unansweredText(item: AskQuestion, labels: string[]): string {
-	return `${item.header}: ${item.question}\n  options: ${labels.join(" | ")}`;
+	const options = item.multi
+		? `pick any subset of: ${labels.join(" | ")}`
+		: `options: ${labels.join(" | ")}`;
+	return `${item.header}: ${item.question}\n  ${options}`;
 }
 
 export function registerAsk(pi: ExtensionAPI): void {

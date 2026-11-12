@@ -9,7 +9,9 @@
  * the always-present Custom… free-text row, Enter records the answer and
  * advances to the next question (the last one submits the whole set), and
  * Esc steps back (input → selection) or cancels the dialog. A "Chat more
- * about this" row is always last. Options may carry a `preview` (ASCII
+ * about this" row is always last. Questions may set `multi: true`: options
+ * carry [x]/[ ] checkboxes, space or digits toggle them, Enter commits the
+ * whole set (Custom… still replaces it with free text). Options may carry a
  * mockup, code snippet, diagram) rendered side-by-side for the highlighted
  * row. Answers survive navigation: revisiting a question shows and lets you
  * change the recorded answer.
@@ -45,6 +47,8 @@ export interface AskDialogQuestion {
 	header: string;
 	question: string;
 	options: AskDialogOption[];
+	/** Multi-select: any subset of options may be chosen (select-all-that-apply). */
+	multi?: boolean;
 }
 
 export interface AskDialogSpec {
@@ -80,7 +84,12 @@ interface QuestionState {
 	answer: AskDialogAnswer | null;
 	/** Row index the recorded answer came from, or null while unanswered. */
 	answeredRow: number | null;
+	/** Toggled option rows (multi questions only). */
+	selected: Set<number>;
 }
+
+/** answeredRow value when a multi answer came from the toggled set, not one row. */
+const SET_ROW = -1;
 
 const PREVIEW_MIN_W = 24;
 const PREVIEW_FRACTION = 0.42;
@@ -125,6 +134,7 @@ export class AskDialog implements Component {
 			customText: "",
 			answer: null,
 			answeredRow: null,
+			selected: new Set<number>(),
 		}));
 		this.state = this.states[0] as QuestionState;
 	}
@@ -179,7 +189,9 @@ export class AskDialog implements Component {
 			const row = this.rowTargets[event.y - this.rowsTop];
 			if (row !== undefined) {
 				this.state.highlight = row;
-				this.commit();
+				if (this.state.question.multi && this.rows()[row]?.kind === "option")
+					this.toggleSelected(row);
+				else this.commit();
 				return { handled: true };
 			}
 		}
@@ -208,9 +220,16 @@ export class AskDialog implements Component {
 		for (let i = 0; i < options.length && i < 9; i++) {
 			if (matchesKey(data, String(i + 1) as KeyId)) {
 				this.state.highlight = i;
-				this.commit();
+				if (this.state.question.multi) this.toggleSelected(i);
+				else this.commit();
 				return;
 			}
+		}
+		if (this.state.question.multi && matchesKey(data, "space")) {
+			if (this.rows()[this.state.highlight]?.kind === "option") {
+				this.toggleSelected(this.state.highlight);
+			}
+			return;
 		}
 		if (matchesKey(data, "n")) {
 			this.input = {
@@ -284,6 +303,11 @@ export class AskDialog implements Component {
 		}
 	}
 
+	private toggleSelected(row: number): void {
+		if (this.state.selected.has(row)) this.state.selected.delete(row);
+		else this.state.selected.add(row);
+	}
+
 	private gotoQuestion(index: number): void {
 		if (index < 0 || index >= this.states.length || index === this.qIndex) return;
 		if (this.input) {
@@ -321,14 +345,30 @@ export class AskDialog implements Component {
 			}
 			this.state.customText = text;
 			this.state.answer = { header: q.header, text: `${text} (custom)` };
+			this.state.answeredRow = this.state.highlight;
+		} else if (q.multi) {
+			const selected = [...this.state.selected].sort((a, b) => a - b);
+			if (selected.length === 0) return; // empty set: nothing to record yet
+			const rows = this.rows();
+			this.state.answer = {
+				header: q.header,
+				text: selected
+					.map((i) => {
+						const label = rows[i]?.label ?? "";
+						const note = this.state.notes.get(i);
+						return note ? `${label} (note: ${note})` : label;
+					})
+					.join(", "),
+			};
+			this.state.answeredRow = SET_ROW;
 		} else {
 			const note = this.state.notes.get(this.state.highlight);
 			this.state.answer = {
 				header: q.header,
 				text: note ? `${row.label} (note: ${note})` : row.label,
 			};
+			this.state.answeredRow = this.state.highlight;
 		}
-		this.state.answeredRow = this.state.highlight;
 		this.input = null;
 		if (this.qIndex < this.states.length - 1) {
 			this.gotoQuestion(this.qIndex + 1); // record, then continue with the next question
@@ -390,7 +430,7 @@ export class AskDialog implements Component {
 				truncateToWidth(styled, Math.max(1, width - 1)) + CURSOR_MARKER + renderFakeCursor(" "),
 			);
 		}
-		lines.push(t.fg("dim", footer(this.input !== null, multi)));
+		lines.push(t.fg("dim", footer(this.input !== null, multi, this.state.question.multi === true)));
 		lines.push("");
 		return lines;
 	}
@@ -427,14 +467,22 @@ export class AskDialog implements Component {
 		const rows = this.rows();
 		const lines: string[] = [];
 		const targets: number[] = [];
+		const multi = this.state.question.multi === true;
 		rows.forEach((row, i) => {
 			const highlighted = i === this.state.highlight;
 			const pointer = highlighted ? "❯ " : "  ";
 			const digit = row.kind === "option" ? `${i + 1} ` : "  ";
+			const box = multi
+				? row.kind === "option"
+					? this.state.selected.has(i)
+						? "[x] "
+						: "[ ] "
+					: "    "
+				: "";
 			const note = this.state.notes.get(i);
 			const noteTag = note ? ` ${t.fg("warning", "✎ note")}` : "";
 			const answered = this.state.answeredRow === i ? ` ${t.fg("success", "✓")}` : "";
-			let text = `${pointer}${digit}${row.label}${answered}${noteTag}`;
+			let text = `${pointer}${digit}${box}${row.label}${answered}${noteTag}`;
 			if (highlighted) text = t.style(text, { fg: "accent", bold: true });
 			else if (row.kind !== "option") text = t.fg("dim", text);
 			lines.push(truncateToWidth(text, Math.max(1, width)));
@@ -475,12 +523,16 @@ export class AskDialog implements Component {
 	}
 }
 
-function footer(inInput: boolean, multi: boolean): string {
+function footer(inInput: boolean, multi: boolean, multiSelect: boolean): string {
 	if (inInput) return "enter submit · esc back to options";
 	if (multi) {
-		return "←→/hl questions · ↑↓/jk move · # pick · n note · tab custom · enter select · esc cancel";
+		return multiSelect
+			? "←→/hl questions · ↑↓/jk move · space/# toggle · n note · tab custom · enter confirm · esc cancel"
+			: "←→/hl questions · ↑↓/jk move · # pick · n note · tab custom · enter select · esc cancel";
 	}
-	return "↑↓/jk move · # pick · n note · tab custom · enter select · esc cancel";
+	return multiSelect
+		? "↑↓/jk move · space/# toggle · n note · tab custom · enter confirm · esc cancel"
+		: "↑↓/jk move · # pick · n note · tab custom · enter select · esc cancel";
 }
 
 function wrapPlain(text: string, width: number): string[] {

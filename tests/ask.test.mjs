@@ -431,3 +431,129 @@ test("torus_ask TUI: escape cancels the whole dialog", async () => {
 	assert.match(result.content[0].text, /- db: Which DB\?/);
 	assert.match(result.content[0].text, /- timing: When to migrate\?/);
 });
+
+const MULTI_QUESTION = {
+	question: "Which checks should run?",
+	header: "checks",
+	multi: true,
+	options: [{ label: "lint" }, { label: "typecheck" }, { label: "smoke" }],
+};
+
+test("torus_ask TUI: multi question toggles a subset and joins the answer", async () => {
+	const { tool } = captureTool();
+	const ctx = tuiCtx((dialog) => {
+		dialog.handleInput("1"); // toggle lint
+		dialog.handleInput("3"); // toggle smoke
+		dialog.handleInput("\r"); // confirm the set
+	});
+	const result = await run(tool, { questions: [MULTI_QUESTION] }, ctx);
+	assert.equal(result.details.mode, "interactive");
+	assert.equal(result.content[0].text, "checks: lint, smoke");
+});
+
+test("torus_ask TUI: space toggles the highlighted option in a multi question", async () => {
+	const { tool } = captureTool();
+	const ctx = tuiCtx((dialog) => {
+		dialog.handleInput("\x1b[B"); // highlight typecheck
+		dialog.handleInput(" ");
+		dialog.handleInput("\r");
+	});
+	const result = await run(tool, { questions: [MULTI_QUESTION] }, ctx);
+	assert.equal(result.details.mode, "interactive");
+	assert.equal(result.content[0].text, "checks: typecheck");
+});
+
+test("torus_ask TUI: custom answer replaces the multi selection", async () => {
+	const { tool } = captureTool();
+	const ctx = tuiCtx((dialog) => {
+		dialog.handleInput("1"); // toggle lint
+		dialog.handleInput("\t");
+		for (const ch of "run shellcheck") dialog.handleInput(ch);
+		dialog.handleInput("\r"); // custom commits and submits (only question)
+	});
+	const result = await run(tool, { questions: [MULTI_QUESTION] }, ctx);
+	assert.equal(result.details.mode, "interactive");
+	assert.equal(result.content[0].text, "checks: run shellcheck (custom)");
+});
+
+test("torus_ask: multi questions degrade to the decide-yourself fallback", async () => {
+	const { tool } = captureTool();
+	for (const hasUI of [true, false]) {
+		const ctx = fakeCtx({ hasUI });
+		const result = await run(tool, { questions: [MULTI_QUESTION] }, ctx);
+		assert.equal(result.details.mode, "fallback");
+		assert.match(result.content[0].text, /pick any subset of: lint \| typecheck \| smoke/);
+		assert.equal(ctx.calls.select.length, 0);
+	}
+});
+
+test("AskDialog: multi question renders checkbox markers and a toggle footer", () => {
+	const { dialog } = dialogWith(MULTI_QUESTION);
+	const before = dialog.render(80).join("\n");
+	assert.match(before, /\[ \] lint/);
+	dialog.handleInput("2");
+	const after = dialog.render(80).join("\n");
+	assert.match(after, /\[x\] typecheck/);
+	assert.doesNotMatch(after, /\[x\] lint/);
+	assert.match(after, /space\/# toggle/);
+});
+
+test("AskDialog: enter on an empty multi selection records nothing", () => {
+	const { dialog, getResult } = dialogWith(MULTI_QUESTION);
+	dialog.render(80);
+	dialog.handleInput("\r");
+	assert.equal(getResult(), undefined);
+	assert.match(dialog.render(80).join("\n"), /Which checks should run\?/);
+});
+
+test("AskDialog: clicking option rows toggles them in a multi question", () => {
+	const { dialog, getResult } = dialogWith(MULTI_QUESTION);
+	const lines = dialog.render(80);
+	const y = lines.findIndex((l) => l.includes("lint"));
+	dialog.handleMouse(click(0, y)); // lint on
+	dialog.handleMouse(click(0, y + 1)); // typecheck on
+	dialog.handleMouse(click(0, y)); // lint off
+	dialog.handleInput("\r");
+	const result = getResult();
+	assert.equal(result.kind, "submit");
+	assert.equal(result.answers[0]?.text, "typecheck");
+});
+
+test("AskDialog: multi answer checks the stepper and revisits keep the toggles", () => {
+	const { dialog, getResult } = dialogWith({
+		questions: [MULTI_QUESTION, TWO_QUESTIONS.questions[1]],
+	});
+	dialog.render(80);
+	dialog.handleInput("2"); // toggle typecheck
+	dialog.handleInput("\r"); // confirm, advance
+	let lines = dialog.render(80).join("\n");
+	assert.match(lines, /timing — When to migrate\?/);
+	assert.match(lines, /1 checks ✓/);
+	dialog.handleInput("\x1b[D"); // back to the multi question
+	lines = dialog.render(80).join("\n");
+	assert.match(lines, /\[x\] typecheck/);
+	dialog.handleInput("\r"); // re-commit, advance
+	dialog.handleInput("\r"); // timing: now, submit
+	const result = getResult();
+	assert.deepEqual(
+		result.answers.map((a) => a?.text),
+		["typecheck", "now"],
+	);
+});
+
+test("AskDialog: single and multi questions mix in one dialog", () => {
+	const { dialog, getResult } = dialogWith({
+		questions: [TWO_QUESTIONS.questions[0], MULTI_QUESTION],
+	});
+	dialog.render(80);
+	dialog.handleInput("1"); // q1 single: postgres, advance
+	dialog.handleInput("2"); // q2 multi: toggle typecheck
+	dialog.handleInput("3"); // toggle smoke
+	dialog.handleInput("\r"); // confirm the set, submit
+	const result = getResult();
+	assert.equal(result.kind, "submit");
+	assert.deepEqual(
+		result.answers.map((a) => a?.text),
+		["postgres", "typecheck, smoke"],
+	);
+});

@@ -660,9 +660,9 @@ Structured user questions: labeled-option select dialogs (1–4 questions, 2–6
 
 | Tool | Purpose |
 |---|---|
-| `torus_ask` | Ask structured questions (questions[] with question/header/options; options may carry description and monospace preview) |
+| `torus_ask` | Ask structured questions (questions[] with question/header/options; options may carry description and monospace preview; `multi` allows any subset of options) |
 
-The dialog always appends a `Custom…` free-text row and a `Chat more about this` row, so callers never add their own "Other"/"discuss" options. In the TUI, all questions render in one dialog: ←/→ (`h`/`l`) or clicking the stepper tabs moves between them, answers are kept and editable when revisiting, and clicking a row commits it. Within a question, digits jump-commit an option, `n` attaches a note to the highlighted option, `tab` opens the custom field, and options with a `preview` (ASCII mockup, snippet, diagram) render side by side. Choosing `Chat more about this` returns a discuss-first directive instead of an answer. In non-interactive contexts the options are returned so the model decides and notes the choice.
+The dialog always appends a `Custom…` free-text row and a `Chat more about this` row, so callers never add their own "Other"/"discuss" options. In the TUI, all questions render in one dialog: ←/→ (`h`/`l`) or clicking the stepper tabs moves between them, answers are kept and editable when revisiting, and clicking a row commits it. Within a question, digits jump-commit an option, `n` attaches a note to the highlighted option, `tab` opens the custom field, and options with a `preview` (ASCII mockup, snippet, diagram) render side by side. `multi: true` questions show `[x]`/`[ ]` checkboxes: space or digits toggle options, Enter commits the joined set, and `Custom…` replaces it. Choosing `Chat more about this` returns a discuss-first directive instead of an answer. In non-interactive contexts the options are returned so the model decides and notes the choice.
 
 ### `ui`
 
