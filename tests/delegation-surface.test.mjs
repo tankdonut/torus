@@ -1340,6 +1340,45 @@ test("rehydrate: un-ended runs with a dead child read failed, live ones stay run
 	registry.resetRegistryForTesting();
 });
 
+test("session replacement retires the registry; reload keeps it", async () => {
+	registry.resetRegistryForTesting();
+
+	// The registry is process-shared and survives pi's extension rebind on a
+	// session switch, so the outgoing session's records are exactly what a
+	// /resume inherits unless shutdown drops them.
+	await registry.startDelegation("replaced-run", "builder", "m", "sess-old", "old-handle");
+	await registry.finishDelegation("replaced-run", true, "old session output", null);
+	await registry.startDelegation("incoming-run", "builder", "m", "sess-incoming", null);
+	await registry.finishDelegation("incoming-run", true, "incoming session output", null);
+
+	await registry.registryShutdown("reload");
+	assert.equal(
+		registry.listDelegations().find((r) => r.id === "replaced-run")?.text,
+		"old session output",
+		"reload keeps the session's records",
+	);
+
+	await registry.registryShutdown("resume");
+	assert.equal(
+		registry.listDelegations().length,
+		0,
+		"replacement must drop the outgoing session's records",
+	);
+
+	registry.rehydrateFromLogs("sess-incoming");
+	const rehydrated = registry.listDelegations();
+	assert.equal(
+		rehydrated.find((r) => r.id.includes("incoming-run"))?.parentSession,
+		"sess-incoming",
+		"the incoming session's own logs rehydrate once the registry is clear",
+	);
+	assert.ok(
+		!rehydrated.some((r) => r.id.includes("replaced-run")),
+		"the outgoing session's runs must not leak into the new session",
+	);
+	registry.resetRegistryForTesting();
+});
+
 test("live-captured RPC usage shape folds cost into snapshots, records, and log lines", async () => {
 	registry.resetRegistryForTesting();
 	const snapshots = [];

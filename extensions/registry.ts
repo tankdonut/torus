@@ -1238,12 +1238,23 @@ function parseTagEnd(raw: string): EndFields | null {
 	return { groups: { status: match[1] ?? "failed", session: attrs.get("session") ?? null } };
 }
 
+/** SessionShutdownEvent.reason: the values pi passes to session_shutdown. */
+export type SessionEndReason = "quit" | "reload" | "new" | "resume" | "fork";
+
 /**
  * Session-shutdown cleanup: kill every live delegation pane, drop late-toast
  * timers, and stop tracked controls so no pane, toast, or child outlives the
  * parent session.
+ *
+ * Replacement reasons (new/resume/fork) also retire the in-memory records:
+ * the registry is process-shared and survives the extension rebind pi runs
+ * for a session switch, and the incoming session_start's rehydrateFromLogs
+ * bails on a non-empty registry — stale records would leak the outgoing
+ * session's runs into torus_results and block rehydrating the incoming
+ * session's own logs. Reload keeps the registry: same session, and its
+ * in-flight records stay live.
  */
-export async function registryShutdown(): Promise<void> {
+export async function registryShutdown(reason: SessionEndReason = "quit"): Promise<void> {
 	for (const late of lateToasts.values()) {
 		if (late.timer) clearTimeout(late.timer);
 	}
@@ -1259,6 +1270,10 @@ export async function registryShutdown(): Promise<void> {
 		}
 	}
 	await Promise.all(paneIds.map((paneId) => killPane(paneId)));
+	if (reason === "new" || reason === "resume" || reason === "fork") {
+		registry.clear();
+		externalRuns().length = 0;
+	}
 }
 
 /**

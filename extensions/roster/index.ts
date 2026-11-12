@@ -1903,8 +1903,8 @@ export function registerRoster(pi: ExtensionAPI): void {
 		} catch {}
 	});
 
-	pi.on("session_shutdown", () => {
-		void registryShutdown();
+	pi.on("session_shutdown", (event) => {
+		void registryShutdown(event.reason);
 	});
 
 	pi.on("turn_start", () => {
