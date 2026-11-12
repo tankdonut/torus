@@ -239,12 +239,11 @@ test("torus_ask TUI: n attaches a note to the highlighted option", async () => {
 	assert.equal(result.content[0].text, "db: postgres (note: needs sudo)");
 });
 
-test("torus_ask TUI: tab opens the custom field and the answer is recorded", async () => {
+test("torus_ask TUI: tab opens the custom field and enter records the answer", async () => {
 	const { tool } = captureTool();
 	const ctx = tuiCtx((dialog) => {
 		dialog.handleInput("\t");
 		for (const ch of "use neon") dialog.handleInput(ch);
-		dialog.handleInput("\r");
 		dialog.handleInput("\r");
 	});
 	const result = await run(tool, PARAMS, ctx);
@@ -334,6 +333,28 @@ test("AskDialog: arrow navigation revisits and revises earlier answers", () => {
 		result.answers.map((a) => a?.text),
 		["sqlite", "now"],
 	);
+});
+
+test("AskDialog: enter in the custom input records, checks the stepper, and advances", () => {
+	const { dialog } = dialogWith(TWO_QUESTIONS);
+	dialog.render(80);
+	dialog.handleInput("\t");
+	for (const ch of "use neon") dialog.handleInput(ch);
+	dialog.handleInput("\r");
+	const lines = dialog.render(80).join("\n");
+	assert.match(lines, /timing — When to migrate\?/, "advances to the next question");
+	assert.match(lines, /1 db ✓/, "answered question carries a check in the stepper");
+});
+
+test("AskDialog: escape in the custom input keeps it a draft without recording", () => {
+	const { dialog } = dialogWith(TWO_QUESTIONS);
+	dialog.render(80);
+	dialog.handleInput("\t");
+	for (const ch of "use neon") dialog.handleInput(ch);
+	dialog.handleInput("\x1b");
+	const lines = dialog.render(80).join("\n");
+	assert.match(lines, /db — Which DB\?/, "stays on the same question");
+	assert.doesNotMatch(lines, /1 db ✓/, "no check while uncommitted");
 });
 
 test("AskDialog: clicking a stepper tab jumps to that question", () => {

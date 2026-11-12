@@ -253,10 +253,13 @@ export class AskDialog implements Component {
 			if (input.field === "note") {
 				if (input.text.trim()) this.state.notes.set(this.state.highlight, input.text.trim());
 				else this.state.notes.delete(this.state.highlight);
-			} else {
-				this.state.customText = input.text;
+				this.input = null;
+				return;
 			}
+			this.state.customText = input.text;
 			this.input = null;
+			this.state.highlight = this.state.question.options.length; // Custom… row
+			this.commit();
 			return;
 		}
 		if (matchesKey(data, "backspace")) {
