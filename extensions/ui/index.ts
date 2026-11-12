@@ -279,15 +279,20 @@ function seedSessionCost(ctx: ExtensionContext): void {
 	sessionCostTallies.set(id, tally);
 }
 
-/** Current model / thinking effort, seeded from ctx and kept fresh via events. */
-let currentModel: string | undefined;
-let currentEffort: string | undefined;
 /**
- * Provider of the current model, from the engine's Model object (its `id` is
- * the bare catalog id; the provider is a sibling field). The hook and any
- * composite "provider/id" string still work via buildStatus's prefix fallback.
+ * Current model / effort / provider, seeded from ctx and kept fresh via
+ * events. Lives on shared state, not module locals: a rebind (/reload,
+ * /resume) re-imports this file, and instance locals would drop the last
+ * real model — the reloaded chip would paint with no model segment and both
+ * providers dim until some later event re-seeded (a reload whose
+ * session_start carries the engine's transient "unknown" model never
+ * re-seeds here). The chip store already survives rebinds the same way.
  */
-let currentProvider: string | undefined;
+const MODEL_STATE_KEY = Symbol.for("torus.statusline.model-state.v1");
+type ModelState = { model?: string; effort?: string; provider?: string };
+function modelState(): ModelState {
+	return sharedState(MODEL_STATE_KEY, () => ({}));
+}
 
 /** MCP connected/registered counts; refreshed on session_start + turn_start and by the settle-poll below. */
 let mcpCounts = { connected: 0, registered: 0 };
@@ -356,9 +361,10 @@ export function personaFg(persona: string, text: string): string {
 
 /** Test/interop hook: set the model+effort state the statusline renders. */
 export function setStatusModel(model: string | undefined, effort: string | undefined): void {
-	currentModel = model;
-	currentEffort = effort;
-	currentProvider = undefined;
+	const state = modelState();
+	state.model = model;
+	state.effort = effort;
+	state.provider = undefined;
 }
 
 /** Test/interop hook: set the MCP counts and goal chip the statusline renders. */
@@ -392,8 +398,8 @@ export function buildStatus(theme?: StatusPainter): string {
 	// session's current model runs on emphasized — after a chain fallback
 	// (zai → opencode-go) the line shows which leg is live, not just what's
 	// configured.
-	const activeProvider =
-		currentProvider ?? (currentModel?.includes("/") ? currentModel.split("/")[0] : undefined);
+	const { model, effort, provider } = modelState();
+	const activeProvider = provider ?? (model?.includes("/") ? model.split("/")[0] : undefined);
 	const providerParts = (["zai", "opencode-go"] as const)
 		.filter((p) => available[p])
 		.map((p) =>
@@ -419,11 +425,11 @@ export function buildStatus(theme?: StatusPainter): string {
 	// identity block: persona, model, and thinking effort share the persona
 	// color so the active configuration reads as one group; model ids are
 	// shortened ("zai/glm-4.7" -> "glm-4.7") to keep the line short
-	const modelText = currentModel ? shortModelId(currentModel) : undefined;
+	const modelText = model ? shortModelId(model) : undefined;
 	if (persona) {
 		segments.push(personaFg(persona, persona));
 		if (modelText) segments.push(personaFg(persona, modelText));
-		if (currentEffort) segments.push(personaFg(persona, currentEffort));
+		if (effort) segments.push(personaFg(persona, effort));
 	} else if (modelText) {
 		segments.push(theme ? theme.fg("dim", modelText) : modelText);
 	}
@@ -483,10 +489,12 @@ export function refreshToruStatus(ctx: ExtensionContext): void {
 	// caching it would paint a phantom model chip until the next model_select.
 	const id = ctx.model?.id;
 	if (id !== undefined && id !== "unknown") {
-		currentModel = id;
-		currentProvider = ctx.model?.provider;
+		const state = modelState();
+		state.model = id;
+		state.provider = ctx.model?.provider;
 	}
-	currentEffort = ctx.thinkingLevel ?? currentEffort;
+	const state = modelState();
+	state.effort = ctx.thinkingLevel ?? state.effort;
 	setTorusChip(STATUS_KEY, buildStatus(ctx.ui.theme));
 }
 
@@ -763,10 +771,11 @@ export function registerUi(pi: ExtensionAPI): void {
 		// can arrive with the engine's "unknown" model; keep the last real id.
 		const id = ctx.model?.id;
 		if (id !== undefined && id !== "unknown") {
-			currentModel = id;
-			currentProvider = ctx.model?.provider;
+			const state = modelState();
+			state.model = id;
+			state.provider = ctx.model?.provider;
 		}
-		currentEffort = ctx.thinkingLevel;
+		modelState().effort = ctx.thinkingLevel;
 		refreshMcp();
 		pollMcpUntilSettled(ctx);
 		refreshToruStatus(ctx);
@@ -812,13 +821,14 @@ export function registerUi(pi: ExtensionAPI): void {
 	});
 
 	pi.on("model_select", (event, ctx: ExtensionContext) => {
-		currentModel = event.model.id;
-		currentProvider = event.model.provider;
+		const state = modelState();
+		state.model = event.model.id;
+		state.provider = event.model.provider;
 		refreshToruStatus(ctx);
 	});
 
 	pi.on("thinking_level_select", (event, ctx: ExtensionContext) => {
-		currentEffort = event.level;
+		modelState().effort = event.level;
 		refreshToruStatus(ctx);
 	});
 }
