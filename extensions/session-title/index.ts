@@ -225,6 +225,15 @@ interface TitleRequest {
 	verb: string;
 }
 
+/** Hard wall-clock cap on one title call — retries and backoff included. */
+const TITLE_TIMEOUT_MS = 30_000;
+
+/** Report an unreachable title model: shared-cooldown mark plus one notify. */
+function markUnreachable(model: Model<Api>, verb: string, ctx: ExtensionContext): void {
+	markModelFailed(`${model.provider}/${model.id}`);
+	ctx.ui.notify(`session-title: ${verb} failed (model unreachable)`, "error");
+}
+
 async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Promise<string | null> {
 	const model = resolveTitleModel(
 		knobString("TORUS_TITLE_MODEL", "sessionTitle", "titleModel", ""),
@@ -245,14 +254,25 @@ async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Prom
 				systemPrompt: TITLE_SYSTEM_PROMPT,
 				messages: [{ role: "user", content: instruction, timestamp: Date.now() }],
 			},
-			{ maxTokens: 1024 },
+			{
+				maxTokens: 1024,
+				// The engine retries retryable errors (429s, dead endpoints) with
+				// backoff, and complete() RESOLVES with an error message instead of
+				// throwing — uncapped, /rename sits through minutes of silent
+				// backoff and then does nothing. Cap the whole call; an aborted
+				// backoff surfaces as an aborted message the check below handles.
+				signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
+			},
 		);
+		if (response.stopReason === "error" || response.stopReason === "aborted") {
+			markUnreachable(model, request.verb, ctx);
+			return null;
+		}
 		return sanitizeTitle(messageText(response));
 	} catch {
 		// The model failed to answer — sit it out for the shared cooldown window
 		// so every chain consumer skips it, not just the next rename.
-		markModelFailed(`${model.provider}/${model.id}`);
-		ctx.ui.notify(`session-title: ${request.verb} failed (model unreachable)`, "error");
+		markUnreachable(model, request.verb, ctx);
 		return null;
 	}
 }

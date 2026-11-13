@@ -21,7 +21,9 @@ after(() => {
 	else process.env["OPENCODE_API_KEY"] = PREV_OPENCODE_KEY;
 });
 
-const { resetFailureMemoForTesting } = await import("../extensions/providers/index.ts");
+const { isModelMemoFailed, resetFailureMemoForTesting } = await import(
+	"../extensions/providers/index.ts"
+);
 const {
 	sanitizeTitle,
 	messageText,
@@ -347,6 +349,35 @@ test("/rename brief carries data-only task state, never block instructions", asy
 		seen.includes("torus_todowrite"),
 		false,
 		"no working-agent instructions in the brief",
+	);
+});
+
+test("an error-resolved title call notifies, marks the model, and leaves the name alone", async () => {
+	const pi = fakePi();
+	registerSessionTitle(pi);
+	const ctx = fakeCtx([msgEntry(USER("fix bug")), msgEntry(ASSISTANT("fixed"))]);
+	ctx.modelRegistry.find = () => ({ id: "glm-5.3-flash", provider: "zai" });
+	// complete() RESOLVES with an error message (the engine's retry layer
+	// returns error responses instead of throwing) — the silent no-op that
+	// made /rename look dead on an unreachable model.
+	ctx.modelRegistry.complete = async () => ({
+		...ASSISTANT(""),
+		stopReason: "error",
+		errorMessage: "429 too many requests",
+	});
+
+	await pi.commands.rename.handler("", ctx);
+	assert.equal(pi.state.name, undefined, "no title applied on an error response");
+	assert.ok(
+		ctx.ui.notifications.some(
+			(n) => n.level === "error" && /renamed failed \(model unreachable\)/.test(n.text),
+		),
+		"the failure is surfaced, not swallowed",
+	);
+	assert.equal(
+		isModelMemoFailed("zai/glm-5.3-flash"),
+		true,
+		"the dead model sits out the shared cooldown",
 	);
 });
 
