@@ -216,8 +216,8 @@ test("configuration.md covers every registered config section and knob", () => {
 		"TORUS_TASK_STALE_MIN/team.taskStaleMin",
 		"TORUS_TEAM_NOTIFY/team.teamNotify",
 		"TORUS_TITLE_MODEL/sessionTitle.titleModel",
+		"TORUS_WAKE/wake.spool",
 		"TORUS_WAKE_COALESCE_MS/wake.coalesceMs",
-		"TORUS_WAKE_SPOOL/wake.spool",
 	].sort();
 	assert.deepEqual(
 		found,

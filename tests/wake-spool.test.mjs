@@ -18,7 +18,7 @@ import { after, test } from "node:test";
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-wake-spool-test-"));
 process.env.TORUS_HOME = HOME;
 process.env.TORUS_NOTIFY = "0";
-delete process.env.TORUS_WAKE_SPOOL;
+delete process.env.TORUS_WAKE;
 // The queued-wake pins assume instant idle delivery; the debounce window is unit-tested in wake-gate.test.mjs.
 process.env.TORUS_WAKE_COALESCE_MS = "0";
 
@@ -64,14 +64,14 @@ test("queued wakes write-ahead to the session spool and clear on delivery", () =
 	registry.setCurrentSession(null);
 });
 
-test("TORUS_WAKE_SPOOL=0 and engine children keep wakes in-process only", () => {
+test("TORUS_WAKE=0 and engine children keep wakes in-process only", () => {
 	gate._resetWakeGateForTesting();
 	registry.setCurrentSession("spool-s2");
-	process.env.TORUS_WAKE_SPOOL = "0";
+	process.env.TORUS_WAKE = "0";
 	gate.queueWakeEntry({ customType: "torus.monitor-fired", text: "output changed" });
 	assert.ok(!existsSync(spoolFile("spool-s2")), "disabled knob writes no spool");
 	gate.drainWakeSpool("spool-s2");
-	delete process.env.TORUS_WAKE_SPOOL;
+	delete process.env.TORUS_WAKE;
 
 	process.env.TORUS_ENGINE_CHILD = "1";
 	gate.queueWakeEntry({ customType: "torus.monitor-fired", text: "child wake" });

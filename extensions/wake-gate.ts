@@ -123,7 +123,7 @@ function spoolEnabled(): boolean {
 	// Engine children have no session to wake; their queue calls are no-ops
 	// that must not grow spool files in the dispatching project's state dir.
 	if (isEngineChild()) return false;
-	return knobBoolean("TORUS_WAKE_SPOOL", "wake", "spool", true, parseZeroDisables);
+	return knobBoolean("TORUS_WAKE", "wake", "spool", true, parseZeroDisables);
 }
 
 function spoolDir(): string {
