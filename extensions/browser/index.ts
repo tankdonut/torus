@@ -629,7 +629,7 @@ class FleetBrowser implements Component {
 	): string[] {
 		this.listRows.clear();
 		this.footerButtons = null;
-		const bar = theme.fg("dim", "─".repeat(Math.max(0, Math.min(width - 2, 72))));
+		const bar = rule(theme, Math.max(0, width - 2), "dim");
 		const header = this.listHeader(theme, width);
 		const lines: string[] = [];
 		/** items index → row in `lines`, for click routing and cursor windowing. */

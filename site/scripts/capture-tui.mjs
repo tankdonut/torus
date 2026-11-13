@@ -177,12 +177,42 @@ const settingsOriginal = existsSync(agentSettingsPath)
 	? readFileSync(agentSettingsPath, "utf8")
 	: null;
 
+// The delegation chains must also start on the opencode-go leg: a dispatch
+// whose chain begins on a dead zai chain head bakes its 429 retry turns
+// into the captured transcripts (fleet-detail showed them verbatim). The
+// chains section replaces the tiers wholesale, so write one for the run —
+// same save/restore contract as the theme flip above.
+const captureConfigPath = resolve(
+	process.env["TORUS_HOME"] ?? resolve(homedir(), ".torus"),
+	"config.json",
+);
+const configOriginal = existsSync(captureConfigPath)
+	? readFileSync(captureConfigPath, "utf8")
+	: null;
+const pinCaptureChains = () => {
+	const merged = JSON.parse(configOriginal ?? "{}");
+	merged.chains = {
+		...merged.chains,
+		primary: ["opencode-go/glm-5.3-flash"],
+		fast: ["opencode-go/glm-5.3-flash"],
+	};
+	writeFileSync(captureConfigPath, `${JSON.stringify(merged, null, "\t")}\n`);
+};
+const restoreCaptureChains = () => {
+	if (configOriginal === null) {
+		if (existsSync(captureConfigPath)) unlinkSync(captureConfigPath);
+		return;
+	}
+	writeFileSync(captureConfigPath, configOriginal);
+};
+
 function teardown(stateDirArg, success) {
 	tmux(["send-keys", "-t", `${SESSION}.0`, "/exit", "Enter"]);
 	sleep(1500);
 	tmux(["kill-session", "-t", SESSION]);
 	rmSync(stateDirArg, { recursive: true, force: true });
 	restoreAgentSettings();
+	restoreCaptureChains();
 	if (!success) {
 		console.error("site: capture run FAILED; artifacts above (if any) are partial");
 		process.exitCode = 1;
@@ -190,6 +220,10 @@ function teardown(stateDirArg, success) {
 }
 
 const boot = () => {
+	// Each capture session re-pins the chains: the teardown between sessions
+	// restores the operator's config, so a one-shot pin at import would leave
+	// the later sessions (dark fleet, team) walking the dead chain head.
+	pinCaptureChains();
 	stateDir = mkdtempSync(resolve(tmpdir(), "torus-site-capture-"));
 	tmux([
 		"new-session",

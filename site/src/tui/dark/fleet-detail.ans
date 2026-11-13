@@ -1,31 +1,31 @@
-[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[39m[48;2;33;59;73m
- [38;2;222;224;225mTask: use grep to list every exported symbol in extensions/fsutil.ts with a one-line summary of each, then do the same for
-[39m [38;2;222;224;225mextensions/registry.ts[39m
+[38;2;205;154;34m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m ├─────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ [38;2;167;152;215mrehydrateFromLogs(currentSessionId?[39m │ Rebuild registry records from log files on resume (bails when the registry is non-empty),      │
+ │ [38;2;167;152;215m)[39m                                   │ reconciling live beacons.                                                                      │
+ ├─────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ [38;2;167;152;215mregistryShutdown(reason)[39m            │ Session-shutdown cleanup: kill panes, drop toasts and controls; [38;2;167;152;215mnew/resume/fork[39m also retire    │
+ │                                     │ in-memory records.                                                                             │
+ └─────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────┘
 
+ <results>
+ <files>
+ - /home/user/torus/extensions/fsutil.ts - shared filesystem/JSON/scratch/formatting helpers (20
+ exports)
+ - /home/user/torus/extensions/registry.ts - delegation registry: records, controls, external runs,
+ teams, shutdown (49 exports)
+ </files>
 
-[49m [38;2;234;127;129mError: 429: {"code":"1310","message":"Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-15 22:52:40"}[39m
+ <answer>
+ Complete export inventories for both files are in the tables above: fsutil.ts exports 20 symbols
+ (state-dir/scratch/JSON/retention/read-cache/formatting helpers) and registry.ts exports 49 symbols (the delegation registry plus
+ text/sanitization helpers, external-run and team plumbing, log parsing, and session shutdown).
+ </answer>
 
- [38;2;234;127;129mError: 429: {"code":"1310","message":"Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-15 22:52:40"}[39m
+ <next_steps>
+ Ready to proceed - no follow-up needed. If you want, the private (non-exported) helpers or call sites for any symbol can be mapped next.
+ </next_steps>
+ </results>
 
- [38;2;234;127;129mError: 429: {"code":"1310","message":"Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-15 22:52:40"}[39m
-
- [38;2;234;127;129mError: 429: {"code":"1310","message":"Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-15 22:52:40"}[39m
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠹ live[39m [38;2;126;136;142mt4 · 21.6k→337 · $0.0045 · 50s · j/k scroll · g/G ends · [38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[39m
-[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;2;205;154;34m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;104;183;141m✓ done[39m [38;2;126;136;142m6t · 25.4k→3.5k · $0.0084 · 40s · j/k scroll · g/G ends · [38;2;167;152;215m[esc] back[38;2;126;136;142m · 01a1d233-ec49-74b0-835[39m…
+[38;2;205;154;34m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
