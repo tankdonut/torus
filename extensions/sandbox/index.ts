@@ -52,11 +52,16 @@ import {
 	type ToolCallEvent,
 	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
-import { readPersistedHosts } from "../approval/index.js";
 import { isBypassMode } from "../automode/config.js";
 import { scratchDir, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { setTorusChip } from "../ui/index.js";
+import {
+	askNetworkTrust,
+	captureTrustCtx,
+	readPersistedHosts,
+	registerApproval,
+} from "./approval.js";
 import {
 	loadSandboxPolicy,
 	type ResolvedSandboxPolicy,
@@ -449,6 +454,7 @@ function subscribeChip(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		lastCtx = ctx;
 		setSandboxStatus(chipText(shared.state));
+		captureTrustCtx(ctx);
 		maybeReloadTrustedPolicy();
 		return undefined;
 	});
@@ -838,24 +844,10 @@ let policyLoadedTrusted = false;
 let activeSeededHosts: (() => string[]) | undefined;
 let activeSignRelay: SignRelay | null = null;
 
-type ApprovalDecision =
-	| { kind: "allow" }
-	| { kind: "always" }
-	| { kind: "deny" }
-	| { kind: "custom"; text: string; host: string | null };
-
 function buildAskCallback(manager: SandboxManagerLike): SandboxAskFn {
 	return async ({ host, port }) => {
-		// Lazy slot resolution: approval loads after sandbox in pi.extensions.
-		const store = globalThis as Record<
-			symbol,
-			| { askNetworkTrust(host: string, port: number | undefined): Promise<ApprovalDecision> }
-			| undefined
-		>;
-		const slot = store[Symbol.for("torus.approval.v1")];
-		if (!slot) return false;
 		try {
-			const decision = await slot.askNetworkTrust(host, port);
+			const decision = await askNetworkTrust(host, port);
 			const grantedHost =
 				decision.kind === "always"
 					? host
@@ -904,6 +896,10 @@ export async function registerSandbox(
 	for (const notice of policyResult.notices) {
 		process.stderr.write(`${notice}\n`);
 	}
+	// Trust dialog gating rides the sandbox registration (TORUS_APPROVAL knob
+	// inside registerApproval); ctx capture happens in subscribeChip's
+	// session_start, before the off-mode early return.
+	registerApproval();
 	activePolicy = policyResult.policy;
 	activeSeededHosts = deps.seededHosts;
 	const sandboxEnv = parseSandboxEnv(process.env, activePolicy);

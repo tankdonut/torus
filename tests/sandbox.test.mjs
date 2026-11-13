@@ -369,6 +369,27 @@ function sandboxManagerFake({ wrapImpl } = {}) {
 	};
 }
 
+/** Scripted ctx for the folded trust dialog, in the style of approval.test.mjs. */
+function trustCtx({ selectScript, inputScript, hasUI = true } = {}) {
+	const calls = { select: [], input: [] };
+	return {
+		calls,
+		hasUI,
+		ui: {
+			async select(title, labels, opts) {
+				calls.select.push({ title, labels, opts });
+				const answer = selectScript?.[calls.select.length - 1];
+				return answer === undefined ? undefined : answer;
+			},
+			async input(title) {
+				calls.input.push({ title });
+				const answer = inputScript?.[calls.input.length - 1];
+				return answer === undefined ? undefined : answer;
+			},
+		},
+	};
+}
+
 async function activateHandlers(manager) {
 	const pi = handlerPi();
 	const previous = process.env.TORUS_SANDBOX;
@@ -729,22 +750,25 @@ test("CURATED_NET_ALLOWLIST: 31 dev-workflow hosts incl. release-assets fix and 
 	}
 });
 
-test("ask callback wiring: absent slot denies; always grants and updateConfig appends the host", async () => {
-	const manager = sandboxManagerFake();
-	const pi = await activateHandlers(manager);
-	const ask = manager.capturedAsk;
-	assert.equal(typeof ask, "function", "initialize receives the ask callback");
-	assert.equal(await ask({ host: "nope.dev", port: 443 }), false, "no approval slot ⇒ deny");
-	assert.equal(manager.updatedConfigs.length, 0);
-
-	const SLOT = Symbol.for("torus.approval.v1");
-	const previousSlot = globalThis[SLOT];
-	globalThis[SLOT] = {
-		async askNetworkTrust(host) {
-			return host === "granted.dev" ? { kind: "always" } : { kind: "deny" };
-		},
-	};
+test("ask callback wiring: headless trust ctx denies; always grants and updateConfig appends the host", async () => {
+	const savedHome = process.env.TORUS_HOME;
+	const home = mkdtempSync(path.join(tmpdir(), "torus-sbx-trust-"));
+	process.env.TORUS_HOME = home;
 	try {
+		const manager = sandboxManagerFake();
+		const pi = await activateHandlers(manager);
+		const ask = manager.capturedAsk;
+		assert.equal(typeof ask, "function", "initialize receives the ask callback");
+		await pi.handlers.session_start({ type: "session_start" }, trustCtx({ hasUI: false }));
+		assert.equal(
+			await ask({ host: "nope.dev", port: 443 }),
+			false,
+			"no interactive trust ctx ⇒ deny",
+		);
+		assert.equal(manager.updatedConfigs.length, 0);
+
+		const ctx = trustCtx({ selectScript: ["Always allow (this project)"] });
+		await pi.handlers.session_start({ type: "session_start" }, ctx);
 		assert.equal(await ask({ host: "granted.dev", port: 443 }), true);
 		assert.equal(manager.updatedConfigs.length, 1);
 		assert.ok(
@@ -752,31 +776,29 @@ test("ask callback wiring: absent slot denies; always grants and updateConfig ap
 			"updateConfig appends the granted host",
 		);
 		assert.equal(await ask({ host: "nope.dev", port: 443 }), false, "deny decisions stay deny");
+		await pi.handlers.session_shutdown(undefined, {
+			ui: { setStatus() {}, theme: { fg: (_c, t) => t } },
+		});
 	} finally {
-		if (previousSlot === undefined) delete globalThis[SLOT];
-		else globalThis[SLOT] = previousSlot;
+		if (savedHome === undefined) delete process.env.TORUS_HOME;
+		else process.env.TORUS_HOME = savedHome;
+		rmSync(home, { recursive: true, force: true });
 	}
-	await pi.handlers.session_shutdown(undefined, {
-		ui: { setStatus() {}, theme: { fg: (_c, t) => t } },
-	});
 });
 
 test("ask callback wiring: allow-once registers on the in-flight commandId; custom also appends", async () => {
-	const manager = sandboxManagerFake();
-	const pi = await activateHandlers(manager);
-	const ask = manager.capturedAsk;
-	const SLOT = Symbol.for("torus.approval.v1");
-	const previousSlot = globalThis[SLOT];
-	const decisions = [
-		{ kind: "allow" },
-		{ kind: "custom", text: "*.internal.corp", host: "*.internal.corp" },
-	];
-	globalThis[SLOT] = {
-		async askNetworkTrust() {
-			return decisions.shift();
-		},
-	};
+	const savedHome = process.env.TORUS_HOME;
+	const home = mkdtempSync(path.join(tmpdir(), "torus-sbx-trust-"));
+	process.env.TORUS_HOME = home;
 	try {
+		const manager = sandboxManagerFake();
+		const pi = await activateHandlers(manager);
+		const ask = manager.capturedAsk;
+		const ctx = trustCtx({
+			selectScript: ["Allow once", "Custom…"],
+			inputScript: ["*.internal.corp"],
+		});
+		await pi.handlers.session_start({ type: "session_start" }, ctx);
 		const input = { command: "curl https://once.example" };
 		await pi.handlers.tool_call({
 			type: "tool_call",
@@ -806,13 +828,14 @@ test("ask callback wiring: allow-once registers on the in-flight commandId; cust
 			content: [{ type: "text", text: "ok" }],
 		});
 		assert.deepEqual(manager.unregisteredCommandIds, [commandId]);
+		await pi.handlers.session_shutdown(undefined, {
+			ui: { setStatus() {}, theme: { fg: (_c, t) => t } },
+		});
 	} finally {
-		if (previousSlot === undefined) delete globalThis[SLOT];
-		else globalThis[SLOT] = previousSlot;
+		if (savedHome === undefined) delete process.env.TORUS_HOME;
+		else process.env.TORUS_HOME = savedHome;
+		rmSync(home, { recursive: true, force: true });
 	}
-	await pi.handlers.session_shutdown(undefined, {
-		ui: { setStatus() {}, theme: { fg: (_c, t) => t } },
-	});
 });
 
 function emptyPolicy(overrides = {}) {

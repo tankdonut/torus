@@ -11,8 +11,8 @@ process.env.TORUS_HOME = home;
 delete process.env.TORUS_PERMISSION_MODE;
 
 const ccsnShim = (await import("../extensions/cc-safety-net/index.ts")).default;
-const approvalExtension = (await import("../extensions/approval/index.ts")).default;
 const sandboxExtension = (await import("../extensions/sandbox/index.ts")).default;
+const { askNetworkTrust } = await import("../extensions/sandbox/approval.ts");
 
 after(() => {
 	rmSync(home, { recursive: true, force: true });
@@ -40,9 +40,9 @@ function withMode(mode, run) {
 	}
 }
 
-test("bypass mode: cc-safety-net shim, approval, and sandbox all register nothing", () => {
+test("bypass mode: cc-safety-net shim and sandbox register nothing", () => {
 	withMode("bypass", () => {
-		for (const register of [ccsnShim, approvalExtension, sandboxExtension]) {
+		for (const register of [ccsnShim, sandboxExtension]) {
 			const { pi, calls } = recordingPi();
 			register(pi);
 			assert.deepEqual(
@@ -64,10 +64,20 @@ test("default mode still loads cc-safety-net through the shim", () => {
 	});
 });
 
-test("default mode still registers the approval extension", () => {
+test("default mode: the trust dialog folds into sandbox, no Symbol.for slot", async () => {
 	withMode(undefined, () => {
 		const { pi, calls } = recordingPi();
-		approvalExtension(pi);
-		assert.ok(calls.on.includes("session_start"), "approval subscribes when not bypassing");
+		sandboxExtension(pi);
+		assert.ok(
+			calls.on.includes("session_start"),
+			"sandbox subscribes session_start to capture the trust ctx",
+		);
 	});
+	const SLOT = Symbol.for("torus.approval.v1");
+	assert.equal(globalThis[SLOT], undefined, "no slot indirection survives the fold");
+	assert.deepEqual(
+		await askNetworkTrust("folded.dev", 443),
+		{ kind: "deny" },
+		"trust path denies without an interactive ctx",
+	);
 });

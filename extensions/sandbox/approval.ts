@@ -1,5 +1,5 @@
 /**
- * torus — approval extension.
+ * torus — sandbox approval module.
  *
  * Trust-on-denial UX for the sandbox's network allowlist: when srt's proxy
  * hits a non-allowlisted host, ask the user Allow once / Always allow
@@ -7,17 +7,15 @@
  * allow). "Always" persists under ~/.torus/state/--<project>--/sandbox-hosts.json
  * — outside the sandbox's writable roots, so the agent cannot self-escalate.
  * Headless sessions auto-deny. TORUS_APPROVAL=0 (or `approval.enabled: false`
- * in config.json) leaves the slot absent (sandbox denies unmatched hosts, as
- * before).
+ * in config.json) disables the dialog entirely: askNetworkTrust denies every
+ * unmatched host, exactly as when no trust wiring existed. The module lives
+ * inside the sandbox extension and is consumed directly; the former
+ * torus.approval.v1 globalThis slot indirection is gone.
  */
 import path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isBypassMode } from "../automode/config.js";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { projectStateDir, readJson, writeJson } from "../fsutil.js";
-import { gateExtension, type PlatformSupport } from "../platform.js";
-
-export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 export type TrustDecision =
 	| { kind: "allow" }
@@ -25,11 +23,6 @@ export type TrustDecision =
 	| { kind: "deny" }
 	| { kind: "custom"; text: string; host: string | null };
 
-export interface ApprovalSlot {
-	askNetworkTrust(host: string, port: number | undefined): Promise<TrustDecision>;
-}
-
-const APPROVAL_SLOT = Symbol.for("torus.approval.v1");
 const DIALOG_TIMEOUT_MS = 120_000;
 const ALLOW_ONCE = "Allow once";
 const ALWAYS_ALLOW = "Always allow (this project)";
@@ -111,12 +104,17 @@ export async function decideTrust(
 	return { kind: "deny" };
 }
 
+let approvalEnabled = true;
 let lastCtx: ExtensionContext | null = null;
 const sessionAllowed = new Set<string>();
 const sessionDenied = new Set<string>();
 const inFlight = new Map<string, Promise<TrustDecision>>();
 
-async function askNetworkTrust(host: string, port: number | undefined): Promise<TrustDecision> {
+export async function askNetworkTrust(
+	host: string,
+	port: number | undefined,
+): Promise<TrustDecision> {
+	if (!approvalEnabled) return { kind: "deny" };
 	if (anyMatches(host, sessionDenied)) return { kind: "deny" };
 	if (anyMatches(host, sessionAllowed)) return { kind: "allow" };
 	const key = `${host}:${port ?? 443}`;
@@ -142,21 +140,11 @@ async function askNetworkTrust(host: string, port: number | undefined): Promise<
 	}
 }
 
-export function registerApproval(pi: ExtensionAPI): void {
-	if (!knobBoolean("TORUS_APPROVAL", "approval", "enabled", true, parseZeroDisables)) return;
-	const store = globalThis as Record<symbol, ApprovalSlot | undefined>;
-	if (!store[APPROVAL_SLOT]) {
-		store[APPROVAL_SLOT] = { askNetworkTrust };
-	}
-	pi.on("session_start", (_event, ctx) => {
-		lastCtx = ctx;
-		return undefined;
-	});
+export function registerApproval(): void {
+	approvalEnabled = knobBoolean("TORUS_APPROVAL", "approval", "enabled", true, parseZeroDisables);
 }
 
-export default function approvalExtension(pi: ExtensionAPI): void {
-	if (!gateExtension("approval", PLATFORM_SUPPORT)) return;
-	// Bypass mode (startup-only) runs without guards, so nothing ever asks.
-	if (isBypassMode()) return;
-	registerApproval(pi);
+export function captureTrustCtx(ctx: ExtensionContext): void {
+	if (!approvalEnabled) return;
+	lastCtx = ctx;
 }

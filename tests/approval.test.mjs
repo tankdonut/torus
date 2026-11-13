@@ -7,8 +7,15 @@ import { test } from "node:test";
 const home = mkdtempSync(path.join(tmpdir(), "torus-approval-"));
 process.env.TORUS_HOME = home;
 
-const { registerApproval, decideTrust, parseCustomHost, readPersistedHosts, writePersistedHosts } =
-	await import("../extensions/approval/index.ts");
+const {
+	registerApproval,
+	captureTrustCtx,
+	askNetworkTrust,
+	decideTrust,
+	parseCustomHost,
+	readPersistedHosts,
+	writePersistedHosts,
+} = await import("../extensions/sandbox/approval.ts");
 
 const SLOT = Symbol.for("torus.approval.v1");
 
@@ -19,18 +26,6 @@ const newHostsFile = (cwd) =>
 		`--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`,
 		"sandbox-hosts.json",
 	);
-
-function handlerPi() {
-	const handlers = {};
-	return {
-		handlers,
-		on(event, handler) {
-			handlers[event] = handler;
-			return () => delete handlers[event];
-		},
-		registerTool() {},
-	};
-}
 
 function fakeCtx({ selectScript, inputScript, hasUI = true, cwd } = {}) {
 	const calls = { select: [], input: [] };
@@ -133,75 +128,70 @@ test("decideTrust: deny on dismiss/timeout, deny on headless, custom cancel deni
 	assert.deepEqual(cancelled, { kind: "deny" });
 });
 
-test("registerApproval: installs the slot, captures ctx, session-caches and dedups", async () => {
+test("registerApproval: captures ctx; askNetworkTrust session-caches and dedups", async () => {
 	const previous = process.env.TORUS_APPROVAL;
 	delete process.env.TORUS_APPROVAL;
-	const existing = globalThis[SLOT];
 	try {
-		const pi = handlerPi();
-		registerApproval(pi);
-		const slot = globalThis[SLOT];
-		assert.ok(slot, "slot installed");
+		registerApproval();
 		const ctx = fakeCtx({ selectScript: ["Allow once"], cwd: "/proj/fresh" });
-		await pi.handlers.session_start({ type: "session_start" }, ctx);
-		const first = await slot.askNetworkTrust("fresh.dev", 443);
+		captureTrustCtx(ctx);
+		const first = await askNetworkTrust("fresh.dev", 443);
 		assert.deepEqual(first, { kind: "allow" });
-		const second = await slot.askNetworkTrust("fresh.dev", 443);
+		const second = await askNetworkTrust("fresh.dev", 443);
 		assert.deepEqual(second, { kind: "allow" });
 		assert.equal(ctx.calls.select.length, 1, "session cache suppresses repeat prompts");
-		const denied = await slot.askNetworkTrust("other.dev", 443);
+		const denied = await askNetworkTrust("other.dev", 443);
 		assert.equal(denied.kind, "deny");
-		assert.deepEqual(await slot.askNetworkTrust("other.dev", 443), { kind: "deny" });
+		assert.deepEqual(await askNetworkTrust("other.dev", 443), { kind: "deny" });
 		assert.equal(ctx.calls.select.length, 2, "deny also sticky");
 	} finally {
-		if (existing === undefined) delete globalThis[SLOT];
-		else globalThis[SLOT] = existing;
 		if (previous === undefined) delete process.env.TORUS_APPROVAL;
 		else process.env.TORUS_APPROVAL = previous;
 	}
 });
 
-test("registerApproval: TORUS_APPROVAL=0 leaves no slot", () => {
+test("registerApproval: TORUS_APPROVAL=0 disables the dialog; askNetworkTrust denies", async () => {
 	const previous = process.env.TORUS_APPROVAL;
-	const existing = globalThis[SLOT];
-	delete globalThis[SLOT];
 	try {
 		process.env.TORUS_APPROVAL = "0";
-		registerApproval(handlerPi());
-		assert.equal(globalThis[SLOT], undefined);
+		registerApproval();
+		assert.equal(globalThis[SLOT], undefined, "no slot indirection");
+		captureTrustCtx(fakeCtx({ selectScript: ["Allow once"] }));
+		assert.deepEqual(await askNetworkTrust("zero.dev", 443), { kind: "deny" });
 	} finally {
-		if (existing !== undefined) globalThis[SLOT] = existing;
 		if (previous === undefined) delete process.env.TORUS_APPROVAL;
 		else process.env.TORUS_APPROVAL = previous;
 	}
 });
 
-test("registerApproval: approval.enabled=false in config.json disables the slot; env=0 beats config true", () => {
+test("registerApproval: approval.enabled=false in config.json disables the dialog; env beats config", async () => {
 	const previous = process.env.TORUS_APPROVAL;
-	const existing = globalThis[SLOT];
 	const configFile = path.join(home, "config.json");
 	try {
 		delete process.env.TORUS_APPROVAL;
-		delete globalThis[SLOT];
 		writeFileSync(configFile, JSON.stringify({ approval: { enabled: false } }));
-		registerApproval(handlerPi());
-		assert.equal(globalThis[SLOT], undefined, "config disables the slot");
+		registerApproval();
+		assert.equal(globalThis[SLOT], undefined, "config disables the dialog");
+		assert.deepEqual(await askNetworkTrust("cfgoff.dev", 443), { kind: "deny" });
 
-		delete globalThis[SLOT];
 		writeFileSync(configFile, JSON.stringify({ approval: { enabled: true } }));
 		process.env.TORUS_APPROVAL = "0";
-		registerApproval(handlerPi());
+		registerApproval();
 		assert.equal(globalThis[SLOT], undefined, "env=0 beats config true");
+		assert.deepEqual(await askNetworkTrust("envbeat.dev", 443), { kind: "deny" });
 
-		delete globalThis[SLOT];
 		writeFileSync(configFile, JSON.stringify({ approval: { enabled: false } }));
 		process.env.TORUS_APPROVAL = "1";
-		registerApproval(handlerPi());
-		assert.ok(globalThis[SLOT], "env=1 beats config false");
+		registerApproval();
+		const ctx = fakeCtx({ selectScript: ["Allow once"], cwd: "/proj/cfgbeat" });
+		captureTrustCtx(ctx);
+		assert.deepEqual(
+			await askNetworkTrust("cfgbeat.dev", 443),
+			{ kind: "allow" },
+			"env=1 beats config false",
+		);
 	} finally {
 		rmSync(configFile, { force: true });
-		if (existing === undefined) delete globalThis[SLOT];
-		else globalThis[SLOT] = existing;
 		if (previous === undefined) delete process.env.TORUS_APPROVAL;
 		else process.env.TORUS_APPROVAL = previous;
 	}

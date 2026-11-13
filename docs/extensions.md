@@ -304,7 +304,7 @@ Opt-in per-command isolation for agent bash calls, built on srt (`@anthropic-ai/
 
 No tools or commands.
 
-- **Hooks:** `session_start`: statusline chip `sbx:on`/`sbx:off`/`sbx:down`; `tool_call`: rewrite the bash command (fail-closed blocks); `tool_result`: annotate sandbox violations onto stderr; `session_shutdown`: chip clear + manager reset (kills socat bridges + proxies)
+- **Hooks:** `session_start`: statusline chip `sbx:on`/`sbx:off`/`sbx:down` + trust-dialog ctx capture; `tool_call`: rewrite the bash command (fail-closed blocks); `tool_result`: annotate sandbox violations onto stderr; `session_shutdown`: chip clear + manager reset (kills socat bridges + proxies)
 - **Env:** `TORUS_SANDBOX=off|full` (default off; opt in with `TORUS_SANDBOX=full`; bypass mode never activates the sandbox); `TORUS_SANDBOX_DEFAULT=full` opts the environment into default-on for unset `TORUS_SANDBOX` (the shipped default stays off); `TORUS_SANDBOX_WRITABLE` extra writable roots, colon-separated; `TORUS_SANDBOX_NET_ADD` appends allowed hosts; `TORUS_SANDBOX_NET_ONLY` replaces the allowlist
 - **Interactions:** `/doctor` reports mode/deps/state; delegated children confine to their own worktree cwd
 
@@ -320,6 +320,12 @@ With `TORUS_SANDBOX` in the on family, every bash tool call is rewritten through
 `interactive_bash` and user `!` commands are never wrapped. Fail-closed: a wrap failure blocks the call with an actionable reason. Missing bwrap/socat or init failure degrades to unsandboxed with a one-time stderr notice (`TORUS_SANDBOX=off` silences). `fs`-only mode is not expressible with srt (network restriction is schema-coupled), and unknown `TORUS_SANDBOX` values fall back to the effective default (`TORUS_SANDBOX_DEFAULT`, else off) with a one-time notice.
 
 Activation pre-creates a per-session private scratch dir under `/tmp` and points the wrapped `TMPDIR` at it, so concurrent sandboxes never share scratch. The writable set also includes the canonical scratch root (`$TORUS_SCRATCH_DIR`, durable agent scratch; see the fsutil rows in [docs/configuration.md](configuration.md)), pre-created at activation so it cannot be dropped from `allowWrite`. With `TORUS_SANDBOX_DEFAULT=full` set in the environment, new sessions start sandboxed while the shipped default stays off; an explicit `TORUS_SANDBOX=off` still wins.
+
+#### Network trust dialog
+
+The trust-on-denial UX for the allowlist is folded into this extension (the former `approval` extension; config: `approval.enabled`, env: `TORUS_APPROVAL=0`). When a sandboxed command contacts a non-allowlisted host, an interactive dialog offers Allow once / Always allow (this project) / Deny / Custom… (typed `host` or `*.domain` ⇒ allowed this session). "Always" persists to `$TORUS_STATE_DIR/sandbox-hosts.json`, outside the sandbox's writable roots, so the agent cannot self-escalate. It applies live (`updateConfig`) plus in fresh sessions (persisted hosts allow silently).
+
+Headless sessions and delegated children auto-deny: an unlisted host fails in about 12 s with `CONNECT tunnel failed, response 403` and no dialog; dialog timeout 120 s ⇒ deny; in-flight dedup + per-session cache (denies sticky). The `approval` knob section stays user-level only: a checked-in repo must not be able to silence the trust dialog (see [docs/configuration.md](configuration.md)).
 
 #### srt behavior notes
 
@@ -337,22 +343,9 @@ Sandboxed `git` cannot reach `ssh-agent` (Unix sockets are blocked; see the srt 
 - **Tradeoff:** the relay is a signing oracle for sandboxed code, equivalent in exposure to a forwarded agent socket. That is why it is opt-in.
 - Push and fetch over SSH remain blocked; https remotes plus the `gh` CLI are the supported path.
 
-### `approval`
-
-Trust-on-denial UX for the sandbox network allowlist.
-
-No tools or commands.
-
-- **Hooks:** `session_start`: ctx capture
-- **Env:** `TORUS_APPROVAL=0` leaves the approval slot absent, so unmatched hosts deny exactly as before the extension existed (config: `approval.enabled`)
-
-When a sandboxed command contacts a non-allowlisted host, an interactive dialog offers Allow once / Always allow (this project) / Deny / Custom… (typed `host` or `*.domain` ⇒ allowed this session). "Always" persists to `$TORUS_STATE_DIR/sandbox-hosts.json`, outside the sandbox's writable roots, so the agent cannot self-escalate. It applies live (`updateConfig`) plus in fresh sessions (persisted hosts allow silently).
-
-Headless sessions and delegated children auto-deny: an unlisted host fails in about 12 s with `CONNECT tunnel failed, response 403` and no dialog; dialog timeout 120 s ⇒ deny; in-flight dedup + per-session cache (denies sticky). Consumed by `sandbox` via the `globalThis` slot `torus.approval.v1` (resolved lazily).
-
 ### `automode`
 
-LLM-classified bash auto-approval for unattended runs, opt-in via `TORUS_PERMISSION_MODE`. In default mode the extension is inert: no model calls, no prompts, no audit rows. In bypass mode (`TORUS_PERMISSION_MODE=bypass`, set only at launch by `torus --permission-mode bypass`) the whole permission layer is off for the session: this classifier never runs, and the `guards`, `cc-safety-net`, `sandbox`, and `approval` extensions never register.
+LLM-classified bash auto-approval for unattended runs, opt-in via `TORUS_PERMISSION_MODE`. In default mode the extension is inert: no model calls, no prompts, no audit rows. In bypass mode (`TORUS_PERMISSION_MODE=bypass`, set only at launch by `torus --permission-mode bypass`) the whole permission layer is off for the session: this classifier never runs, and the `guards`, `cc-safety-net`, and `sandbox` extensions never register (the sandbox's folded-in trust dialog included).
 
 - **Shortcuts:** `alt+m`: cycle the session mode between default and auto (the same switch `/automode` makes; bypass refuses with the restart hint)
 - **Commands:** `/automode` prints the effective config (mode and its source, decision model, every rule entry, `environment` and `hardDeny` prose, `classifyAllShell`, cache size, breaker state); `/automode auto` and `/automode default` switch the session mode, clear the cache, reset the breaker, and reload the rules (bypass sessions refuse the switch: bypass is startup-only, so the posture cannot change mid-session); `/automode denied` lists the last ten denials from the audit log; `/automode setup` drafts `environment` entries from the repo's git remotes and `ask` entries from repeated audit denials, then writes them into config.json's `automode` section (interactive sessions only; headless ones print the draft and write nothing); `/automode setup apply <file>` lands a reviewed draft file through the same validated merge, refusing every key except `environment` and `ask` (the `automode-setup` skill drafts such files from git remotes, the audit log, session transcripts, delegation logs, and memory)
