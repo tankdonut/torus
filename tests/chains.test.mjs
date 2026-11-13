@@ -87,13 +87,51 @@ const sessionTitle = await import("../extensions/session-title/index.ts");
 
 const PREV_ENGINE_BIN = process.env.TORUS_ENGINE_BIN;
 
+// Built-in chain providers are credential-gated at resolution now, so every
+// chain-resolution test needs a credential: set dummy env values (presence
+// only — nothing reads them) and restore the caller's state in after().
+const PREV_ZAI_KEY = process.env.ZAI_API_KEY;
+const PREV_OPENCODE_KEY = process.env.OPENCODE_API_KEY;
+process.env.ZAI_API_KEY = "torus-test-dummy";
+process.env.OPENCODE_API_KEY = "torus-test-dummy";
+
+// Injectable credential sources for the gate tests: empty auth.json and
+// models.json fixtures — nothing answers there.
+const GATE_DIR = mkdtempSync(path.join(tmpdir(), "torus-chains-gate-"));
+const GATE_AUTH = path.join(GATE_DIR, "auth.json");
+const GATE_MODELS = path.join(GATE_DIR, "models.json");
+writeFileSync(GATE_AUTH, "{}", "utf8");
+writeFileSync(GATE_MODELS, "{}", "utf8");
+
 after(() => {
 	process.env.TORUS_ENGINE_BIN = PREV_ENGINE_BIN;
+	if (PREV_ZAI_KEY === undefined) delete process.env.ZAI_API_KEY;
+	else process.env.ZAI_API_KEY = PREV_ZAI_KEY;
+	if (PREV_OPENCODE_KEY === undefined) delete process.env.OPENCODE_API_KEY;
+	else process.env.OPENCODE_API_KEY = PREV_OPENCODE_KEY;
+	roster.resetFailureMemoForTesting();
 	registry.resetRegistryForTesting();
 	rmSync(HOME, { recursive: true, force: true });
 	rmSync(ROOT, { recursive: true, force: true });
 	rmSync(ENGINE_DIR, { recursive: true, force: true });
+	rmSync(GATE_DIR, { recursive: true, force: true });
 });
+
+/** Run body with both built-in provider env vars deleted (restored after). */
+function withoutCredentialEnv(body) {
+	const zai = process.env.ZAI_API_KEY;
+	const opencode = process.env.OPENCODE_API_KEY;
+	delete process.env.ZAI_API_KEY;
+	delete process.env.OPENCODE_API_KEY;
+	try {
+		return body();
+	} finally {
+		if (zai === undefined) delete process.env.ZAI_API_KEY;
+		else process.env.ZAI_API_KEY = zai;
+		if (opencode === undefined) delete process.env.OPENCODE_API_KEY;
+		else process.env.OPENCODE_API_KEY = opencode;
+	}
+}
 
 function writeChains(data) {
 	writeConfig({ chains: data });
@@ -570,4 +608,167 @@ test("concurrencyWarning flags only models pushed over cap", () => {
 	);
 	assert.equal(roster.withWarning("done", "warn"), "warn\n\ndone");
 	assert.equal(roster.withWarning("done", undefined), "done");
+});
+
+// --- Credential presence gate (built-in providers) ---
+
+test("gate: built-in entries drop when no credential source answers", () => {
+	withoutCredentialEnv(() => {
+		assert.equal(
+			providers.hasCredential("zai", { authPath: GATE_AUTH, modelsPath: GATE_MODELS }),
+			false,
+		);
+		assert.equal(
+			providers.hasCredential("opencode-go", { authPath: GATE_AUTH, modelsPath: GATE_MODELS }),
+			false,
+		);
+		writeChains({
+			fast: ["ollama/gemma3:12b", "zai/gone", "opencode-go/gone"],
+			providers: { ollama: OLLAMA },
+		});
+		assert.deepEqual(
+			roster.resolveModels("fast", { authPath: GATE_AUTH, modelsPath: GATE_MODELS }),
+			["ollama/gemma3:12b"],
+			"custom declared provider stays, credential-less built-ins drop",
+		);
+		assert.deepEqual(
+			providers.providerAvailabilities({ authPath: GATE_AUTH, modelsPath: GATE_MODELS }),
+			{
+				zai: false,
+				"opencode-go": false,
+				ollama: true,
+			},
+		);
+		removeConfig();
+	});
+});
+
+test("gate: a dummy env var alone credentiials the provider", () => {
+	withoutCredentialEnv(() => {
+		process.env.ZAI_API_KEY = "torus-test-dummy";
+		writeChains({ fast: ["zai/back", "opencode-go/still-gone"] });
+		assert.deepEqual(
+			roster.resolveModels("fast", { authPath: GATE_AUTH, modelsPath: GATE_MODELS }),
+			["zai/back"],
+			"env presence credentiials zai even with empty auth.json and models.json",
+		);
+		removeConfig();
+	});
+});
+
+test("gate: a stored auth.json credential credentiials the provider", () => {
+	withoutCredentialEnv(() => {
+		const authPath = path.join(GATE_DIR, "fixture-auth.json");
+		writeFileSync(
+			authPath,
+			JSON.stringify({ zai: { type: "api", key: "torus-test-dummy" } }),
+			"utf8",
+		);
+		writeChains({ fast: ["zai/back"] });
+		assert.deepEqual(
+			roster.resolveModels("fast", { authPath, modelsPath: GATE_MODELS }),
+			["zai/back"],
+			"auth.json presence credentiials zai with no env var set",
+		);
+		removeConfig();
+	});
+});
+
+test("gate: a models.json apiKey literal (even an unresolved $NAME) credentiials the provider", () => {
+	withoutCredentialEnv(() => {
+		const modelsPath = path.join(GATE_DIR, "fixture-models.json");
+		writeFileSync(
+			modelsPath,
+			JSON.stringify({ providers: { zai: { apiKey: "$ZAI_API_KEY" } } }),
+			"utf8",
+		);
+		writeChains({ fast: ["zai/back"] });
+		assert.deepEqual(
+			roster.resolveModels("fast", { authPath: GATE_AUTH, modelsPath }),
+			["zai/back"],
+			"the unresolved $NAME literal counts as present — it is never resolved here",
+		);
+		removeConfig();
+	});
+});
+
+test("startup notice: credential-less built-ins each print one line naming provider and env var", () => {
+	withoutCredentialEnv(() => {
+		// registerProviders reads the real credential sources; point the
+		// engine agent dir at an empty temp dir so nothing answers.
+		const emptyAgentDir = path.join(GATE_DIR, "empty-agent");
+		mkdirSync(emptyAgentDir, { recursive: true });
+		const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = emptyAgentDir;
+		const { calls, pi } = registrationCalls();
+		try {
+			const lines = captureStderr(() => providers.registerProviders(pi));
+			const notices = lines.filter((l) => l.includes("[torus: chains] no credential for"));
+			assert.equal(notices.length, 2, "exactly one notice per credential-less built-in");
+			assert.ok(
+				notices.some((l) => l.includes("zai") && l.includes("ZAI_API_KEY")),
+				"the zai notice names the provider and its env var",
+			);
+			assert.ok(
+				notices.some((l) => l.includes("opencode-go") && l.includes("OPENCODE_API_KEY")),
+				"the opencode-go notice names the provider and its env var",
+			);
+			assert.ok(
+				notices.every((l) => !l.includes("torus-test-dummy")),
+				"no credential value may ever appear in the notice",
+			);
+		} finally {
+			if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
+		}
+		assert.deepEqual(
+			calls.map((c) => c.name),
+			[],
+			"notice mode registers nothing",
+		);
+	});
+});
+
+// --- Session no-work cooldown (failure memo) ---
+
+test("no-work cooldown: a memoized head drops from resolution until the TTL expires", () => {
+	removeConfig();
+	roster.resetFailureMemoForTesting();
+	assert.equal(roster.resolveModels("primary")[0], "zai/glm-5.3");
+	// Pin the mark time: a default Date.now() mark races the query below into
+	// the same millisecond under load.
+	const now = Date.now();
+	roster.markModelFailed("zai/glm-5.3", now);
+	assert.equal(roster.resolveModels("primary")[0], "zai/glm-5.3-flash");
+	assert.equal(roster.plannedRunModel("worker"), "zai/glm-5.3-flash");
+	assert.equal(roster.isModelMemoFailed("zai/glm-5.3", now + 299_999), true, "just inside the TTL");
+	assert.equal(
+		roster.isModelMemoFailed("zai/glm-5.3", now + 300_000),
+		false,
+		"at the TTL it expires",
+	);
+	// A mark older than the TTL is inert: expiry restores the head.
+	roster.markModelFailed("zai/glm-5.3", now - 300_000);
+	assert.equal(roster.resolveModels("primary")[0], "zai/glm-5.3", "expiry restores the head");
+	roster.resetFailureMemoForTesting();
+});
+
+test("no-work cooldown: memoizing every chain entry falls back to the availability-only list", () => {
+	removeConfig();
+	roster.resetFailureMemoForTesting();
+	for (const model of [...DEFAULT_PRIMARY, ...DEFAULT_FAST]) roster.markModelFailed(model);
+	assert.deepEqual(roster.resolveModels("primary"), DEFAULT_PRIMARY);
+	assert.deepEqual(roster.resolveModels("fast"), DEFAULT_FAST);
+	assert.ok(roster.availableModels().includes("zai/glm-5.3"));
+	roster.resetFailureMemoForTesting();
+});
+
+test("no-work cooldown: exact-id overrides bypass the memo, chain shorthands ride it", () => {
+	removeConfig();
+	roster.resetFailureMemoForTesting();
+	roster.markModelFailed("zai/glm-5.3");
+	assert.equal(roster.resolveRequestedModel("zai/glm-5.3"), "zai/glm-5.3");
+	assert.equal(roster.resolveRequestedModel("primary"), "zai/glm-5.3-flash");
+	assert.equal(roster.plannedRunModel("worker", "zai/glm-5.3"), "zai/glm-5.3");
+	roster.resetFailureMemoForTesting();
 });

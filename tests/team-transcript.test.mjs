@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { after, test } from "node:test";
+import { after, beforeEach, test } from "node:test";
 
 // Team lifecycle must reach the transcript and the delegation registry. The
 // sandbox envs land before any extension import: registry and team-runtime
@@ -15,7 +15,16 @@ process.env.HOME = HOME;
 process.env.TORUS_NOTIFY = "0";
 process.env.TORUS_TMUX = "0";
 
+// Built-in chain providers are credential-gated at resolution: dummy env
+// values (presence only — nothing reads them) keep the shorthand-to-chain-head
+// resolution hermetic instead of depending on the machine's real agent dir.
+const PREV_ZAI_KEY = process.env.ZAI_API_KEY;
+const PREV_OPENCODE_KEY = process.env.OPENCODE_API_KEY;
+process.env.ZAI_API_KEY = "torus-test-dummy";
+process.env.OPENCODE_API_KEY = "torus-test-dummy";
+
 const registry = await import("../extensions/registry.ts");
+const roster = await import("../extensions/roster/index.ts");
 const team = await import("../extensions/team/index.ts");
 const runtime = await import("../extensions/team-runtime.ts");
 
@@ -65,8 +74,16 @@ after(() => {
 	team.setMemberSpawnerForTesting(null);
 	registry.setCustomSender(() => {});
 	registry.resetRegistryForTesting();
+	if (PREV_ZAI_KEY === undefined) delete process.env.ZAI_API_KEY;
+	else process.env.ZAI_API_KEY = PREV_ZAI_KEY;
+	if (PREV_OPENCODE_KEY === undefined) delete process.env.OPENCODE_API_KEY;
+	else process.env.OPENCODE_API_KEY = PREV_OPENCODE_KEY;
 	rmSync(HOME, { recursive: true, force: true });
 });
+
+// Dead attempts enter the session's no-work cooldown; clear it between tests
+// so each starts from the unfiltered chain.
+beforeEach(() => roster.resetFailureMemoForTesting());
 
 test("team_create emits one combined start marker and creates running delegation records", async () => {
 	registry.resetRegistryForTesting();

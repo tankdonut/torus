@@ -16,6 +16,14 @@ process.env.TORUS_NOTIFY = "0";
 process.env.TORUS_TMUX = "0";
 delete process.env.TORUS_TEAM_NOTIFY;
 
+// Built-in chain providers are credential-gated at resolution: dummy env
+// values (presence only — nothing reads them) keep the shorthand resolution
+// hermetic instead of depending on the machine's real agent dir.
+const PREV_ZAI_KEY = process.env.ZAI_API_KEY;
+const PREV_OPENCODE_KEY = process.env.OPENCODE_API_KEY;
+process.env.ZAI_API_KEY = "torus-test-dummy";
+process.env.OPENCODE_API_KEY = "torus-test-dummy";
+
 const registry = await import("../extensions/registry.ts");
 const team = await import("../extensions/team/index.ts");
 
@@ -44,6 +52,10 @@ after(() => {
 	team.setMemberSpawnerForTesting(null);
 	registry.setCustomSender(() => {});
 	registry.resetRegistryForTesting();
+	if (PREV_ZAI_KEY === undefined) delete process.env.ZAI_API_KEY;
+	else process.env.ZAI_API_KEY = PREV_ZAI_KEY;
+	if (PREV_OPENCODE_KEY === undefined) delete process.env.OPENCODE_API_KEY;
+	else process.env.OPENCODE_API_KEY = PREV_OPENCODE_KEY;
 	rmSync(HOME, { recursive: true, force: true });
 });
 

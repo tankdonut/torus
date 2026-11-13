@@ -41,6 +41,7 @@ import { clickable } from "../notify/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	type ChainTier,
+	type CredentialSourceOpts,
 	modelChain,
 	modelConcurrencyMap,
 	providerAvailabilities,
@@ -144,8 +145,45 @@ function firstDelegatable(name: string): AgentDef | undefined {
 	return DELEGATABLE.find((a) => a.name === name);
 }
 
-export function resolveModels(chain: ChainTier): string[] {
-	const available = providerAvailabilities();
+/**
+ * Session-scoped no-work cooldown: model id → epoch-ms until which the model
+ * is skipped at chain resolution. Per-process and in-memory by design — one
+ * engine session's bad patch must not outlive it, and a restart clears it.
+ * A chain-walk attempt judged no-work marks its model here, so later
+ * delegations start below the dead head instead of paying a failed attempt
+ * on it every time.
+ */
+const FAILURE_MEMO_TTL_MS = 300_000;
+/** model id → epoch ms when it was last judged no-work. */
+const failureMemo = new Map<string, number>();
+
+/** Mark a model no-work for the cooldown window (test seam: inject `now`). */
+export function markModelFailed(model: string, now: number = Date.now()): void {
+	failureMemo.set(model, now);
+}
+
+/** Whether the model is inside the no-work cooldown window (test seam: inject `now`). */
+export function isModelMemoFailed(model: string, now: number = Date.now()): boolean {
+	const markedAt = failureMemo.get(model);
+	if (markedAt === undefined) return false;
+	if (now >= markedAt + FAILURE_MEMO_TTL_MS) {
+		failureMemo.delete(model);
+		return false;
+	}
+	return true;
+}
+
+/** Clears the cooldown map (tests only). */
+export function resetFailureMemoForTesting(): void {
+	failureMemo.clear();
+}
+
+/** Chain candidates whose provider passes the availability filter (no memo applied). */
+function availabilityFilteredChain(
+	chain: ChainTier,
+	credentialOpts?: CredentialSourceOpts,
+): string[] {
+	const available = providerAvailabilities(credentialOpts);
 	return modelChain(chain).filter((model) => {
 		const provider = model.split("/")[0];
 		return (
@@ -156,23 +194,86 @@ export function resolveModels(chain: ChainTier): string[] {
 	});
 }
 
+/**
+ * Availability-filtered chain minus models inside the no-work cooldown.
+ * If the memo drops EVERYTHING, the availability-only list survives —
+ * attempting a possibly-dead head beats having no model at all.
+ */
+function memoFilteredChain(chain: ChainTier, credentialOpts?: CredentialSourceOpts): string[] {
+	const available = availabilityFilteredChain(chain, credentialOpts);
+	const cooled = available.filter((model) => !isModelMemoFailed(model));
+	return cooled.length > 0 ? cooled : available;
+}
+
+/**
+ * Effective chain for resolution: provider-availability filter, then the
+ * session's no-work cooldown. `credentialOpts` is a test seam forwarding to
+ * the built-in providers' credential gate; production callers pass nothing.
+ */
+export function resolveModels(chain: ChainTier, credentialOpts?: CredentialSourceOpts): string[] {
+	return memoFilteredChain(chain, credentialOpts);
+}
+
 function resolveModel(chain: ChainTier): string | undefined {
 	return resolveModels(chain)[0];
 }
 
-/** Model ids a delegation may run on right now: every chain candidate whose provider is credentialed. */
+/** Model ids a delegation may run on right now: credentialed chain candidates not in the no-work cooldown. */
 export function availableModels(): string[] {
 	return [...new Set([...resolveModels("primary"), ...resolveModels("fast")])];
 }
 
+/** Union of both chains under the availability filter only (no cooldown). */
+function declaredAvailableModels(): string[] {
+	return [
+		...new Set([...availabilityFilteredChain("primary"), ...availabilityFilteredChain("fast")]),
+	];
+}
+
 /**
- * Resolve a per-run model override: "primary"/"fast" name a chain (resolved to
- * its first credentialed candidate), anything else must be an exact id in the
- * available set. Returns the concrete id, or undefined when nothing matches.
+ * Resolve a per-run model override: "primary"/"fast" name a chain (resolved
+ * to its first credentialed candidate outside the no-work cooldown, falling
+ * back to the plain head when the cooldown covers the whole chain); anything
+ * else must be an exact id among the credentialed providers' models —
+ * validated WITHOUT the cooldown, because naming a model explicitly is a
+ * deliberate bypass of it. Returns the concrete id, or undefined when
+ * nothing matches.
  */
 export function resolveRequestedModel(requested: string): string | undefined {
-	if (requested === "primary" || requested === "fast") return resolveModel(requested);
-	return availableModels().includes(requested) ? requested : undefined;
+	if (requested === "primary" || requested === "fast") return memoFilteredChain(requested)[0];
+	return declaredAvailableModels().includes(requested) ? requested : undefined;
+}
+
+/**
+ * One chain-walk rejection: a candidate the walk judged no-work, the next
+ * candidate it moved to (null when the chain was exhausted), and the attempt's
+ * exit code and engine-signaled model error. The error text is provider error
+ * output (e.g. a 429 body) — it carries no credentials.
+ */
+export interface FallbackEvent {
+	from: string;
+	to: string | null;
+	exitCode: number;
+	lastError?: string;
+	isLast: boolean;
+}
+
+/**
+ * Collapse one rejection to a short reason: the engine-signaled error text
+ * (whitespace collapsed, capped) or the exit code when the engine said nothing.
+ */
+export function fallbackReason(exitCode: number, lastError?: string): string {
+	const flat = (lastError ?? "").replace(/\s+/g, " ").trim();
+	if (flat.length === 0) return `exit ${exitCode}`;
+	return flat.length > 160 ? `${flat.slice(0, 160)}...` : flat;
+}
+
+/** Transcript line for one chain-walk fallback. */
+export function formatFallbackNote(event: FallbackEvent): string {
+	const reason = fallbackReason(event.exitCode, event.lastError);
+	return event.to === null
+		? `↻ ${event.from} produced no work (${reason}) — chain exhausted`
+		: `↻ ${event.from} produced no work (${reason}) — falling back to ${event.to}`;
 }
 
 export function personaModel(name: string): string | null {
@@ -1132,10 +1233,16 @@ export async function runDelegation(
 	/**
 	 * Per-run overrides. `model` starts the chain walk at a specific model:
 	 * "primary"/"fast" (chain shorthands) or an exact available id — validated
-	 * before any spawn, invalid values reject pre-flight. Older call sites
-	 * (memory background runs) pass announce positionally, so the bag trails.
+	 * before any spawn, invalid values reject pre-flight. `onFallback` fires for
+	 * every rejected candidate just before the walk moves on (also after the
+	 * last one), so tool surfaces can show the fallback live and durably.
+	 * Older call sites (memory background runs) pass announce positionally, so
+	 * the bag trails.
 	 */
-	options?: { model?: string | null },
+	options?: {
+		model?: string | null;
+		onFallback?: (event: FallbackEvent) => void;
+	},
 ): Promise<DelegationOutcome> {
 	// ACP agents from acp.json run their own models and win over same-named
 	// roster agents; the engine path below is untouched when acp.json is absent.
@@ -1259,6 +1366,9 @@ export async function runDelegation(
 
 		let result: SpawnResult | null = null;
 		let usedModel = firstModel;
+		// One event per rejected candidate; appended to the final text below and
+		// mirrored to options.onFallback for the live tool surface.
+		const fallbackEvents: FallbackEvent[] = [];
 		// The delegation's stop signal: stopDelegation aborts it, which kills a
 		// JSON-mode fallback child via its abort listener (rpc children are
 		// stopped directly through their control).
@@ -1267,7 +1377,9 @@ export async function runDelegation(
 		// control attach; this placeholder keeps the abort reachable so an early
 		// stop is never lost to that race (the real control replaces it).
 		attachControl(delegationId, { stop: () => stopController.abort(), steer: () => false });
-		for (const candidate of attemptModels) {
+		for (let attemptIndex = 0; attemptIndex < attemptModels.length; attemptIndex += 1) {
+			const candidate = attemptModels[attemptIndex];
+			if (candidate === undefined) break;
 			usedModel = candidate;
 			if (candidate !== firstModel) {
 				setDelegationModel(delegationId, candidate);
@@ -1323,8 +1435,21 @@ export async function runDelegation(
 				(attempt.exitCode === 0 || attempt.usage.turns > 0)
 			)
 				break;
-			const isLast = candidate === attemptModels[attemptModels.length - 1];
-			if (!isLast) {
+			// Rejected: every candidate including the last enters the session's
+			// no-work cooldown, so the next delegation starts below it instead of
+			// paying the same failed attempt again.
+			markModelFailed(candidate);
+			const nextCandidate = attemptModels[attemptIndex + 1] ?? null;
+			const event: FallbackEvent = {
+				from: candidate,
+				to: nextCandidate,
+				exitCode: attempt.exitCode,
+				...(attempt.usage.lastError ? { lastError: attempt.usage.lastError } : {}),
+				isLast: nextCandidate === null,
+			};
+			fallbackEvents.push(event);
+			options?.onFallback?.(event);
+			if (nextCandidate !== null) {
 				appendAction(
 					delegationId,
 					`! ${candidate} produced no work (exit ${attempt.exitCode}) — retrying down-chain`,
@@ -1358,12 +1483,18 @@ export async function runDelegation(
 		// partial text below is still delivered, it may hold useful work — but
 		// the run must render red, never green.
 		const ok = !stopped && finalResult.exitCode === 0 && !lastError && noProgressTail === 0;
-		const text = stopped
+		const walked = stopped
 			? finalResult.finalText
 				? `${finalResult.finalText}\n\n(interrupted — stopped from the fleet view; partial output above)`
 				: "(interrupted — stopped from the fleet view before any model output)"
 			: finalResult.finalText ||
 				`(no text output; exit=${finalResult.exitCode})\n${finalResult.stderr.slice(0, 2000)}`;
+		// Durable fallback record, both outcomes: here so the registry text,
+		// wake markers, and every tool result built from the outcome carry it.
+		const text =
+			fallbackEvents.length > 0
+				? `${walked}\n\n${fallbackEvents.map(formatFallbackNote).join("\n")}`
+				: walked;
 		await finishDelegation(delegationId, ok, text, finalResult.sessionId);
 		if (emitResult) {
 			emitTorusCustom(
@@ -1407,6 +1538,7 @@ export async function runDelegation(
 				noProgressTail,
 				...(stopped ? { stopped: true } : {}),
 				...(lastError ? { error: lastError } : {}),
+				...(fallbackEvents.length > 0 ? { fallbacks: fallbackEvents } : {}),
 				...(noProgressTail > 0
 					? {
 							noProgress: `delegated run ended without model progress (${noProgressTail} turn(s) with no progress — connection or model failure)`,
@@ -1668,6 +1800,10 @@ const delegateTool = defineTool({
 				};
 			}
 		}
+		// Live fallback notes: a chain-walk rejection burns seconds with no
+		// snapshot arriving, so the notes lead each update — otherwise the tool
+		// block reads frozen. They also trail the final text via the outcome.
+		const fallbackNotes: string[] = [];
 		let outcome: DelegationOutcome;
 		outcome = await runDelegation(
 			params.agent,
@@ -1677,8 +1813,12 @@ const delegateTool = defineTool({
 				if (!onUpdate) return;
 				const preview =
 					snapshot.text.length > 1500 ? `${snapshot.text.slice(0, 1500)}...` : snapshot.text;
+				const body =
+					preview ||
+					`(working · turns ${snapshot.turns} · ${snapshot.usage.input}→${snapshot.usage.output} tok)`;
+				const text = fallbackNotes.length > 0 ? `${fallbackNotes.join("\n")}\n${body}` : body;
 				onUpdate({
-					content: [{ type: "text", text: preview || "(working...)" }],
+					content: [{ type: "text", text }],
 					details: {
 						agent: params.agent,
 						delegationId: snapshot.delegationId,
@@ -1694,7 +1834,10 @@ const delegateTool = defineTool({
 			// as a duplicate of the call line above. The tool block is the surface.
 			false,
 			undefined,
-			{ model: params.model ?? null },
+			{
+				model: params.model ?? null,
+				onFallback: (event) => fallbackNotes.push(formatFallbackNote(event)),
+			},
 		);
 		if (!outcome.ok) {
 			// Exit-code failures render red through details.exitCode; engine-signaled

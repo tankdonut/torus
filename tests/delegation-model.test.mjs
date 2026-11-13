@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { after, test } from "node:test";
+import { after, beforeEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 // Per-run model overrides for delegations: torus_delegate/fanout/chain accept a
@@ -91,13 +91,29 @@ const team = await import("../extensions/team/index.ts");
 
 const PREV_ENGINE_BIN = process.env.TORUS_ENGINE_BIN;
 
+// Built-in chain providers are credential-gated at resolution: dummy env
+// values (presence only — nothing reads them) keep chain resolution hermetic
+// instead of depending on the machine's real ~/.pi/agent/auth.json.
+const PREV_ZAI_KEY = process.env.ZAI_API_KEY;
+const PREV_OPENCODE_KEY = process.env.OPENCODE_API_KEY;
+process.env.ZAI_API_KEY = "torus-test-dummy";
+process.env.OPENCODE_API_KEY = "torus-test-dummy";
+
 after(() => {
 	process.env.TORUS_ENGINE_BIN = PREV_ENGINE_BIN;
+	if (PREV_ZAI_KEY === undefined) delete process.env.ZAI_API_KEY;
+	else process.env.ZAI_API_KEY = PREV_ZAI_KEY;
+	if (PREV_OPENCODE_KEY === undefined) delete process.env.OPENCODE_API_KEY;
+	else process.env.OPENCODE_API_KEY = PREV_OPENCODE_KEY;
 	registry.resetRegistryForTesting();
 	rmSync(HOME, { recursive: true, force: true });
 	rmSync(ROOT, { recursive: true, force: true });
 	rmSync(ENGINE_DIR, { recursive: true, force: true });
 });
+
+// Dead attempts enter the session's no-work cooldown; clear it between tests
+// so each starts from the unfiltered chain.
+beforeEach(() => roster.resetFailureMemoForTesting());
 
 // Fresh argv dir per test so spawn counts are exact.
 function freshArgsDir(name) {

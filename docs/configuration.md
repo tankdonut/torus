@@ -18,7 +18,7 @@ User-level torus config lives in one file: `config.json` under the torus home (`
 
 | Section | Configures |
 | --- | --- |
-| `chains` | Model chains per tier plus compatible-provider endpoints |
+| `chains` | Model chains per tier plus compatible-provider endpoints; built-in chain providers are credential-gated at resolution (presence-only across the provider's env var, the engine's auth.json, and a models.json `apiKey`; no credential value is ever read or logged), a credential-less provider prints one startup notice naming its env var and its chain entries filter out, chain models a delegation walk judged no-work sit out 5 minutes (session-scoped in-memory memo; naming a model explicitly bypasses the cooldown), and walk rejections surface in the transcript as fallback notes (live in the delegate tool block and trailing the result text) |
 | `automode` | Auto permission-mode rules and circuit-breaker settings |
 | `serve` | HTTP server bind, port, token path, and scheduled triggers (auth is runtime state) |
 | `keywords` | Keyword rows injected into the system prompt |

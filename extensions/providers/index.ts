@@ -3,8 +3,11 @@
  *
  * Both chain providers are BUILT IN to stock pi: `zai` and `opencode-go` are
  * engine KnownProviders, so torus registers neither. Authenticate via pi's
- * `/login zai` and `/login opencode-go` (the gateway also reads
- * OPENCODE_API_KEY); credential resolution is the engine's job.
+ * `/login zai` and `/login opencode-go`, via their env vars (ZAI_API_KEY,
+ * OPENCODE_API_KEY), or via a models.json `apiKey`. Chain resolution checks
+ * credential PRESENCE across those sources (never reading values) so a
+ * credential-less provider's chain entries drop instead of burning a failed
+ * attempt per delegation; the request itself is still the engine's job.
  *
  * The chains config is the unified config's `chains` section: tiers plus a
  * `providers` map of compatible-endpoint registrations — local
@@ -15,11 +18,15 @@
  * entries, so this registration IS the mechanism for local endpoints.
  */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { KnownApi } from "@earendil-works/pi-ai";
-import type {
-	ExtensionAPI,
-	ProviderConfig,
-	ProviderModelConfig,
+import {
+	type ExtensionAPI,
+	getAgentDir,
+	type ProviderConfig,
+	type ProviderModelConfig,
+	readStoredCredential,
 } from "@earendil-works/pi-coding-agent";
 import { configFilePath, readSection, type SectionSource } from "../config/loader.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -304,17 +311,81 @@ export function modelConcurrency(model: string): number | undefined {
 }
 
 /**
- * Providers whose models chains may resolve to: the engine's built-in `zai`
- * and `opencode-go` (declared = available; credential resolution is the
- * engine's job, so the roster filter never drops their chain entries for
- * lacking a torus-side credential gate), and every validly-declared provider
- * from the resolved chains section.
+ * Injectable credential sources for hasCredential() and the availability
+ * filter's built-in gate: absent fields fall through to the engine's own
+ * resolution (real env, real auth.json, real models.json). A test/ops seam —
+ * production callers pass nothing.
  */
-export function providerAvailabilities(): Record<string, boolean> {
-	const available: Record<string, boolean> = {
-		zai: true,
-		"opencode-go": true,
-	};
+export interface CredentialSourceOpts {
+	authPath?: string;
+	modelsPath?: string;
+	env?: Record<string, string | undefined>;
+}
+
+/**
+ * Env var NAMES that provide a credential for each built-in chain provider,
+ * mirroring the engine's own env-key map at the pinned version. Names only —
+ * no credential value is ever read, logged, or stored here.
+ */
+export const BUILTIN_PROVIDER_ENV_KEYS: Readonly<Record<string, string>> = {
+	zai: "ZAI_API_KEY",
+	"opencode-go": "OPENCODE_API_KEY",
+};
+
+/**
+ * Credential-presence check for one provider: true when ANY source answers.
+ *   - env: a configured env-var NAME for the provider holds a non-empty value
+ *     (the value itself is never read past that emptiness test),
+ *   - auth.json: the engine's one-off reader reports a stored credential
+ *     (the Credential object is discarded untouched),
+ *   - models.json: the provider entry carries a non-empty `apiKey` string
+ *     (a literal "$NAME" or "!command" counts — it is NOT resolved here;
+ *     the engine expands it at request time).
+ * Every source is wrapped: a missing or unreadable file is "not configured",
+ * never an error. Presence-only by design; no credential value is logged.
+ */
+export function hasCredential(provider: string, opts: CredentialSourceOpts = {}): boolean {
+	const envKey = BUILTIN_PROVIDER_ENV_KEYS[provider];
+	if (envKey !== undefined) {
+		const value = opts.env?.[envKey] ?? process.env[envKey];
+		if (typeof value === "string" && value.length > 0) return true;
+	}
+	try {
+		// readStoredCredential defaults authPath to the engine agent dir's
+		// auth.json when undefined — the same resolution the engine itself uses.
+		if (readStoredCredential(provider, opts.authPath) !== undefined) return true;
+	} catch {
+		// Unreadable auth store is "not configured", not an error.
+	}
+	try {
+		const modelsPath = opts.modelsPath ?? path.join(getAgentDir(), "models.json");
+		const raw = JSON.parse(readFileSync(modelsPath, "utf8")) as Record<string, unknown>;
+		const providers = raw["providers"];
+		if (typeof providers !== "object" || providers === null) return false;
+		const entry = (providers as Record<string, unknown>)[provider];
+		if (typeof entry !== "object" || entry === null) return false;
+		const apiKey = (entry as Record<string, unknown>)["apiKey"];
+		return typeof apiKey === "string" && apiKey.trim().length > 0;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Providers whose models chains may resolve to: the engine's built-in `zai`
+ * and `opencode-go` (credential-gated: present only when some credential
+ * source answers — env var, auth.json, or a models.json `apiKey`), and every
+ * validly-declared provider from the resolved chains section (declared =
+ * available; their auth is endpoint-specific and not introspectable
+ * generically, so no presence gate applies to them).
+ */
+export function providerAvailabilities(
+	credentialOpts?: CredentialSourceOpts,
+): Record<string, boolean> {
+	const available: Record<string, boolean> = {};
+	for (const id of Object.keys(BUILTIN_PROVIDER_ENV_KEYS)) {
+		available[id] = hasCredential(id, credentialOpts);
+	}
 	const { value, source } = chainsSection();
 	for (const { name } of chainProviderRegistrations(value, chainsOrigin(source)).valid) {
 		available[name] = true;
@@ -328,6 +399,16 @@ export function registerProviders(pi: ExtensionAPI): void {
 	const { value, source, warning } = chainsSection();
 	if (warning !== undefined) console.error(`torus: ${warning}`);
 	const origin = chainsOrigin(source);
+	// One startup notice per credential-less built-in: the gate would silently
+	// filter its chain entries otherwise. Presence-only — the line names the
+	// provider and the env var, never any credential content.
+	for (const id of Object.keys(BUILTIN_PROVIDER_ENV_KEYS)) {
+		if (!hasCredential(id)) {
+			console.error(
+				`[torus: chains] no credential for ${id} — its chain entries are filtered out (set ${BUILTIN_PROVIDER_ENV_KEYS[id]} or run /login ${id})`,
+			);
+		}
+	}
 	const { valid, warnings } = chainProviderRegistrations(value, origin);
 	for (const entry of warnings) console.error(entry);
 	for (const { name, config } of valid) {
