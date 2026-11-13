@@ -29,7 +29,7 @@ const {
 	messageText,
 	firstUserPrompt,
 	renameBrief,
-	resolveTitleModel,
+	resolveTitleCandidates,
 	registerSessionTitle,
 } = await import("../extensions/session-title/index.ts");
 
@@ -157,20 +157,39 @@ test("renameBrief: over budget -> even middle sampling, first and last pinned, o
 	assert.ok(numbers.length * 304 <= 8400, `sampled turns stay near budget, got ${numbers.length}`);
 });
 
-test("resolveTitleModel: override -> authed fast default -> session model -> undefined", () => {
+test("resolveTitleCandidates: pin alone, else fast chain walk, session model last", () => {
 	const makeRegistry = (found, authed = true) => ({
-		find: (_p, _m) => (found ? { id: "m" } : undefined),
+		find: (_p, _m) => (found ? { id: "m", provider: "zai" } : undefined),
 		hasConfiguredAuth: () => authed,
 	});
-	const sessionModel = { id: "session" };
+	const sessionModel = { id: "session", provider: "zai" };
 
-	assert.equal(resolveTitleModel("custom/big", makeRegistry(true), undefined).id, "m");
-	assert.equal(resolveTitleModel(undefined, makeRegistry(true), sessionModel).id, "m");
-	assert.equal(resolveTitleModel(undefined, makeRegistry(false), sessionModel).id, "session");
-	assert.equal(resolveTitleModel(undefined, makeRegistry(true, false), sessionModel).id, "session");
-	assert.equal(resolveTitleModel(undefined, makeRegistry(false), undefined), undefined);
-	// malformed override (no slash) falls through, not crashes
-	assert.equal(resolveTitleModel("nonsense", makeRegistry(true), sessionModel).id, "m");
+	// an explicit pin is the whole list — no walk, no session fallback
+	assert.deepEqual(
+		resolveTitleCandidates("custom/big", makeRegistry(true), sessionModel).map((m) => m.id),
+		["m"],
+	);
+	// unauthed chain entries drop, the session model rides last
+	assert.deepEqual(
+		resolveTitleCandidates(undefined, makeRegistry(false), sessionModel).map((m) => m.id),
+		["session"],
+	);
+	// authed chain leads, session model still backs it (deduped when equal)
+	const authed = resolveTitleCandidates(undefined, makeRegistry(true), sessionModel);
+	assert.deepEqual(
+		authed.map((m) => m.id),
+		["m", "session"],
+	);
+	assert.deepEqual(
+		resolveTitleCandidates(undefined, makeRegistry(true), { id: "m", provider: "zai" }).map(
+			(m) => m.id,
+		),
+		["m"],
+		"the session model equal to a chain candidate is deduped away",
+	);
+	assert.deepEqual(resolveTitleCandidates(undefined, makeRegistry(false), undefined), []);
+	// malformed override (no slash) falls through to the walk, not crashes
+	assert.equal(resolveTitleCandidates("nonsense", makeRegistry(true), sessionModel)[0].id, "m");
 });
 
 // ---- extension wiring: auto-title on turn_end + /rename ----
@@ -263,13 +282,14 @@ test("TORUS_TITLE=0 disables auto-titling entirely", async () => {
 	}
 });
 
-test("auto-title retries across turns while unnamed, then gives up", async () => {
+test("auto-title walks the chain, then everything sits in the cooldown", async () => {
 	const pi = fakePi();
 	registerSessionTitle(pi);
 	let calls = 0;
 	const ctx = fakeCtx([msgEntry(USER("first ask"))], {
 		reply: undefined,
 	});
+	ctx.modelRegistry.find = (provider, modelId) => ({ id: modelId, provider });
 	ctx.modelRegistry.complete = async () => {
 		calls += 1;
 		throw new Error("network down");
@@ -280,7 +300,10 @@ test("auto-title retries across turns while unnamed, then gives up", async () =>
 		await flush();
 	}
 	assert.equal(pi.state.name, undefined);
-	assert.equal(calls, 3, "must stop after MAX_AUTO_ATTEMPTS");
+	// the first attempt walks every candidate (fast chain + session fallback);
+	// after each failure marks its model, later attempts resolve to no
+	// candidates and notify instantly instead of re-burning timeouts
+	assert.equal(calls, 3, "every candidate burned exactly once, then never again");
 });
 
 test("engine children never auto-title", async () => {
@@ -360,24 +383,25 @@ test("an error-resolved title call notifies, marks the model, and leaves the nam
 	// complete() RESOLVES with an error message (the engine's retry layer
 	// returns error responses instead of throwing) — the silent no-op that
 	// made /rename look dead on an unreachable model.
-	ctx.modelRegistry.complete = async () => ({
-		...ASSISTANT(""),
-		stopReason: "error",
-		errorMessage: "429 too many requests",
-	});
+	let calls = 0;
+	ctx.modelRegistry.complete = async () => {
+		calls += 1;
+		return { ...ASSISTANT(""), stopReason: "error", errorMessage: "429 too many requests" };
+	};
 
 	await pi.commands.rename.handler("", ctx);
 	assert.equal(pi.state.name, undefined, "no title applied on an error response");
 	assert.ok(
 		ctx.ui.notifications.some(
-			(n) => n.level === "error" && /renamed failed \(model unreachable\)/.test(n.text),
+			(n) => n.level === "error" && /renamed failed \(no reachable model\)/.test(n.text),
 		),
 		"the failure is surfaced, not swallowed",
 	);
+	assert.equal(calls, 2, "the walk tried the chain entry and the session model");
 	assert.equal(
 		isModelMemoFailed("zai/glm-5.3-flash"),
 		true,
-		"the dead model sits out the shared cooldown",
+		"the dead chain entry sits out the shared cooldown",
 	);
 });
 

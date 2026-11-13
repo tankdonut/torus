@@ -61,7 +61,7 @@ Rows carrying a config key also read that key from the [unified config](#the-uni
 | `TORUS_BG=0` | monitor | Disable background tasks (config: `monitor.bg`) |
 | `TORUS_STATUSLINE_COST=0` | ui | Disable the session-cost statusline chip (config: `ui.statuslineCost`) |
 | `TORUS_BANNER=0` | ui | Keep pi's built-in startup header instead of the torus banner (config: `ui.banner`) |
-| `TORUS_TITLE_MODEL=provider/model` | session-title | Override the session-title generator model (default: the first authed fast-chain entry, then the session model; config: `sessionTitle.titleModel`) |
+| `TORUS_TITLE_MODEL=provider/model` | session-title | Override the session-title generator model (default: the fast chain walked candidate-by-candidate, each try capped at 10s, failures marking the shared no-work cooldown, then the session model; config: `sessionTitle.titleModel`) |
 | `TORUS_TEAM_NOTIFY=0` | team | Disable the per-member idle/crash wake-up markers (result markers still render) (config: `team.teamNotify`) |
 | `TORUS_TASK_STALE_MIN=<minutes>` | team | Stale-task threshold for `team_status`: an in_progress task under an idle member with no tasklist update for more than N minutes renders a read-only stale line (default 30; invalid values fall back to 30) (config: `team.taskStaleMin`) |
 | `TORUS_COMMENT_CHECKER=0` / `TORUS_COMMENT_CHECKER_PROMPT` | comment-checker | Disable / override the challenge text (config: `commentChecker.enabled`; `TORUS_COMMENT_CHECKER_PROMPT` is env-only) |

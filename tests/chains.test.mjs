@@ -410,27 +410,35 @@ test("ambient session-title cascade follows a fast-tier override onto the local 
 		},
 		hasConfiguredAuth: () => true,
 	};
-	const sessionModel = { id: "session" };
+	const sessionModel = { id: "session", provider: "zai" };
 
-	assert.equal(
-		sessionTitle.resolveTitleModel(undefined, registry, sessionModel),
-		sessionModel,
-		"unfindable local head falls back to the session model",
+	assert.deepEqual(
+		sessionTitle.resolveTitleCandidates(undefined, registry, sessionModel),
+		[sessionModel],
+		"unfindable local head leaves the session model as the only candidate",
 	);
 	assert.deepEqual(finds, ["ollama/gemma3:12b"], "ambient cascade must look up the fast-tier head");
 
-	found = { id: "local" };
-	assert.equal(sessionTitle.resolveTitleModel(undefined, registry, sessionModel).id, "local");
+	found = { id: "local", provider: "ollama" };
+	const withLocal = sessionTitle.resolveTitleCandidates(undefined, registry, sessionModel);
+	assert.equal(withLocal[0].id, "local");
+	assert.deepEqual(withLocal[1], sessionModel, "session model still rides last");
 
 	finds.length = 0;
-	found = { id: "custom" };
-	assert.equal(sessionTitle.resolveTitleModel("zai/custom", registry, sessionModel).id, "custom");
-	assert.deepEqual(finds, ["zai/custom"], "TORUS_TITLE_MODEL still wins over the chain head");
+	found = { id: "custom", provider: "zai" };
+	assert.deepEqual(
+		sessionTitle.resolveTitleCandidates("zai/custom", registry, sessionModel),
+		[found],
+		"TORUS_TITLE_MODEL pin is the whole candidate list",
+	);
+	assert.deepEqual(finds, ["zai/custom"]);
 
 	found = undefined;
 	finds.length = 0;
 	removeConfig();
-	assert.equal(sessionTitle.resolveTitleModel(undefined, registry, sessionModel), sessionModel);
+	assert.deepEqual(sessionTitle.resolveTitleCandidates(undefined, registry, sessionModel), [
+		sessionModel,
+	]);
 	assert.deepEqual(
 		finds,
 		["zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
@@ -445,26 +453,28 @@ test("ambient session-title walks past an unauthed zai onto the second fast entr
 	const registry = {
 		find: (provider, modelId) => {
 			finds.push(`${provider}/${modelId}`);
-			return { id: modelId };
+			return { id: modelId, provider };
 		},
 		hasConfiguredAuth: () => authed,
 	};
-	const sessionModel = { id: "session" };
+	const sessionModel = { id: "session", provider: "zai" };
 
-	assert.equal(
-		sessionTitle.resolveTitleModel(undefined, registry, sessionModel),
-		sessionModel,
-		"no authed fast entry falls back to the session model",
+	assert.deepEqual(
+		sessionTitle.resolveTitleCandidates(undefined, registry, sessionModel),
+		[sessionModel],
+		"no authed fast entry leaves the session model as the only candidate",
 	);
 	assert.deepEqual(finds, ["zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"]);
 
 	authed = true;
 	finds.length = 0;
-	assert.equal(
-		sessionTitle.resolveTitleModel(undefined, registry, sessionModel).id,
-		"glm-5.3-flash",
+	const authedChain = sessionTitle.resolveTitleCandidates(undefined, registry, sessionModel);
+	assert.equal(authedChain[0].id, "glm-5.3-flash", "the fast head leads when authed");
+	assert.deepEqual(
+		finds,
+		["zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
+		"resolution collects the whole chain; the attempt loop stops early on success",
 	);
-	assert.equal(finds.length, 1, "walk stops at the first authed entry");
 });
 
 test("happy path: a chains-section override reaches the engine child's --model argv", async () => {

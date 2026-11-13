@@ -23,7 +23,7 @@ import type {
 import { knobString } from "../config/knobs.js";
 import { goalTitleLine } from "../goal/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
-import { markModelFailed, resolveModels } from "../providers/index.js";
+import { isModelMemoFailed, markModelFailed, resolveModels } from "../providers/index.js";
 import { todoTitleLines } from "../todo/index.js";
 import { workTitleLine } from "../work/index.js";
 
@@ -62,35 +62,54 @@ Rules:
 - For trivial or conversational openers, name the intent (e.g. "Greeting", "Quick check-in")
 - When given a full conversation, title by the dominant thread or final outcome, not the first message alone`;
 
-/** Minimal registry surface resolveTitleModel needs (satisfied by ModelRegistry). */
+/** Minimal registry surface resolveTitleCandidates needs (satisfied by ModelRegistry). */
 export interface TitleModelRegistry {
 	find(provider: string, modelId: string): Model<Api> | undefined;
 	hasConfiguredAuth(model: Model<Api>): boolean;
 }
 
-/** Model cascade for title generation: env override -> first available fast-chain entry -> session model. */
-export function resolveTitleModel(
+/**
+ * Ordered title candidates for one generateTitle call: an explicit
+ * TORUS_TITLE_MODEL pin alone (deliberate bypass of the walk and the
+ * cooldown, like naming a model on a delegation), else the fast chain walked
+ * candidate-by-candidate — credential-gated entries drop and models another
+ * consumer watched fail sit out the no-work cooldown — with the session model
+ * (the model the chat is demonstrably working on) appended as last resort.
+ * An empty list means nothing is reachable right now.
+ */
+export function resolveTitleCandidates(
 	override: string | undefined,
 	registry: TitleModelRegistry,
 	sessionModel: Model<Api> | undefined,
-): Model<Api> | undefined {
+): Model<Api>[] {
 	if (override) {
 		const slash = override.indexOf("/");
 		if (slash > 0) {
 			const candidate = registry.find(override.slice(0, slash), override.slice(slash + 1));
-			if (candidate) return candidate;
+			if (candidate) return [candidate];
 		}
 	}
-	// resolveModels is THE chain helper: credential-gated entries drop and
-	// models another consumer watched fail sit out the no-work cooldown, so ambient
-	// titling neither burns a dead head nor rediscovers it per call.
+	const candidates: Model<Api>[] = [];
+	const seen = new Set<string>();
 	for (const id of resolveModels("fast")) {
 		const slash = id.indexOf("/");
 		if (slash === -1) continue;
+		if (isModelMemoFailed(id)) continue;
 		const model = registry.find(id.slice(0, slash), id.slice(slash + 1));
-		if (model && registry.hasConfiguredAuth(model)) return model;
+		const key = model ? `${model.provider}/${model.id}` : id;
+		if (model && registry.hasConfiguredAuth(model) && !seen.has(key)) {
+			candidates.push(model);
+			seen.add(key);
+		}
 	}
-	return sessionModel;
+	if (
+		sessionModel &&
+		!seen.has(`${sessionModel.provider}/${sessionModel.id}`) &&
+		!isModelMemoFailed(`${sessionModel.provider}/${sessionModel.id}`)
+	) {
+		candidates.push(sessionModel);
+	}
+	return candidates;
 }
 
 /** Extract the plain text of a user or assistant message's content blocks. */
@@ -225,56 +244,59 @@ interface TitleRequest {
 	verb: string;
 }
 
-/** Hard wall-clock cap on one title call — retries and backoff included. */
-const TITLE_TIMEOUT_MS = 30_000;
+/** Hard wall-clock cap per title attempt — engine retries and backoff included. */
+const TITLE_TIMEOUT_MS = 10_000;
 
-/** Report an unreachable title model: shared-cooldown mark plus one notify. */
-function markUnreachable(model: Model<Api>, verb: string, ctx: ExtensionContext): void {
+/** Sit an unreachable title model out in the shared no-work cooldown. */
+function markUnreachable(model: Model<Api>): void {
 	markModelFailed(`${model.provider}/${model.id}`);
-	ctx.ui.notify(`session-title: ${verb} failed (model unreachable)`, "error");
 }
 
 async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Promise<string | null> {
-	const model = resolveTitleModel(
+	const candidates = resolveTitleCandidates(
 		knobString("TORUS_TITLE_MODEL", "sessionTitle", "titleModel", ""),
 		ctx.modelRegistry,
 		ctx.model,
 	);
-	if (!model) {
-		ctx.ui.notify("session-title: no model available (set TORUS_TITLE_MODEL)", "error");
+	if (candidates.length === 0) {
+		ctx.ui.notify("session-title: no reachable model (set TORUS_TITLE_MODEL)", "error");
 		return null;
 	}
 	const instruction = request.hint
 		? `Generate a title for this session (focus: ${request.hint}):\n\n${request.context}`
 		: `Generate a title for this session:\n\n${request.context}`;
-	try {
-		const response = await ctx.modelRegistry.complete(
-			model,
-			{
-				systemPrompt: TITLE_SYSTEM_PROMPT,
-				messages: [{ role: "user", content: instruction, timestamp: Date.now() }],
-			},
-			{
-				maxTokens: 1024,
-				// The engine retries retryable errors (429s, dead endpoints) with
-				// backoff, and complete() RESOLVES with an error message instead of
-				// throwing — uncapped, /rename sits through minutes of silent
-				// backoff and then does nothing. Cap the whole call; an aborted
-				// backoff surfaces as an aborted message the check below handles.
-				signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
-			},
-		);
-		if (response.stopReason === "error" || response.stopReason === "aborted") {
-			markUnreachable(model, request.verb, ctx);
-			return null;
+	for (const model of candidates) {
+		try {
+			const response = await ctx.modelRegistry.complete(
+				model,
+				{
+					systemPrompt: TITLE_SYSTEM_PROMPT,
+					messages: [{ role: "user", content: instruction, timestamp: Date.now() }],
+				},
+				{
+					maxTokens: 1024,
+					// The engine retries retryable errors (429s, dead endpoints) with
+					// backoff, and complete() RESOLVES with an error message instead of
+					// throwing — uncapped, /rename sits through minutes of silent
+					// backoff and then does nothing. Cap each attempt; an aborted
+					// backoff surfaces as an aborted message the check below handles.
+					signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
+				},
+			);
+			if (response.stopReason === "error" || response.stopReason === "aborted") {
+				markUnreachable(model);
+				continue;
+			}
+			const title = sanitizeTitle(messageText(response));
+			if (title) return title;
+		} catch {
+			// The model failed to answer — sit it out for the shared cooldown
+			// window so every chain consumer skips it, not just the next rename.
+			markUnreachable(model);
 		}
-		return sanitizeTitle(messageText(response));
-	} catch {
-		// The model failed to answer — sit it out for the shared cooldown window
-		// so every chain consumer skips it, not just the next rename.
-		markUnreachable(model, request.verb, ctx);
-		return null;
 	}
+	ctx.ui.notify(`session-title: ${request.verb} failed (no reachable model)`, "error");
+	return null;
 }
 
 function applyTitle(pi: ExtensionAPI, ctx: ExtensionContext, title: string, verb: string): void {
