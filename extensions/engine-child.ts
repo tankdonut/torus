@@ -206,6 +206,20 @@ export function reduceEngineEvent(record: Record<string, unknown>, tally: Engine
 }
 
 /**
+ * Whether the settled tail of a tally is dead work: a trailing model error,
+ * or trailing turns that produced neither tokens nor text. The engine
+ * settles just as cleanly after its auto-retry exhausts on a provider
+ * 429/5xx storm as after a real answer, and a failed turn still counts as a
+ * turn, so "settled with turns" proves nothing — the same judgment the
+ * delegation walk applies before falling back. Runs the team supervisor's
+ * bootstrap and mail legs through this so a member never idles on a model
+ * that can only answer with errors.
+ */
+export function tallyHasDeadTail(tally: EngineTally): boolean {
+	return tally.lastError !== undefined || (tally.noProgressTail ?? 0) > 0;
+}
+
+/**
  * The canonical `--extension` argument list every torus child engine gets.
  * In `ephemeral` child-session mode the list grows `--no-session`: children
  * keep no transcript files at all.

@@ -18,6 +18,7 @@ import {
 	reduceEngineEvent,
 	resolveEngineBin,
 	sessionIdFromState,
+	tallyHasDeadTail,
 } from "./engine-child.js";
 import { stripFrontmatter } from "./frontmatter.js";
 import { projectKey, projectStateDir, readJson, sleep, torusHome, writeJson } from "./fsutil.js";
@@ -28,7 +29,7 @@ import {
 	resolveModels,
 } from "./providers/index.js";
 import { AGENT_NAME_RE, repoRoot } from "./registry.js";
-import { AGENTS, ENV_CONVENTION } from "./roster/index.js";
+import { AGENTS, ENV_CONVENTION, fallbackReason } from "./roster/index.js";
 import { RpcChild } from "./rpc.js";
 
 /**
@@ -642,7 +643,20 @@ export function spawnMember(
 	};
 	let modelIndex = 0;
 	let turnsAtSpawn = 0;
+	let tailAtSpawn = 0;
 	let resolveExited: (code: number) => void = () => {};
+	/**
+	 * Healthy turns since a baseline: turns minus the dead tail they sit in
+	 * (a progressing turn resets the tail, so any real work in the span shows
+	 * here). The supervisor judges legs and mail runs by this, never by raw
+	 * turns — a 429-failed turn still counts as a turn but is dead work, and
+	 * the engine settles a quota-stormed run as cleanly as a real answer.
+	 */
+	const healthyTurnsSince = (turnsAt: number, tailAt: number): number => {
+		const spanTurns = tally.turns - turnsAt;
+		const spanTail = Math.max(0, (tally.noProgressTail ?? 0) - tailAt);
+		return spanTurns - spanTail;
+	};
 	const exitedAll = new Promise<number>((r) => {
 		resolveExited = r;
 	});
@@ -806,17 +820,21 @@ export function spawnMember(
 			} catch (error) {
 				appendLog(`bootstrap failed: ${String(error).slice(0, 160)}`);
 			}
-			// A bootstrap that produced zero turns judges its model no-work: mark
-			// it in the shared cooldown so every other chain consumer in this
-			// process — delegations and ambient titling — skips it too.
-			if (!alive && tally.turns === turnsAtSpawn) markModelFailed(headModel);
+			// Judge work, not turns: the engine settles a run whose turns all
+			// errored (provider 429/5xx storm, auto-retry exhausted) exactly as
+			// cleanly as a real answer, so a settled bootstrap with a dead tail
+			// is no work. A leg without healthy turns marks its model in the
+			// shared cooldown so every chain consumer in this process —
+			// delegations and ambient titling — skips it too.
+			if (alive && tallyHasDeadTail(tally)) alive = false;
+			if (!alive && healthyTurnsSince(turnsAtSpawn, tailAtSpawn) <= 0) markModelFailed(headModel);
 			// No JSON-mode fallback here (unlike roster's one-shot delegations):
 			// a member is a long-lived RPC child whose supervisor drives persistent
 			// getState/prompt cycles plus mailbox polling; JSON mode is turn-based
 			// and one-shot, so it cannot host that loop — a dead member is revived
 			// wholesale by team_respawn instead.
 			while (!alive && !stopped) {
-				if (tally.turns !== turnsAtSpawn) {
+				if (healthyTurnsSince(turnsAtSpawn, tailAtSpawn) > 0) {
 					appendLog(
 						`member engine died mid-work after ${tally.turns - turnsAtSpawn} turns — not retrying`,
 					);
@@ -827,8 +845,11 @@ export function spawnMember(
 				const nextModel = modelCandidates[modelIndex];
 				const prevModel = modelCandidates[modelIndex - 1] ?? "engine";
 				if (!nextModel) break;
-				appendLog(`! ${prevModel} produced no work — falling back to ${nextModel}`);
+				appendLog(
+					`! ${prevModel} produced no work (${fallbackReason(0, tally.lastError)}) — falling back to ${nextModel}`,
+				);
 				turnsAtSpawn = tally.turns;
+				tailAtSpawn = tally.noProgressTail ?? 0;
 				child.kill();
 				child = createChild(nextModel);
 				try {
@@ -845,7 +866,8 @@ export function spawnMember(
 				} catch (error) {
 					appendLog(`fallback bootstrap failed: ${String(error).slice(0, 160)}`);
 				}
-				if (!alive && tally.turns === turnsAtSpawn) markModelFailed(nextModel);
+				if (alive && tallyHasDeadTail(tally)) alive = false;
+				if (!alive && healthyTurnsSince(turnsAtSpawn, tailAtSpawn) <= 0) markModelFailed(nextModel);
 			}
 			if (!alive) stopped = true;
 			drainOutbox();
@@ -874,9 +896,12 @@ export function spawnMember(
 					// polls) must already count as work, not handshake.
 					sawMail = true;
 					emitState("working");
+					const mailPrompt = `NEW MAIL:\n${mail}\n\nAct on it, report to your outbox.`;
+					const turnsAtMail = tally.turns;
+					const tailAtMail = tally.noProgressTail ?? 0;
 					let settledRun = false;
 					try {
-						await sendPrompt(`NEW MAIL:\n${mail}\n\nAct on it, report to your outbox.`);
+						await sendPrompt(mailPrompt);
 						settledRun = (await waitSettled()) === "settled";
 					} catch (error) {
 						appendLog(`member run failed: ${String(error).slice(0, 160)}`);
@@ -886,6 +911,50 @@ export function spawnMember(
 							`member engine exited during mail run (turns this child: ${tally.turns - turnsAtSpawn})`,
 						);
 						break;
+					}
+					// Mid-life model death: the run settled with only dead tail turns
+					// (quota exhaustion, auth, provider storm). Mark the model and
+					// rotate onto the next candidate, replaying this mail — the
+					// member never idles on a model that can only answer with errors.
+					if (stopped) continue;
+					if (tally.turns > turnsAtMail && healthyTurnsSince(turnsAtMail, tailAtMail) <= 0) {
+						const dead = modelCandidates[modelIndex] ?? "engine";
+						markModelFailed(dead);
+						const next = modelCandidates[modelIndex + 1];
+						if (next === undefined) {
+							appendLog(
+								`! ${dead} produced no work (${fallbackReason(0, tally.lastError)}) — chain exhausted, member idle`,
+							);
+						} else {
+							modelIndex += 1;
+							appendLog(
+								`! ${dead} produced no work (${fallbackReason(0, tally.lastError)}) — rotating to ${next}`,
+							);
+							turnsAtSpawn = tally.turns;
+							tailAtSpawn = tally.noProgressTail ?? 0;
+							child.kill();
+							child = createChild(next);
+							try {
+								const state = await Promise.race([
+									child.getState(),
+									child.exited.then(() => {
+										throw new Error("rotated engine exited before state");
+									}),
+								]);
+								const sid = sessionIdFromState(state);
+								if (sid) sessionId = sid;
+								await sendPrompt(mailPrompt);
+								settledRun = (await waitSettled()) === "settled";
+							} catch (error) {
+								appendLog(`rotated run failed: ${String(error).slice(0, 160)}`);
+							}
+							if (!settledRun && !stopped) {
+								appendLog(
+									`member engine exited during rotated mail run (turns this child: ${tally.turns - turnsAtSpawn})`,
+								);
+								break;
+							}
+						}
 					}
 					drainOutbox();
 					continue;
