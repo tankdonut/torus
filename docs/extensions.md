@@ -86,6 +86,8 @@ The same section's optional `concurrency` map (`{"provider/model": <positive num
 
 The caps surface in three places: `torus_roster` lists each credentialed model's cap, the delegation system prompt tells the lead to size fan-outs within them, and `torus_delegate`/`torus_fanout` prepend a warning to their result when running delegations plus the planned batch would push a model over its cap. The warning is advisory (no queueing, no refusal); the engine's own retry path still handles any 429 that slips through. Uncapped models (no default, no override) are treated as unconstrained, and team members are not counted (they idle between turns, and the default member model is the flash tier).
 
+Dispatch honesty rides the same result text: all three delegation tools scan each authored task for tool names that other personas grant but the target's `tools:` allowlist withholds, and prepend a warning naming the tool and the options (dispatch a persona that has it, land the artifact from the child's returned text, or reword). The candidate universe comes from the roster itself (the union of every persona's entries, wildcards honored as coverage), so there is no static tool list to drift; names no persona grants are skipped because a child without them fails loudly with unknown-tool anyway. The scan reads authored task text only, so a chain step's carried prior output cannot false-positive it.
+
 #### Alternate providers
 
 The same section's `providers` map registers compatible endpoints through the engine's `pi.registerProvider`: one entry per server, models addressable in chains as `<provider-name>/<model-id>`.

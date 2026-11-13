@@ -53,3 +53,34 @@ test("repo roster invariants: current agents load, leader present, librarian car
 	const librarian = AGENTS.find((a) => a.name === "librarian");
 	assert.ok(librarian?.commandAliases?.includes("research"), "librarian alias research missing");
 });
+
+test("dispatchToolWarning: task naming a tool outside the persona's allowlist warns, with wildcard coverage honored", async () => {
+	const { dispatchToolWarning } = await import("../extensions/roster/index.ts");
+	const reviewer = dispatchToolWarning(
+		"reviewer",
+		"Verify the claim, then append a work_note row: event verified, verifiedBy reviewer.",
+	);
+	assert.ok(reviewer, "reviewer has no work_note — a dispatch naming it must warn");
+	assert.match(reviewer, /"work_note"/);
+	assert.match(reviewer, /reviewer persona/);
+	assert.equal(
+		dispatchToolWarning("builder", "Implement X, then journal a work_note row."),
+		undefined,
+		"builder grants work_note",
+	);
+	assert.equal(
+		dispatchToolWarning("reviewer", "Grep the diff for trust handoffs."),
+		undefined,
+		"grep is in the reviewer allowlist",
+	);
+	assert.equal(
+		dispatchToolWarning("looker", "Use look_at on the capture."),
+		undefined,
+		"looker grants look_at",
+	);
+	assert.equal(
+		dispatchToolWarning("nonexistent-agent", "work_note please"),
+		undefined,
+		"unknown agent warns nothing",
+	);
+});

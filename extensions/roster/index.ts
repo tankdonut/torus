@@ -337,6 +337,38 @@ export function withWarning(text: string, warning: string | undefined): string {
 	return warning === undefined ? text : `${warning}\n\n${text}`;
 }
 
+/**
+ * Dispatch honesty: warn when a task text names a tool the target child will
+ * not have. A dispatch that promises a tool the persona's allowlist withholds
+ * makes the child improvise the tool's output format (a reviewer hand-writing
+ * ledger JSONL produced rows missing required fields). The candidate universe
+ * is derived from the roster itself — the union of every persona's tools
+ * entries — so the check tracks the agent files with no static tool list to
+ * drift; wildcard entries (`mcp__server__*`) are skip-listed as candidates and
+ * honored as coverage, and names no persona grants are skipped because those
+ * fail loudly at the child anyway (unknown tool).
+ */
+export function dispatchToolWarning(agentName: string, task: string): string | undefined {
+	const agent = firstDelegatable(agentName);
+	const allowlist = agent?.tools;
+	if (!allowlist) return undefined;
+	const granted = (name: string): boolean =>
+		allowlist.some((entry) =>
+			entry.endsWith("*") ? name.startsWith(entry.slice(0, -1)) : entry === name,
+		);
+	const known = new Set<string>();
+	for (const other of loadAgents()) {
+		for (const tool of other.tools ?? []) {
+			if (!tool.includes("*")) known.add(tool);
+		}
+	}
+	const mentioned = [...known].filter(
+		(name) => !granted(name) && new RegExp(`(^|[^\\w])${name}([^\\w]|$)`).test(task),
+	);
+	if (mentioned.length === 0) return undefined;
+	return `warning: the task text names ${mentioned.map((n) => `"${n}"`).join(", ")} but the ${agent.name} persona's tool allowlist does not include them — this child cannot call them and will improvise instead. Dispatch a persona that has them, land the artifact from the child's returned text yourself, or reword the task.`;
+}
+
 function piAgentDir(): string {
 	return process.env["PI_CODING_AGENT_DIR"] ?? path.join(homedir(), ".pi", "agent");
 }
@@ -1818,6 +1850,10 @@ const delegateTool = defineTool({
 			onUpdate({ content: [{ type: "text", text: `▶ ${label} · running` }], details: {} });
 		}
 		const capWarning = concurrencyWarning([plannedRunModel(params.agent, params.model)]);
+		const capAndToolWarning =
+			[capWarning, dispatchToolWarning(params.agent, params.task)]
+				.filter((w): w is string => typeof w === "string")
+				.join("\n\n") || undefined;
 		let backgroundNote = "";
 		if (params.background === true) {
 			if (
@@ -1861,7 +1897,7 @@ const delegateTool = defineTool({
 							type: "text",
 							text: withWarning(
 								`background delegation started — ${label} (${params.agent})${record ? ` · id ${record.id}` : ""}. You'll be woken when the run finishes or fails: the result arrives as a torus.delegation-result wake marker (batched with other pending wakes when busy). Don't poll or wait for it — end the turn or keep working, then read the full output with torus_results.`,
-								capWarning,
+								capAndToolWarning,
 							),
 						},
 					],
@@ -1924,7 +1960,9 @@ const delegateTool = defineTool({
 			// their tool block red while the text keeps the partial work.
 			const failedCleanExit = outcome.details.exitCode === 0;
 			return {
-				content: [{ type: "text", text: withWarning(backgroundNote + outcome.text, capWarning) }],
+				content: [
+					{ type: "text", text: withWarning(backgroundNote + outcome.text, capAndToolWarning) },
+				],
 				details: outcome.details,
 				...(failedCleanExit ? { isError: true } : {}),
 			};
@@ -1932,7 +1970,9 @@ const delegateTool = defineTool({
 		const usage = (outcome.details.usage ?? {}) as Record<string, unknown>;
 		const num = (v: unknown): number => (typeof v === "number" ? v : 0);
 		return {
-			content: [{ type: "text", text: withWarning(backgroundNote + outcome.text, capWarning) }],
+			content: [
+				{ type: "text", text: withWarning(backgroundNote + outcome.text, capAndToolWarning) },
+			],
 			details: outcome.details,
 			structuredContent: {
 				ok: true,

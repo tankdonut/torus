@@ -20,7 +20,7 @@ Dispatch all three at once: one `torus_delegate` per lens, agent `reviewer`, par
 - The diff scope (commit range or files) and the working directory.
 - The round number and the acceptance criteria, verbatim.
 - The lens checklist below.
-- The verdict contract: return `OKAY` or `REJECT` plus numbered findings, each finding carrying severity (`Blocker`, `Major`, or `Nit`), `file:line`, what would fix it, and a stable ID `<lens>-<round>-<n>`. Vague findings do not count. A lens REJECTs on any Blocker or Major; Nits never block.
+- The verdict contract: return `OKAY` or `REJECT` plus numbered findings, each finding carrying severity (`Blocker`, `Major`, or `Nit`), `file:line`, what would fix it, and a stable ID `<lens>-<round>-<n>`. Vague findings do not count. A lens REJECTs on any Blocker or Major; Nits never block. The verdict comes back as the lens's final text; never instruct a lens to journal it (the reviewer persona carries no `work_note` tool, and a dispatch that asks for one gets a hand-formatted ledger row instead).
 
 **Security**. Where does this change-set trust what it shouldn't: injection paths (shell, query, path traversal, template interpolation), guard bypasses (auth checks, allowlists, capability gates that new code slips past), trust handoffs (data crossing a process or session boundary unvalidated), unsafe paths (file writes, symlink and absolute-path handling, anything touching credentials or env). Gate every finding on confidence: a finding counts only when the vulnerable pattern AND attacker-controlled input reaching it are both confirmed: trace each input to its source first (operator config, env vars, and constants are server-controlled, not findings) and check for upstream validation or framework/runtime mitigation before flagging. Theoretical hardening and defense-in-depth suggestions never count as findings. Fold the exploit precondition into the finding text: what an attacker must control, reach, or already hold for the issue to bite (direct exploit, exploitable with conditions, specific preconditions). (Confidence-gated methodology adapted from getsentry/skills `security-review`, Apache-2.0.)
 
@@ -57,7 +57,7 @@ Rework happens in the author session: fixes land on the change-set, then the nex
 
 ## Evidence
 
-Land one `work_note` per lens verdict (event: `verified`): the text names the lens, its verdict, the round, and the top blocking finding when there is one (e.g. `security REJECT round 2 — injection at <file>:<line>, user input reaches a shell unquoted`). When no work is bound to this session, the verdicts land in the final chat answer instead. Never invent a slug.
+Land one `work_note` per lens verdict yourself, from the lens's returned text (event: `verified`, `verifiedBy: reviewer`): the text names the lens, its verdict, the round, and the top blocking finding when there is one (e.g. `security REJECT round 2 — injection at <file>:<line>, user input reaches a shell unquoted`). The conductor writes the row, never the lens. When no work is bound to this session, or `work_note` is not in this session's toolset, the verdicts land in the final chat answer instead. Never invent a slug.
 
 The final answer carries the aggregate: per-lens verdicts by round, the blocking findings with their IDs and `file:line`, and what would clear each one.
 

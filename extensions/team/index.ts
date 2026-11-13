@@ -30,6 +30,7 @@ import {
 	AGENTS,
 	concurrencyWarning,
 	type DelegationOutcome,
+	dispatchToolWarning,
 	fireDelegationsBackground,
 	plannedRunModel,
 	resolveRequestedModel,
@@ -144,6 +145,16 @@ const fanoutTool = defineTool({
 		const capWarning = concurrencyWarning(
 			params.runs.map((r) => plannedRunModel(r.agent, r.model)),
 		);
+		// The authored task texts only: the step's carried context never reaches
+		// this scan, so prior output mentioning a tool cannot false-positive.
+		const toolWarning =
+			params.runs
+				.map((r) => dispatchToolWarning(r.agent, r.task))
+				.filter((w): w is string => typeof w === "string")
+				.join("\n\n") || undefined;
+		const batchWarning =
+			[capWarning, toolWarning].filter((w): w is string => typeof w === "string").join("\n\n") ||
+			undefined;
 		const report = () => {
 			if (!onUpdate) return;
 			const line =
@@ -213,7 +224,7 @@ const fanoutTool = defineTool({
 							type: "text",
 							text: withWarning(
 								`background fan-out started — ${params.runs.length} runs: ${runLabels}. You'll be woken as each run finishes or fails: results arrive as torus.delegation-result wake markers (batched with other pending wakes when busy). Don't poll or wait for them — end the turn or keep working, then read the full output with torus_results.`,
-								capWarning,
+								batchWarning,
 							),
 						},
 					],
@@ -416,7 +427,7 @@ const fanoutTool = defineTool({
 							`fan-out complete in ${Math.round((Date.now() - started) / 1000)}s` +
 							(okCount === outcomes.length ? "" : ` · ${okCount}/${outcomes.length} ok`) +
 							`\n\n${summary}`,
-						capWarning,
+						batchWarning,
 					),
 				},
 			],
@@ -472,6 +483,13 @@ const chainTool = defineTool({
 		const parentSession = ctx.sessionManager.getSessionId();
 		const outcomes: Array<{ agent: string; ok: boolean; text: string }> = [];
 		let carry = "";
+		// Authored step tasks only: the carried prior-step output never enters
+		// this scan, so its tool mentions cannot false-positive the warning.
+		const chainWarning =
+			params.steps
+				.map((s) => dispatchToolWarning(s.agent, s.task))
+				.filter((w): w is string => typeof w === "string")
+				.join("\n\n") || undefined;
 
 		// The whole chain as one sequential walk. Background mode runs this as the
 		// body of a single background descriptor; the live update stream and the
@@ -573,11 +591,14 @@ const chainTool = defineTool({
 					content: [
 						{
 							type: "text",
-							text: `background chain started — ${params.steps.length} steps: ${params.steps
-								.map((s) => s.agent)
-								.join(
-									" → ",
-								)}. You'll be woken when the chain finishes or fails: the final outcome arrives as one torus.delegation-result wake marker (batched with other pending wakes when busy). Don't poll or wait for it — end the turn or keep working, then read the full output with torus_results.`,
+							text: withWarning(
+								`background chain started — ${params.steps.length} steps: ${params.steps
+									.map((s) => s.agent)
+									.join(
+										" → ",
+									)}. You'll be woken when the chain finishes or fails: the final outcome arrives as one torus.delegation-result wake marker (batched with other pending wakes when busy). Don't poll or wait for it — end the turn or keep working, then read the full output with torus_results.`,
+								chainWarning,
+							),
 						},
 					],
 					details: {
@@ -593,7 +614,7 @@ const chainTool = defineTool({
 			content: [
 				{
 					type: "text",
-					text: backgroundNote + chainText(),
+					text: withWarning(backgroundNote + chainText(), chainWarning),
 				},
 			],
 			details: { steps: outcomes.length, ok: okCount() },
