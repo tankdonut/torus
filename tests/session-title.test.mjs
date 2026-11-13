@@ -375,7 +375,7 @@ test("/rename brief carries data-only task state, never block instructions", asy
 	);
 });
 
-test("an error-resolved title call notifies, marks the model, and leaves the name alone", async () => {
+test("durable error responses notify, mark the model, and leave the name alone", async () => {
 	const pi = fakePi();
 	registerSessionTitle(pi);
 	const ctx = fakeCtx([msgEntry(USER("fix bug")), msgEntry(ASSISTANT("fixed"))]);
@@ -384,9 +384,11 @@ test("an error-resolved title call notifies, marks the model, and leaves the nam
 	// returns error responses instead of throwing) — the silent no-op that
 	// made /rename look dead on an unreachable model.
 	let calls = 0;
-	ctx.modelRegistry.complete = async () => {
+	let seenOptions;
+	ctx.modelRegistry.complete = async (_model, _context, options) => {
 		calls += 1;
-		return { ...ASSISTANT(""), stopReason: "error", errorMessage: "429 too many requests" };
+		seenOptions = options;
+		return { ...ASSISTANT(""), stopReason: "error", errorMessage: "connection refused" };
 	};
 
 	await pi.commands.rename.handler("", ctx);
@@ -398,10 +400,53 @@ test("an error-resolved title call notifies, marks the model, and leaves the nam
 		"the failure is surfaced, not swallowed",
 	);
 	assert.equal(calls, 2, "the walk tried the chain entry and the session model");
+	assert.equal(seenOptions.maxRetries, 0, "provider-level retries are off for title calls");
 	assert.equal(
 		isModelMemoFailed("zai/glm-5.3-flash"),
 		true,
-		"the dead chain entry sits out the shared cooldown",
+		"a durably dead chain entry sits out the shared cooldown",
+	);
+});
+
+test("plain rate limits fall through unmarked; quota 429s mark the cooldown", async () => {
+	const pi = fakePi();
+	registerSessionTitle(pi);
+	const ctx = fakeCtx([msgEntry(USER("fix bug")), msgEntry(ASSISTANT("fixed"))]);
+	ctx.modelRegistry.find = () => ({ id: "glm-5.3-flash", provider: "zai" });
+	ctx.modelRegistry.complete = async () => ({
+		...ASSISTANT(""),
+		stopReason: "error",
+		errorMessage: "429 too many requests",
+	});
+
+	await pi.commands.rename.handler("", ctx);
+	assert.ok(
+		ctx.ui.notifications.some((n) => /renamed failed \(no reachable model\)/.test(n.text)),
+		"the walk still reports total failure",
+	);
+	assert.equal(
+		isModelMemoFailed("zai/glm-5.3-flash"),
+		false,
+		"a plain rate limit is momentary, never memo-marked",
+	);
+});
+
+test("weekly-quota 429s mark the cooldown", async () => {
+	const pi = fakePi();
+	registerSessionTitle(pi);
+	const ctx = fakeCtx([msgEntry(USER("fix bug")), msgEntry(ASSISTANT("fixed"))]);
+	ctx.modelRegistry.find = () => ({ id: "glm-5.3-flash", provider: "zai" });
+	ctx.modelRegistry.complete = async () => ({
+		...ASSISTANT(""),
+		stopReason: "error",
+		errorMessage: '429 {"code":1308,"msg":"plan usage limit reached, resets weekly"}',
+	});
+
+	await pi.commands.rename.handler("", ctx);
+	assert.equal(
+		isModelMemoFailed("zai/glm-5.3-flash"),
+		true,
+		"a quota/plan-limit 429 lasts hours, so it sits out the window",
 	);
 });
 

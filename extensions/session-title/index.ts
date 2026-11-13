@@ -244,12 +244,35 @@ interface TitleRequest {
 	verb: string;
 }
 
-/** Hard wall-clock cap per title attempt — engine retries and backoff included. */
-const TITLE_TIMEOUT_MS = 10_000;
+/** Hard wall-clock cap per title attempt; guards hangs, since provider retries are off. */
+const TITLE_TIMEOUT_MS = 15_000;
 
-/** Sit an unreachable title model out in the shared no-work cooldown. */
-function markUnreachable(model: Model<Api>): void {
-	markModelFailed(`${model.provider}/${model.id}`);
+/**
+ * Quota and suspension style failures: weekly/monthly plan limits, drained
+ * balances, suspended accounts. They reset after hours, so a model carrying
+ * one sits out the whole cooldown window — a plain 429 with this wording is
+ * the weekly-quota case, not a momentary throttle.
+ */
+const QUOTA_LIMIT_PATTERN =
+	/usage.?limit|insufficient_quota|out of budget|quota|billing|suspension|available balance|GoUsageLimit|FreeUsageLimit|\b1308\b|subscription/i;
+/**
+ * Momentary throttles: plain rate limits, capacity overload, transient 5xx.
+ * With provider retries off they fail in a second or two — cheap to re-try on
+ * the next call and never worth poisoning the shared cooldown over (a marked
+ * throttle is how the whole chain ends up “no reachable model” while every
+ * provider is merely busy).
+ */
+const TRANSIENT_FAILURE_PATTERN =
+	/\b429\b|\b5(?:02|03|04)\b|rate.?limit|too many requests|overloaded|server.?busy|retry.?after/i;
+
+/**
+ * Whether a failure text earns a cooldown mark: everything durable does
+ * (hangs, auth, connection errors, quota/suspension limits); only momentary
+ * throttles stay unmarked.
+ */
+function shouldMarkFailed(text: string | undefined): boolean {
+	if (text === undefined) return true;
+	return QUOTA_LIMIT_PATTERN.test(text) || !TRANSIENT_FAILURE_PATTERN.test(text);
 }
 
 async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Promise<string | null> {
@@ -266,6 +289,7 @@ async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Prom
 		? `Generate a title for this session (focus: ${request.hint}):\n\n${request.context}`
 		: `Generate a title for this session:\n\n${request.context}`;
 	for (const model of candidates) {
+		let failureText: string | undefined;
 		try {
 			const response = await ctx.modelRegistry.complete(
 				model,
@@ -275,25 +299,28 @@ async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Prom
 				},
 				{
 					maxTokens: 1024,
-					// The engine retries retryable errors (429s, dead endpoints) with
-					// backoff, and complete() RESOLVES with an error message instead of
-					// throwing — uncapped, /rename sits through minutes of silent
-					// backoff and then does nothing. Cap each attempt; an aborted
-					// backoff surfaces as an aborted message the check below handles.
+					// complete() RESOLVES with an error message instead of throwing.
+					// Provider-level retries stay OFF so a rate limit or 5xx fails in
+					// a second or two instead of sitting out retry-after waits; the
+					// wall-clock cap below then only guards genuine hangs.
+					maxRetries: 0,
 					signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
 				},
 			);
 			if (response.stopReason === "error" || response.stopReason === "aborted") {
-				markUnreachable(model);
+				failureText = response.errorMessage;
+			} else {
+				const title = sanitizeTitle(messageText(response));
+				if (title) return title;
 				continue;
 			}
-			const title = sanitizeTitle(messageText(response));
-			if (title) return title;
-		} catch {
-			// The model failed to answer — sit it out for the shared cooldown
-			// window so every chain consumer skips it, not just the next rename.
-			markUnreachable(model);
+		} catch (error) {
+			failureText = error instanceof Error ? error.message : String(error);
 		}
+		// Durable failures sit the model out in the shared cooldown so every
+		// chain consumer skips it; momentary throttles just fall through to
+		// the next candidate and re-try cheaply on the next call.
+		if (shouldMarkFailed(failureText)) markModelFailed(`${model.provider}/${model.id}`);
 	}
 	ctx.ui.notify(`session-title: ${request.verb} failed (no reachable model)`, "error");
 	return null;
