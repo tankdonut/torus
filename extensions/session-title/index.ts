@@ -13,7 +13,7 @@
  * TORUS_TITLE=0; TORUS_TITLE_MODEL=provider/model overrides the generator.
  */
 
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { type Api, type Model, uuidv7 } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -261,10 +261,11 @@ export function setTitleIdleTimeoutForTesting(ms: number): void {
  * Quota and suspension style failures: weekly/monthly plan limits, drained
  * balances, suspended accounts. They reset after hours, so a model carrying
  * one sits out the whole cooldown window — a plain 429 with this wording is
- * the weekly-quota case, not a momentary throttle.
+ * the weekly-quota case, not a momentary throttle. Zhipu's weekly/monthly
+ * exhaustion surfaces as codes 1308 (limit) and 1310 (limit exhausted).
  */
 const QUOTA_LIMIT_PATTERN =
-	/usage.?limit|insufficient_quota|out of budget|quota|billing|suspension|available balance|GoUsageLimit|FreeUsageLimit|\b1308\b|subscription/i;
+	/usage.?limit|limit.?exhaust|limit.?will.?reset|insufficient_quota|out of budget|quota|billing|suspension|available balance|GoUsageLimit|FreeUsageLimit|\b13(?:08|10)\b|subscription/i;
 /**
  * Momentary throttles: plain rate limits, capacity overload, transient 5xx.
  * With provider retries off they fail in a second or two — cheap to re-try on
@@ -317,6 +318,10 @@ async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Prom
 					// Provider-level retries stay OFF so a rate limit or 5xx fails
 					// in a second or two instead of sitting out retry-after waits.
 					maxRetries: 0,
+					// OpenCode Go routes by x-opencode-session and rejects requests
+					// without one (400 MissingSessionID); ambient one-shot calls
+					// mint a fresh id per attempt, like compaction does.
+					sessionId: uuidv7(),
 					signal: abortController.signal,
 				},
 			);

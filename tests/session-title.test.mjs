@@ -416,6 +416,11 @@ test("durable error responses notify, mark the model, and leave the name alone",
 	);
 	assert.equal(calls, 2, "the walk tried the chain entry and the session model");
 	assert.equal(seenOptions.maxRetries, 0, "provider-level retries are off for title calls");
+	assert.match(
+		seenOptions.sessionId,
+		/^[0-9a-f-]{20,}$/,
+		"opencode-go needs a per-call session id",
+	);
 	assert.equal(
 		isModelMemoFailed("zai/glm-5.3-flash"),
 		true,
@@ -456,14 +461,15 @@ test("weekly-quota 429s mark the cooldown", async () => {
 		fakeStream({
 			...ASSISTANT(""),
 			stopReason: "error",
-			errorMessage: '429 {"code":1308,"msg":"plan usage limit reached, resets weekly"}',
+			errorMessage:
+				'429: {"code":"1310","message":"Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-11-15 22:52:40"}',
 		});
 
 	await pi.commands.rename.handler("", ctx);
 	assert.equal(
 		isModelMemoFailed("zai/glm-5.3-flash"),
 		true,
-		"a quota/plan-limit 429 lasts hours, so it sits out the window",
+		"the real zai weekly-limit exhaustion (code 1310) sits out the window",
 	);
 });
 
