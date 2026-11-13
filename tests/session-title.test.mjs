@@ -24,6 +24,7 @@ after(() => {
 const { isModelMemoFailed, resetFailureMemoForTesting } = await import(
 	"../extensions/providers/index.ts"
 );
+const { setTitleIdleTimeoutForTesting } = await import("../extensions/session-title/index.ts");
 const {
 	sanitizeTitle,
 	messageText,
@@ -217,6 +218,16 @@ function fakePi() {
 
 const SESSION_ID = "title-wiring-session";
 
+/** Minimal AssistantMessageEventStream stand-in: async-iterable with result(). */
+function fakeStream(response, events = [{ type: "message_start" }]) {
+	return {
+		async *[Symbol.asyncIterator]() {
+			yield* events;
+		},
+		result: async () => response,
+	};
+}
+
 function fakeCtx(entries, { reply } = {}) {
 	return {
 		sessionManager: { getEntries: () => entries, getSessionId: () => SESSION_ID },
@@ -224,7 +235,7 @@ function fakeCtx(entries, { reply } = {}) {
 		modelRegistry: {
 			find: () => ({ id: "fast" }),
 			hasConfiguredAuth: () => true,
-			complete: async () => ASSISTANT(reply ?? "Generated session title"),
+			stream: () => fakeStream(ASSISTANT(reply ?? "Generated session title")),
 		},
 		ui: {
 			notifications: [],
@@ -290,7 +301,7 @@ test("auto-title walks the chain, then everything sits in the cooldown", async (
 		reply: undefined,
 	});
 	ctx.modelRegistry.find = (provider, modelId) => ({ id: modelId, provider });
-	ctx.modelRegistry.complete = async () => {
+	ctx.modelRegistry.stream = () => {
 		calls += 1;
 		throw new Error("network down");
 	};
@@ -330,9 +341,9 @@ test("/rename regenerates from the whole session, overwriting an existing name",
 	const ctx = fakeCtx([msgEntry(USER("fix bug")), msgEntry(ASSISTANT("fixed via X"))], {
 		reply: "Hashline edit bug fix",
 	});
-	ctx.modelRegistry.complete = async (_model, context) => {
+	ctx.modelRegistry.stream = (_model, context) => {
 		seenInstruction = context.messages[0].content;
-		return ASSISTANT("Hashline edit bug fix");
+		return fakeStream(ASSISTANT("Hashline edit bug fix"));
 	};
 	await pi.commands.rename.handler("", ctx);
 	assert.equal(pi.state.name, "Hashline edit bug fix");
@@ -341,9 +352,9 @@ test("/rename regenerates from the whole session, overwriting an existing name",
 
 	// hint rides along
 	let seenHint = "";
-	ctx.modelRegistry.complete = async (_m, c) => {
+	ctx.modelRegistry.stream = (_m, c) => {
 		seenHint = c.messages[0].content;
-		return ASSISTANT("Focused title");
+		return fakeStream(ASSISTANT("Focused title"));
 	};
 	await pi.commands.rename.handler("the auth refactor", ctx);
 	assert.match(seenHint, /focus: the auth refactor/);
@@ -360,9 +371,9 @@ test("/rename brief carries data-only task state, never block instructions", asy
 	]);
 	let seen = "";
 	const ctx = fakeCtx([msgEntry(USER("improve /rename")), msgEntry(ASSISTANT("shipped"))]);
-	ctx.modelRegistry.complete = async (_model, context) => {
+	ctx.modelRegistry.stream = (_model, context) => {
 		seen = context.messages[0].content;
-		return ASSISTANT("Stratified rename brief");
+		return fakeStream(ASSISTANT("Stratified rename brief"));
 	};
 	await pi.commands.rename.handler("", ctx);
 	assert.equal(pi.state.name, "Stratified rename brief");
@@ -380,15 +391,19 @@ test("durable error responses notify, mark the model, and leave the name alone",
 	registerSessionTitle(pi);
 	const ctx = fakeCtx([msgEntry(USER("fix bug")), msgEntry(ASSISTANT("fixed"))]);
 	ctx.modelRegistry.find = () => ({ id: "glm-5.3-flash", provider: "zai" });
-	// complete() RESOLVES with an error message (the engine's retry layer
-	// returns error responses instead of throwing) — the silent no-op that
-	// made /rename look dead on an unreachable model.
+	// complete() RESOLVES with an error message (the engine never throws on
+	// model errors) — the silent no-op that made /rename look dead on an
+	// unreachable model.
 	let calls = 0;
 	let seenOptions;
-	ctx.modelRegistry.complete = async (_model, _context, options) => {
+	ctx.modelRegistry.stream = (_model, _context, options) => {
 		calls += 1;
 		seenOptions = options;
-		return { ...ASSISTANT(""), stopReason: "error", errorMessage: "connection refused" };
+		return fakeStream({
+			...ASSISTANT(""),
+			stopReason: "error",
+			errorMessage: "connection refused",
+		});
 	};
 
 	await pi.commands.rename.handler("", ctx);
@@ -413,11 +428,12 @@ test("plain rate limits fall through unmarked; quota 429s mark the cooldown", as
 	registerSessionTitle(pi);
 	const ctx = fakeCtx([msgEntry(USER("fix bug")), msgEntry(ASSISTANT("fixed"))]);
 	ctx.modelRegistry.find = () => ({ id: "glm-5.3-flash", provider: "zai" });
-	ctx.modelRegistry.complete = async () => ({
-		...ASSISTANT(""),
-		stopReason: "error",
-		errorMessage: "429 too many requests",
-	});
+	ctx.modelRegistry.stream = () =>
+		fakeStream({
+			...ASSISTANT(""),
+			stopReason: "error",
+			errorMessage: "429 too many requests",
+		});
 
 	await pi.commands.rename.handler("", ctx);
 	assert.ok(
@@ -436,11 +452,12 @@ test("weekly-quota 429s mark the cooldown", async () => {
 	registerSessionTitle(pi);
 	const ctx = fakeCtx([msgEntry(USER("fix bug")), msgEntry(ASSISTANT("fixed"))]);
 	ctx.modelRegistry.find = () => ({ id: "glm-5.3-flash", provider: "zai" });
-	ctx.modelRegistry.complete = async () => ({
-		...ASSISTANT(""),
-		stopReason: "error",
-		errorMessage: '429 {"code":1308,"msg":"plan usage limit reached, resets weekly"}',
-	});
+	ctx.modelRegistry.stream = () =>
+		fakeStream({
+			...ASSISTANT(""),
+			stopReason: "error",
+			errorMessage: '429 {"code":1308,"msg":"plan usage limit reached, resets weekly"}',
+		});
 
 	await pi.commands.rename.handler("", ctx);
 	assert.equal(
@@ -463,4 +480,59 @@ test("/rename works mid-turn; empty sessions still refuse", async () => {
 	const empty = fakeCtx([]);
 	await emptyPi.commands.rename.handler("", empty);
 	assert.equal(emptyPi.state.name, undefined);
+});
+
+test("a trickling stream outlives the idle cap; a silent one is aborted and marked", async () => {
+	setTitleIdleTimeoutForTesting(50);
+	try {
+		// tokens keep arriving every 30ms — slower than the cap wall-clock,
+		// never 50ms silent, so the title completes
+		const pi = fakePi();
+		registerSessionTitle(pi);
+		const ctx = fakeCtx([msgEntry(USER("fix bug")), msgEntry(ASSISTANT("fixed"))]);
+		ctx.modelRegistry.stream = () => ({
+			async *[Symbol.asyncIterator]() {
+				for (let i = 0; i < 5; i++) {
+					await new Promise((r) => setTimeout(r, 30));
+					yield { type: "message_start" };
+				}
+			},
+			result: async () => ASSISTANT("Trickled title"),
+		});
+		await pi.commands.rename.handler("", ctx);
+		assert.equal(pi.state.name, "Trickled title", "a streaming response is never borked");
+
+		// total silence: the armed idle cap aborts, the candidate is marked
+		const silentPi = fakePi();
+		registerSessionTitle(silentPi);
+		const silent = fakeCtx([msgEntry(USER("fix bug")), msgEntry(ASSISTANT("fixed"))]);
+		silent.modelRegistry.find = () => ({ id: "glm-5.3-flash", provider: "zai" });
+		silent.modelRegistry.stream = (_m, _c, options) => ({
+			[Symbol.asyncIterator]() {
+				return {
+					next: () =>
+						new Promise((_, reject) => {
+							options.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+						}),
+				};
+			},
+			result: () =>
+				new Promise((_, reject) => {
+					options.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+				}),
+		});
+		await silentPi.commands.rename.handler("", silent);
+		assert.equal(silentPi.state.name, undefined, "a silent stream produces no title");
+		assert.equal(
+			isModelMemoFailed("zai/glm-5.3-flash"),
+			true,
+			"the silent candidate sits out the cooldown",
+		);
+		assert.ok(
+			silent.ui.notifications.some((n) => /renamed failed/.test(n.text)),
+			"the abort surfaces as a failure",
+		);
+	} finally {
+		setTitleIdleTimeoutForTesting(15_000);
+	}
 });

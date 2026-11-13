@@ -244,8 +244,18 @@ interface TitleRequest {
 	verb: string;
 }
 
-/** Hard wall-clock cap per title attempt; guards hangs, since provider retries are off. */
-const TITLE_TIMEOUT_MS = 15_000;
+/**
+ * Idle cap per title attempt: abort only when NO stream event has arrived for
+ * this long. complete() streams under the hood, so a blind wall-clock cap can
+ * kill a healthy response that is merely trickling tokens; silence is what
+ * actually distinguishes a dead model from a slow one.
+ */
+let TITLE_IDLE_TIMEOUT_MS = 15_000;
+
+/** Test seam: shrink the idle cap so silence can be tested in real time. */
+export function setTitleIdleTimeoutForTesting(ms: number): void {
+	TITLE_IDLE_TIMEOUT_MS = ms;
+}
 
 /**
  * Quota and suspension style failures: weekly/monthly plan limits, drained
@@ -290,8 +300,13 @@ async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Prom
 		: `Generate a title for this session:\n\n${request.context}`;
 	for (const model of candidates) {
 		let failureText: string | undefined;
+		const abortController = new AbortController();
+		let idleTimer: ReturnType<typeof setTimeout> | undefined;
 		try {
-			const response = await ctx.modelRegistry.complete(
+			// stream() instead of complete(): the event stream is AsyncIterable,
+			// so each arriving event proves the model is alive and resets the
+			// idle cap below — a slow-but-streaming response is never aborted.
+			const stream = ctx.modelRegistry.stream(
 				model,
 				{
 					systemPrompt: TITLE_SYSTEM_PROMPT,
@@ -299,14 +314,24 @@ async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Prom
 				},
 				{
 					maxTokens: 1024,
-					// complete() RESOLVES with an error message instead of throwing.
-					// Provider-level retries stay OFF so a rate limit or 5xx fails in
-					// a second or two instead of sitting out retry-after waits; the
-					// wall-clock cap below then only guards genuine hangs.
+					// Provider-level retries stay OFF so a rate limit or 5xx fails
+					// in a second or two instead of sitting out retry-after waits.
 					maxRetries: 0,
-					signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
+					signal: abortController.signal,
 				},
 			);
+			const bump = () => {
+				clearTimeout(idleTimer);
+				idleTimer = setTimeout(() => abortController.abort(), TITLE_IDLE_TIMEOUT_MS);
+			};
+			// Arm immediately: silence BEFORE the first event is exactly the
+			// dead-hang case the cap exists for.
+			bump();
+			void (async () => {
+				for await (const _event of stream) bump();
+			})().catch(() => {});
+			const response = await stream.result();
+			clearTimeout(idleTimer);
 			if (response.stopReason === "error" || response.stopReason === "aborted") {
 				failureText = response.errorMessage;
 			} else {
@@ -315,6 +340,7 @@ async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Prom
 				continue;
 			}
 		} catch (error) {
+			clearTimeout(idleTimer);
 			failureText = error instanceof Error ? error.message : String(error);
 		}
 		// Durable failures sit the model out in the shared cooldown so every
