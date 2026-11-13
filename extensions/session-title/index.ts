@@ -22,7 +22,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { knobString } from "../config/knobs.js";
 import { goalTitleLine } from "../goal/index.js";
-import { gateExtension, type PlatformSupport } from "../platform.js";
+import { gateExtension, isEngineChild, type PlatformSupport } from "../platform.js";
 import { isModelMemoFailed, markModelFailed, resolveModels } from "../providers/index.js";
 import { todoTitleLines } from "../todo/index.js";
 import { workTitleLine } from "../work/index.js";
@@ -371,7 +371,7 @@ export function registerSessionTitle(pi: ExtensionAPI): void {
 
 	pi.on("turn_end", (_event, ctx) => {
 		if (process.env["TORUS_TITLE"] === "0") return;
-		if (process.env["TORUS_ENGINE_CHILD"] === "1") return;
+		if (isEngineChild()) return;
 		if (pi.getSessionName()) return;
 		if (autoAttempts >= MAX_AUTO_ATTEMPTS) return;
 		const prompt = firstUserPrompt(ctx.sessionManager.getEntries());

@@ -11,6 +11,7 @@ import {
 import path from "node:path";
 import { knobBoolean, parseZeroDisables } from "./config/knobs.js";
 import { projectStateDir } from "./fsutil.js";
+import { isEngineChild } from "./platform.js";
 import { currentSessionId, emitTorusCustom, sharedState } from "./registry.js";
 
 /**
@@ -77,7 +78,7 @@ interface SpoolRecord {
 function spoolEnabled(): boolean {
 	// Engine children have no session to wake; their queue calls are no-ops
 	// that must not grow spool files in the dispatching project's state dir.
-	if (process.env["TORUS_ENGINE_CHILD"] === "1") return false;
+	if (isEngineChild()) return false;
 	return knobBoolean("TORUS_WAKE_SPOOL", "wake", "spool", true, parseZeroDisables);
 }
 

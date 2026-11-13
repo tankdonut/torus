@@ -23,6 +23,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { isEngineChild } from "./platform.js";
 
 /**
  * Root of torus user state. `TORUS_HOME` overrides the default `~/.torus` —
@@ -112,7 +113,7 @@ function isUnderHome(dir: string): boolean {
  * and never touch the env.
  */
 export function projectStateDir(cwd?: string): string {
-	if (cwd === undefined && process.env["TORUS_ENGINE_CHILD"] === "1") {
+	if (cwd === undefined && isEngineChild()) {
 		const pinned = process.env[TORUS_STATE_DIR_ENV];
 		if (pinned !== undefined && pinned.length > 0 && isUnderHome(pinned)) {
 			return pinned;

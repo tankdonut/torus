@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-const { currentPlatform, gateExtension, platformDecisions, resetPlatformRegistryForTests } =
-	await import("../extensions/platform.ts");
+const {
+	currentPlatform,
+	gateExtension,
+	isEngineChild,
+	platformDecisions,
+	resetPlatformRegistryForTests,
+} = await import("../extensions/platform.ts");
 
 function captureStderr(run) {
 	const chunks = [];
@@ -120,6 +125,22 @@ test("platformDecisions reflects gate-call order and reset clears the slot", () 
 	);
 	resetPlatformRegistryForTests();
 	assert.equal(platformDecisions().length, 0);
+});
+
+test("isEngineChild: true only for TORUS_ENGINE_CHILD=1", () => {
+	const had = Object.hasOwn(process.env, "TORUS_ENGINE_CHILD");
+	const saved = process.env["TORUS_ENGINE_CHILD"];
+	try {
+		delete process.env["TORUS_ENGINE_CHILD"];
+		assert.equal(isEngineChild(), false);
+		process.env["TORUS_ENGINE_CHILD"] = "1";
+		assert.equal(isEngineChild(), true);
+		process.env["TORUS_ENGINE_CHILD"] = "0";
+		assert.equal(isEngineChild(), false);
+	} finally {
+		if (had) process.env["TORUS_ENGINE_CHILD"] = saved;
+		else delete process.env["TORUS_ENGINE_CHILD"];
+	}
 });
 
 test("gateExtension never throws for malformed-free but empty descriptor shapes", () => {

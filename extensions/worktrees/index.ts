@@ -42,7 +42,7 @@ import {
 import { Type } from "typebox";
 import { runChild } from "../child-run.js";
 import { projectKey, torusHome } from "../fsutil.js";
-import { gateExtension, type PlatformSupport } from "../platform.js";
+import { gateExtension, isEngineChild, type PlatformSupport } from "../platform.js";
 import { setTorusChip } from "../ui/index.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
@@ -428,7 +428,7 @@ export async function performMerge(
 
 export default function worktreesExtension(pi: ExtensionAPI): void {
 	if (!gateExtension("worktrees", PLATFORM_SUPPORT)) return;
-	if (process.env["TORUS_ENGINE_CHILD"] === "1") return;
+	if (isEngineChild()) return;
 
 	pi.registerTool(
 		defineTool({

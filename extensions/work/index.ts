@@ -24,7 +24,7 @@ import path from "node:path";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { displayPath, projectStateDir, readJson, torusHome, writeJson } from "../fsutil.js";
-import { gateExtension, type PlatformSupport } from "../platform.js";
+import { gateExtension, isEngineChild, type PlatformSupport } from "../platform.js";
 import { currentSessionId } from "../registry.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
@@ -584,7 +584,7 @@ export function registerWork(pi: ExtensionAPI): void {
 
 	// Delegated child sessions get exactly one surface: work_note with an
 	// explicit slug. Binding, resuming, and completing stay with the parent.
-	const isChild = process.env["TORUS_ENGINE_CHILD"] === "1";
+	const isChild = isEngineChild();
 
 	if (!isChild) {
 		pi.registerTool(

@@ -98,6 +98,11 @@ export function platformDecisions(): readonly GateDecision[] {
 	return registry().decisions;
 }
 
+/** True when this process runs as a spawned engine child (parent-side machinery skipped). */
+export function isEngineChild(): boolean {
+	return process.env["TORUS_ENGINE_CHILD"] === "1";
+}
+
 /** Reset the shared registry so tests start from a clean slot. */
 export function resetPlatformRegistryForTests(): void {
 	const store = globalThis as Record<symbol, PlatformRegistry | undefined>;
