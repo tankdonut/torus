@@ -27,7 +27,7 @@ import type {
 	TextContent,
 } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import { modelChain } from "../providers/index.js";
+import { resolveModels } from "../providers/index.js";
 import { CLASSIFY_TIMEOUT_MS, LOW_CONFIDENCE_THRESHOLD } from "./config.js";
 import { type AutomodeVerdict, type Decision, normalizeCommand } from "./policy.js";
 
@@ -153,14 +153,16 @@ function modelLabel(model: { provider: string; id: string }): string {
 
 /**
  * The chat fallback's default judge: the first fast-chain model the registry
- * knows with working credentials (chains-section overrides ride along), falling
- * back to the session model. Undefined only when both miss.
+ * knows with working credentials (resolveModels adds credential gating and
+ * the shared no-work cooldown, so a model another consumer watched fail is
+ * skipped here too), falling back to the session model. Undefined only when
+ * both miss.
  */
 export function pickChatModel(
 	registry: DecisionRegistry,
 	sessionModel: Model<Api> | undefined,
 ): Model<Api> | undefined {
-	for (const id of modelChain("fast")) {
+	for (const id of resolveModels("fast")) {
 		const slash = id.indexOf("/");
 		if (slash === -1) continue;
 		const model = registry.find(id.slice(0, slash), id.slice(slash + 1));

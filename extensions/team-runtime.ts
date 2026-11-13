@@ -21,9 +21,14 @@ import {
 } from "./engine-child.js";
 import { stripFrontmatter } from "./frontmatter.js";
 import { projectKey, projectStateDir, readJson, sleep, torusHome, writeJson } from "./fsutil.js";
-import { DEFAULT_MEMBER_MODEL } from "./providers/index.js";
+import {
+	type CredentialSourceOpts,
+	DEFAULT_MEMBER_MODEL,
+	markModelFailed,
+	resolveModels,
+} from "./providers/index.js";
 import { AGENT_NAME_RE, repoRoot } from "./registry.js";
-import { AGENTS, ENV_CONVENTION, resolveModels } from "./roster/index.js";
+import { AGENTS, ENV_CONVENTION } from "./roster/index.js";
 import { RpcChild } from "./rpc.js";
 
 /**
@@ -573,9 +578,17 @@ PROTOCOL each cycle: finish current instruction, then read your inbox for new me
  * content into the next prompt, publish outbox deltas to the log. Runs until
  * stopped (control.stop kills the child; the loop exits on child exit).
  */
-export function memberModelCandidates(spec: MemberSpec): string[] {
+export function memberModelCandidates(
+	spec: MemberSpec,
+	credentialOpts?: CredentialSourceOpts,
+): string[] {
 	const chain = AGENTS.find((a) => a.name === spec.agent)?.chain ?? "primary";
-	return [...new Set([spec.model ?? DEFAULT_MEMBER_MODEL, ...resolveModels(chain)])];
+	// The member default rides the availability-filtered fast head — a
+	// credential-less provider's entry drops instead of burning a bootstrap
+	// attempt, and a chains-section fast override retargets the default. The
+	// static constant only covers the everything-uncredentialed corner.
+	const head = spec.model ?? resolveModels("fast", credentialOpts)[0] ?? DEFAULT_MEMBER_MODEL;
+	return [...new Set([head, ...resolveModels(chain, credentialOpts)])];
 }
 
 export function spawnMember(
@@ -608,7 +621,7 @@ export function spawnMember(
 
 	const root = repoRoot();
 	const modelCandidates = memberModelCandidates(spec);
-	const headModel = spec.model ?? DEFAULT_MEMBER_MODEL;
+	const headModel = modelCandidates[0] ?? DEFAULT_MEMBER_MODEL;
 
 	let settleResolve: (() => void) | null = null;
 	let settleLatch = new Promise<void>((r) => {
@@ -793,6 +806,10 @@ export function spawnMember(
 			} catch (error) {
 				appendLog(`bootstrap failed: ${String(error).slice(0, 160)}`);
 			}
+			// A bootstrap that produced zero turns judges its model no-work: mark
+			// it in the shared cooldown so every other chain consumer in this
+			// process — delegations and ambient titling — skips it too.
+			if (!alive && tally.turns === turnsAtSpawn) markModelFailed(headModel);
 			// No JSON-mode fallback here (unlike roster's one-shot delegations):
 			// a member is a long-lived RPC child whose supervisor drives persistent
 			// getState/prompt cycles plus mailbox polling; JSON mode is turn-based
@@ -828,6 +845,7 @@ export function spawnMember(
 				} catch (error) {
 					appendLog(`fallback bootstrap failed: ${String(error).slice(0, 160)}`);
 				}
+				if (!alive && tally.turns === turnsAtSpawn) markModelFailed(nextModel);
 			}
 			if (!alive) stopped = true;
 			drainOutbox();

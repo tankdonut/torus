@@ -393,6 +393,105 @@ export function providerAvailabilities(
 	return available;
 }
 
+/**
+ * Session-scoped no-work cooldown: model id → epoch-ms until which the model
+ * is skipped at chain resolution. Per-process and in-memory by design — one
+ * engine session's bad patch must not outlive it, and a restart clears it.
+ * Any chain consumer that watches a model produce no work or fail to answer
+ * marks it here, so every later chain resolution starts below the dead head
+ * instead of paying a failed attempt on it all over again.
+ */
+const FAILURE_MEMO_TTL_MS = 300_000;
+/** model id → epoch ms when it was last judged no-work. */
+const failureMemo = new Map<string, number>();
+
+/** Mark a model no-work for the cooldown window (test seam: inject `now`). */
+export function markModelFailed(model: string, now: number = Date.now()): void {
+	failureMemo.set(model, now);
+}
+
+/** Whether the model is inside the no-work cooldown window (test seam: inject `now`). */
+export function isModelMemoFailed(model: string, now: number = Date.now()): boolean {
+	const markedAt = failureMemo.get(model);
+	if (markedAt === undefined) return false;
+	if (now >= markedAt + FAILURE_MEMO_TTL_MS) {
+		failureMemo.delete(model);
+		return false;
+	}
+	return true;
+}
+
+/** Clears the cooldown map (tests only). */
+export function resetFailureMemoForTesting(): void {
+	failureMemo.clear();
+}
+
+/** Chain candidates whose provider passes the availability filter (no memo applied). */
+function availabilityFilteredChain(
+	chain: ChainTier,
+	credentialOpts?: CredentialSourceOpts,
+): string[] {
+	const available = providerAvailabilities(credentialOpts);
+	return modelChain(chain).filter((model) => {
+		const provider = model.split("/")[0];
+		return (
+			provider !== undefined &&
+			provider in available &&
+			available[provider as keyof typeof available]
+		);
+	});
+}
+
+/**
+ * Availability-filtered chain minus models inside the no-work cooldown.
+ * If the memo drops EVERYTHING, the availability-only list survives —
+ * attempting a possibly-dead head beats having no model at all.
+ */
+function memoFilteredChain(chain: ChainTier, credentialOpts?: CredentialSourceOpts): string[] {
+	const available = availabilityFilteredChain(chain, credentialOpts);
+	const cooled = available.filter((model) => !isModelMemoFailed(model));
+	return cooled.length > 0 ? cooled : available;
+}
+
+/**
+ * Effective chain for resolution: provider-availability filter, then the
+ * session's no-work cooldown. This is THE chain-model helper — every
+ * surface that picks a chain model (delegations, team members, ambient
+ * titling, chat classification) resolves through it, so a model judged
+ * dead by one consumer is skipped by all of them for the cooldown window.
+ * `credentialOpts` is a test seam forwarding to the built-in providers'
+ * credential gate; production callers pass nothing.
+ */
+export function resolveModels(chain: ChainTier, credentialOpts?: CredentialSourceOpts): string[] {
+	return memoFilteredChain(chain, credentialOpts);
+}
+
+/** Model ids a delegation may run on right now: credentialed chain candidates not in the no-work cooldown. */
+export function availableModels(): string[] {
+	return [...new Set([...resolveModels("primary"), ...resolveModels("fast")])];
+}
+
+/** Union of both chains under the availability filter only (no cooldown). */
+function declaredAvailableModels(): string[] {
+	return [
+		...new Set([...availabilityFilteredChain("primary"), ...availabilityFilteredChain("fast")]),
+	];
+}
+
+/**
+ * Resolve a per-run model override: "primary"/"fast" name a chain (resolved
+ * to its first credentialed candidate outside the no-work cooldown, falling
+ * back to the plain head when the cooldown covers the whole chain); anything
+ * else must be an exact id among the credentialed providers' models —
+ * validated WITHOUT the cooldown, because naming a model explicitly is a
+ * deliberate bypass of it. Returns the concrete id, or undefined when
+ * nothing matches.
+ */
+export function resolveRequestedModel(requested: string): string | undefined {
+	if (requested === "primary" || requested === "fast") return memoFilteredChain(requested)[0];
+	return declaredAvailableModels().includes(requested) ? requested : undefined;
+}
+
 export function registerProviders(pi: ExtensionAPI): void {
 	// Only the section-level warning (a malformed config.json) surfaces, once
 	// at startup.

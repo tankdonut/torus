@@ -2,11 +2,26 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, beforeEach, test } from "node:test";
 
 const home = mkdtempSync(path.join(tmpdir(), "torus-title-"));
 process.env["TORUS_HOME"] = home;
 
+// resolveTitleModel walks the credential-gated chain helper, so the gate
+// needs presence-only dummy keys here too (nothing reads the values).
+const PREV_ZAI_KEY = process.env["ZAI_API_KEY"];
+const PREV_OPENCODE_KEY = process.env["OPENCODE_API_KEY"];
+process.env["ZAI_API_KEY"] = "torus-test-dummy";
+process.env["OPENCODE_API_KEY"] = "torus-test-dummy";
+
+after(() => {
+	if (PREV_ZAI_KEY === undefined) delete process.env["ZAI_API_KEY"];
+	else process.env["ZAI_API_KEY"] = PREV_ZAI_KEY;
+	if (PREV_OPENCODE_KEY === undefined) delete process.env["OPENCODE_API_KEY"];
+	else process.env["OPENCODE_API_KEY"] = PREV_OPENCODE_KEY;
+});
+
+const { resetFailureMemoForTesting } = await import("../extensions/providers/index.ts");
 const {
 	sanitizeTitle,
 	messageText,
@@ -15,6 +30,10 @@ const {
 	resolveTitleModel,
 	registerSessionTitle,
 } = await import("../extensions/session-title/index.ts");
+
+// generateTitle marks an unreachable model in the shared cooldown; each test
+// starts with a clean memo.
+beforeEach(() => resetFailureMemoForTesting());
 
 function msgEntry(message) {
 	return { type: "message", id: `e${Math.random()}`, parentId: null, timestamp: "0", message };

@@ -23,7 +23,7 @@ import type {
 import { knobString } from "../config/knobs.js";
 import { goalTitleLine } from "../goal/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
-import { modelChain } from "../providers/index.js";
+import { markModelFailed, resolveModels } from "../providers/index.js";
 import { todoTitleLines } from "../todo/index.js";
 import { workTitleLine } from "../work/index.js";
 
@@ -68,7 +68,7 @@ export interface TitleModelRegistry {
 	hasConfiguredAuth(model: Model<Api>): boolean;
 }
 
-/** Model cascade for title generation: env override -> first authed fast-chain entry -> session model. */
+/** Model cascade for title generation: env override -> first available fast-chain entry -> session model. */
 export function resolveTitleModel(
 	override: string | undefined,
 	registry: TitleModelRegistry,
@@ -81,11 +81,10 @@ export function resolveTitleModel(
 			if (candidate) return candidate;
 		}
 	}
-	// The fast chain is read per call, so a chains-section fast override retargets
-	// ambient titling without a restart; entries without a slash or without
-	// configured credentials drop, and an exhausted chain falls through to the
-	// session model below.
-	for (const id of modelChain("fast")) {
+	// resolveModels is THE chain helper: credential-gated entries drop and
+	// models another consumer watched fail sit out the no-work cooldown, so ambient
+	// titling neither burns a dead head nor rediscovers it per call.
+	for (const id of resolveModels("fast")) {
 		const slash = id.indexOf("/");
 		if (slash === -1) continue;
 		const model = registry.find(id.slice(0, slash), id.slice(slash + 1));
@@ -250,6 +249,9 @@ async function generateTitle(ctx: ExtensionContext, request: TitleRequest): Prom
 		);
 		return sanitizeTitle(messageText(response));
 	} catch {
+		// The model failed to answer — sit it out for the shared cooldown window
+		// so every chain consumer skips it, not just the next rename.
+		markModelFailed(`${model.provider}/${model.id}`);
 		ctx.ui.notify(`session-title: ${request.verb} failed (model unreachable)`, "error");
 		return null;
 	}
