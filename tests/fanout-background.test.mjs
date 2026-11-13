@@ -196,7 +196,7 @@ test(
 			assert.equal(message.details.background, true);
 			assert.equal(message.details.ok, true);
 			assert.equal(message.details.agent, "builder");
-			assert.match(message.content[0].text, /background delegation finished/);
+			assert.match(message.content[0].text, /delegation "\w+" finished:/);
 			assert.equal(options?.triggerTurn, true);
 			assert.equal(options?.deliverAs, "followUp");
 		}
@@ -232,7 +232,7 @@ test(
 		const failed = entries.find((e) => e.message.details.handle === "dead2");
 		assert.ok(failed, "the failed run's entry is present");
 		assert.equal(failed.message.details.ok, false);
-		assert.match(failed.message.content[0].text, /background delegation FAILED/);
+		assert.match(failed.message.content[0].text, /delegation "dead2" failed:/);
 		const healthy = entries.find((e) => e.message.details.handle === "alive2");
 		assert.ok(healthy, "the healthy run's entry is present");
 		assert.equal(healthy.message.details.ok, true);
@@ -320,7 +320,7 @@ test(
 		assert.equal(message.details.background, true);
 		assert.equal(message.details.ok, true);
 		assert.equal(message.details.agent, "chain");
-		assert.match(message.content[0].text, /background delegation finished/);
+		assert.match(message.content[0].text, /delegation "chain" finished:/);
 		assert.match(message.content[0].text, /chain complete/);
 		assert.match(message.content[0].text, /torus_results/);
 		assert.equal(typeof message.details.delegationId, "string", "the wake points at the last step");

@@ -15,11 +15,11 @@ import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { runChild } from "../child-run.js";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
-import { flattenPreview, formatDuration } from "../fleet/theme-kit.js";
+import { flattenPreview } from "../fleet/theme-kit.js";
 import { projectStateDir } from "../fsutil.js";
 import { notifyBg, notifyMonitor } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
-import { queueWakeEntry } from "../wake-gate.js";
+import { queueWakeEntry, torusWake } from "../wake-gate.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin"],
@@ -97,7 +97,11 @@ function emitMonitorFired(
 	// one-at-a-time follow-up queue turns later.
 	queueWakeEntry({
 		customType: "torus.monitor-fired",
-		text: `monitor "${entry.name}" ${what}${exit !== null ? ` (exit ${exit})` : ""}${tail.length > 0 ? `: ${tail}` : ""} — monitor stopped itself, no torus_monitor_stop needed`,
+		text: torusWake("monitor", entry.name, what, {
+			code: exit,
+			...(tail.length > 0 ? { tail } : {}),
+			hint: "monitor stopped itself, no torus_monitor_stop needed",
+		}),
 		details: { name: entry.name, reason, exit, tail },
 	});
 }
@@ -227,10 +231,14 @@ function emitBgExit(entry: BgEntry, code: number | null, signal: string | null):
 		entry.logFile,
 		`[${new Date().toISOString()}] exit code=${code} signal=${signal} ${reason} in ${durationMs}ms\n`,
 	);
-	const codeText = code !== null ? `exit ${code}` : `signal ${signal ?? "unknown"}`;
 	queueWakeEntry({
 		customType: "torus.bg-exit",
-		text: `bg "${entry.name}" ${reason} (${codeText}) in ${formatDuration(durationMs)}${flat.length > 0 ? `: ${flat}` : ""} — log: ${entry.logFile}`,
+		text: torusWake("bg", entry.name, reason, {
+			code: code !== null ? code : `signal ${signal ?? "unknown"}`,
+			durationMs,
+			...(flat.length > 0 ? { tail: flat } : {}),
+			hint: `log: ${entry.logFile}`,
+		}),
 		details: {
 			name: entry.name,
 			code,

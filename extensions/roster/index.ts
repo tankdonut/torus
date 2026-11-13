@@ -91,6 +91,7 @@ import { findSessionFile } from "../sessions/index.js";
 import {
 	drainWakeSpool,
 	queueWakeEntry,
+	torusWake,
 	wakeGateAgentSettled,
 	wakeGateAgentStart,
 } from "../wake-gate.js";
@@ -1030,10 +1031,17 @@ export function fireDelegationsBackground(
 					outcome.text.length > BACKGROUND_SUMMARY_CAP
 						? `${outcome.text.slice(0, BACKGROUND_SUMMARY_CAP)}…`
 						: outcome.text;
-				const label = run.handle ? `@${run.handle} (${run.agent})` : run.agent;
 				queueWakeEntry({
 					customType: "torus.delegation-result",
-					text: `[torus] ${label} background delegation ${outcome.ok ? "finished" : "FAILED"}. Full result:\n\n${summary}\n\nFull output: run torus_results${outcome.delegationId ? ` with id ${outcome.delegationId}` : " and pick this run"}.${record ? ` Log: ${record.logFile}` : ""}`,
+					text: torusWake(
+						"delegation",
+						run.handle ?? run.agent,
+						outcome.ok ? "finished" : "failed",
+						{
+							tail: `Full result:\n\n${summary}`,
+							hint: `Full output: run torus_results${outcome.delegationId ? ` with id ${outcome.delegationId}` : " and pick this run"}.${record ? ` Log: ${record.logFile}` : ""}`,
+						},
+					),
 					details: {
 						agent: run.agent,
 						handle: run.handle,
@@ -2166,7 +2174,7 @@ export function registerRoster(pi: ExtensionAPI): void {
 					const summary =
 						outcome.text.length > 4000 ? `${outcome.text.slice(0, 4000)}…` : outcome.text;
 					pi.sendUserMessage(
-						`[torus] ${agent.name} delegation ${outcome.ok ? "finished" : "FAILED"}. Full result:\n\n${summary}\n\nRead the result above and continue the session work if this outcome affects it.`,
+						`[torus] ${agent.name} delegation ${outcome.ok ? "finished" : "failed"}. Full result:\n\n${summary}\n\nRead the result above and continue the session work if this outcome affects it.`,
 						{ deliverAs: "followUp" },
 					);
 				},

@@ -14,6 +14,47 @@ import { projectStateDir } from "./fsutil.js";
 import { isEngineChild } from "./platform.js";
 import { currentSessionId, emitTorusCustom, sharedState } from "./registry.js";
 
+/** Optional segments for torusWake(); every absent segment leaves no empty parens or dashes. */
+export interface TorusWakeOpts {
+	/** Process exit code (renders `exit N`) or a preformatted note (e.g. `signal TERM`). */
+	code?: number | string | null;
+	durationMs?: number | null;
+	tail?: string | null;
+	hint?: string | null;
+}
+
+/** Same whole-second shape as the theme-kit duration formatter, kept local to stay dependency-lean. */
+function formatWakeDuration(ms: number): string {
+	const total = Math.max(0, Math.round(ms / 1000));
+	const hours = Math.floor(total / 3600);
+	const minutes = Math.floor((total % 3600) / 60);
+	const seconds = total % 60;
+	if (hours > 0) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+	if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+	return `${seconds}s`;
+}
+
+/**
+ * The one wake-text grammar every producer shares:
+ * `[torus] <surface> "<name>" <event> (<code>) in <dur>: <tail> — <hint>`.
+ * Event casing is lowercase throughout (`finished`/`failed`); code, duration,
+ * tail, and hint are optional and drop out cleanly when absent.
+ */
+export function torusWake(
+	surface: string,
+	name: string,
+	event: string,
+	opts: TorusWakeOpts = {},
+): string {
+	let text = `[torus] ${surface} "${name}" ${event}`;
+	if (typeof opts.code === "number") text += ` (exit ${opts.code})`;
+	else if (opts.code) text += ` (${opts.code})`;
+	if (typeof opts.durationMs === "number") text += ` in ${formatWakeDuration(opts.durationMs)}`;
+	if (opts.tail) text += `: ${opts.tail}`;
+	if (opts.hint) text += ` — ${opts.hint}`;
+	return text;
+}
+
 /**
  * One pending wake marker, held while the agent is mid-run. `customType`,
  * `details`, and `text` carry exactly what an ungated emit would have sent.

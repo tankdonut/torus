@@ -110,7 +110,7 @@ test("per-member wake-up fires on a member's finished episode, independent of si
 	team.flushTeamWakesForTesting();
 	assert.equal(wakes.length, 1, "episode fires on flush even though one is still working");
 	const wake = wakes[0];
-	assert.match(wakeText(wake), /\[torus\] team alpha: @two \(builder\) is idle/);
+	assert.match(wakeText(wake), /\[torus\] team "alpha" @two \(builder\) is idle/);
 	assert.match(wakeText(wake), /report: .*found 3 issues/);
 	assert.match(wakeText(wake), /team_status/);
 	assert.equal(wake.options?.deliverAs, "followUp");
@@ -202,7 +202,11 @@ test("episodes within one coalescing window flush as a single combined wake", as
 	team.flushTeamWakesForTesting();
 	assert.equal(wakes.length, 1, "two episodes in one window flush as one wake");
 	const text = wakeText(wakes[0]);
-	assert.match(text, /2 members finished/);
+	assert.equal(
+		(text.match(/\[torus\] team "golf"/g) ?? []).length,
+		2,
+		"multi-episode wake renders one torusWake line per member",
+	);
 	assert.match(text, /@scan-a/);
 	assert.match(text, /@scan-b/);
 	assert.match(text, /scan-a done/);

@@ -136,10 +136,7 @@ test("fireDelegationsBackground queues one wake entry per completed run, no dire
 		"torus.delegation-result",
 		"single-entry flush keeps the marker type",
 	);
-	assert.match(
-		message.content[0].text,
-		/\[torus\] @bg-probe \(worker\) background delegation finished\./,
-	);
+	assert.match(message.content[0].text, /\[torus\] delegation "bg-probe" finished:/);
 	assert.match(message.content[0].text, /probe result/);
 	assert.match(message.content[0].text, /torus_results/);
 	assert.equal(message.details.handle, "bg-probe", "handle stays bare (renderers prepend @)");
@@ -169,7 +166,7 @@ test("a crashing background run still queues a FAILED entry instead of rejecting
 	assert.equal(outcomes[0].ok, false);
 	assert.equal(sent.length, 1);
 	assert.equal(sent[0].message.details.ok, false);
-	assert.match(sent[0].message.content[0].text, /background delegation FAILED/);
+	assert.match(sent[0].message.content[0].text, /delegation "worker" failed:/);
 });
 
 test("torus_delegate background:true returns immediately and delivers via the wake gate", async () => {
@@ -208,7 +205,7 @@ test("torus_delegate background:true returns immediately and delivers via the wa
 		assert.equal(entries[0].message.details.handle, "bg-run");
 		assert.equal(entries[0].message.details.ok, true);
 		assert.equal(entries[0].message.details.delegationId, result.structuredContent.delegationId);
-		assert.match(entries[0].message.content[0].text, /background delegation finished/);
+		assert.match(entries[0].message.content[0].text, /delegation "bg-run" finished:/);
 	} finally {
 		if (PREV_ENGINE_BIN === undefined) delete process.env.TORUS_ENGINE_BIN;
 		else process.env.TORUS_ENGINE_BIN = PREV_ENGINE_BIN;

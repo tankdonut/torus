@@ -38,7 +38,7 @@ import {
 	runDelegation,
 	withWarning,
 } from "../roster/index.js";
-import { dropWakeEntries, queueWakeEntry } from "../wake-gate.js";
+import { dropWakeEntries, queueWakeEntry, torusWake } from "../wake-gate.js";
 import {
 	blockedTasks,
 	deliverMail,
@@ -741,12 +741,15 @@ function flushTeamWake(teamId: string): void {
 		});
 	}
 	if (episodes.length === 0) return;
-	const lines = episodes.map((e) => `@${e.member} (${e.agent}) is ${e.status} — ${e.reason}`);
 	const first = episodes[0];
-	const text =
-		episodes.length === 1
-			? `[torus] team ${record.name}: ${lines[0]}. Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.`
-			: `[torus] team ${record.name}: ${episodes.length} members finished — ${lines.join("; ")}. Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.`;
+	const text = episodes
+		.map((e) =>
+			torusWake("team", record.name, `@${e.member} (${e.agent}) is ${e.status}`, {
+				tail: e.reason,
+				hint: "Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.",
+			}),
+		)
+		.join("\n");
 	// Wake via a triggerTurn marker (the monitor pattern), never a bare user
 	// follow-up: a queued follow-up is only consumed by a run, so an
 	// interrupted turn strands it pending until the next user input.
