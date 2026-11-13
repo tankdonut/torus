@@ -43,8 +43,6 @@ const OUTCOME_MAX = 400;
 const STATE_MAX = 2000;
 /** Give-up threshold for background auto-title retries. */
 const MAX_AUTO_ATTEMPTS = 3;
-/** Hard fallback when the fast chain resolves empty (it never does today). */
-const DEFAULT_TITLE_MODEL = "zai/glm-5.3-flash";
 
 const TITLE_SYSTEM_PROMPT = `You are a title generator. You output ONLY a session title. Nothing else.
 
@@ -70,7 +68,7 @@ export interface TitleModelRegistry {
 	hasConfiguredAuth(model: Model<Api>): boolean;
 }
 
-/** Model cascade for title generation: env override -> fast chain head -> session model. */
+/** Model cascade for title generation: env override -> first authed fast-chain entry -> session model. */
 export function resolveTitleModel(
 	override: string | undefined,
 	registry: TitleModelRegistry,
@@ -84,11 +82,15 @@ export function resolveTitleModel(
 		}
 	}
 	// The fast chain is read per call, so a chains-section fast override retargets
-	// ambient titling without a restart; an unfindable head falls through to the
+	// ambient titling without a restart; entries without a slash or without
+	// configured credentials drop, and an exhausted chain falls through to the
 	// session model below.
-	const [provider, modelId] = (modelChain("fast")[0] ?? DEFAULT_TITLE_MODEL).split("/");
-	const fast = registry.find(provider ?? "", modelId ?? "");
-	if (fast && registry.hasConfiguredAuth(fast)) return fast;
+	for (const id of modelChain("fast")) {
+		const slash = id.indexOf("/");
+		if (slash === -1) continue;
+		const model = registry.find(id.slice(0, slash), id.slice(slash + 1));
+		if (model && registry.hasConfiguredAuth(model)) return model;
+	}
 	return sessionModel;
 }
 

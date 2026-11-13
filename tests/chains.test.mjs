@@ -433,9 +433,38 @@ test("ambient session-title cascade follows a fast-tier override onto the local 
 	assert.equal(sessionTitle.resolveTitleModel(undefined, registry, sessionModel), sessionModel);
 	assert.deepEqual(
 		finds,
-		["zai/glm-5.3-flash"],
-		"built-in fast head returns with the section gone",
+		["zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
+		"built-in fast chain is walked in order with the section gone",
 	);
+});
+
+test("ambient session-title walks past an unauthed zai onto the second fast entry", () => {
+	removeConfig();
+	const finds = [];
+	let authed = false;
+	const registry = {
+		find: (provider, modelId) => {
+			finds.push(`${provider}/${modelId}`);
+			return { id: modelId };
+		},
+		hasConfiguredAuth: () => authed,
+	};
+	const sessionModel = { id: "session" };
+
+	assert.equal(
+		sessionTitle.resolveTitleModel(undefined, registry, sessionModel),
+		sessionModel,
+		"no authed fast entry falls back to the session model",
+	);
+	assert.deepEqual(finds, ["zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"]);
+
+	authed = true;
+	finds.length = 0;
+	assert.equal(
+		sessionTitle.resolveTitleModel(undefined, registry, sessionModel).id,
+		"glm-5.3-flash",
+	);
+	assert.equal(finds.length, 1, "walk stops at the first authed entry");
 });
 
 test("happy path: a chains-section override reaches the engine child's --model argv", async () => {
