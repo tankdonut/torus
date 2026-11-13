@@ -5,7 +5,6 @@
  * file (which tmux panes tail), and is listed by the /torus browser overlay.
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
 import {
 	appendFileSync,
 	chmodSync,
@@ -16,6 +15,7 @@ import {
 	statSync,
 } from "node:fs";
 import path from "node:path";
+import { runChild } from "./child-run.js";
 import { flattenPreview } from "./fleet/theme-kit.js";
 import {
 	formatCost,
@@ -727,36 +727,10 @@ export function resetRegistryForTesting(): void {
  * blocks the engine event loop. A stuck server is killed after 5s.
  */
 function runTmux(args: string[]): Promise<{ ok: boolean; stdout: string }> {
-	return new Promise((resolve) => {
-		let child: ChildProcess;
-		try {
-			child = spawn("tmux", args, { stdio: ["ignore", "pipe", "ignore"] });
-		} catch {
-			resolve({ ok: false, stdout: "" });
-			return;
-		}
-		let stdout = "";
-		let settled = false;
-		let termTimer: ReturnType<typeof setTimeout> | undefined;
-		let killTimer: ReturnType<typeof setTimeout> | undefined;
-		const finish = (ok: boolean) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(termTimer);
-			clearTimeout(killTimer);
-			resolve({ ok, stdout: stdout.trim() });
-		};
-		termTimer = setTimeout(() => {
-			child.kill("SIGTERM");
-			killTimer = setTimeout(() => child.kill("SIGKILL"), 250);
-		}, 5000);
-		child.stdout?.setEncoding("utf8");
-		child.stdout?.on("data", (chunk: string) => {
-			stdout += chunk;
-		});
-		child.on("error", () => finish(false));
-		child.on("close", (code) => finish(code === 0));
-	});
+	return runChild("tmux", args, { timeoutMs: 5000 }).then((run) => ({
+		ok: run.status === 0,
+		stdout: run.stdout.trim(),
+	}));
 }
 
 /**

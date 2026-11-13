@@ -9,6 +9,7 @@
 import { spawn } from "node:child_process";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { runChild } from "../child-run.js";
 import { truncateText } from "../guards/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
@@ -51,41 +52,13 @@ interface SgResult {
 /**
  * Async sg runner: piped stdio, both streams buffered, resolves on close so
  * the engine event loop (the TUI renders on it) never blocks. A 30s kill
- * timer bounds runaway scans, and output past the 4MB cap is trimmed —
- * partial output with a null exit status, never a thrown error.
+ * timer bounds runaway scans, and output past the 4MB cap is discarded —
+ * capped text at close with a null exit status on a kill, never a thrown
+ * error.
  */
-function runSg(args: string[]): Promise<SgResult> {
-	return new Promise((resolve) => {
-		let stdout = "";
-		let stderr = "";
-		let settled = false;
-		let killTimer: NodeJS.Timeout | undefined;
-		const child = spawn("sg", args, { stdio: ["ignore", "pipe", "pipe"] });
-		const finish = (status: number | null) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(killTimer);
-			const trim = (s: string) => (s.length > SG_MAX_BUFFER ? s.slice(0, SG_MAX_BUFFER) : s);
-			resolve({ stdout: trim(stdout), stderr: trim(stderr), status });
-		};
-		killTimer = setTimeout(() => {
-			child.kill("SIGTERM");
-			setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
-		}, SG_TIMEOUT_MS);
-		killTimer.unref();
-		child.stdout.setEncoding("utf8");
-		child.stderr.setEncoding("utf8");
-		child.stdout.on("data", (d: string) => {
-			stdout += d;
-			if (stdout.length >= SG_MAX_BUFFER) child.kill("SIGTERM");
-		});
-		child.stderr.on("data", (d: string) => {
-			stderr += d;
-			if (stderr.length >= SG_MAX_BUFFER) child.kill("SIGTERM");
-		});
-		child.on("error", () => finish(null));
-		child.on("close", (code) => finish(code));
-	});
+async function runSg(args: string[]): Promise<SgResult> {
+	const run = await runChild("sg", args, { timeoutMs: SG_TIMEOUT_MS, maxBuffer: SG_MAX_BUFFER });
+	return { stdout: run.stdout, stderr: run.stderr, status: run.status };
 }
 export function buildAstgrepArgs(
 	pattern: string,

@@ -12,10 +12,11 @@
  * notify-send is absent; TORUS_NOTIFY=0 opts out entirely.
  */
 
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { runChild } from "./child-run.js";
 import { knobBoolean, parseZeroDisables } from "./config/knobs.js";
 import { formatDuration, formatTokens, shortModel, statusGlyphText } from "./fleet/theme-kit.js";
 import { previewLine } from "./text.js";
@@ -242,46 +243,12 @@ export async function osNotify(
 	} else if (replaceId !== undefined) {
 		chainId = (await replaceId) ?? undefined;
 	}
-	return new Promise((resolve) => {
-		let child: ChildProcess;
-		try {
-			child = spawn("notify-send", toastArgs(toast, chainId, canChain), {
-				stdio: ["ignore", "pipe", "ignore"],
-			});
-		} catch {
-			// absent binary or desktop bus — notifications are best-effort
-			resolve(null);
-			return;
-		}
-		let stdout = "";
-		let settled = false;
-		let termTimer: ReturnType<typeof setTimeout> | undefined;
-		let killTimer: ReturnType<typeof setTimeout> | undefined;
-		const settle = (id: number | null) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(termTimer);
-			clearTimeout(killTimer);
-			resolve(id);
-		};
-		termTimer = setTimeout(() => {
-			child.kill("SIGTERM");
-			killTimer = setTimeout(() => child.kill("SIGKILL"), 250);
-		}, 3000);
-		child.stdout?.setEncoding("utf8");
-		child.stdout?.on("data", (chunk: string) => {
-			stdout += chunk;
-		});
-		child.on("error", () => settle(null));
-		child.on("close", (code) => {
-			if (!canChain || code !== 0) {
-				settle(null);
-				return;
-			}
-			const id = Number.parseInt(stdout.trim(), 10);
-			settle(Number.isInteger(id) && id > 0 ? id : null);
-		});
+	const run = await runChild("notify-send", toastArgs(toast, chainId, canChain), {
+		timeoutMs: 3000,
 	});
+	if (!canChain || run.status !== 0) return null;
+	const id = Number.parseInt(run.stdout.trim(), 10);
+	return Number.isInteger(id) && id > 0 ? id : null;
 }
 
 export async function notifyDelegation(

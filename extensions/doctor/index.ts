@@ -6,11 +6,12 @@
  * state-dir writability, each with a concrete ok/warn/fail line.
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { runChild } from "../child-run.js";
 import { type StatusState, statusGlyphText } from "../fleet/theme-kit.js";
 import { torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport, platformDecisions } from "../platform.js";
@@ -159,29 +160,9 @@ interface ProbeResult {
  * stdout, mirroring spawnSync's `status: null` on error or kill. An optional
  * timeout kills the child (SIGTERM, then SIGKILL two seconds later).
  */
-function runProbe(cmd: string, args: string[], timeoutMs?: number): Promise<ProbeResult> {
-	return new Promise((resolve) => {
-		let stdout = "";
-		let settled = false;
-		const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "ignore"] });
-		const finish = () => {
-			if (settled) return;
-			settled = true;
-			resolve({ status: child.exitCode, stdout });
-		};
-		child.stdout.setEncoding("utf8");
-		child.stdout.on("data", (d: string) => {
-			stdout += d;
-		});
-		child.on("error", () => finish());
-		child.on("close", () => finish());
-		if (timeoutMs !== undefined) {
-			setTimeout(() => {
-				child.kill("SIGTERM");
-				setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
-			}, timeoutMs).unref();
-		}
-	});
+async function runProbe(cmd: string, args: string[], timeoutMs?: number): Promise<ProbeResult> {
+	const run = await runChild(cmd, args, { timeoutMs });
+	return { status: run.status, stdout: run.stdout };
 }
 
 async function engineCheck(engineBin: string, pinnedVersion: string): Promise<CheckResult> {

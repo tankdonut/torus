@@ -32,7 +32,6 @@
  * inside an assigned worktree via cwd; they never drive the lifecycle.
  */
 
-import { spawn } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import {
@@ -41,6 +40,7 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { runChild } from "../child-run.js";
 import { projectKey, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { setTorusChip } from "../ui/index.js";
@@ -95,48 +95,17 @@ export interface GitResult {
  * hanging forever, and an AbortSignal kills the child (SIGTERM, then
  * SIGKILL after 2s) so users can cancel a stuck git operation.
  */
-function runProcess(
+async function runProcess(
 	cmd: string,
 	args: string[],
 	opts: { cwd: string; env?: NodeJS.ProcessEnv; signal?: AbortSignal },
 ): Promise<GitResult> {
-	return new Promise((resolve) => {
-		let stdout = "";
-		let stderr = "";
-		let settled = false;
-		const child = spawn(cmd, args, {
-			cwd: opts.cwd,
-			env: opts.env,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		const finish = (ok: boolean) => {
-			if (settled) return;
-			settled = true;
-			resolve({ ok, stdout: stdout.trim(), stderr: stderr.trim() });
-		};
-		child.stdout.setEncoding("utf8");
-		child.stderr.setEncoding("utf8");
-		child.stdout.on("data", (d: string) => {
-			stdout += d;
-		});
-		child.stderr.on("data", (d: string) => {
-			stderr += d;
-		});
-		child.on("error", (err) => {
-			stderr += `${err}`;
-			finish(false);
-		});
-		child.on("close", (code) => finish(code === 0));
-		const signal = opts.signal;
-		if (signal) {
-			const kill = () => {
-				child.kill("SIGTERM");
-				setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
-			};
-			if (signal.aborted) kill();
-			else signal.addEventListener("abort", kill, { once: true });
-		}
-	});
+	const run = await runChild(cmd, args, { cwd: opts.cwd, env: opts.env, signal: opts.signal });
+	return {
+		ok: run.status === 0,
+		stdout: run.stdout.trim(),
+		stderr: run.stderr.trim() || (run.error ?? ""),
+	};
 }
 
 export function runGit(cwd: string, args: string[], signal?: AbortSignal): Promise<GitResult> {

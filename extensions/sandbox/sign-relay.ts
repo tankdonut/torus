@@ -36,7 +36,7 @@
  * file. Processed requests are unlinked; the wrapper unlinks the response it
  * consumed — stale files from crashed runs are harmless and simply persist.
  */
-import { spawn } from "node:child_process";
+
 import {
 	chmodSync,
 	existsSync,
@@ -50,6 +50,8 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+
+import { runChild } from "../child-run.js";
 
 export interface SignRelayOptions {
 	/** Pre-created private dir; all relay state (watcher side) lives under it. */
@@ -315,26 +317,9 @@ function resolveKeyRef(keyRef: string): string {
 	return path.resolve(keyRef);
 }
 
-function runSshKeygen(bin: string, args: string[], timeoutMs: number): Promise<KeygenResult> {
-	return new Promise((resolve) => {
-		let stdout = "";
-		let stderr = "";
-		let settled = false;
-		const finish = (status: number | null, failure?: string): void => {
-			if (settled) return;
-			settled = true;
-			resolve({ status, failure, stdout, stderr });
-		};
-		const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], timeout: timeoutMs });
-		child.stdout?.on("data", (chunk: Buffer) => {
-			stdout += chunk.toString("utf8");
-		});
-		child.stderr?.on("data", (chunk: Buffer) => {
-			stderr += chunk.toString("utf8");
-		});
-		child.on("error", (error: Error) => finish(null, formatError(error)));
-		child.on("close", (code: number | null) => finish(code));
-	});
+async function runSshKeygen(bin: string, args: string[], timeoutMs: number): Promise<KeygenResult> {
+	const run = await runChild(bin, args, { timeoutMs });
+	return { status: run.status, failure: run.error, stdout: run.stdout, stderr: run.stderr };
 }
 
 function describeKeygenFailure(result: KeygenResult): string {

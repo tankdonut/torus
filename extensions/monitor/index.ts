@@ -13,6 +13,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { runChild } from "../child-run.js";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { flattenPreview, formatDuration } from "../fleet/theme-kit.js";
 import { projectStateDir } from "../fsutil.js";
@@ -111,32 +112,9 @@ function emitMonitorFired(
 function runCommand(
 	command: string,
 ): Promise<{ status: number | null; stdout: string; stderr: string }> {
-	return new Promise((resolve) => {
-		let stdout = "";
-		let stderr = "";
-		let settled = false;
-		const child = spawn("bash", ["-c", command], { stdio: ["ignore", "pipe", "pipe"] });
-		const finish = (status: number | null) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			resolve({ status, stdout, stderr });
-		};
-		const timer = setTimeout(() => {
-			child.kill("SIGTERM");
-			setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
-			finish(null);
-		}, CHECK_TIMEOUT_SEC * 1000);
-		child.stdout.setEncoding("utf8");
-		child.stderr.setEncoding("utf8");
-		child.stdout.on("data", (chunk: string) => {
-			stdout += chunk;
-		});
-		child.stderr.on("data", (chunk: string) => {
-			stderr += chunk;
-		});
-		child.on("error", () => finish(null));
-		child.on("close", (code) => finish(code));
+	return runChild("bash", ["-c", command], {
+		timeoutMs: CHECK_TIMEOUT_SEC * 1000,
+		resolveOnTimeout: true,
 	});
 }
 
