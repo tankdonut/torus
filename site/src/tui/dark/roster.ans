@@ -1,13 +1,7 @@
 
  [38;2;205;154;34mWarning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys on` to ~/.tmux.conf and restart tmux.[39m
 
-[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[39m [1m[38;2;205;154;34mUpdate Available[0m
- [38;2;157;165;169mNew version 1.5.2 is available. Run [38;2;167;152;215mpi update[39m
- [38;2;157;165;169mChangelog: [38;2;167;152;215mhttps://pi.dev/changelog[39m
-[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-[39m [38;2;126;136;142mproviders: zai=true opencode-go=true
+ [38;2;126;136;142mproviders: zai=true opencode-go=true
 [39m [38;2;126;136;142mbuilder: Executes one self-contained implementation task: code, tests, verification, no delegation. Dispatch for build tasks with
 [39m [38;2;126;136;142mexact files, acceptance commands, and QA evidence; not for review or research. [chain=primary -> opencode-go/glm-5.3-flash]
 [39m [38;2;126;136;142mcritic: design-side plan critic: self-containment, YAGNI, reuse; fresh eyes, never agrees by default [chain=primary ->
@@ -22,6 +16,12 @@
 [39m [38;2;126;136;142mreviewer: Practical adversarial reviewer: plans, docs, code, work descriptions; blocker-finder, not perfectionist [chain=primary ->
 [39m [38;2;126;136;142mopencode-go/glm-5.3-flash]
 [39m [38;2;126;136;142mconcurrency caps (max parallel runs per model, provider account-level): opencode-go/glm-5.3-flash=uncapped[39m
+
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [1m[38;2;205;154;34mUpdate Available[0m
+ [38;2;157;165;169mNew version 1.5.2 is available. Run [38;2;167;152;215mpi update[39m
+ [38;2;157;165;169mChangelog: [38;2;167;152;215mhttps://pi.dev/changelog[39m
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 [1m[38;2;167;152;215mtorus[0m[38;2;126;136;142m · [38;2;86;182;194mleader[38;2;126;136;142m · [38;2;86;182;194mglm-5.3-flash[38;2;126;136;142m · [38;2;86;182;194mhigh[38;2;126;136;142m · zai|[1m[38;2;167;152;215mopencode-go[0m[38;2;126;136;142m · perm:default · [38;2;104;183;141mmcp:2[38;2;126;136;142m · [39msbx:off
 

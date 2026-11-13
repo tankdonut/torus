@@ -364,6 +364,9 @@ function runDispatchScenes() {
 		} catch {
 			console.log("site: detail phase marker absent, capturing as-is");
 		}
+		// A member or child side pane may have re-opened while the detail view
+		// waited; re-pin so the detail frame renders at the scene width.
+		setMainPaneWidth(MAIN_COLS);
 		capture(`${SESSION}.0`, "fleet-detail", resolve(tuiRoot, theme));
 		closeOverlay();
 	};
@@ -426,24 +429,37 @@ function runTeamScene() {
 	capture(`${SESSION}.0`, "team", resolve(tuiRoot, "dark"));
 	// The flip's /reload terminalizes the running members like any live
 	// delegation; persistent teams re-engage a member on mail, so nudge each
-	// one back to work for the light pass.
+	// one back to work for the light pass. A nudge sent while the rebind is
+	// still routing can land as chat text instead of member mail and no
+	// member wakes, so the nudge-and-wait retries like the dispatch above.
 	setEngineTheme("light");
-	tmux([
-		"send-keys",
-		"-t",
-		`${SESSION}.0`,
-		"@scout read site/src/lib/ansi.mjs and reply with a one-line summary",
-		"Enter",
-	]);
-	sleep(3000);
-	tmux([
-		"send-keys",
-		"-t",
-		`${SESSION}.0`,
-		"@index read site/src/lib/code-copy.mjs and reply with a one-line summary",
-		"Enter",
-	]);
-	waitFor(`${SESSION}.0`, "alt+t all", 180_000, "team members to re-run");
+	const nudge = () => {
+		tmux([
+			"send-keys",
+			"-t",
+			`${SESSION}.0`,
+			"@scout read site/src/lib/ansi.mjs and reply with a one-line summary",
+			"Enter",
+		]);
+		sleep(3000);
+		tmux([
+			"send-keys",
+			"-t",
+			`${SESSION}.0`,
+			"@index read site/src/lib/code-copy.mjs and reply with a one-line summary",
+			"Enter",
+		]);
+	};
+	for (let attempt = 1; attempt <= 3; attempt += 1) {
+		nudge();
+		try {
+			waitFor(`${SESSION}.0`, "alt+t all", 180_000, "team members to re-run");
+			break;
+		} catch (error) {
+			if (attempt === 3) throw error;
+			console.log("site: team members did not re-engage, re-nudging");
+		}
+	}
 	// The respawned member engines re-open their side panes; re-pin again.
 	setMainPaneWidth(MAIN_COLS);
 	openTeamBrowser();

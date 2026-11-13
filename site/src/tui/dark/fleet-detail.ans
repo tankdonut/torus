@@ -1,31 +1,31 @@
-[38;2;205;154;34m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[39m ├─────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤
- │ [38;2;167;152;215mrehydrateFromLogs(currentSessionId?[39m │ Rebuild registry records from log files on resume (bails when the registry is non-empty),      │
- │ [38;2;167;152;215m)[39m                                   │ reconciling live beacons.                                                                      │
- ├─────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤
- │ [38;2;167;152;215mregistryShutdown(reason)[39m            │ Session-shutdown cleanup: kill panes, drop toasts and controls; [38;2;167;152;215mnew/resume/fork[39m also retire    │
- │                                     │ in-memory records.                                                                             │
- └─────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────┘
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m │ 1242 │ [38;2;167;152;215mSessionEndReason[39m (type)                              │ [38;2;167;152;215m"quit" | "reload" | "new" | "resume" | "fork"[39m — pi's                 │
+ │      │                                                      │ session_shutdown reasons.                                            │
+ ├──────┼──────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+ │ 1257 │ [38;2;167;152;215mregistryShutdown(reason?): Promise<void>[39m             │ Session-shutdown cleanup: kill panes, clear toast timers, stop       │
+ │      │                                                      │ controls; replacement reasons also retire in-memory records.         │
+ └──────┴──────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────┘
 
  <results>
  <files>
- - /home/user/torus/extensions/fsutil.ts - shared filesystem/JSON/scratch/formatting helpers (20
- exports)
- - /home/user/torus/extensions/registry.ts - delegation registry: records, controls, external runs,
- teams, shutdown (49 exports)
+ - /home/user/torus/extensions/fsutil.ts - shared filesystem/formatting/timing helpers; 20
+ exported symbols listed above
+ - /home/user/torus/extensions/registry.ts - delegation registry; 58 exported symbols (types,
+ functions, constants) listed above
  </files>
 
  <answer>
- Complete export inventories for both files are in the tables above: fsutil.ts exports 20 symbols
- (state-dir/scratch/JSON/retention/read-cache/formatting helpers) and registry.ts exports 49 symbols (the delegation registry plus
- text/sanitization helpers, external-run and team plumbing, log parsing, and session shutdown).
+ Complete export inventories for both files with one-line summaries per symbol, derived from full reads of both files plus their doc
+ comments. fsutil.ts is the state/filesystem foundation (project keys, state/scratch dirs, JSON IO, pruning, caching, formatting);
+ registry.ts is the delegation/fleet runtime (records, tmux panes, beacons, steering, rehydration, teams, external runs).
  </answer>
 
  <next_steps>
- Ready to proceed - no follow-up needed. If you want, the private (non-exported) helpers or call sites for any symbol can be mapped next.
+ Ready to proceed — no follow-up needed. If you want cross-references (who imports each symbol), say which symbol and I can grep usage
+ sites.
  </next_steps>
  </results>
 
-[38;2;205;154;34m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;104;183;141m✓ done[39m [38;2;126;136;142m6t · 25.4k→3.5k · $0.0084 · 40s · j/k scroll · g/G ends · [38;2;167;152;215m[esc] back[38;2;126;136;142m · 01a1d233-ec49-74b0-835[39m…
-[38;2;205;154;34m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;104;183;141m✓ done[39m [38;2;126;136;142m8t · 29.2k→3.9k · $0.0109 · 50s · j/k scroll · g/G ends · [38;2;167;152;215m[esc] back[38;2;126;136;142m · 01a1d241-3385-769d-a[39m…
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

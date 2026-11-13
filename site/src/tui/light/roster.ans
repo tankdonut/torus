@@ -1,11 +1,5 @@
-[38;2;126;136;142mtechnical-writing, torus-execute, torus-lsp-setup, torus-plan, torus-plan-review, torus-research, torus-roadmap,
-update-opencode-plugins, web-design-guidelines, writing-guidelines, writing-skills[39m
 
-[38;2;205;154;34m[Extensions][39m
-[38;2;126;136;142m  acp, approval, ask, astgrep, automode, browser, cc-safety-net, comment-checker, compact, dist, doctor, exit, fleet, goal, guards,
-handles, hashline, interactive, mcp, memory, monitor, notify, prompts, providers, roster, sandbox, session-title, sessions, src, team,
-todo, ui, vision, work, worktrees[39m
-
+ [38;2;205;154;34mWarning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys on` to ~/.tmux.conf and restart tmux.[39m
 
  [38;2;126;136;142mproviders: zai=true opencode-go=true
 [39m [38;2;126;136;142mbuilder: Executes one self-contained implementation task: code, tests, verification, no delegation. Dispatch for build tasks with
@@ -23,10 +17,16 @@ todo, ui, vision, work, worktrees[39m
 [39m [38;2;126;136;142mopencode-go/glm-5.3-flash]
 [39m [38;2;126;136;142mconcurrency caps (max parallel runs per model, provider account-level): opencode-go/glm-5.3-flash=uncapped[39m
 
-[1m[38;2;167;152;215mtorus[0m[38;2;126;136;142m · [38;2;86;182;194mleader[38;2;126;136;142m · [38;2;86;182;194mglm-5.3-flash[38;2;126;136;142m · [38;2;86;182;194mhigh[38;2;126;136;142m · zai|[1m[38;2;167;152;215mopencode-go[0m[38;2;126;136;142m · perm:default · [38;2;104;183;141mmcp:2[38;2;126;136;142m · [39msbx:off
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [1m[38;2;205;154;34mUpdate Available[0m
+ [38;2;157;165;169mNew version 1.5.2 is available. Run [38;2;167;152;215mpi update[39m
+ [38;2;157;165;169mChangelog: [38;2;167;152;215mhttps://pi.dev/changelog[39m
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-[38;2;86;182;194m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;2;95;168;204m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [38;2;157;165;169mReloading keybindings, extensions, skills, prompts, themes, and context files...[39m
+
+[38;2;95;168;204m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 [38;2;126;136;142m~/torus (main)[39m
 [38;2;126;136;142m0.0%/1.0M (auto)                                                                                      (opencode-go) glm-5.3-flash • high

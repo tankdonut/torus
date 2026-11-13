@@ -1,31 +1,31 @@
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m │ [38;2;167;152;215mRECORD_TEXT_CAP[39m                                 │ const       │ 4000-char bounded head of final text kept on finished/rehydrated   │
+ │                                                 │             │ records.                                                           │
+ ├─────────────────────────────────────────────────┼─────────────┼────────────────────────────────────────────────────────────────────┤
+ │ [38;2;167;152;215mparseLastTurnText(raw)[39m                          │ function    │ Extract the last turn block from a raw log, undoing the two-space  │
+ │                                                 │             │ child indent and stripping markers.                                │
+ ├─────────────────────────────────────────────────┼─────────────┼────────────────────────────────────────────────────────────────────┤
+ │ [38;2;167;152;215mreadFullRecordText(record)[39m                      │ function    │ A record's complete final text read back from its log; null when   │
+ │                                                 │             │ unreadable.                                                        │
+ ├─────────────────────────────────────────────────┼─────────────┼────────────────────────────────────────────────────────────────────┤
+ │ [38;2;167;152;215mrehydrateFromLogs(currentSessionId?)[39m            │ function    │ Rebuild registry records from the project's delegation logs after  │
+ │                                                 │             │ a resume (capped at 50, skips live foreign beacons).               │
+ ├─────────────────────────────────────────────────┼─────────────┼────────────────────────────────────────────────────────────────────┤
+ │ [38;2;167;152;215mSessionEndReason[39m                                │ type        │ [38;2;167;152;215m"quit" | "reload" | "new" | "resume" | "fork"[39m — pi                 │
+ │                                                 │             │ session-shutdown reasons.                                          │
+ ├─────────────────────────────────────────────────┼─────────────┼────────────────────────────────────────────────────────────────────┤
+ │ [38;2;167;152;215mregistryShutdown(reason)[39m                        │ async       │ Session-shutdown cleanup: kill panes, drop toasts/controls; clears │
+ │                                                 │ function    │ records for replacement reasons.                                   │
+ └─────────────────────────────────────────────────┴─────────────┴────────────────────────────────────────────────────────────────────┘
 
-[39m[48;2;37;65;49m
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:251-700[39m
+ </answer>
 
+ <next_steps>
+ Both files are shared modules imported by the extension set (`registry.ts` imports `fsutil.js` directly). If you need per-symbol call
+ sites, grep for the symbol name across `extensions/` — most consumers are the delegation, fleet, roster, and memory extensions.
+ </next_steps>
+ </results>
 
-[49m [3m[38;2;150;160;164mI still need lines ~700-1300 of registry.ts to summarize the rest: listDelegations, resetRegistryForTesting, startDelegation,
-[0m [3m[38;2;150;160;164mappendAction, attachSessionId, updateDelegation, setDelegationModel, finishDelegation, RECORD_TEXT_CAP, parseLastTurnText,
-[0m [3m[38;2;150;160;164mreadFullRecordText, rehydrateFromLogs, SessionEndReason, registryShutdown. Also lines ~510-600ish (pidAlive,
-[0m [3m[38;2;150;160;164mlistExternalRunsExcludingDelegations — already partially seen). Let me read the remainder.[0m
-
-[48;2;37;65;49m
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:701-1340[39m
-
-
-[49m [3m[38;2;150;160;164mI've seen most of registry.ts. I'm missing the middle sections around lines 511-700 (pidAlive, foreignRunningBeacons,
-[0m [3m[38;2;150;160;164mlistExternalRunsExcludingDelegations), and around lines 960-1245 (finishDelegation tail, RECORD_TEXT_CAP, parseLastTurnText,
-[0m [3m[38;2;150;160;164mreadFullRecordText, rehydrateFromLogs). I have the export lines from grep and docstrings for most. Let me read those two remaining
-[0m [3m[38;2;150;160;164mchunks to write accurate summaries.[0m
-
-[48;2;37;65;49m
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:500-594[39m
-
-
-
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:960-1119[39m
-
-
-[38;2;205;154;34m[49m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠹ live[39m [38;2;126;136;142mt5 · 24.2k→601 · $0.0057 · 50s · j/k scroll · g/G ends · [38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[39m
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;104;183;141m✓ done[39m [38;2;126;136;142m6t · 31.0k→3.2k · $0.0090 · 38s · j/k scroll · g/G ends · [38;2;167;152;215m[esc] back[38;2;126;136;142m · 01a1d240-5902-748e-9[39m…
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
