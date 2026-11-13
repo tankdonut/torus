@@ -37,7 +37,14 @@ import {
 import { PROJECT_AUTOMODE_KEYS } from "../config/sections.js";
 import { scratchDir } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
-import { cmdUsage, refreshToruStatus, setStatusPermission } from "../ui/index.js";
+import {
+	cmdUsage,
+	refreshToruStatus,
+	setStatusPermission,
+	TRUST_DIALOG_TIMEOUT_MS,
+	TRUST_LABELS,
+	trustDurabilityLine,
+} from "../ui/index.js";
 import { DecisionCache, decide, pickChatModel, pickModel } from "./classify.js";
 import {
 	type AuditRow,
@@ -576,8 +583,9 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	/**
 	 * Ask the user (step f). Headless sessions block with the reason spelled
 	 * out; interactive ones get a three-way dialog whose "Always" answer seeds
-	 * the session cache. Dialog allows reset the deny streak, dialog denies
-	 * leave it — only the decision model's own denies grow it.
+	 * the session cache. esc and the shared 120s timeout resolve like an
+	 * explicit deny. Dialog allows reset the deny streak, dialog denies leave
+	 * it — only the decision model's own denies grow it.
 	 */
 	async function askUser(
 		ctx: ExtensionContext,
@@ -591,17 +599,17 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			audit(command, "dialog", "deny", `no UI to ask: ${reason}`);
 			return { block: true, reason: noUiReason(reason) };
 		}
-		const choice = await ctx.ui.select(`automode: ${reason}\n\n  ${command}\n\nAllow?`, [
-			"Allow once",
-			"Always this session",
-			"Deny",
-		]);
-		if (choice === "Allow once") {
+		const choice = await ctx.ui.select(
+			`automode: ${reason}\n\n  ${command}\n\n${trustDurabilityLine(false)}\n\nAllow?`,
+			[TRUST_LABELS.once, TRUST_LABELS.session, TRUST_LABELS.deny],
+			{ timeout: TRUST_DIALOG_TIMEOUT_MS },
+		);
+		if (choice === TRUST_LABELS.once) {
 			consecutiveDenies = 0;
 			audit(command, "dialog", "allow", `allowed once by user: ${reason}`);
 			return undefined;
 		}
-		if (choice === "Always this session") {
+		if (choice === TRUST_LABELS.session) {
 			consecutiveDenies = 0;
 			cache.set(command, {
 				verdict: "allow",

@@ -19,6 +19,7 @@ delete process.env.TORUS_PERMISSION_MODE;
 delete process.env.TORUS_PERMISSION_MODEL;
 
 const automode = await import("../extensions/automode/index.ts");
+const { TRUST_DIALOG_TIMEOUT_MS } = await import("../extensions/ui/index.ts");
 const { scratchDir } = await import("../extensions/fsutil.ts");
 
 // fsutil (pulled in by the ui import chain) recomputes TORUS_STATE_DIR from
@@ -122,8 +123,8 @@ function setup(options = {}) {
 			notify: (message, type) => {
 				notifications.push({ message, type });
 			},
-			select: async (title, choices) => {
-				dialog.calls.push({ title, options: choices });
+			select: async (title, choices, opts) => {
+				dialog.calls.push({ title, options: choices, opts });
 				return options.answer;
 			},
 			setStatus: () => {},
@@ -210,7 +211,11 @@ test("auto mode with UI: dialog deny blocks, allow once passes without caching",
 	});
 	assert.equal(denied.dialog.calls.length, 1);
 	assert.match(denied.dialog.calls[0].title, /git push origin main/);
-	assert.deepEqual(denied.dialog.calls[0].options, ["Allow once", "Always this session", "Deny"]);
+	assert.deepEqual(denied.dialog.calls[0].options, [
+		"Allow once",
+		"Always allow (this session)",
+		"Deny",
+	]);
 
 	resetAudit();
 	const once = setup({
@@ -227,11 +232,32 @@ test("auto mode with UI: dialog deny blocks, allow once passes without caching",
 	);
 });
 
-test("auto mode with UI: Always this session caches; repeat passes via cache with no dialog", async () => {
+test("auto mode with UI: dialog timeout/esc blocks like an explicit deny and carries the shared 120s timeout", async () => {
+	resetAudit();
+	const { pi, ctx, dialog } = setup({
+		config: { automode: { ask: ["git push *"] } },
+		hasUI: true,
+		// No answer: the select fake resolves undefined, the dialog's esc/timeout path.
+	});
+	assert.deepEqual(await call(pi, ctx, "git push origin main"), {
+		block: true,
+		reason: "automode: denied by user",
+	});
+	assert.equal(dialog.calls.length, 1);
+	assert.equal(dialog.calls[0].opts?.timeout, TRUST_DIALOG_TIMEOUT_MS);
+	assert.deepEqual(dialog.calls[0].options, ["Allow once", "Always allow (this session)", "Deny"]);
+	assert.match(dialog.calls[0].title, /session only · resets on restart/);
+	assert.deepEqual(
+		auditRows().map((row) => [row.source, row.verdict]),
+		[["dialog", "deny"]],
+	);
+});
+
+test("auto mode with UI: Always allow (this session) caches; repeat passes via cache with no dialog", async () => {
 	resetAudit();
 	const { pi, ctx, dialog } = setup({
 		hasUI: true,
-		answer: "Always this session",
+		answer: "Always allow (this session)",
 		replies: [jsonReply("ask")],
 	});
 	assert.equal(await call(pi, ctx, "cargo build"), undefined);
@@ -481,7 +507,11 @@ test("/automode: status shows mode and rules path; toggles clear the cache and r
 	assert.ok(status.includes(configFilePath), "status names the config path");
 	assert.match(status, /cache: 0/);
 
-	const active = setup({ hasUI: true, answer: "Always this session", replies: [jsonReply("ask")] });
+	const active = setup({
+		hasUI: true,
+		answer: "Always allow (this session)",
+		replies: [jsonReply("ask")],
+	});
 	await active.pi.commands.automode.handler("", active.ctx);
 	assert.equal(await call(active.pi, active.ctx, "cargo build"), undefined);
 	await active.pi.commands.automode.handler("", active.ctx);

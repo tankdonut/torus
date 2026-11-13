@@ -364,10 +364,10 @@ The decision pipeline runs in a fixed order:
 | Allow rules | Matching allow entries pass without a model call |
 | Circuit breaker | Three consecutive decision-model denies switch the session to asking for everything |
 | Fast path | Read-only commands (`ls`, `git status`, version probes, plain `find`) pass without a model call |
-| Cache | "Always this session" approvals replay without asking again |
+| Cache | "Always allow (this session)" approvals replay without asking again |
 | Decision model | Classifier verdict with confidence; low confidence demotes to ask; both model paths failing fails open |
 
-Interactive sessions ask through a three-way dialog (Allow once / Always this session / Deny). Headless sessions block instead, with a reason naming the env to rerun with. A fail-open run passes the command, and its tool result carries an `[automode]` annotation saying it ran unjudged. Broad allow entries (`*` or empty prefixes) match nothing under the prefix-pattern rules; loading warns and ignores them.
+Interactive sessions ask through a three-way dialog (Allow once / Always allow (this session) / Deny) that shows the answer's durability and falls back to deny on esc or after the shared two-minute timeout. Headless sessions block instead, with a reason naming the env to rerun with. A fail-open run passes the command, and its tool result carries an `[automode]` annotation saying it ran unjudged. Broad allow entries (`*` or empty prefixes) match nothing under the prefix-pattern rules; loading warns and ignores them.
 
 The judge prompts carry rule prose in a fixed tier order: environment context, soft boundaries (`softDeny`), soft-boundary exceptions (`softDenyExceptions`), absolute boundaries (`hardDeny`), then the recent user intent window quoted as data. A softDeny entry denies unless cleared: a matching `softDenyExceptions` entry clears it for that command, and so does an intent line, but only one that directly and specifically describes the exact command; a general request such as "clean up the repo" clears nothing. The intent window buffers the user's own message lines since the last approval dialog, deny, or `/automode` mode toggle, bounded to the newest lines (five rendered, 2000 characters of content). softDeny and its exceptions are judge prose only: no deterministic rule consumes them.
 

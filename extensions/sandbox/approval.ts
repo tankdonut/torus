@@ -16,18 +16,13 @@ import path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { projectStateDir, readJson, writeJson } from "../fsutil.js";
+import { TRUST_DIALOG_TIMEOUT_MS, TRUST_LABELS, trustDurabilityLine } from "../ui/index.js";
 
 export type TrustDecision =
 	| { kind: "allow" }
 	| { kind: "always" }
 	| { kind: "deny" }
 	| { kind: "custom"; text: string; host: string | null };
-
-const DIALOG_TIMEOUT_MS = 120_000;
-const ALLOW_ONCE = "Allow once";
-const ALWAYS_ALLOW = "Always allow (this project)";
-const DENY = "Deny";
-const CUSTOM = "Custom…";
 
 function hostsFile(cwd: string): string {
 	return path.join(projectStateDir(cwd), "sandbox-hosts.json");
@@ -87,16 +82,16 @@ export async function decideTrust(
 	if (!ctx?.hasUI) return { kind: "deny" };
 	const where = `${host}${port !== undefined ? `:${port}` : ""}`;
 	const chosen = await ctx.ui.select(
-		`Sandbox — trust ${where}?`,
-		[ALLOW_ONCE, ALWAYS_ALLOW, DENY, CUSTOM],
-		{ timeout: DIALOG_TIMEOUT_MS },
+		`Sandbox — trust ${where}?\n\n${trustDurabilityLine(true, "sandbox-hosts.json")}`,
+		[TRUST_LABELS.once, TRUST_LABELS.project, TRUST_LABELS.deny, TRUST_LABELS.custom],
+		{ timeout: TRUST_DIALOG_TIMEOUT_MS },
 	);
-	if (chosen === ALLOW_ONCE) return { kind: "allow" };
-	if (chosen === ALWAYS_ALLOW) {
+	if (chosen === TRUST_LABELS.once) return { kind: "allow" };
+	if (chosen === TRUST_LABELS.project) {
 		persist([...persisted, host]);
 		return { kind: "always" };
 	}
-	if (chosen === CUSTOM) {
+	if (chosen === TRUST_LABELS.custom) {
 		const typed = (await ctx.ui.input(`${where} — host or *.domain to allow`))?.trim();
 		if (typed) return { kind: "custom", text: typed, host: parseCustomHost(typed) };
 		return { kind: "deny" };

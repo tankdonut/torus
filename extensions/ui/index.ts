@@ -36,6 +36,30 @@ import {
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
+/**
+ * Shared trust-dialog vocabulary for the two ask-the-user prompts (the sandbox
+ * network-trust dialog and the automode command ask). Two local dialog bodies,
+ * one vocabulary: option labels, the esc/timeout window, and a durability line
+ * telling the user how long their answer lasts and where it is stored.
+ */
+export const TRUST_LABELS = {
+	once: "Allow once",
+	session: "Always allow (this session)",
+	project: "Always allow (this project)",
+	deny: "Deny",
+	custom: "Custom…",
+} as const;
+
+/** How long a trust dialog waits for an answer before resolving undefined (esc/timeout). */
+export const TRUST_DIALOG_TIMEOUT_MS = 120_000;
+
+/** Durability detail line for a trust dialog: how long the answer lasts, and its store. */
+export function trustDurabilityLine(persistent: boolean, store?: string): string {
+	return persistent
+		? `persists for this project${store !== undefined ? ` · stored in ${store}` : ""}`
+		: "session only · resets on restart";
+}
+
 export const STATUS_KEY = "torus";
 const STATUSLINE_WIDGET_KEY = "torus-statusline";
 const DOCK_GAP_WIDGET_KEY = "torus-dock-gap";
