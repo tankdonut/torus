@@ -188,7 +188,7 @@ test("bg-exit renders like a monitor line with exit, duration, and tail", () => 
 		tail: "",
 	});
 	assert.match(failed, /<error>✗> <customMessageText>bg build exited>/);
-	assert.match(failed, /exit 2 · 0s/);
+	assert.match(failed, /exit 2 · 1s/);
 
 	const stopped = render("torus.bg-exit", {
 		name: "build",

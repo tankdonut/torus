@@ -1,9 +1,9 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, MouseRegion, Text, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { entityColor, flattenPreview, teamName } from "../fleet/theme-kit.js";
-import { formatDuration } from "../osnotify.js";
+import { entityColor, flattenPreview, formatDuration, teamName } from "../fleet/theme-kit.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
-import { FLEET_OPENER, listExternalRuns, sanitizeRender } from "../registry.js";
+import { FLEET_OPENER, listExternalRuns } from "../registry.js";
+import { sanitizeRender } from "../text.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin"],

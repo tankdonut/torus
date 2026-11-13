@@ -8,7 +8,7 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { formatCost } from "../fsutil.js";
-import { type ExternalRun, stableColorIndex } from "../registry.js";
+import type { ExternalRun } from "../registry.js";
 
 export type Theme = ExtensionContext["ui"]["theme"];
 export type ThemeColor = Parameters<Theme["fg"]>[0];
@@ -23,6 +23,13 @@ export const AGENT_COLORS: ThemeColor[] = [
 ];
 
 export const SPINNER: string[] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** Stable per-entity hash bucket (same name → same bucket across processes). */
+export function stableColorIndex(name: string, buckets: number): number {
+	let hash = 7;
+	for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + (name.codePointAt(i) ?? 0)) | 0;
+	return Math.abs(hash) % Math.max(1, buckets);
+}
 
 /** Stable per-entity color (same name → same color across all fleet views). */
 export function entityColor(name: string): ThemeColor {

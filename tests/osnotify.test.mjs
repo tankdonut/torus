@@ -5,6 +5,8 @@ import { test } from "node:test";
 // the exact notify-send argv (grouping hints, transient policy, replaces-id
 // chaining). The spawn path itself lives in osnotify-spawn.test.mjs.
 const osnotify = await import("../extensions/osnotify.ts");
+const themeKit = await import("../extensions/fleet/theme-kit.ts");
+const text = await import("../extensions/text.ts");
 
 const INFO = {
 	agent: "explorer",
@@ -17,21 +19,22 @@ const INFO = {
 	text: "\x1b[32mall clear\x1b[0m\nsecond line",
 };
 
-test("formatDuration renders humans", () => {
-	assert.equal(osnotify.formatDuration(0), "0s");
-	assert.equal(osnotify.formatDuration(45_000), "45s");
-	assert.equal(osnotify.formatDuration(60_000), "1m");
-	assert.equal(osnotify.formatDuration(134_000), "2m 14s");
-	assert.equal(osnotify.formatDuration(3_780_000), "1h 03m");
-	assert.equal(osnotify.formatDuration(7_200_000), "2h");
+test("formatDuration renders humans — seconds-bearing branches and whole hours pad", () => {
+	assert.equal(themeKit.formatDuration(0), "0s");
+	assert.equal(themeKit.formatDuration(45_000), "45s");
+	assert.equal(themeKit.formatDuration(60_000), "1m 00s");
+	assert.equal(themeKit.formatDuration(62_000), "1m 02s");
+	assert.equal(themeKit.formatDuration(134_000), "2m 14s");
+	assert.equal(themeKit.formatDuration(3_780_000), "1h 03m");
+	assert.equal(themeKit.formatDuration(7_200_000), "2h 00m");
 });
 
-test("compactTokens compacts only when it saves space", () => {
-	assert.equal(osnotify.compactTokens(0), "0");
-	assert.equal(osnotify.compactTokens(850), "850");
-	assert.equal(osnotify.compactTokens(11_234), "11.2k");
-	assert.equal(osnotify.compactTokens(180_000), "180k");
-	assert.equal(osnotify.compactTokens(1_500_000), "1.5M");
+test("formatTokens compacts on the 180.0k scale", () => {
+	assert.equal(themeKit.formatTokens(0), "0");
+	assert.equal(themeKit.formatTokens(850), "850");
+	assert.equal(themeKit.formatTokens(11_234), "11.2k");
+	assert.equal(themeKit.formatTokens(180_000), "180.0k");
+	assert.equal(themeKit.formatTokens(1_500_000), "1.5M");
 });
 
 test("runLabel prefers the handle with @ prefix", () => {
@@ -40,10 +43,10 @@ test("runLabel prefers the handle with @ prefix", () => {
 });
 
 test("previewLine flattens ANSI and skips blank lines", () => {
-	assert.equal(osnotify.previewLine("\n\n  \x1b[1mhello world\x1b[0m  \nrest"), "hello world");
-	assert.equal(osnotify.previewLine("x".repeat(200)).length, 140);
-	assert.ok(osnotify.previewLine("x".repeat(200)).endsWith("…"));
-	assert.equal(osnotify.previewLine(""), "");
+	assert.equal(text.previewLine("\n\n  \x1b[1mhello world\x1b[0m  \nrest"), "hello world");
+	assert.equal(text.previewLine("x".repeat(200)).length, 140);
+	assert.ok(text.previewLine("x".repeat(200)).endsWith("…"));
+	assert.equal(text.previewLine(""), "");
 });
 
 test("delegationToast done leads with handle, duration, preview, stats", () => {
@@ -57,7 +60,7 @@ test("delegationToast done leads with handle, duration, preview, stats", () => {
 
 test("delegationToast failed is critical and persistent", () => {
 	const toast = osnotify.delegationToast("failed", INFO, 1_060_000);
-	assert.equal(toast.summary, "torus ✗ @scout failed · 1m");
+	assert.equal(toast.summary, "torus ✗ @scout failed · 1m 00s");
 	assert.equal(toast.urgency, "critical");
 	assert.equal(toast.expireMs, 0);
 	assert.equal(toast.transient, false);

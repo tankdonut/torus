@@ -5,6 +5,7 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { flattenPreview } from "../fleet/theme-kit.js";
 import { projectStateDir, pruneOrphanSessionFiles, readJson, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { currentSessionId, setCurrentSessionId } from "../registry.js";
@@ -71,15 +72,13 @@ export function goalTitleLine(sessionId: string | null): string {
 	if (!sessionId) return "";
 	const state = readGoal(sessionId);
 	if (!state || state.goal.trim().length === 0) return "";
-	const head = state.goal.replace(/\s+/g, " ").slice(0, 160);
-	return `goal (${state.status}): ${head}`;
+	return `goal (${state.status}): ${flattenPreview(state.goal, 160)}`;
 }
 
 function summary(state: GoalState | null): string {
 	if (!state) return "no goal set — /goal <objective> to set one";
-	const head = state.goal.replace(/\s+/g, " ").slice(0, 80);
 	const icon = state.status === "complete" ? "✓" : state.status === "active" ? "▶" : "⏸";
-	return `${icon} ${head}${state.goal.length > 80 ? "…" : ""}`;
+	return `${icon} ${flattenPreview(state.goal, 80)}`;
 }
 
 /** Compact statusline chip: active/paused goals only, head truncated to 48 chars. */

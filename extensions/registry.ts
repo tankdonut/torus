@@ -16,6 +16,7 @@ import {
 	statSync,
 } from "node:fs";
 import path from "node:path";
+import { flattenPreview } from "./fleet/theme-kit.js";
 import {
 	formatCost,
 	projectKeyFor,
@@ -103,15 +104,6 @@ function toastInfo(record: DelegationRecord): DelegationToastInfo {
 /** Agent names reach shell command lines and tmux format strings — allowlist strictly. */
 export const AGENT_NAME_RE = /^[a-z0-9-]+$/;
 
-/** Strip ANSI escape sequences and C1 control chars before text reaches the TUI. */
-export function sanitizeRender(text: string): string {
-	return text
-		.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
-		.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-		.replace(/\x1b/g, "")
-		.replace(/[\u0080-\u009F]/g, "");
-}
-
 /** Replace credential-shaped substrings with [redacted] before tool args are logged. */
 export function redactSecrets(text: string): string {
 	return text
@@ -121,12 +113,6 @@ export function redactSecrets(text: string): string {
 			/([A-Za-z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD)[A-Za-z0-9_]*)\s*=\s*[^\s"']+/gi,
 			"$1=[redacted]",
 		);
-}
-
-export function stableColorIndex(name: string, buckets: number): number {
-	let hash = 7;
-	for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + (name.codePointAt(i) ?? 0)) | 0;
-	return Math.abs(hash) % Math.max(1, buckets);
 }
 
 /**
@@ -333,7 +319,8 @@ export function steerLogLine(
 	delivered: boolean,
 	ts = new Date().toISOString(),
 ): string {
-	const safe = redactSecrets(text).replace(/\s+/g, " ").slice(0, 200);
+	// Redaction first: flattenPreview collapses whitespace but never redacts.
+	const safe = flattenPreview(redactSecrets(text), 200);
 	return `\n[${ts}] steer${delivered ? "" : " (no-op)"}: ${safe}\n`;
 }
 

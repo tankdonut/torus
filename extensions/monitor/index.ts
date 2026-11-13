@@ -14,8 +14,9 @@ import path from "node:path";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
+import { flattenPreview, formatDuration } from "../fleet/theme-kit.js";
 import { projectStateDir } from "../fsutil.js";
-import { formatDuration, notifyBg, notifyMonitor } from "../osnotify.js";
+import { notifyBg, notifyMonitor } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { queueWakeEntry } from "../wake-gate.js";
 
@@ -88,8 +89,7 @@ function emitMonitorFired(
 	exit: number | null,
 	output: string,
 ): void {
-	const trimmed = output.trim().replace(/\s+/g, " ");
-	const tail = trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
+	const tail = flattenPreview(output, 200);
 	const what = reason === "fail" ? "failed" : "output changed";
 	// Delivery goes through the wake gate: held while the agent runs so the
 	// fire joins the next settle flush instead of trickling out of pi's
@@ -244,8 +244,7 @@ function emitBgExit(entry: BgEntry, code: number | null, signal: string | null):
 	const reason = entry.timedOut ? "timed out" : entry.stopped ? "stopped" : "exited";
 	// Forward truncation like every other wake (monitor-fired, delegation
 	// summaries): tail-end slices cut mid-word into whatever happened to be last.
-	const trimmedTail = entry.tail.trim().replace(/\s+/g, " ");
-	const flat = trimmedTail.length > 200 ? `${trimmedTail.slice(0, 200)}…` : trimmedTail;
+	const flat = flattenPreview(entry.tail, 200);
 	appendFileSync(
 		entry.logFile,
 		`[${new Date().toISOString()}] exit code=${code} signal=${signal} ${reason} in ${durationMs}ms\n`,

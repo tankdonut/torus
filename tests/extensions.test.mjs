@@ -9,9 +9,10 @@ import { fileURLToPath } from "node:url";
 // tests/resolve-ts-hook.mjs (registered via the npm test script) maps the
 // extension modules' .js specifiers to their .ts sources, so every extension
 // is importable under --experimental-strip-types.
-const { normalizeHandle, shellQuote, AGENT_NAME_RE, sanitizeRender, redactSecrets } = await import(
+const { normalizeHandle, shellQuote, AGENT_NAME_RE, redactSecrets } = await import(
 	"../extensions/registry.ts"
 );
+const { sanitizeRender } = await import("../extensions/text.ts");
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 

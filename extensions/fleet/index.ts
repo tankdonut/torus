@@ -15,8 +15,8 @@ import {
 	listDelegations,
 	listExternalRuns,
 	listExternalRunsExcludingDelegations,
-	sanitizeRender,
 } from "../registry.js";
+import { sanitizeRender } from "../text.js";
 import {
 	delegationIcon,
 	entityColor,

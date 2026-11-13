@@ -12,6 +12,7 @@ import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { childSessionsRoot, displayPath } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
+import { escapeRegExp } from "../text.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
@@ -70,10 +71,6 @@ export interface SessionHit {
 /** Scan bookkeeping for callers that surface it (the tool's result note). */
 export interface SessionScanStats {
 	skippedOversized: number;
-}
-
-function escapeRegExp(text: string): string {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**

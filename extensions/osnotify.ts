@@ -16,8 +16,9 @@ import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-
 import { knobBoolean, parseZeroDisables } from "./config/knobs.js";
+import { formatDuration, formatTokens, shortModel } from "./fleet/theme-kit.js";
+import { previewLine } from "./text.js";
 
 /** Runs shorter than this never announce their start; completion always toasts. */
 export const RUNNING_LATE_MS = 45_000;
@@ -71,59 +72,8 @@ export function runLabel(agent: string, handle: string | null): string {
 	return handle ? `@${handle}` : agent;
 }
 
-export function formatDuration(ms: number): string {
-	if (ms < 0) ms = 0;
-	const totalSec = Math.floor(ms / 1000);
-	if (totalSec < 60) return `${totalSec}s`;
-	const totalMin = Math.floor(totalSec / 60);
-	if (totalMin < 60) {
-		const sec = totalSec % 60;
-		return sec > 0 ? `${totalMin}m ${String(sec).padStart(2, "0")}s` : `${totalMin}m`;
-	}
-	const hours = Math.floor(totalMin / 60);
-	const min = totalMin % 60;
-	return min > 0 ? `${hours}h ${String(min).padStart(2, "0")}m` : `${hours}h`;
-}
-
-export function compactTokens(n: number): string {
-	if (n < 1000) return String(n);
-	if (n < 1_000_000) {
-		const k = n / 1000;
-		return `${k >= 100 ? Math.round(k) : Math.round(k * 10) / 10}k`;
-	}
-	const m = n / 1_000_000;
-	return `${m >= 100 ? Math.round(m) : Math.round(m * 10) / 10}M`;
-}
-
-function shortModel(model: string): string {
-	return model.split("/")[1] ?? model;
-}
-
-/**
- * Strip ANSI escape sequences and C1 control chars before text reaches a
- * toast. Local copy of registry's sanitizeRender — kept here to avoid a
- * registry ↔ osnotify import cycle.
- */
-function flatten(text: string): string {
-	return text
-		.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
-		.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-		.replace(/\x1b/g, "")
-		.replace(/[\u0080-\u009F]/g, "");
-}
-
-/** First meaningful line of a result, flattened and trimmed for the toast body. */
-export function previewLine(text: string, max = 140): string {
-	for (const raw of flatten(text).split("\n")) {
-		const line = raw.trim().replace(/\s+/g, " ");
-		if (line.length === 0) continue;
-		return line.length > max ? `${line.slice(0, max - 1)}…` : line;
-	}
-	return "";
-}
-
 function statsLine(info: DelegationToastInfo): string {
-	const tokens = compactTokens(info.tokensIn + info.tokensOut);
+	const tokens = formatTokens(info.tokensIn + info.tokensOut);
 	return `${info.turns} turn${info.turns === 1 ? "" : "s"} · ${tokens} tok · ${shortModel(info.model)}`;
 }
 

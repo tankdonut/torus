@@ -45,10 +45,10 @@ import {
 	listDelegations,
 	listExternalRuns,
 	listExternalRunsExcludingDelegations,
-	sanitizeRender,
 	steerDelegation,
 	stopDelegation,
 } from "../registry.js";
+import { sanitizeRender } from "../text.js";
 import { liveTail, type TranscriptItem, transcriptItems } from "../transcript.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {

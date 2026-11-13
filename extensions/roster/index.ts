@@ -183,9 +183,11 @@ export interface FallbackEvent {
  * (whitespace collapsed, capped) or the exit code when the engine said nothing.
  */
 export function fallbackReason(exitCode: number, lastError?: string): string {
-	const flat = (lastError ?? "").replace(/\s+/g, " ").trim();
+	// limit 161 keeps the 160-char content cap: flattenPreview appends the
+	// ellipsis inside the limit, so 160 content chars + "…" needs limit+1.
+	const flat = flattenPreview(lastError ?? "", 161);
 	if (flat.length === 0) return `exit ${exitCode}`;
-	return flat.length > 160 ? `${flat.slice(0, 160)}...` : flat;
+	return flat;
 }
 
 /** Transcript line for one chain-walk fallback. */

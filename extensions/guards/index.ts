@@ -34,6 +34,7 @@ import { isBypassMode } from "../automode/config.js";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { projectStateDir, readFileCached, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
+import { escapeRegExp } from "../text.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
@@ -84,10 +85,6 @@ export function isMemoryStoreMutation(command: string, storeDir: string): boolea
 
 function memoryStoreDir(): string {
 	return path.join(torusHome(), "memory");
-}
-
-function escapeRegExp(text: string): string {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Path of a team mailbox file referenced by the command, or null when none is. */
