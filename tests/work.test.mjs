@@ -222,6 +222,25 @@ test("ledger: append then tail newest-last; corrupt lines skipped; missing file 
 	assert.deepEqual(readLedger("missing-slug", 5), []);
 });
 
+test("readLedger: valid-JSON rows missing a string text/event are skipped, not cast blindly", () => {
+	// The shape a child emulating work_note via bash actually wrote
+	appendFileSync(
+		path.join(projectDir(), "work", "t.ledger.jsonl"),
+		`${JSON.stringify({ ts: "3", sessionId: "unknown", event: "verified", slug: "t", verification: "checks pass" })}\n`,
+		"utf-8",
+	);
+	appendFileSync(
+		path.join(projectDir(), "work", "t.ledger.jsonl"),
+		`${JSON.stringify({ ts: "4", sessionId: "s", event: "note", text: 42 })}\n`,
+		"utf-8",
+	);
+	appendLedgerEntry("t", { ts: "5", sessionId: "s", event: "note", text: "third" });
+	assert.deepEqual(
+		readLedger("t", 10).map((e) => e.text),
+		["first", "second", "third"],
+	);
+});
+
 test("readLedger: a ledger over 64KB reads only the tail window and matches the full parse", () => {
 	const slug = "big-ledger";
 	for (let i = 0; i < 200; i += 1) {

@@ -358,7 +358,20 @@ export function readLedger(slug: string, n: number): LedgerEntry[] {
 		const trimmed = line.trim();
 		if (trimmed.length === 0) continue;
 		try {
-			rows.push(JSON.parse(trimmed) as LedgerEntry);
+			const parsed: unknown = JSON.parse(trimmed);
+			// Hand-written rows (a child without the work_note tool emulating it
+			// via bash) can be valid JSON that is not a well-formed entry; every
+			// reader slices text/event unguarded, so only objects carrying both
+			// as strings are accepted.
+			if (
+				typeof parsed !== "object" ||
+				parsed === null ||
+				typeof (parsed as LedgerEntry).text !== "string" ||
+				typeof (parsed as LedgerEntry).event !== "string"
+			) {
+				continue;
+			}
+			rows.push(parsed as LedgerEntry);
 		} catch {
 			// skip corrupt line
 		}
