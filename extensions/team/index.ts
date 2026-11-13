@@ -3,7 +3,6 @@ import path from "node:path";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
-import { statusGlyphText } from "../fleet/theme-kit.js";
 import { displayPath, formatCost, projectKey, sleep } from "../fsutil.js";
 import { osNotify, shutdownToast } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -93,13 +92,12 @@ function memberObjective(
 	return out;
 }
 
-/** Fan-out result coalescing window (see flushBatch); module-level for test overriding. */
-let fanoutCoalesceMs = 5_000;
-
-/** Test seam: shrink the window to force staggered single-run flushes in tests. */
-export function setFanoutCoalesceForTesting(ms: number): void {
-	fanoutCoalesceMs = ms;
-}
+/**
+ * Wake-text cap for a fanout run's result tail: the marker is context,
+ * the registry record (torus_results) carries the full output — same
+ * rationale as roster's background-delegation wakes.
+ */
+const FANOUT_WAKE_SUMMARY_CAP = 4000;
 
 const fanoutTool = defineTool({
 	name: "torus_fanout",
@@ -182,9 +180,9 @@ const fanoutTool = defineTool({
 					"(background requested but disabled via TORUS_DELEGATE_BACKGROUND=0 — ran blocking)\n\n";
 			} else {
 				// Fire-and-forget, one descriptor per run: each completion queues
-				// exactly one wake-gate entry (never the coalesced marker below — the
-				// gate is the only delivery path for background results, and it batches
-				// pending entries into one turn while the session is busy).
+				// exactly one wake-gate entry (the gate is the only delivery path for
+				// background results, and it batches pending entries into one turn
+				// while the session is busy).
 				const runs = params.runs.map((run) => ({
 					agent: run.agent,
 					task: run.task,
@@ -265,92 +263,61 @@ const fanoutTool = defineTool({
 			},
 			{ triggerTurn: false },
 		);
-		// Result-marker coalescer: completions landing within COALESCE_MS merge
-		// into one combined torus.delegation-result (per-run markers would trickle
-		// into the transcript one turn boundary apart); the whole batch finishing
-		// flushes early instead of waiting out the window.
-		const COALESCE_MS = fanoutCoalesceMs;
-		type FanoutEntry = {
+		// Per-run completion wakes: each run's outcome queues ONE typed
+		// delegation-result wake entry through the wake gate — the same shape
+		// roster's background delegations emit, so fleet and notify render both
+		// identically. The gate holds entries while the turn is active and
+		// flushes them as a single wake-batch at settle; registry's
+		// notifyDelegation stays the delegation-lifecycle toast owner.
+		const wakeFanoutRun = (wake: {
+			/** Bare handle (no "@") or the agent name: the wake's origin label. */
 			label: string;
-			/** Bare handle (no "@") for the result marker; null for handleless runs. */
 			handle: string | null;
 			agent: string;
 			ok: boolean;
 			delegationId: string | null;
-			turns: number;
-			/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
-			cost: number;
-			durationMs: number;
-			/** Engine-signaled model-error text for failed runs; absent otherwise. */
+			startedAt: number;
+			/** Run output; absent when the run crashed before producing one. */
+			text?: string;
+			/** Engine-signaled model-error or crash text for failed runs. */
 			error?: string;
-		};
-		let batch: FanoutEntry[] = [];
-		let flushTimer: ReturnType<typeof setTimeout> | null = null;
-		const flushBatch = (): void => {
-			if (flushTimer) {
-				clearTimeout(flushTimer);
-				flushTimer = null;
-			}
-			if (batch.length === 0) return;
-			const entries = batch;
-			batch = [];
-			const single = entries.length === 1 ? entries[0] : undefined;
-			// One filtered list feeds both arrays: a run without a delegation id
-			// contributes neither an id nor a cost entry, so costs stay
-			// index-aligned with delegationIds in mixed success/failure batches.
-			const identified = entries.filter(
-				(e): e is FanoutEntry & { delegationId: string } => typeof e.delegationId === "string",
-			);
-			emitTorusCustom(
-				{
-					customType: "torus.delegation-result",
-					content: [
-						{
-							type: "text",
-							text: `fan-out ${entries
-								.map((e) => `${e.label} ${statusGlyphText(e.ok ? "done" : "failed")}`)
-								.join(", ")}`,
-						},
-					],
-					display: true,
-					details: {
-						// Bare handle: the notify renderer prepends "@"; combined batches
-						// have no single handle and fall back to agent "fan-out".
-						agent: single ? single.agent : "fan-out",
-						handle: single?.handle ?? undefined,
-						ok: entries.every((e) => e.ok),
-						delegationId: single?.delegationId ?? undefined,
-						delegationIds: identified.map((e) => e.delegationId),
-						runs: entries.length,
-						turns: entries.reduce((sum, e) => sum + e.turns, 0),
-						// Per-run costs in completion order (aligned with delegationIds)
-						// plus the summed batch cost; 0 when a model has no catalog price.
-						costs: identified.map((e) => e.cost),
-						cost: entries.reduce((sum, e) => sum + e.cost, 0),
-						// Per-failed-run model-error texts in completion order
-						// ("@sick: fetch failed"); present only when a run carried one.
-						...(entries.some((e) => !e.ok && typeof e.error === "string")
-							? {
-									errors: entries
-										.filter((e) => !e.ok && typeof e.error === "string")
-										.map((e) => `${e.label}: ${e.error}`),
-								}
-							: {}),
-						durationMs: Math.max(...entries.map((e) => e.durationMs)),
+		}): void => {
+			try {
+				const summary =
+					wake.text !== undefined && wake.text.length > FANOUT_WAKE_SUMMARY_CAP
+						? `${wake.text.slice(0, FANOUT_WAKE_SUMMARY_CAP)}…`
+						: wake.text;
+				const record = wake.delegationId
+					? listDelegations().find((r) => r.id === wake.delegationId)
+					: undefined;
+				const tail =
+					wake.ok || (wake.error === undefined && summary === undefined)
+						? undefined
+						: wake.error !== undefined
+							? [wake.error, summary].filter(Boolean).join(" — ")
+							: `Full result:\n\n${summary}`;
+				deliverWake({
+					customType: "delegation-result",
+					origin: { label: wake.label },
+					severity: wake.ok ? "success" : "error",
+					toast: false,
+					summary: torusWake("delegation", wake.label, wake.ok ? "finished" : "failed", {
+						tail,
+						hint:
+							wake.delegationId || record
+								? `Full output: run torus_results${wake.delegationId ? ` with id ${wake.delegationId}` : ""}.${record ? ` Log: ${record.logFile}` : ""}`
+								: undefined,
+					}),
+					detail: {
+						agent: wake.agent,
+						handle: wake.handle,
+						ok: wake.ok,
+						...(wake.delegationId ? { delegationId: wake.delegationId } : {}),
+						durationMs: Date.now() - wake.startedAt,
 					},
-				},
-				{ triggerTurn: false },
-			);
-		};
-		const coalesce = (entry: FanoutEntry): void => {
-			batch.push(entry);
-			if (batch.length >= params.runs.length) {
-				flushBatch();
-				return;
-			}
-			if (!flushTimer) {
-				flushTimer = setTimeout(flushBatch, COALESCE_MS);
-				flushTimer.unref();
+				});
+			} catch {
+				// Delivery is best-effort; the tool result and the registry record keep the outcome.
 			}
 		};
 		const settledRuns = await Promise.allSettled(
@@ -373,16 +340,14 @@ const fanoutTool = defineTool({
 						false,
 						{ model: run.model ?? null },
 					);
-					const usage = outcome.details.usage as { turns?: number; cost?: number } | undefined;
-					coalesce({
+					wakeFanoutRun({
 						label,
 						handle,
 						agent: run.agent,
 						ok: outcome.ok,
 						delegationId: outcome.delegationId,
-						turns: usage?.turns ?? 0,
-						cost: typeof usage?.cost === "number" && Number.isFinite(usage.cost) ? usage.cost : 0,
-						durationMs: Date.now() - runStartedAt,
+						startedAt: runStartedAt,
+						text: outcome.text,
 						error:
 							outcome.ok || typeof outcome.details.error !== "string"
 								? undefined
@@ -395,15 +360,14 @@ const fanoutTool = defineTool({
 						details: outcome.details,
 					};
 				} catch (error) {
-					coalesce({
+					wakeFanoutRun({
 						label,
 						handle,
 						agent: run.agent,
 						ok: false,
 						delegationId: null,
-						turns: 0,
-						cost: 0,
-						durationMs: Date.now() - runStartedAt,
+						startedAt: runStartedAt,
+						error: `run crashed: ${String(error).slice(0, 300)}`,
 					});
 					throw error;
 				}

@@ -11,6 +11,8 @@ import { after, beforeEach, test } from "node:test";
 // consumes whatever the script prints on stdout.
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-delegation-surface-test-"));
 process.env.TORUS_HOME = HOME;
+// Fanout completion wakes ride the gate; the suite pins instant idle delivery.
+process.env.TORUS_WAKE_COALESCE_MS = "0";
 
 const ENGINE_DIR = mkdtempSync(path.join(tmpdir(), "torus-fake-engines-"));
 const SILENT_ENGINE = path.join(ENGINE_DIR, "silent-engine.sh");
@@ -210,6 +212,7 @@ const registry = await import("../extensions/registry.ts");
 const { childSessionsRoot } = await import("../extensions/fsutil.ts");
 const roster = await import("../extensions/roster/index.ts");
 const team = await import("../extensions/team/index.ts");
+const gate = await import("../extensions/wake-gate.ts");
 const ui = await import("../extensions/ui/index.ts");
 
 const PREV_ENGINE_BIN = process.env.TORUS_ENGINE_BIN;
@@ -229,6 +232,7 @@ after(() => {
 	if (PREV_OPENCODE_KEY === undefined) delete process.env.OPENCODE_API_KEY;
 	else process.env.OPENCODE_API_KEY = PREV_OPENCODE_KEY;
 	registry.resetRegistryForTesting();
+	gate._resetWakeGateForTesting();
 	rmSync(HOME, { recursive: true, force: true });
 	rmSync(ENGINE_DIR, { recursive: true, force: true });
 });
@@ -809,8 +813,9 @@ test("chain paints no per-step statusline chips", async () => {
 	);
 });
 
-test("fan-out emits one combined start marker instead of per-run markers", async () => {
+test("fan-out start stays one combined marker; completions settle into one wake-batch", async () => {
 	registry.resetRegistryForTesting();
+	gate._resetWakeGateForTesting();
 	const customs = [];
 	captureCustoms(customs);
 	const fanoutTool = registeredTools().find((t) => t.name === "torus_fanout");
@@ -820,21 +825,29 @@ test("fan-out emits one combined start marker instead of per-run markers", async
 		ui: { setStatus: () => {} },
 	};
 
-	await withEngine(EVENT_ENGINE, async () => {
-		const result = await fanoutTool.execute(
-			"call",
-			{
-				runs: [
-					{ agent: "builder", task: "probe a", handle: "alpha" },
-					{ agent: "builder", task: "probe b", handle: "beta" },
-				],
-			},
-			undefined,
-			undefined,
-			ctx,
-		);
-		assert.equal(result.details.ok, 2, "both runs succeed under the fake engine");
-	});
+	// The lead is mid-run while its fanout executes, so completions queue and
+	// settle out as one batch — hold the gate active the same way.
+	gate._setWakeGateActiveForTesting(true);
+	try {
+		await withEngine(EVENT_ENGINE, async () => {
+			const result = await fanoutTool.execute(
+				"call",
+				{
+					runs: [
+						{ agent: "builder", task: "probe a", handle: "alpha" },
+						{ agent: "builder", task: "probe b", handle: "beta" },
+					],
+				},
+				undefined,
+				undefined,
+				ctx,
+			);
+			assert.equal(result.details.ok, 2, "both runs succeed under the fake engine");
+		});
+	} finally {
+		gate._setWakeGateActiveForTesting(false);
+	}
+	gate.wakeGateFlushForTesting();
 
 	const starts = customs.filter((m) => m.customType === "torus.delegation-start");
 	assert.equal(starts.length, 1, "exactly one combined start marker for the batch");
@@ -845,21 +858,33 @@ test("fan-out emits one combined start marker instead of per-run markers", async
 		!starts.some((m) => typeof m.details.delegationId === "string"),
 		"no per-run start markers may leak",
 	);
-	const results = customs.filter((m) => m.customType === "torus.delegation-result");
-	assert.equal(results.length, 1, "simultaneous completions flush as one combined marker");
-	assert.equal(results[0].details.agent, "fan-out");
-	assert.equal(results[0].details.handle, undefined, "combined marker carries no handle");
-	assert.equal(results[0].details.runs, 2);
-	assert.match(
-		results[0].content[0].text,
-		/^fan-out (@alpha ✓, @beta ✓|@beta ✓, @alpha ✓)$/,
-		"combined marker lists runs in completion order",
+	assert.equal(
+		customs.filter((m) => m.customType === "torus.delegation-result").length,
+		0,
+		"no directly emitted result marker rides along — the gate owns delivery",
 	);
+	const batches = customs.filter((m) => m.customType === "torus.wake-batch");
+	assert.equal(batches.length, 1, "the held completions settle out as ONE wake-batch");
+	assert.equal(batches[0].details.count, 2, "one entry per run");
+	assert.deepEqual(
+		batches[0].details.entries.map((e) => e.details.handle).sort(),
+		["alpha", "beta"],
+		"each batch entry carries its run's bare handle",
+	);
+	for (const entry of batches[0].details.entries) {
+		assert.equal(entry.customType, "delegation-result");
+		assert.equal(entry.details.agent, "builder");
+		assert.equal(entry.details.ok, true);
+		assert.equal(typeof entry.details.delegationId, "string", "entries stay clickable");
+		assert.equal(typeof entry.details.durationMs, "number");
+		assert.match(entry.text, /delegation "@\w+" finished/);
+	}
 	registry.setCustomSender(() => {});
 });
 
-test("fan-out staggered completions flush per-run markers carrying the bare handle", async () => {
+test("fan-out completions land one wake entry per run, staggered or simultaneous", async () => {
 	registry.resetRegistryForTesting();
+	gate._resetWakeGateForTesting();
 	const customs = [];
 	captureCustoms(customs);
 	const fanoutTool = registeredTools().find((t) => t.name === "torus_fanout");
@@ -869,33 +894,26 @@ test("fan-out staggered completions flush per-run markers carrying the bare hand
 		ui: { setStatus: () => {} },
 	};
 
-	// Shrink the coalesce window so the 1s-staggered second completion misses it
-	// and flushes as its own single-run marker (the user-visible "finished" line).
-	team.setFanoutCoalesceForTesting(150);
-	try {
-		await withEngine(STAGGER_ENGINE, async () => {
-			const result = await fanoutTool.execute(
-				"call",
-				{
-					runs: [
-						{ agent: "builder", task: "fast stagger probe", handle: "alpha" },
-						{ agent: "builder", task: "slow stagger probe", handle: "beta" },
-					],
-				},
-				undefined,
-				undefined,
-				ctx,
-			);
-			assert.equal(result.details.ok, 2, "both runs succeed under the fake engine");
-		});
-	} finally {
-		team.setFanoutCoalesceForTesting(5_000);
-	}
-	// The last single-run flush rides a 150ms timer that outlives execute().
-	await new Promise((resolve) => setTimeout(resolve, 400));
+	// Idle gate with the coalesce window at 0: even completions landing a
+	// second apart deliver as their own single-entry wake markers.
+	await withEngine(STAGGER_ENGINE, async () => {
+		const result = await fanoutTool.execute(
+			"call",
+			{
+				runs: [
+					{ agent: "builder", task: "fast stagger probe", handle: "alpha" },
+					{ agent: "builder", task: "slow stagger probe", handle: "beta" },
+				],
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		assert.equal(result.details.ok, 2, "both runs succeed under the fake engine");
+	});
 
 	const results = customs.filter((m) => m.customType === "torus.delegation-result");
-	assert.equal(results.length, 2, "completions past the coalesce window flush separately");
+	assert.equal(results.length, 2, "each completion delivers its own marker");
 	assert.deepEqual(
 		results.map((m) => m.details.handle).sort(),
 		["alpha", "beta"],
@@ -907,7 +925,10 @@ test("fan-out staggered completions flush per-run markers carrying the bare hand
 			"handles must be bare — the notify renderer prepends the @",
 		);
 		assert.equal(marker.details.agent, "builder");
-		assert.equal(marker.details.runs, 1);
+		assert.equal(marker.details.ok, true);
+		assert.equal(typeof marker.details.delegationId, "string", "the marker stays clickable");
+		assert.equal(typeof marker.details.durationMs, "number");
+		assert.match(marker.content[0].text, /delegation "@\w+" finished/);
 	}
 	registry.setCustomSender(() => {});
 });

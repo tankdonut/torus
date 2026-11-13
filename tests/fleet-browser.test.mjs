@@ -266,8 +266,10 @@ test("fullscreen click: clicking a rendered list row opens its detail", () => {
 	component.dispose();
 });
 
-test("fan-out coalesces near-simultaneous completions into one combined result marker", async () => {
+test("fan-out completions settle into one wake-batch with per-run entries", async () => {
 	registry.resetRegistryForTesting();
+	const gate = await import("../extensions/wake-gate.ts");
+	gate._resetWakeGateForTesting();
 	const customs = [];
 	registry.setCustomSender((message, options) => customs.push({ message, options }));
 	const tools = [];
@@ -279,29 +281,45 @@ test("fan-out coalesces near-simultaneous completions into one combined result m
 		ui: { setStatus: () => {} },
 	};
 
-	await withEngine(EVENT_ENGINE, async () => {
-		const result = await fanoutTool.execute(
-			"call",
-			{
-				runs: [
-					{ agent: "builder", task: "probe a", handle: "alpha" },
-					{ agent: "builder", task: "probe b", handle: "beta" },
-				],
-			},
-			undefined,
-			undefined,
-			ctx,
-		);
-		assert.equal(result.details.ok, 2, "both runs succeed under the fake engine");
-	});
+	// The lead is mid-run while its fanout executes: hold the gate active so
+	// both completions settle out as one batch, then flush it explicitly.
+	gate._setWakeGateActiveForTesting(true);
+	try {
+		await withEngine(EVENT_ENGINE, async () => {
+			const result = await fanoutTool.execute(
+				"call",
+				{
+					runs: [
+						{ agent: "builder", task: "probe a", handle: "alpha" },
+						{ agent: "builder", task: "probe b", handle: "beta" },
+					],
+				},
+				undefined,
+				undefined,
+				ctx,
+			);
+			assert.equal(result.details.ok, 2, "both runs succeed under the fake engine");
+		});
+	} finally {
+		gate._setWakeGateActiveForTesting(false);
+	}
+	gate.wakeGateFlushForTesting();
 
-	const results = customs.filter((e) => e.message.customType === "torus.delegation-result");
-	assert.equal(results.length, 1, "both completions merge into exactly one result marker");
-	const entry = results[0];
-	assert.equal(entry.message.details.runs, 2);
-	assert.equal(entry.message.details.delegationIds.length, 2, "combined marker lists every run id");
-	assert.equal(entry.message.details.handle, undefined, "combined marker carries no handle");
-	assert.equal(entry.options?.triggerTurn, false, "combined marker defers to the turn boundary");
+	const batches = customs.filter((e) => e.message.customType === "torus.wake-batch");
+	assert.equal(batches.length, 1, "both completions settle out as one wake-batch");
+	const entries = batches[0].message.details.entries;
+	assert.equal(entries.length, 2, "one entry per run");
+	for (const entry of entries) {
+		assert.equal(entry.customType, "delegation-result");
+		assert.equal(entry.details.ok, true);
+		assert.equal(typeof entry.details.delegationId, "string", "each entry keeps its run clickable");
+	}
+	assert.equal(
+		customs.filter((e) => e.message.customType === "torus.delegation-result").length,
+		0,
+		"no directly emitted result marker rides along — the gate owns delivery",
+	);
+	assert.equal(batches[0].options?.triggerTurn, true, "the wake-batch triggers its settle turn");
 	registry.setCustomSender(() => {});
 });
 
