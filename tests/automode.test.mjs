@@ -502,7 +502,12 @@ test("/automode: status shows mode and rules path; toggles clear the cache and r
 	assert.match(after, /circuit breaker: off/);
 
 	await active.pi.commands.automode.handler("banana", active.ctx);
-	assert.match(active.notifications[active.notifications.length - 1].message, /usage: \/automode/);
+	const unknownMode = active.notifications[active.notifications.length - 1];
+	assert.match(
+		unknownMode.message,
+		/Usage: \/automode \[auto\|default\] \| denied \| setup \| setup apply <draft\.json>/,
+	);
+	assert.equal(unknownMode.type, "error", "unknown mode is a usage error, not a warning");
 });
 
 test("startup notice: auto mode announces on once, naming the session model and rules path", async () => {
@@ -1235,7 +1240,7 @@ test("/automode setup apply: widening keys, junk arrays, and empty drafts are re
 	rmSync(drafts, { recursive: true, force: true });
 });
 
-test("/automode setup apply: headless prints the draft and writes nothing; missing file and bare usage warn", async () => {
+test("/automode setup apply: headless prints the draft and writes nothing; missing file and bare usage error", async () => {
 	resetAudit();
 	setConfig(undefined);
 	const drafts = mkdtempSync(path.join(tmpdir(), "torus-drafts-"));
@@ -1254,14 +1259,19 @@ test("/automode setup apply: headless prints the draft and writes nothing; missi
 		`setup apply ${path.join(drafts, "nope.json")}`,
 		missing.ctx,
 	);
-	assert.match(missing.notifications[missing.notifications.length - 1].message, /unreadable/);
+	const missingFile = missing.notifications[missing.notifications.length - 1];
+	assert.match(missingFile.message, /unreadable/);
+	assert.equal(
+		missingFile.type,
+		"error",
+		"an unreadable draft file is the user's error, not a system warning",
+	);
 
 	const bare = setup({});
 	await bare.pi.commands.automode.handler("setup apply", bare.ctx);
-	assert.match(
-		bare.notifications[bare.notifications.length - 1].message,
-		/usage: \/automode setup apply/,
-	);
+	const bareUsage = bare.notifications[bare.notifications.length - 1];
+	assert.match(bareUsage.message, /Usage: \/automode setup apply <draft\.json>/);
+	assert.equal(bareUsage.type, "error", "bare usage is an error, not a warning");
 
 	const discard = setup({ hasUI: true, answer: "Discard" });
 	await discard.pi.commands.automode.handler(`setup apply ${file}`, discard.ctx);

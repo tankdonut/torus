@@ -48,6 +48,7 @@ import {
 	resolveModels,
 	resolveRequestedModel,
 } from "../providers/index.js";
+import { cmdUsage } from "../ui/index.js";
 
 // The chain-model helpers live in providers (the chain-routing module) so every
 // chain consumer resolves through one availability + cooldown-filtered helper;
@@ -2111,9 +2112,14 @@ export function registerRoster(pi: ExtensionAPI): void {
 				pi.registerCommand(commandName, {
 					description: `Toggle the ${agent.name} persona for this session (${agent.description}); /${commandName} off clears it`,
 					handler: async (args, ctx) => {
-						if (args.trim() === "off") {
+						const arg = args.trim();
+						if (arg === "off") {
 							setSessionPersona(null);
 							ctx.ui.notify(`${agent.name} persona off`, "info");
+							return;
+						}
+						if (arg !== "") {
+							ctx.ui.notify(cmdUsage(`/${commandName}`, "[off]"), "error");
 							return;
 						}
 						setSessionPersona(agent.name);
@@ -2130,7 +2136,7 @@ export function registerRoster(pi: ExtensionAPI): void {
 				handler: async (args, ctx) => {
 					const task = args.trim();
 					if (!task) {
-						ctx.ui.notify(`Usage: /${commandName} <task text>`, "error");
+						ctx.ui.notify(cmdUsage(`/${commandName}`, "<task text>"), "error");
 						return;
 					}
 					const parentSession = ctx.sessionManager.getSessionId();

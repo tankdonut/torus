@@ -717,6 +717,16 @@ function installCursorBlinkWidget(ctx: ExtensionContext): void {
 	});
 }
 
+/**
+ * One usage-error dialect for every registerCommand site: a usage error is
+ * `Usage: /<name> <spec>` (capital U, no extension prefix) surfaced through
+ * ctx.ui.notify at ERROR level; any non-usage failure is `<extension>:
+ * <message>` at error/warning by severity.
+ */
+export function cmdUsage(command: string, argsSpec: string): string {
+	return `Usage: ${command} ${argsSpec}`;
+}
+
 export function registerUi(pi: ExtensionAPI): void {
 	// fleet spend rides delegation record updates: fold each into the
 	// session-keyed total and repaint when a live ctx exists (module-level

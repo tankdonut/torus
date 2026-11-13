@@ -166,3 +166,29 @@ test("unreadable sessions root keeps all goal files", () => {
 		rmSync(home, { recursive: true, force: true });
 	}
 });
+
+test("goal command dialect: cmdUsage usage line and the prefixed no-goal error", async () => {
+	const registry = await import("../extensions/registry.ts");
+	const ui = await import("../extensions/ui/index.ts");
+	const commands = new Map();
+	goal.registerGoal({
+		registerCommand: (name, cmd) => commands.set(name, cmd),
+		registerTool: () => {},
+		on: () => {},
+	});
+	const notifications = [];
+	const ctx = { ui: { notify: (message, type) => notifications.push({ message, type }) } };
+	registry.setCurrentSessionId("sess-dialect");
+	try {
+		assert.equal(
+			ui.cmdUsage("/goal", "<text> | note <text> | pause | resume | off"),
+			"Usage: /goal <text> | note <text> | pause | resume | off",
+		);
+		await commands.get("goal").handler("note some progress", ctx);
+		assert.deepEqual(notifications, [
+			{ message: "goal: no goal set — set one with /goal <text> first", type: "error" },
+		]);
+	} finally {
+		registry.setCurrentSessionId(null);
+	}
+});

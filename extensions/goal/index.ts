@@ -10,7 +10,7 @@ import { projectStateDir, pruneOrphanSessionFiles, readJson, writeJson } from ".
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { currentSessionId, setCurrentSessionId } from "../registry.js";
 import { sessionFileExists } from "../sessions/index.js";
-import { type GoalChip, refreshToruStatus, setStatusGoal } from "../ui/index.js";
+import { cmdUsage, type GoalChip, refreshToruStatus, setStatusGoal } from "../ui/index.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
@@ -150,11 +150,11 @@ export function registerGoal(pi: ExtensionAPI): void {
 			if (trimmed.startsWith("note ")) {
 				const note = trimmed.slice(5).trim();
 				if (note.length === 0) {
-					ctx.ui.notify("usage: /goal note <progress note>", "error");
+					ctx.ui.notify(cmdUsage("/goal", "<text> | note <text> | pause | resume | off"), "error");
 					return;
 				}
 				if (!state || state.goal.length === 0) {
-					ctx.ui.notify("no goal set — set one with /goal <text> first", "error");
+					ctx.ui.notify("goal: no goal set — set one with /goal <text> first", "error");
 					return;
 				}
 				state.notes.push(`[${new Date().toISOString()}] ${note}`);
@@ -162,6 +162,7 @@ export function registerGoal(pi: ExtensionAPI): void {
 				ctx.ui.notify("goal note added", "info");
 				return;
 			}
+			// Any other argument intentionally becomes a new active goal.
 			writeGoal(sessionId, {
 				goal: trimmed,
 				status: "active",

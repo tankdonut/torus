@@ -1782,3 +1782,48 @@ test("delegate carries structuredContent on success and omits it on failure", as
 	assert.match(failure.content[0].text, /Unknown agent/);
 	registry.setCustomSender(() => {});
 });
+
+test("agent commands speak the usage dialect: empty delegate args and a junk /leader arg error", async () => {
+	registry.resetRegistryForTesting();
+	const commands = new Map();
+	roster.registerRoster({
+		registerTool: () => {},
+		registerCommand: (name, cmd) => commands.set(name, cmd),
+		on: () => {},
+		sendMessage: () => {},
+	});
+	const notifications = [];
+	const ctx = { ui: { notify: (message, type) => notifications.push({ message, type }) } };
+
+	for (const name of [
+		"builder",
+		"critic",
+		"dreamer",
+		"explorer",
+		"librarian",
+		"research",
+		"looker",
+		"reviewer",
+	]) {
+		const cmd = commands.get(name);
+		assert.ok(cmd, `/${name} not registered`);
+		notifications.length = 0;
+		await cmd.handler("", ctx);
+		assert.deepEqual(notifications, [{ message: `Usage: /${name} <task text>`, type: "error" }]);
+	}
+
+	const leader = commands.get("leader");
+	assert.ok(leader, "/leader not registered");
+	notifications.length = 0;
+	await leader.handler("xyz", ctx);
+	assert.deepEqual(notifications, [{ message: "Usage: /leader [off]", type: "error" }]);
+	assert.equal(registry.sessionPersona(), null, "a rejected arg never sets the persona");
+	notifications.length = 0;
+	await leader.handler("off", ctx);
+	assert.equal(registry.sessionPersona(), null, "/leader off clears the persona");
+	notifications.length = 0;
+	await leader.handler("", ctx);
+	assert.equal(registry.sessionPersona(), "leader", "a bare /leader activates the persona");
+	assert.match(notifications[0].message, /persona active/);
+	registry.setSessionPersona(null);
+});

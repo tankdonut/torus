@@ -37,7 +37,7 @@ import {
 import { PROJECT_AUTOMODE_KEYS } from "../config/sections.js";
 import { scratchDir } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
-import { refreshToruStatus, setStatusPermission } from "../ui/index.js";
+import { cmdUsage, refreshToruStatus, setStatusPermission } from "../ui/index.js";
 import { DecisionCache, decide, pickChatModel, pickModel } from "./classify.js";
 import {
 	type AuditRow,
@@ -945,7 +945,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		const target = path.resolve(ctx.cwd, file);
 		const parsed = parseDraftFile(target);
 		if (!parsed.ok) {
-			ctx.ui.notify(`automode: ${parsed.error}`, "warning");
+			ctx.ui.notify(`automode: ${parsed.error}`, "error");
 			return;
 		}
 		const current = loadAutomodeRules();
@@ -1034,7 +1034,7 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			if (arg.startsWith("setup apply")) {
 				const file = raw.slice("setup apply".length).trim();
 				if (file === "") {
-					ctx.ui.notify("automode: usage: /automode setup apply <draft.json>", "warning");
+					ctx.ui.notify(cmdUsage("/automode", "setup apply <draft.json>"), "error");
 					return;
 				}
 				await runSetupApply(ctx, file);
@@ -1042,8 +1042,11 @@ export function registerAutomode(pi: ExtensionAPI): void {
 			}
 			if (arg !== "auto" && arg !== "default") {
 				ctx.ui.notify(
-					`automode: unknown mode "${args.trim()}" — usage: /automode [auto|default]`,
-					"warning",
+					`automode: unknown mode "${args.trim()}" — ${cmdUsage(
+						"/automode",
+						"[auto|default] | denied | setup | setup apply <draft.json>",
+					)}`,
+					"error",
 				);
 				return;
 			}

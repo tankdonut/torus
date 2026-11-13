@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -238,6 +246,14 @@ test("memoryContextBlock with three args keeps the fold shape", () => {
 
 	const second = memory.memoryContextBlock(process.cwd(), "", "fold-9");
 	assert.equal(second, first, "three-arg calls are pure: no ledger, no drift");
+});
+
+test("reflect failure notify is extension-prefixed at the call site", () => {
+	const source = readFileSync(new URL("../extensions/memory/index.ts", import.meta.url), "utf8");
+	assert.ok(
+		source.includes(': "reflect: reflection failed",'),
+		"the failed reflect outcome carries the reflect: prefix",
+	);
 });
 
 test.after(() => {

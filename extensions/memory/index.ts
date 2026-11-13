@@ -1520,7 +1520,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 			ctx.ui.notify(
 				outcome.ok
 					? `Reflection complete — ${totalApplied(counts)} change(s) applied`
-					: "Reflection failed",
+					: "reflect: reflection failed",
 				outcome.ok ? "info" : "error",
 			);
 		},
