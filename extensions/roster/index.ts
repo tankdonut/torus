@@ -901,6 +901,52 @@ export function _drivenDelegationsForTesting(): Set<string> {
 }
 
 /**
+ * Session ids a record's log names, in leg order — one <torus:session> tag per
+ * chain-walk leg (same-id re-attach writes no duplicate tag). Falls back to the
+ * record's live session id when the log is unreadable or tag-free.
+ */
+function recordLegSessions(record: DelegationRecord): string[] {
+	let raw: string;
+	try {
+		raw = readFileSync(record.logFile, "utf8");
+	} catch {
+		return record.sessionId === null ? [] : [record.sessionId];
+	}
+	const sessions = [
+		...new Set([...raw.matchAll(/^<torus:session id="([^"]*)"[^>]*\/>/gm)].map((m) => m[1] ?? "")),
+	];
+	if (sessions.length === 0 && record.sessionId !== null) sessions.push(record.sessionId);
+	return sessions;
+}
+
+/**
+ * Fold every leg's transcript into one tally through the shared engine
+ * reducer: the record counts the whole walk, so reconciliation against only
+ * the latest leg would regress a fallback's already-folded spend. Leg order
+ * comes from the log's session tags; legs whose transcript is missing (or
+ * never named a session) contribute nothing, and the text is the last leg's.
+ */
+function recordTranscriptTally(record: DelegationRecord): EngineTally | null {
+	let folded: EngineTally | null = null;
+	for (const sessionId of recordLegSessions(record)) {
+		const leg = childTranscriptTally(sessionId);
+		if (leg === null) continue;
+		if (folded === null) {
+			folded = leg;
+			continue;
+		}
+		folded.turns += leg.turns;
+		folded.tokensIn += leg.tokensIn;
+		folded.tokensOut += leg.tokensOut;
+		folded.cacheRead += leg.cacheRead;
+		folded.cacheWrite += leg.cacheWrite;
+		folded.cost += leg.cost;
+		folded.text = leg.text;
+	}
+	return folded;
+}
+
+/**
  * Fold one child session transcript into a tally through the shared engine
  * reducer. Returns null when the transcript is missing or unreadable.
  */
@@ -956,7 +1002,7 @@ export async function reconcileOrphanedDelegations(): Promise<void> {
 	for (const record of listDelegations()) {
 		if (record.status !== "running" || drivenDelegations.has(record.id)) continue;
 		if (record.sessionId === null) continue;
-		const tally = childTranscriptTally(record.sessionId);
+		const tally = recordTranscriptTally(record);
 		if (tally === null) continue;
 		const dead = record.childPid !== undefined && !pidAlive(record.childPid);
 		if (
@@ -1358,9 +1404,25 @@ export async function runDelegation(
 		await writeFile(file, promptBody, "utf8");
 		commonArgs.push("--append-system-prompt", file);
 
+		// Spend carried across walk legs: each child counts its own turns from 1,
+		// so the strip, the record, and the final details offset every snapshot by
+		// what the earlier legs already spent — a fallback resets the model, never
+		// the visible counter.
+		const carried = { turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 		const onTurnWrapped = (snapshot: DelegationSnapshot) => {
-			updateDelegation(delegationId, snapshot);
-			onTurn?.({ ...snapshot, delegationId });
+			const folded: DelegationSnapshot = {
+				...snapshot,
+				turns: carried.turns + snapshot.turns,
+				usage: {
+					input: carried.input + snapshot.usage.input,
+					output: carried.output + snapshot.usage.output,
+					cacheRead: carried.cacheRead + snapshot.usage.cacheRead,
+					cacheWrite: carried.cacheWrite + snapshot.usage.cacheWrite,
+					cost: carried.cost + snapshot.usage.cost,
+				},
+			};
+			updateDelegation(delegationId, folded);
+			onTurn?.({ ...folded, delegationId });
 		};
 		const onActionWrapped = (actionLine: string) => appendAction(delegationId, actionLine);
 
@@ -1419,6 +1481,12 @@ export async function runDelegation(
 				}
 			})();
 			result = attempt;
+			carried.turns += attempt.usage.turns;
+			carried.input += attempt.usage.input;
+			carried.output += attempt.usage.output;
+			carried.cacheRead += attempt.usage.cacheRead;
+			carried.cacheWrite += attempt.usage.cacheWrite;
+			carried.cost += attempt.usage.cost;
 			// An operator stop from the fleet view ends the walk: retrying a
 			// cancelled run down-chain would respawn it on the next model.
 			if (delegationStopRequested(delegationId)) break;
@@ -1514,7 +1582,7 @@ export async function runDelegation(
 						sessionId: finalResult.sessionId,
 						handle,
 						durationMs: Date.now() - startedAt,
-						turns: finalResult.usage.turns,
+						turns: carried.turns,
 						...(stopped ? { stopped: true } : {}),
 						...(lastError ? { error: lastError } : {}),
 						...(noProgressTail > 0 ? { noProgressTail } : {}),
@@ -1533,8 +1601,17 @@ export async function runDelegation(
 				exitCode: finalResult.exitCode,
 				sessionId: finalResult.sessionId,
 				delegationId,
-				turns: finalResult.usage.turns,
-				usage: finalResult.usage,
+				turns: carried.turns,
+				usage: {
+					input: carried.input,
+					output: carried.output,
+					turns: carried.turns,
+					cacheRead: carried.cacheRead,
+					cacheWrite: carried.cacheWrite,
+					cost: carried.cost,
+					noProgressTail: finalResult.usage.noProgressTail,
+					...(finalResult.usage.lastError ? { lastError: finalResult.usage.lastError } : {}),
+				},
 				noProgressTail,
 				...(stopped ? { stopped: true } : {}),
 				...(lastError ? { error: lastError } : {}),
@@ -1694,7 +1771,9 @@ const delegateTool = defineTool({
 			const streaming = result.content.some(
 				(block) => block.type === "text" && block.text.trim().length > 0,
 			);
-			const state = streaming ? `working · turn ${turns ?? 1}` : "starting";
+			const state = streaming
+				? `working${turns === undefined ? "" : ` · turn ${turns}`}`
+				: "starting";
 			return clickable(
 				[new Text(theme.fg("warning", `delegate ${agent} (${model}): ${state}`), 0, 0)],
 				delegationId,

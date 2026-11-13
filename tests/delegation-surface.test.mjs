@@ -114,6 +114,31 @@ writeFileSync(
 	"utf8",
 );
 chmodSync(MODEL_ERROR_ENGINE, 0o755);
+// A chain walk: the zai leg does two real turns then stalls into a no-progress
+// tail (rejected), the opencode-go leg does three clean turns (accepted). The
+// models are told apart by the --model argv so both legs share one script.
+const WALK_ENGINE = path.join(ENGINE_DIR, "walk-engine.sh");
+writeFileSync(
+	WALK_ENGINE,
+	[
+		"#!/bin/sh",
+		'case "$*" in',
+		'  *"--model zai"*)',
+		'    echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"zai turn1"}],"usage":{"input":12000,"output":2000,"cost":{"total":0.04}},"stopReason":"toolUse"}}\'',
+		'    echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"zai turn2"}],"usage":{"input":1200,"output":200,"cost":{"total":0.004}},"stopReason":"toolUse"}}\'',
+		'    echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"zai turn2"}],"usage":{"input":0,"output":0,"cost":{"total":0}}}}\'',
+		"    exit 0 ;;",
+		'  *"--model opencode-go"*)',
+		'    echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"oc turn1"}],"usage":{"input":100,"output":50,"cost":{"total":0.01}},"stopReason":"toolUse"}}\'',
+		'    echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"oc turn2"}],"usage":{"input":80,"output":40,"cost":{"total":0.008}},"stopReason":"toolUse"}}\'',
+		'    echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"oc final answer"}],"usage":{"input":70,"output":30,"cost":{"total":0.006}},"stopReason":"stop"}}\'',
+		"    exit 0 ;;",
+		"esac",
+		"",
+	].join("\n"),
+	"utf8",
+);
+chmodSync(WALK_ENGINE, 0o755);
 // The engine retried a transient failure and gave up: auto_retry_end with
 // success:false + finalError — the "week of connection errors" shape.
 const AUTO_RETRY_FAIL_ENGINE = path.join(ENGINE_DIR, "auto-retry-fail-engine.sh");
@@ -381,7 +406,8 @@ test("delegation ending in an engine-signaled model error fails red with the err
 			0,
 			"the engine finalized cleanly — the failure is the error signal",
 		);
-		assert.equal(outcome.details.turns, 3);
+		// Three rejected legs, three turns each: the walk's cumulative spend.
+		assert.equal(outcome.details.turns, 9);
 		assert.equal(
 			outcome.details.model,
 			"opencode-go/glm-5.3-flash",
@@ -1237,6 +1263,96 @@ test("orphaned running delegations reconcile from their child transcript", async
 	await roster.reconcileOrphanedDelegations();
 	const driven = registry.listDelegations().find((r) => r.id === "driven-1");
 	assert.equal(driven.cost, 0, "driven records are not reconciled");
+
+	roster._drivenDelegationsForTesting().clear();
+	registry.resetRegistryForTesting();
+});
+
+test("a chain walk's snapshots and result carry cumulative spend across legs", async () => {
+	registry.resetRegistryForTesting();
+	const snapshots = [];
+
+	await withEngine(WALK_ENGINE, async () => {
+		const outcome = await roster.runDelegation(
+			"explorer",
+			"walk probe",
+			undefined,
+			(snapshot) => snapshots.push(snapshot),
+			"sess-walk",
+		);
+		assert.equal(outcome.ok, true);
+		assert.equal(
+			outcome.details.turns,
+			6,
+			"turns sum across the rejected leg and the accepted one",
+		);
+		assert.equal(outcome.details.usage.input, 13450, "input tokens sum across legs");
+		assert.equal(outcome.details.usage.output, 2320, "output tokens sum across legs");
+		assert.equal(outcome.details.usage.cost, 0.068, "cost sums across legs");
+		assert.equal(outcome.details.usage.turns, 6, "usage.turns matches the top-level count");
+	});
+
+	// The zai leg counts 1..3; the opencode-go leg continues at 4 — the fallback
+	// resets the model, never the visible counter (strip and record both read
+	// these snapshots).
+	const ocFirst = snapshots.filter((s) => s.text === "oc turn1");
+	assert.ok(ocFirst.length > 0, "the accepted leg streamed snapshots");
+	assert.ok(
+		ocFirst.every((s) => s.turns === 4),
+		"the second leg's first turn continues the walk's count",
+	);
+	assert.equal(snapshots.at(-1).turns, 6, "the final snapshot carries the walk total");
+
+	const record = registry.listDelegations().at(-1);
+	assert.equal(record.turns, 6, "the registry record holds the walk total");
+	assert.equal(record.cost, 0.068, "the registry record folds every leg's cost");
+	assert.match(
+		readFileSync(record.logFile, "utf8"),
+		/--- turn 6 \(13450\/2320 tok · \$0\.0680\) ---/,
+		"the log's last turn line is the cumulative walk total",
+	);
+	registry.setCustomSender(() => {});
+});
+
+test("orphan reconciliation folds every chain-walk leg's transcript", async () => {
+	registry.resetRegistryForTesting();
+	roster._drivenDelegationsForTesting().clear();
+	await registry.startDelegation("orphan-legs", "builder", "m", "sess-legs", null);
+	registry.attachSessionId("orphan-legs", "child-sess-leg1");
+	registry.attachSessionId("orphan-legs", "child-sess-leg2");
+	const transcriptDir = childSessionsRoot();
+	mkdirSync(transcriptDir, { recursive: true });
+	const turn = (text, input, output, total) =>
+		JSON.stringify({
+			type: "message",
+			id: `m-${text}`,
+			parentId: null,
+			timestamp: new Date().toISOString(),
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text }],
+				usage: { input, output, cost: { total } },
+				stopReason: "stop",
+			},
+		});
+	writeFileSync(
+		path.join(transcriptDir, "child-sess-leg1.jsonl"),
+		`${turn("leg1a", 10, 5, 0.03)}\n${turn("leg1b", 10, 5, 0)}\n`,
+		"utf8",
+	);
+	writeFileSync(
+		path.join(transcriptDir, "child-sess-leg2.jsonl"),
+		`${turn("leg2a", 20, 10, 0.02)}\n`,
+		"utf8",
+	);
+
+	await roster.reconcileOrphanedDelegations();
+	const record = registry.listDelegations().find((r) => r.id === "orphan-legs");
+	assert.equal(record.turns, 3, "the fold sums both legs' turns");
+	assert.equal(record.tokensIn, 40, "the fold sums both legs' input tokens");
+	assert.equal(record.tokensOut, 20, "the fold sums both legs' output tokens");
+	assert.equal(record.cost, 0.05, "the fold sums both legs' cost");
+	assert.equal(record.text, "leg2a", "the text is the last leg's");
 
 	roster._drivenDelegationsForTesting().clear();
 	registry.resetRegistryForTesting();
