@@ -4,7 +4,7 @@ import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { displayPath, formatCost, projectKey, sleep } from "../fsutil.js";
-import { osNotify } from "../osnotify.js";
+import { osNotify, shutdownToast } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { DEFAULT_MEMBER_MODEL } from "../providers/index.js";
 import {
@@ -1666,13 +1666,7 @@ const teamDeleteTool = defineTool({
 			},
 			{ triggerTurn: false },
 		);
-		osNotify({
-			summary: `torus team ${record.name} shut down`,
-			body: `${record.members.length} member(s) stopped · logs kept at ${record.dir}`,
-			urgency: "normal",
-			expireMs: 6000,
-			transient: true,
-		});
+		osNotify(shutdownToast({ name: record.name, members: record.members.length, dir: record.dir }));
 		for (const member of record.members) suppressedResultMarkers.delete(member.id);
 		return {
 			content: [

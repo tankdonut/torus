@@ -135,6 +135,22 @@ export function monitorToast(kind: MonitorToastKind, info: MonitorToastInfo): To
 	};
 }
 
+export interface ShutdownToastInfo {
+	name: string;
+	members: number;
+	dir: string;
+}
+
+export function shutdownToast(info: ShutdownToastInfo): Toast {
+	return {
+		summary: `torus team ${info.name} shut down`,
+		body: `${info.members} member(s) stopped · logs kept at ${info.dir}`,
+		urgency: "normal",
+		expireMs: 6000,
+		transient: true,
+	};
+}
+
 /** The notification-spec body parser eats raw markup — escape the big three. */
 function escapeMarkup(text: string): string {
 	return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

@@ -131,6 +131,15 @@ test("bgToast carries outcome, duration, and escalation reason", () => {
 	assert.equal(stopped.summary, "torus bg ✗ build stopped (exit 143)");
 });
 
+test("shutdownToast reports the team's member count and log dir", () => {
+	const toast = osnotify.shutdownToast({ name: "scouts", members: 3, dir: "/tmp/team-scouts" });
+	assert.equal(toast.summary, "torus team scouts shut down");
+	assert.equal(toast.body, "3 member(s) stopped · logs kept at /tmp/team-scouts");
+	assert.equal(toast.urgency, "normal");
+	assert.equal(toast.expireMs, 6000);
+	assert.equal(toast.transient, true);
+});
+
 test("toastArgs groups under the torus desktop entry and chains replacements", () => {
 	const args = osnotify.toastArgs(osnotify.delegationToast("done", INFO, 1_134_000), 42, true);
 	assert.deepEqual(args.slice(0, 8), [
