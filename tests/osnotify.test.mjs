@@ -128,7 +128,7 @@ test("bgToast carries outcome, duration, and escalation reason", () => {
 		durationMs: 5_000,
 		stopped: true,
 	});
-	assert.equal(stopped.summary, "torus bg ✗ build stopped (exit 143)");
+	assert.equal(stopped.summary, "torus bg ■ build stopped (exit 143)");
 });
 
 test("shutdownToast reports the team's member count and log dir", () => {

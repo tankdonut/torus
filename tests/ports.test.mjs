@@ -509,7 +509,7 @@ test("formatDoctorReport: icons, summary line, fail/warn counts", () => {
 	const report = formatDoctorReport(checks);
 	assert.match(report, /3 checks: 1 fail, 1 warn/);
 	assert.match(report, /✓ engine: pi 0.99.1/);
-	assert.match(report, /! lsp: absent/);
+	assert.match(report, /⚠ lsp: absent/);
 	assert.match(report, /✗ auth: missing/);
 });
 

@@ -1,6 +1,13 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, MouseRegion, Text, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { entityColor, flattenPreview, formatDuration, teamName } from "../fleet/theme-kit.js";
+import {
+	entityColor,
+	flattenPreview,
+	formatDuration,
+	type StatusState,
+	statusGlyph,
+	teamName,
+} from "../fleet/theme-kit.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { FLEET_OPENER, listExternalRuns } from "../registry.js";
 import { sanitizeRender } from "../text.js";
@@ -16,14 +23,8 @@ function opener(): FleetOpener | undefined {
 	return (globalThis as Record<symbol, unknown>)[FLEET_OPENER] as FleetOpener | undefined;
 }
 
-function delegationLine(
-	icon: string,
-	iconColor: Parameters<Theme["fg"]>[0],
-	label: string,
-	detail: string,
-	theme: Theme,
-): string {
-	return `${theme.fg(iconColor, icon)} ${label}${theme.fg("dim", ` · ${detail}`)}`;
+function delegationLine(state: StatusState, label: string, detail: string, theme: Theme): string {
+	return `${statusGlyph(theme, state)} ${label}${theme.fg("dim", ` · ${detail}`)}`;
 }
 
 /** Single hovered marker across the transcript: a move over one clears the last. */
@@ -122,8 +123,7 @@ function delegationResultLine(details: Record<string, unknown>, theme: Theme): s
 	const combined = Array.isArray(details["delegationIds"]) && runs > 1;
 	const hint = `${took}${combined ? `${runs} runs · ` : ""}alt+t for the ${ok ? "transcript" : "log"}`;
 	return delegationLine(
-		stopped ? "■" : ok ? "✓" : "✗",
-		stopped ? "warning" : ok ? "success" : "error",
+		stopped ? "stopped" : ok ? "done" : "failed",
 		styledRunLabel(details, agent, theme) +
 			theme.fg("customMessageText", ` ${stopped ? "stopped" : ok ? "finished" : "failed"}`),
 		hint,
@@ -156,8 +156,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 			[
 				new Text(
 					delegationLine(
-						"▶",
-						"warning",
+						"started",
 						styledRunLabel(details, agent, theme) + theme.fg("customMessageText", " delegated"),
 						task,
 						theme,
@@ -185,7 +184,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 		return clickable(
 			[
 				new Text(
-					delegationLine("✿", "success", theme.fg("customMessageText", "memory"), text, theme),
+					delegationLine("memory", theme.fg("customMessageText", "memory"), text, theme),
 					0,
 					0,
 				),
@@ -200,8 +199,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 		const exit = typeof details["exit"] === "number" ? `exit ${details["exit"]}` : "";
 		const tail = sanitizeRender(flattenPreview(details["tail"], 70));
 		return delegationLine(
-			failed ? "✗" : "≈",
-			failed ? "error" : "warning",
+			failed ? "failed" : "changed",
 			theme.fg("customMessageText", `monitor ${name} ${failed ? "failed" : "output changed"}`),
 			[exit, tail].filter(Boolean).join(" · "),
 			theme,
@@ -230,8 +228,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 		const took = durationMs !== null ? formatDuration(durationMs) : "";
 		const tail = sanitizeRender(flattenPreview(details["tail"], 70));
 		return delegationLine(
-			stopped ? "■" : clean ? "✓" : "✗",
-			stopped ? "warning" : clean ? "success" : "error",
+			stopped ? "stopped" : clean ? "done" : "failed",
 			theme.fg("customMessageText", `bg ${name} ${reason}`),
 			[code, took, tail].filter(Boolean).join(" · "),
 			theme,
@@ -254,8 +251,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 			const reason = sanitizeRender(flattenPreview(entry["reason"], 70));
 			return {
 				line: delegationLine(
-					status === "stopped" ? "✗" : "☾",
-					status === "stopped" ? "error" : "warning",
+					status === "stopped" ? "failed" : "wake",
 					theme.fg("customMessageText", `team ${team}: `) +
 						theme.fg(entityColor(member), `@${member}`) +
 						theme.fg("customMessageText", ` ${status}`),
@@ -318,8 +314,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 		if (lines.length === 0) {
 			lines.push(
 				delegationLine(
-					"☾",
-					"warning",
+					"wake",
 					theme.fg("customMessageText", "wake batch"),
 					sanitizeRender(
 						flattenPreview(

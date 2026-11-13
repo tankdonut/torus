@@ -59,15 +59,56 @@ export function formatDuration(ms: number): string {
 	return `${seconds}s`;
 }
 
-/** Spinner/check/cross icon colored by status. */
+/** Every run/wake status the fleet, doctor, and notification surfaces draw. */
+export type StatusState =
+	| "running"
+	| "started"
+	| "done"
+	| "failed"
+	| "stopped"
+	| "changed"
+	| "idle"
+	| "wake"
+	| "warn"
+	| "memory"
+	| "paused";
+
+/**
+ * The one status→glyph/color table behind every run, wake, and doctor marker.
+ * `running` is the only animated state: it renders the SPINNER frame at `tick`.
+ */
+const STATUS_GLYPHS: Record<StatusState, { glyph: (tick: number) => string; color: ThemeColor }> = {
+	running: { glyph: (tick) => SPINNER[tick % SPINNER.length] ?? "•", color: "warning" },
+	started: { glyph: () => "▶", color: "warning" },
+	done: { glyph: () => "✓", color: "success" },
+	failed: { glyph: () => "✗", color: "error" },
+	stopped: { glyph: () => "■", color: "warning" },
+	changed: { glyph: () => "≈", color: "warning" },
+	idle: { glyph: () => "·", color: "dim" },
+	wake: { glyph: () => "☾", color: "warning" },
+	warn: { glyph: () => "⚠", color: "warning" },
+	memory: { glyph: () => "✿", color: "success" },
+	paused: { glyph: () => "⏸", color: "dim" },
+};
+
+/** The table's glyph, theme-colored — the single renderer for run statuses. */
+export function statusGlyph(theme: Theme, state: StatusState, tick = 0): string {
+	const entry = STATUS_GLYPHS[state];
+	return theme.fg(entry.color, entry.glyph(tick));
+}
+
+/** The table's bare glyph for themeless surfaces (doctor lines, toast summaries). */
+export function statusGlyphText(state: StatusState, tick = 0): string {
+	return STATUS_GLYPHS[state].glyph(tick);
+}
+
+/** Spinner/check/cross icon colored by status (the run-status slice of the table). */
 export function statusIcon(
 	theme: Theme,
 	status: "running" | "done" | "failed",
 	tick: number,
 ): string {
-	if (status === "running") return theme.fg("warning", SPINNER[tick % SPINNER.length] ?? "•");
-	if (status === "done") return theme.fg("success", "✓");
-	return theme.fg("error", "✗");
+	return statusGlyph(theme, status, tick);
 }
 
 /** "torus-team:build-a1b2c3" → "build" (id suffix stripped); "" for other or missing sources. */
@@ -82,11 +123,11 @@ export function teamBadgeText(source: string | undefined): string {
 	return name === "" ? "" : `⧉${name}`;
 }
 
-/** External-run icon: idle members rest on a dim dot, everything else spins. */
+/** External-run icon: idle members rest on the dim dot, everything else spins. */
 export function externalRunIcon(theme: Theme, run: ExternalRun, tick: number): string {
 	return run.memberStatus === "idle"
-		? theme.fg("dim", "·")
-		: theme.fg("warning", SPINNER[tick % SPINNER.length] ?? "•");
+		? statusGlyph(theme, "idle")
+		: statusGlyph(theme, "running", tick);
 }
 
 /** Delegation icon: a running delegation that is an idle team member rests
@@ -97,9 +138,11 @@ export function delegationIcon(
 	run: ExternalRun | undefined,
 	tick: number,
 ): string {
-	return status === "running" && run?.memberStatus === "idle"
-		? theme.fg("dim", "·")
-		: statusIcon(theme, status, tick);
+	return statusGlyph(
+		theme,
+		status === "running" && run?.memberStatus === "idle" ? "idle" : status,
+		tick,
+	);
 }
 
 /** The fleet stat grammar shared by the strip and the fleet browser:

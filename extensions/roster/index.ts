@@ -34,7 +34,7 @@ import {
 	resolveEngineBin,
 	sessionIdFromState,
 } from "../engine-child.js";
-import { flattenPreview, formatDuration, shortModel } from "../fleet/theme-kit.js";
+import { flattenPreview, formatDuration, shortModel, statusGlyphText } from "../fleet/theme-kit.js";
 import { parseFrontmatter, stripFrontmatter } from "../frontmatter.js";
 import { formatCost, pruneScratch, scratchDir, sleep, splitList } from "../fsutil.js";
 import { clickable } from "../notify/index.js";
@@ -1770,7 +1770,10 @@ const delegateTool = defineTool({
 		// leads. Live fleet state rides the strip and browser, not per-run
 		// statusline chips.
 		if (onUpdate) {
-			onUpdate({ content: [{ type: "text", text: `▶ ${label} · running` }], details: {} });
+			onUpdate({
+				content: [{ type: "text", text: `${statusGlyphText("started")} ${label} · running` }],
+				details: {},
+			});
 		}
 		const capWarning = concurrencyWarning([plannedRunModel(params.agent, params.model)]);
 		const capAndToolWarning =

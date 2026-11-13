@@ -11,6 +11,7 @@ import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type StatusState, statusGlyphText } from "../fleet/theme-kit.js";
 import { torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport, platformDecisions } from "../platform.js";
 
@@ -28,9 +29,15 @@ export interface CheckResult {
 	detail: string;
 }
 
+/** Doctor verdicts ride the shared status→glyph table (ok ✓ / warn ⚠ / fail ✗). */
+const DOCTOR_STATES: Record<CheckResult["status"], StatusState> = {
+	ok: "done",
+	warn: "warn",
+	fail: "failed",
+};
+
 export function formatDoctorReport(checks: CheckResult[]): string {
-	const icon = (status: CheckResult["status"]): string =>
-		status === "ok" ? "✓" : status === "warn" ? "!" : "✗";
+	const icon = (status: CheckResult["status"]): string => statusGlyphText(DOCTOR_STATES[status]);
 	const lines = checks.map((check) => `${icon(check.status)} ${check.name}: ${check.detail}`);
 	const fails = checks.filter((check) => check.status === "fail").length;
 	const warns = checks.filter((check) => check.status === "warn").length;

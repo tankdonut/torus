@@ -3,6 +3,7 @@ import path from "node:path";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
+import { statusGlyphText } from "../fleet/theme-kit.js";
 import { displayPath, formatCost, projectKey, sleep } from "../fsutil.js";
 import { osNotify, shutdownToast } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -306,7 +307,9 @@ const fanoutTool = defineTool({
 					content: [
 						{
 							type: "text",
-							text: `fan-out ${entries.map((e) => `${e.label} ${e.ok ? "✓" : "✗"}`).join(", ")}`,
+							text: `fan-out ${entries
+								.map((e) => `${e.label} ${statusGlyphText(e.ok ? "done" : "failed")}`)
+								.join(", ")}`,
 						},
 					],
 					display: true,

@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { knobBoolean, parseZeroDisables } from "./config/knobs.js";
-import { formatDuration, formatTokens, shortModel } from "./fleet/theme-kit.js";
+import { formatDuration, formatTokens, shortModel, statusGlyphText } from "./fleet/theme-kit.js";
 import { previewLine } from "./text.js";
 
 /** Runs shorter than this never announce their start; completion always toasts. */
@@ -89,7 +89,7 @@ export function delegationToast(
 
 	if (kind === "running-late") {
 		return {
-			summary: `torus ▶ ${who} still running`,
+			summary: `torus ${statusGlyphText("started")} ${who} still running`,
 			body: [`${elapsed} in · ${stats}`, preview].filter(Boolean).join("\n"),
 			urgency: "low",
 			expireMs: 5000,
@@ -98,7 +98,7 @@ export function delegationToast(
 	}
 	if (kind === "failed") {
 		return {
-			summary: `torus ✗ ${who} failed · ${elapsed}`,
+			summary: `torus ${statusGlyphText("failed")} ${who} failed · ${elapsed}`,
 			body: [preview || "(no output)", stats].join("\n"),
 			urgency: "critical",
 			expireMs: 0,
@@ -106,7 +106,7 @@ export function delegationToast(
 		};
 	}
 	return {
-		summary: `torus ✓ ${who} finished · ${elapsed}`,
+		summary: `torus ${statusGlyphText("done")} ${who} finished · ${elapsed}`,
 		body: [preview || "(no text output)", stats].join("\n"),
 		urgency: "low",
 		expireMs: 6000,
@@ -119,7 +119,7 @@ export function monitorToast(kind: MonitorToastKind, info: MonitorToastInfo): To
 	if (kind === "failed") {
 		const exit = info.exit === null ? "signal" : `exit ${info.exit}`;
 		return {
-			summary: `torus monitor ✗ ${info.name} failed (${exit})`,
+			summary: `torus monitor ${statusGlyphText("failed")} ${info.name} failed (${exit})`,
 			body: tail,
 			urgency: "critical",
 			expireMs: 0,
@@ -127,7 +127,7 @@ export function monitorToast(kind: MonitorToastKind, info: MonitorToastInfo): To
 		};
 	}
 	return {
-		summary: `torus monitor ≈ ${info.name} output changed`,
+		summary: `torus monitor ${statusGlyphText("changed")} ${info.name} output changed`,
 		body: tail || "(empty output)",
 		urgency: "normal",
 		expireMs: 8000,
@@ -301,7 +301,7 @@ export function bgToast(kind: BgToastKind, info: BgToastInfo): Toast {
 	const tail = previewLine(info.output, 120);
 	if (kind === "done") {
 		return {
-			summary: `torus bg ✓ ${info.name} exited 0 in ${formatDuration(info.durationMs)}`,
+			summary: `torus bg ${statusGlyphText("done")} ${info.name} exited 0 in ${formatDuration(info.durationMs)}`,
 			body: tail || "(no output)",
 			urgency: "normal",
 			expireMs: 8000,
@@ -315,7 +315,7 @@ export function bgToast(kind: BgToastKind, info: BgToastInfo): Toast {
 			? `stopped (${exit})`
 			: `failed (${exit})`;
 	return {
-		summary: `torus bg ✗ ${info.name} ${why}`,
+		summary: `torus bg ${statusGlyphText(info.stopped === true ? "stopped" : "failed")} ${info.name} ${why}`,
 		body: tail || "(no output)",
 		urgency: "critical",
 		expireMs: 0,
