@@ -124,13 +124,18 @@ test("wake-batch lines route each click to its own run or member", () => {
 					customType: "torus.delegation-result",
 					details: { agent: "builder", ok: true, delegationId: "d-10" },
 				},
+				{
+					customType: "torus.bg-exit",
+					details: { name: "build", code: 0, durationMs: 61000, reason: "exited" },
+				},
 			],
 		}),
 		{},
 		theme,
 	);
 	const rows = component.render(200);
-	assert.equal(rows.length, 4, "one row per entry line");
+	assert.equal(rows.length, 5, "one row per entry line");
+	assert.match(rows[4], /bg build exited/);
 
 	const opened = [];
 	globalThis[registry.FLEET_OPENER] = (id) => opened.push(id ?? "list");
@@ -149,10 +154,52 @@ test("wake-batch lines route each click to its own run or member", () => {
 			undefined,
 			"monitor line carries no target",
 		);
+		assert.equal(
+			component.handleMouse({ type: "click", button: "left", x: 3, y: 4 }),
+			undefined,
+			"bg line carries no target",
+		);
 	} finally {
 		delete globalThis[registry.FLEET_OPENER];
 	}
 	assert.deepEqual(opened, ["team-t1/scout", "d-9", "d-10"]);
+});
+
+test("bg-exit renders like a monitor line with exit, duration, and tail", () => {
+	const clean = render("torus.bg-exit", {
+		name: "build",
+		code: 0,
+		signal: null,
+		durationMs: 61000,
+		reason: "exited",
+		stopped: false,
+		timedOut: false,
+		tail: "wrote 3 files",
+	});
+	assert.match(clean, /<success>✓> <customMessageText>bg build exited>/);
+	assert.match(clean, /exit 0 · 1m 01s · wrote 3 files/);
+
+	const failed = render("torus.bg-exit", {
+		name: "build",
+		code: 2,
+		signal: null,
+		durationMs: 500,
+		reason: "exited",
+		tail: "",
+	});
+	assert.match(failed, /<error>✗> <customMessageText>bg build exited>/);
+	assert.match(failed, /exit 2 · 0s/);
+
+	const stopped = render("torus.bg-exit", {
+		name: "build",
+		code: null,
+		signal: "SIGTERM",
+		durationMs: 2000,
+		reason: "stopped",
+		stopped: true,
+	});
+	assert.match(stopped, /<warning>■> <customMessageText>bg build stopped>/);
+	assert.match(stopped, /signal SIGTERM · 2s/);
 });
 
 test("a team-wake member without a live run falls back to the list", () => {

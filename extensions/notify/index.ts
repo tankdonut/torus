@@ -213,6 +213,36 @@ export function registerNotify(pi: ExtensionAPI): void {
 		return new Text(monitorLine(details, theme), 0, 0);
 	});
 
+	// Shared by the standalone bg-exit marker and its wake-batch entry.
+	const bgLine = (details: Record<string, unknown>, theme: Theme): string => {
+		const name = typeof details["name"] === "string" ? sanitizeRender(details["name"]) : "task";
+		const stopped = details["stopped"] === true;
+		const timedOut = details["timedOut"] === true;
+		const clean = details["code"] === 0 && !stopped && !timedOut;
+		const reason = timedOut ? "timed out" : stopped ? "stopped" : "exited";
+		const code =
+			typeof details["code"] === "number"
+				? `exit ${details["code"]}`
+				: typeof details["signal"] === "string"
+					? `signal ${details["signal"]}`
+					: "";
+		const durationMs = typeof details["durationMs"] === "number" ? details["durationMs"] : null;
+		const took = durationMs !== null ? formatDuration(durationMs) : "";
+		const tail = sanitizeRender(flattenPreview(details["tail"], 70));
+		return delegationLine(
+			stopped ? "■" : clean ? "✓" : "✗",
+			stopped ? "warning" : clean ? "success" : "error",
+			theme.fg("customMessageText", `bg ${name} ${reason}`),
+			[code, took, tail].filter(Boolean).join(" · "),
+			theme,
+		);
+	};
+
+	pi.registerMessageRenderer("torus.bg-exit", (message, _options, theme) => {
+		const details = (message.details ?? {}) as Record<string, unknown>;
+		return new Text(bgLine(details, theme), 0, 0);
+	});
+
 	const teamWakeEntries = (
 		details: Record<string, unknown>,
 		theme: Theme,
@@ -258,7 +288,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 	// One batch marker per wake-gate flush; each entry renders with the same
 	// lines its standalone marker would have shown, and every line keeps its
 	// own click target: a completion opens its run, a member episode that
-	// member, monitor lines carry no target.
+	// member, monitor and bg lines carry no target.
 	pi.registerMessageRenderer("torus.wake-batch", (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		const lines: string[] = [];
@@ -275,6 +305,9 @@ export function registerNotify(pi: ExtensionAPI): void {
 				targets.push(...wake.targets);
 			} else if (customType === "torus.monitor-fired") {
 				lines.push(monitorLine(entryDetails as Record<string, unknown>, theme));
+				targets.push(undefined);
+			} else if (customType === "torus.bg-exit") {
+				lines.push(bgLine(entryDetails as Record<string, unknown>, theme));
 				targets.push(undefined);
 			} else if (customType === "torus.delegation-result") {
 				const record = entryDetails as Record<string, unknown>;
