@@ -333,7 +333,7 @@ test("TORUS_TEAM_NOTIFY=0 suppresses the wake-up", async () => {
 });
 
 test("mailbox polls read only deltas: an unchanged inbox costs zero byte reads", async () => {
-	const runtime = await import("../extensions/team-runtime.ts");
+	const runtime = await import("../extensions/team/team-runtime.ts");
 	const dir = path.join(HOME, "delta-poll");
 	mkdirSync(dir, { recursive: true });
 	const mailbox = path.join(dir, "inbox.md");

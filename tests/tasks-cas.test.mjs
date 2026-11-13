@@ -4,7 +4,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { test } from "node:test";
 
 const { readTasksFile, tasksFile, updateTasksFile, writeTasksFile, teamDir } = await import(
-	"../extensions/team-runtime.ts"
+	"../extensions/team/team-runtime.ts"
 );
 
 test("dependsOn-carrying mutations survive the CAS rebase (mutator idempotency with the new field)", async () => {

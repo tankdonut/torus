@@ -12,7 +12,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 const { memberMailbox, memberModelCandidates, spawnMember } = await import(
-	"../extensions/team-runtime.ts"
+	"../extensions/team/team-runtime.ts"
 );
 
 test("supervisor seeds the inbox cursor to cover pre-spawn mail", async () => {

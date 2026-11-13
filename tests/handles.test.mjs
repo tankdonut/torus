@@ -17,7 +17,7 @@ process.env.TORUS_TMUX = "0";
 
 const handles = await import("../extensions/handles/index.ts");
 const registry = await import("../extensions/registry.ts");
-const runtime = await import("../extensions/team-runtime.ts");
+const runtime = await import("../extensions/team/team-runtime.ts");
 
 after(() => {
 	rmSync(HOME, { recursive: true, force: true });

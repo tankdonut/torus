@@ -131,7 +131,7 @@ test("RpcChild resolves sends on response, rejects pending when child dies early
 });
 
 // ---- team tasklist + team spec persistence ----
-const teamRuntime = await import("../extensions/team-runtime.ts");
+const teamRuntime = await import("../extensions/team/team-runtime.ts");
 
 test("team tasklist issues monotonic ids from nextId; a file without nextId is not re-derived", () => {
 	const teamId = `test-${randomUUID().slice(0, 8)}`;

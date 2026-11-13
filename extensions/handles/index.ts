@@ -165,7 +165,7 @@ export async function routeMention(command: MentionCommand): Promise<MentionRout
 			},
 		};
 	}
-	const { deliverMail } = await import("../team-runtime.js");
+	const { deliverMail } = await import("../team/team-runtime.js");
 	deliverMail(target.teamId, target.name, "lead", command.message);
 	return {
 		action: "handled",

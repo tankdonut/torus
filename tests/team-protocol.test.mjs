@@ -12,7 +12,7 @@ process.env["HOME"] = HOME;
 process.env["TORUS_NOTIFY"] = "0";
 process.env["TORUS_TMUX"] = "0";
 
-const runtime = await import("../extensions/team-runtime.ts");
+const runtime = await import("../extensions/team/team-runtime.ts");
 
 // Minimal RPC-mode engine double: answers every command, settles after each
 // prompt, and records received prompt texts so tests can assert exactly what

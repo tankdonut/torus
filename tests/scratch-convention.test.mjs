@@ -76,7 +76,10 @@ test("env convention is shared, not forked: roster owns it, team references it, 
 		);
 	}
 
-	const teamRuntime = readFileSync(path.join(root, "extensions", "team-runtime.ts"), "utf8");
+	const teamRuntime = readFileSync(
+		path.join(root, "extensions", "team", "team-runtime.ts"),
+		"utf8",
+	);
 	assert.ok(
 		/\bENV_CONVENTION\b/.test(teamRuntime),
 		"team-runtime must reference the shared constant",

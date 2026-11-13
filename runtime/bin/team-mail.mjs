@@ -4,7 +4,7 @@
  *
  * Team members load no team tools (childExtensionArgs carries none), so a
  * CLI invoked through their bash is their only structured path to mail.
- * Every send goes through extensions/team-runtime.ts's deliverMemberMail —
+ * Every send goes through extensions/team/team-runtime.ts's deliverMemberMail —
  * which validates sender, recipient, and team membership before delegating
  * to deliverMail — so no raw writes and no forged senders: `lead` and
  * `tasklist` are reserved, and mail must come from a real spec member.
@@ -60,7 +60,9 @@ registerHooks({
 	},
 });
 
-const runtime = await import(new URL("../../extensions/team-runtime.ts", import.meta.url).href);
+const runtime = await import(
+	new URL("../../extensions/team/team-runtime.ts", import.meta.url).href
+);
 const { deliverMemberMail, readTeamSpec, teamDir } = runtime;
 
 const argv = process.argv.slice(2);

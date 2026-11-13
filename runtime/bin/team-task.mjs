@@ -4,7 +4,7 @@
  *
  * Team members load no team tools (childExtensionArgs carries none), so a
  * CLI invoked through their bash is their only structured path to tasks.json.
- * Every write goes through extensions/team-runtime.ts's updateTasksFile —
+ * Every write goes through extensions/team/team-runtime.ts's updateTasksFile —
  * the same directory-lock + mtime-CAS read-modify-write the lead's
  * team_task_* tools use — so this CLI is just another writer family over the
  * same file, never a raw write. Claim conditions are re-checked inside the
@@ -63,7 +63,9 @@ registerHooks({
 	},
 });
 
-const runtime = await import(new URL("../../extensions/team-runtime.ts", import.meta.url).href);
+const runtime = await import(
+	new URL("../../extensions/team/team-runtime.ts", import.meta.url).href
+);
 const {
 	blockedTasks,
 	notifyUnblocked,

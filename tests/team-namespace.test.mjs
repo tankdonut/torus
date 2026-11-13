@@ -13,7 +13,7 @@ process.env.TORUS_HOME = HOME;
 process.env.TORUS_NOTIFY = "0";
 process.env.TORUS_TEAM_NOTIFY = "0";
 
-const runtime = await import("../extensions/team-runtime.ts");
+const runtime = await import("../extensions/team/team-runtime.ts");
 const fsutil = await import("../extensions/fsutil.ts");
 
 const KEY = fsutil.projectKey(process.cwd());

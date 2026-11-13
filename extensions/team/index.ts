@@ -37,6 +37,7 @@ import {
 	runDelegation,
 	withWarning,
 } from "../roster/index.js";
+import { dropWakeEntries, queueWakeEntry } from "../wake-gate.js";
 import {
 	blockedTasks,
 	deliverMail,
@@ -55,8 +56,7 @@ import {
 	unblockedDependents,
 	updateTasksFile,
 	writeTeamSpec,
-} from "../team-runtime.js";
-import { dropWakeEntries, queueWakeEntry } from "../wake-gate.js";
+} from "./team-runtime.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin", "win32"],

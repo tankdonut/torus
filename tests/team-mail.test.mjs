@@ -17,7 +17,7 @@ process.env.HOME = HOME;
 process.env.TORUS_NOTIFY = "0";
 process.env.TORUS_TMUX = "0";
 
-const runtime = await import("../extensions/team-runtime.ts");
+const runtime = await import("../extensions/team/team-runtime.ts");
 const registry = await import("../extensions/registry.ts");
 const team = await import("../extensions/team/index.ts");
 

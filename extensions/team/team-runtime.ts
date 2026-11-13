@@ -19,18 +19,18 @@ import {
 	resolveEngineBin,
 	sessionIdFromState,
 	tallyHasDeadTail,
-} from "./engine-child.js";
-import { stripFrontmatter } from "./frontmatter.js";
-import { projectKey, projectStateDir, readJson, sleep, torusHome, writeJson } from "./fsutil.js";
+} from "../engine-child.js";
+import { stripFrontmatter } from "../frontmatter.js";
+import { projectKey, projectStateDir, readJson, sleep, torusHome, writeJson } from "../fsutil.js";
 import {
 	type CredentialSourceOpts,
 	DEFAULT_MEMBER_MODEL,
 	markModelFailed,
 	resolveModels,
-} from "./providers/index.js";
-import { AGENT_NAME_RE, repoRoot } from "./registry.js";
-import { AGENTS, ENV_CONVENTION, fallbackReason } from "./roster/index.js";
-import { RpcChild } from "./rpc.js";
+} from "../providers/index.js";
+import { AGENT_NAME_RE, repoRoot } from "../registry.js";
+import { AGENTS, ENV_CONVENTION, fallbackReason } from "../roster/index.js";
+import { RpcChild } from "../rpc.js";
 
 /**
  * Global team index ($TORUS_HOME/teams.json): team id → project key. Member children
@@ -543,7 +543,7 @@ export async function updateTasksFile(
 }
 
 async function rolePromptFor(spec: MemberSpec, teamId: string, objective: string): Promise<string> {
-	const agentsDir = path.resolve(import.meta.dirname, "../agents");
+	const agentsDir = path.resolve(import.meta.dirname, "../../agents");
 	let raw: string | null = null;
 	if (AGENT_NAME_RE.test(spec.agent)) {
 		try {

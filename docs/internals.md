@@ -21,7 +21,7 @@ Known srt gaps: unreliable signal/exit-code propagation (upstream #602/#603/#635
 | `extensions/registry.ts` | DelegationRecord store (globalThis-hosted), run beacons + foreign-process scan, team records, session/persona slots, log rehydration, tmux pane mgmt, `repoRoot()`, sanitize/redact/shellQuote/name gates | roster, team, browser, fleet, notify, memory, goal, prompts, ui, engine-child |
 | `extensions/rpc.ts` | `RpcChild`: newline-JSON RPC client for engine children (prompt/steer/getState/kill) | roster, team-runtime, acp (serve) |
 | `extensions/engine-child.ts` | `engineChildEnv` (sets `TORUS_ENGINE_CHILD=1`, carries the pinned `TORUS_STATE_DIR`), event parse/reduce, `childExtensionArgs` (the child set), `resolveEngineBin` | roster, team-runtime, doctor, ui, acp (serve) |
-| `extensions/team-runtime.ts` | Team spec persistence, mailboxes, locked tasklist, member supervisor | team |
+| `extensions/team/team-runtime.ts` | Team spec persistence, mailboxes, locked tasklist, member supervisor | team |
 | `extensions/frontmatter.ts` | `---` header parser/stripper | roster, prompts, memory |
 | `extensions/fsutil.ts` | `TORUS_HOME`, `TORUS_STATE_DIR` export + `displayPath`, best-effort readJson, atomic writeJson, sleep, splitList | registry, memory, goal, worktrees, prompts, team-runtime, ui |
 | `extensions/osnotify.ts` | notify-send toasts (summary+body, @handle label, duration/preview/stats; grouped under a torus desktop entry; running-late ping after 45s, replaced in place by the finish toast via replaces-id; suppressed per member on team_delete in favor of one combined shutdown toast; failures critical+persistent, low-value toasts transient); `TORUS_NOTIFY=0` opt-out | registry, monitor, notify |

@@ -26,7 +26,7 @@ process.env.OPENCODE_API_KEY = "torus-test-dummy";
 const registry = await import("../extensions/registry.ts");
 const roster = await import("../extensions/roster/index.ts");
 const team = await import("../extensions/team/index.ts");
-const runtime = await import("../extensions/team-runtime.ts");
+const runtime = await import("../extensions/team/team-runtime.ts");
 
 function fakeSpawner() {
 	const spawned = [];

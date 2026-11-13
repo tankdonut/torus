@@ -21,7 +21,7 @@ process.env["HOME"] = HOME;
 process.env["TORUS_NOTIFY"] = "0";
 process.env["TORUS_TMUX"] = "0";
 
-const runtime = await import("../extensions/team-runtime.ts");
+const runtime = await import("../extensions/team/team-runtime.ts");
 
 const STAMP = "[2026-10-29T00:00:00.000Z]";
 
