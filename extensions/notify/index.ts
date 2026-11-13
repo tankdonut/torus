@@ -206,9 +206,10 @@ export function registerNotify(pi: ExtensionAPI): void {
 		);
 	};
 
+	// Monitor lines open the fleet list (alt+t parity), like team episodes.
 	pi.registerMessageRenderer("torus.monitor-fired", (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
-		return new Text(monitorLine(details, theme), 0, 0);
+		return clickableLines([monitorLine(details, theme)], [null]);
 	});
 
 	// Shared by the standalone bg-exit marker and its wake-batch entry.
@@ -235,9 +236,10 @@ export function registerNotify(pi: ExtensionAPI): void {
 		);
 	};
 
+	// bg lines open the fleet list too; the log path stays in the wake text.
 	pi.registerMessageRenderer("torus.bg-exit", (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
-		return new Text(bgLine(details, theme), 0, 0);
+		return clickableLines([bgLine(details, theme)], [null]);
 	});
 
 	const teamWakeEntries = (
@@ -284,7 +286,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 	// One batch marker per wake-gate flush; each entry renders with the same
 	// lines its standalone marker would have shown, and every line keeps its
 	// own click target: a completion opens its run, a member episode that
-	// member, monitor and bg lines carry no target.
+	// member, monitor and bg lines open the fleet list.
 	pi.registerMessageRenderer("torus.wake-batch", (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		const lines: string[] = [];
@@ -292,23 +294,52 @@ export function registerNotify(pi: ExtensionAPI): void {
 		const entries = Array.isArray(details["entries"]) ? details["entries"] : [];
 		for (const entry of entries) {
 			if (typeof entry !== "object" || entry === null) continue;
-			const entryDetails = (entry as Record<string, unknown>)["details"];
-			if (typeof entryDetails !== "object" || entryDetails === null) continue;
-			const customType = (entry as Record<string, unknown>)["customType"];
-			if (customType === "torus.team-wake") {
-				const wake = teamWakeEntries(entryDetails as Record<string, unknown>, theme);
+			const record = entry as Record<string, unknown>;
+			// Dispatch on the typed WakeCustomType union; transcripts written by
+			// older builds carry the `torus.`-prefixed marker spelling — normalize.
+			const customType =
+				typeof record["customType"] === "string"
+					? record["customType"].replace(/^torus\./, "")
+					: "";
+			const entryDetails =
+				typeof record["details"] === "object" && record["details"] !== null
+					? (record["details"] as Record<string, unknown>)
+					: undefined;
+			if (customType === "team-wake" && entryDetails) {
+				const wake = teamWakeEntries(entryDetails, theme);
 				lines.push(...wake.lines);
 				targets.push(...wake.targets);
-			} else if (customType === "torus.monitor-fired") {
-				lines.push(monitorLine(entryDetails as Record<string, unknown>, theme));
+				continue;
+			}
+			if (customType === "monitor-fired" && entryDetails) {
+				lines.push(monitorLine(entryDetails, theme));
+				targets.push(null);
+				continue;
+			}
+			if (customType === "bg-exit" && entryDetails) {
+				lines.push(bgLine(entryDetails, theme));
+				targets.push(null);
+				continue;
+			}
+			if (customType === "delegation-result" && entryDetails) {
+				lines.push(delegationResultLine(entryDetails, theme));
+				targets.push(
+					typeof entryDetails["delegationId"] === "string" ? entryDetails["delegationId"] : null,
+				);
+				continue;
+			}
+			// No per-kind line: the entry's own wake text is the line.
+			const text = typeof record["text"] === "string" ? record["text"] : "";
+			if (text !== "") {
+				lines.push(
+					delegationLine(
+						"wake",
+						theme.fg("customMessageText", sanitizeRender(flattenPreview(text, 90))),
+						"",
+						theme,
+					),
+				);
 				targets.push(undefined);
-			} else if (customType === "torus.bg-exit") {
-				lines.push(bgLine(entryDetails as Record<string, unknown>, theme));
-				targets.push(undefined);
-			} else if (customType === "torus.delegation-result") {
-				const record = entryDetails as Record<string, unknown>;
-				lines.push(delegationResultLine(record, theme));
-				targets.push(typeof record["delegationId"] === "string" ? record["delegationId"] : null);
 			}
 		}
 		if (lines.length === 0) {

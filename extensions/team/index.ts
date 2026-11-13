@@ -38,12 +38,7 @@ import {
 	runDelegation,
 	withWarning,
 } from "../roster/index.js";
-import {
-	dropWakeEntries,
-	queueWakeEntry,
-	torusWake,
-	wakeGateFlushForTesting,
-} from "../wake-gate.js";
+import { deliverWake, dropWakeEntries, torusWake, wakeGateFlushForTesting } from "../wake-gate.js";
 import {
 	blockedTasks,
 	deliverMail,
@@ -688,13 +683,21 @@ function notifyMemberEpisode(teamId: string, memberId: string): void {
 	// next user input. The gate holds the entry while the lead is mid-run and
 	// team_delete can still drop it before it reaches pi's one-at-a-time
 	// follow-up queue.
-	queueWakeEntry({
-		customType: "torus.team-wake",
-		text: torusWake("team", record.name, `@${member.name} (${member.agent}) is ${member.status}`, {
-			tail: reason,
-			hint: "Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.",
-		}),
-		details: {
+	deliverWake({
+		customType: "team-wake",
+		origin: { label: record.name },
+		// Team wakes are marker-only — no desktop toast for the team surface.
+		toast: false,
+		summary: torusWake(
+			"team",
+			record.name,
+			`@${member.name} (${member.agent}) is ${member.status}`,
+			{
+				tail: reason,
+				hint: "Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.",
+			},
+		),
+		detail: {
 			team: record.name,
 			members: [{ member: member.name, agent: member.agent, status: member.status, reason }],
 			member: member.name,
@@ -1573,7 +1576,7 @@ const teamDeleteTool = defineTool({
 		// markers pi already queued, which drain one turn apiece and read as stale
 		// churn from a deleted team.
 		dropWakeEntries(
-			(entry) => entry.customType === "torus.team-wake" && entry.details?.team === record.name,
+			(entry) => entry.customType === "team-wake" && entry.details?.team === record.name,
 		);
 		for (const member of record.members) {
 			memberControls.delete(member.id);

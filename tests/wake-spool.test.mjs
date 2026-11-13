@@ -80,6 +80,30 @@ test("TORUS_WAKE=0 and engine children keep wakes in-process only", () => {
 	registry.setCurrentSession(null);
 });
 
+test("a pre-union spool record (prefixed customType, no severity/toast) still drains", () => {
+	gate._resetWakeGateForTesting();
+	registry.setCurrentSession("spool-old");
+	mkdirSync(spoolDir(), { recursive: true });
+	writeFileSync(
+		spoolFile("spool-old"),
+		`${JSON.stringify({
+			id: "old-1",
+			ts: new Date().toISOString(),
+			entry: { customType: "torus.team-wake", text: "OLD-SPOOL-PAYLOAD: member idle" },
+		})}\n`,
+	);
+
+	const sent = [];
+	registry.setCustomSender((message) => sent.push(message));
+	gate.drainWakeSpool("spool-old");
+	assert.equal(sent.length, 1, "the old record drains");
+	assert.equal(sent[0].customType, "torus.team-wake", "the marker type survives the round-trip");
+	assert.equal(sent[0].content[0].text, "OLD-SPOOL-PAYLOAD: member idle");
+	assert.equal(spoolLines("spool-old").length, 0, "delivered old record clears the spool");
+	registry.setCustomSender(() => {});
+	registry.setCurrentSession(null);
+});
+
 test("dropWakeEntries also removes the dropped entries from the spool", () => {
 	gate._resetWakeGateForTesting();
 	registry.setCurrentSession("spool-s3");

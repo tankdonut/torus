@@ -68,6 +68,15 @@ export interface Toast {
 	transient: boolean;
 }
 
+/**
+ * Severity→style policy for wake toasts (see wakeToast):
+ *   success → delegation-done style   (transient low/6000)
+ *   error   → monitor/bg/delegation-failed style (resident critical/0)
+ *   warning → monitor-changed style   (resident normal/8000)
+ * Delegation's running-late (transient low/5000) and shutdownToast sit outside
+ * the table; info has no row this slice.
+ */
+
 /** Prefer the run's @handle over the generic agent name (fleet/pane convention). */
 export function runLabel(agent: string, handle: string | null): string {
 	return handle ? `@${handle}` : agent;
@@ -270,9 +279,9 @@ export function bgToast(kind: BgToastKind, info: BgToastInfo): Toast {
 		return {
 			summary: `torus bg ${statusGlyphText("done")} ${info.name} exited 0 in ${formatDuration(info.durationMs)}`,
 			body: tail || "(no output)",
-			urgency: "normal",
-			expireMs: 8000,
-			transient: false,
+			urgency: "low",
+			expireMs: 6000,
+			transient: true,
 		};
 	}
 	const exit = info.exit === null ? "signal" : `exit ${info.exit}`;
@@ -292,4 +301,40 @@ export function bgToast(kind: BgToastKind, info: BgToastInfo): Toast {
 
 export function notifyBg(kind: BgToastKind, info: BgToastInfo): void {
 	osNotify(bgToast(kind, info)).catch(() => {});
+}
+
+/**
+ * The toast for a wake event, keyed by its severity: the delegation-lifecycle
+ * and team wakes carry toast:false and never reach here, so only the monitor
+ * and bg producers map onto the per-kind builders above. Returns null for any
+ * event the policy does not cover. Structurally typed over the event shape so
+ * wake-gate can call it without importing this module's types.
+ */
+export function wakeToast(event: {
+	customType: string;
+	severity?: string;
+	detail?: Record<string, unknown>;
+}): Toast | null {
+	if (event.severity === undefined) return null;
+	const detail = event.detail ?? {};
+	const name = typeof detail["name"] === "string" ? detail["name"] : "";
+	const output = typeof detail["output"] === "string" ? detail["output"] : "";
+	if (event.customType === "bg-exit") {
+		return bgToast(event.severity === "success" ? "done" : "failed", {
+			name,
+			exit: typeof detail["code"] === "number" ? detail["code"] : null,
+			output,
+			durationMs: typeof detail["durationMs"] === "number" ? detail["durationMs"] : 0,
+			stopped: detail["stopped"] === true,
+			timedOut: detail["timedOut"] === true,
+		});
+	}
+	if (event.customType === "monitor-fired") {
+		return monitorToast(event.severity === "error" ? "failed" : "changed", {
+			name,
+			exit: typeof detail["exit"] === "number" ? detail["exit"] : null,
+			output,
+		});
+	}
+	return null;
 }

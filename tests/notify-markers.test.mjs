@@ -109,23 +109,31 @@ test("wake-batch lines route each click to its own run or member", () => {
 		message({
 			entries: [
 				{
-					customType: "torus.team-wake",
+					customType: "team-wake",
+					text: '[torus] team "build": @scout idle',
 					details: {
 						team: "build",
 						members: [{ member: "scout", status: "idle", reason: "bootstrap ready" }],
 					},
 				},
-				{ customType: "torus.monitor-fired", details: { name: "ci", reason: "change" } },
 				{
-					customType: "torus.delegation-result",
+					customType: "monitor-fired",
+					text: '[torus] monitor "ci" output changed (exit 0): two',
+					details: { name: "ci", reason: "change" },
+				},
+				{
+					customType: "delegation-result",
+					text: '[torus] delegation "scout" finished',
 					details: { agent: "explorer", handle: "scout", ok: true, delegationId: "d-9" },
 				},
 				{
+					// Older transcripts carry the `torus.`-prefixed marker spelling.
 					customType: "torus.delegation-result",
 					details: { agent: "builder", ok: true, delegationId: "d-10" },
 				},
 				{
-					customType: "torus.bg-exit",
+					customType: "bg-exit",
+					text: '[torus] bg "build" exited (exit 0) in 1m 01s',
 					details: { name: "build", code: 0, durationMs: 61000, reason: "exited" },
 				},
 			],
@@ -140,29 +148,36 @@ test("wake-batch lines route each click to its own run or member", () => {
 	const opened = [];
 	globalThis[registry.FLEET_OPENER] = (id) => opened.push(id ?? "list");
 	try {
-		assert.deepEqual(component.handleMouse({ type: "click", button: "left", x: 3, y: 0 }), {
-			handled: true,
-		});
-		assert.deepEqual(component.handleMouse({ type: "click", button: "left", x: 3, y: 2 }), {
-			handled: true,
-		});
-		assert.deepEqual(component.handleMouse({ type: "click", button: "left", x: 3, y: 3 }), {
-			handled: true,
-		});
-		assert.equal(
-			component.handleMouse({ type: "click", button: "left", x: 3, y: 1 }),
-			undefined,
-			"monitor line carries no target",
-		);
-		assert.equal(
-			component.handleMouse({ type: "click", button: "left", x: 3, y: 4 }),
-			undefined,
-			"bg line carries no target",
-		);
+		for (const y of [0, 1, 2, 3, 4]) {
+			assert.deepEqual(
+				component.handleMouse({ type: "click", button: "left", x: 3, y }),
+				{ handled: true },
+				`row ${y} is clickable`,
+			);
+		}
 	} finally {
 		delete globalThis[registry.FLEET_OPENER];
 	}
-	assert.deepEqual(opened, ["team-t1/scout", "d-9", "d-10"]);
+	assert.deepEqual(
+		opened,
+		["team-t1/scout", "list", "d-9", "d-10", "list"],
+		"a completion opens its run; monitor and bg lines open the fleet list",
+	);
+});
+
+test("a wake-batch entry without details renders its own wake text", () => {
+	const component = renderers.get("torus.wake-batch")(
+		message({
+			entries: [
+				{ customType: "bg-exit", text: '[torus] bg "build" exited (exit 0) in 1m 01s: done' },
+			],
+		}),
+		{},
+		theme,
+	);
+	const rows = component.render(400);
+	assert.equal(rows.length, 1);
+	assert.match(rows[0], /bg "build" exited \(exit 0\) in 1m 01s: done/);
 });
 
 test("bg-exit renders like a monitor line with exit, duration, and tail", () => {
@@ -200,6 +215,21 @@ test("bg-exit renders like a monitor line with exit, duration, and tail", () => 
 	});
 	assert.match(stopped, /<warning>■> <customMessageText>bg build stopped>/);
 	assert.match(stopped, /signal SIGTERM · 2s/);
+});
+
+test("standalone monitor-fired and bg-exit markers open the fleet list", () => {
+	for (const type of ["torus.monitor-fired", "torus.bg-exit"]) {
+		const component = renderers.get(type)(message({ name: "ci" }), {}, theme);
+		component.render(200);
+		const opened = [];
+		globalThis[registry.FLEET_OPENER] = (id) => opened.push(id ?? "list");
+		try {
+			component.handleMouse({ type: "click", button: "left", x: 3, y: 0 });
+		} finally {
+			delete globalThis[registry.FLEET_OPENER];
+		}
+		assert.deepEqual(opened, ["list"], `${type} routes to the fleet list`);
+	}
 });
 
 test("a team-wake member without a live run falls back to the list", () => {

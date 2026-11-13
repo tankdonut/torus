@@ -17,9 +17,8 @@ import { runChild } from "../child-run.js";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { flattenPreview } from "../fleet/theme-kit.js";
 import { projectStateDir } from "../fsutil.js";
-import { notifyBg, notifyMonitor } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
-import { queueWakeEntry, torusWake } from "../wake-gate.js";
+import { deliverWake, torusWake } from "../wake-gate.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin"],
@@ -94,15 +93,18 @@ function emitMonitorFired(
 	const what = reason === "fail" ? "failed" : "output changed";
 	// Delivery goes through the wake gate: held while the agent runs so the
 	// fire joins the next settle flush instead of trickling out of pi's
-	// one-at-a-time follow-up queue turns later.
-	queueWakeEntry({
-		customType: "torus.monitor-fired",
-		text: torusWake("monitor", entry.name, what, {
+	// one-at-a-time follow-up queue turns later. deliverWake also fires the
+	// toast (fail → error, change → warning) — no standalone toast call here.
+	deliverWake({
+		customType: "monitor-fired",
+		origin: { label: entry.name },
+		severity: reason === "fail" ? "error" : "warning",
+		summary: torusWake("monitor", entry.name, what, {
 			code: exit,
 			...(tail.length > 0 ? { tail } : {}),
 			hint: "monitor stopped itself, no torus_monitor_stop needed",
 		}),
-		details: { name: entry.name, reason, exit, tail },
+		detail: { name: entry.name, reason, exit, tail, output },
 	});
 }
 
@@ -140,13 +142,11 @@ export async function runMonitorCheck(entry: MonitorEntry): Promise<void> {
 
 	if (failed && entry.stopOn === "fail") {
 		emitMonitorFired(entry, "fail", run.status, output);
-		notifyMonitor("failed", { name: entry.name, exit: run.status, output });
 		stopMonitor(entry.name);
 		return;
 	}
 	if (entry.lastHash !== null && digest !== entry.lastHash && entry.stopOn === "change") {
 		emitMonitorFired(entry, "change", run.status, output);
-		notifyMonitor("changed", { name: entry.name, exit: run.status, output });
 		appendFileSync(logFile, `[${new Date().toISOString()}] change detected — monitor stopped\n`);
 		stopMonitor(entry.name);
 		return;
@@ -231,15 +231,18 @@ function emitBgExit(entry: BgEntry, code: number | null, signal: string | null):
 		entry.logFile,
 		`[${new Date().toISOString()}] exit code=${code} signal=${signal} ${reason} in ${durationMs}ms\n`,
 	);
-	queueWakeEntry({
-		customType: "torus.bg-exit",
-		text: torusWake("bg", entry.name, reason, {
+	// deliverWake fires the toast (done → success, everything else → error).
+	deliverWake({
+		customType: "bg-exit",
+		origin: { label: entry.name },
+		severity: code === 0 && !entry.stopped && !entry.timedOut ? "success" : "error",
+		summary: torusWake("bg", entry.name, reason, {
 			code: code !== null ? code : `signal ${signal ?? "unknown"}`,
 			durationMs,
 			...(flat.length > 0 ? { tail: flat } : {}),
 			hint: `log: ${entry.logFile}`,
 		}),
-		details: {
+		detail: {
 			name: entry.name,
 			code,
 			signal,
@@ -248,15 +251,8 @@ function emitBgExit(entry: BgEntry, code: number | null, signal: string | null):
 			stopped: entry.stopped,
 			timedOut: entry.timedOut,
 			tail: flat,
+			output: entry.tail,
 		},
-	});
-	notifyBg(code === 0 && !entry.stopped && !entry.timedOut ? "done" : "failed", {
-		name: entry.name,
-		exit: code,
-		output: entry.tail,
-		durationMs,
-		stopped: entry.stopped,
-		timedOut: entry.timedOut,
 	});
 }
 

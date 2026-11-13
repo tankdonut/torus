@@ -106,8 +106,11 @@ test("bgToast carries outcome, duration, and escalation reason", () => {
 	});
 	assert.equal(done.summary, "torus bg ✓ image exited 0 in 4m 12s");
 	assert.equal(done.body, "built in 4m");
-	assert.equal(done.urgency, "normal");
-	assert.equal(done.expireMs, 8000);
+	// A clean exit is banner-only: transient low/6000 so long builds do not
+	// pile up in the message tray (the resident normal/8000 style was the old one).
+	assert.equal(done.urgency, "low");
+	assert.equal(done.expireMs, 6000);
+	assert.equal(done.transient, true);
 
 	const timedOut = osnotify.bgToast("failed", {
 		name: "bake",
@@ -184,4 +187,56 @@ test("toastArgs omits an empty body argument", () => {
 	);
 	assert.equal(args.at(-1), "s");
 	assert.equal(args.length, 9);
+});
+
+test("wakeToast maps the event severity onto the per-kind builders", () => {
+	const done = osnotify.wakeToast({
+		customType: "bg-exit",
+		severity: "success",
+		detail: { name: "image", code: 0, durationMs: 252_000, output: "built in 4m" },
+	});
+	assert.deepEqual(
+		done,
+		osnotify.bgToast("done", {
+			name: "image",
+			exit: 0,
+			output: "built in 4m",
+			durationMs: 252_000,
+			stopped: false,
+			timedOut: false,
+		}),
+	);
+
+	const failed = osnotify.wakeToast({
+		customType: "bg-exit",
+		severity: "error",
+		detail: { name: "bake", code: null, durationMs: 60_000, timedOut: true, output: "" },
+	});
+	assert.equal(failed.summary, "torus bg ✗ bake timed out (signal)");
+
+	const changed = osnotify.wakeToast({
+		customType: "monitor-fired",
+		severity: "warning",
+		detail: { name: "ci", exit: 0, output: "two" },
+	});
+	assert.equal(changed.summary, "torus monitor ≈ ci output changed");
+
+	const failedMonitor = osnotify.wakeToast({
+		customType: "monitor-fired",
+		severity: "error",
+		detail: { name: "ci", exit: 3, output: "oops" },
+	});
+	assert.equal(failedMonitor.urgency, "critical");
+
+	assert.equal(
+		osnotify.wakeToast({ customType: "delegation-result", severity: "success", detail: {} }),
+		null,
+		"registry owns delegation toasts",
+	);
+	assert.equal(
+		osnotify.wakeToast({ customType: "team-wake", severity: "info", detail: {} }),
+		null,
+		"team wakes are marker-only",
+	);
+	assert.equal(osnotify.wakeToast({ customType: "bg-exit" }), null, "no severity, no toast");
 });

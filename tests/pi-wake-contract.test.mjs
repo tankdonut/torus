@@ -165,17 +165,17 @@ test("wake gate: entries queued mid-run settle into exactly ONE model request", 
 	gate.wakeGateAgentStart();
 	const before = bodies.length;
 	gate.queueWakeEntry({
-		customType: "torus.team-wake",
+		customType: "team-wake",
 		text: "GATE-ENTRY-ONE: @scout is idle",
 		details: { team: "t" },
 	});
 	gate.queueWakeEntry({
-		customType: "torus.team-wake",
+		customType: "team-wake",
 		text: "GATE-ENTRY-TWO: @looker is idle",
 		details: { team: "t" },
 	});
 	gate.queueWakeEntry({
-		customType: "torus.monitor-fired",
+		customType: "monitor-fired",
 		text: "GATE-ENTRY-THREE: monitor ci failed",
 		details: { name: "ci" },
 	});
@@ -209,7 +209,7 @@ test("wake gate: a single entry on an idle session flushes as one marker, one tu
 
 	const before = bodies.length;
 	gate.queueWakeEntry({
-		customType: "torus.team-wake",
+		customType: "team-wake",
 		text: "GATE-IDLE-ONLY: @builder is idle",
 		details: { team: "t" },
 	});

@@ -11,6 +11,7 @@ import {
 import path from "node:path";
 import { knobBoolean, knobNumber, parseZeroDisables } from "./config/knobs.js";
 import { projectStateDir } from "./fsutil.js";
+import { osNotify, wakeToast } from "./osnotify.js";
 import { isEngineChild } from "./platform.js";
 import { currentSessionId, emitTorusCustom, sharedState } from "./registry.js";
 
@@ -55,16 +56,50 @@ export function torusWake(
 	return text;
 }
 
+/** The wake discriminator, typed once and shared by producers and the renderer. */
+export type WakeCustomType = "delegation-result" | "monitor-fired" | "bg-exit" | "team-wake";
+
+/** Coarse outcome class a producer stamps on its wake; drives the toast policy. */
+export type WakeSeverity = "success" | "info" | "warning" | "error";
+
+/**
+ * What a producer hands to deliverWake: the typed wake, a human-readable
+ * origin, the wake text built via torusWake, and the payload the marker
+ * renderer (and the toast policy) read. `toast: false` opts the event out of
+ * the desktop toast — delegation results (registry owns that lifecycle toast)
+ * and team wakes (marker-only) carry it.
+ */
+export interface WakeEvent {
+	customType: WakeCustomType;
+	origin: { label: string };
+	severity?: WakeSeverity;
+	toast?: boolean;
+	summary: string;
+	detail?: Record<string, unknown>;
+}
+
 /**
  * One pending wake marker, held while the agent is mid-run. `customType`,
- * `details`, and `text` carry exactly what an ungated emit would have sent.
+ * `details`, and `text` carry exactly what an ungated emit would have sent;
+ * `severity`/`toast` ride along so a batch entry keeps its event's delivery flags.
  */
 export interface WakeEntry {
-	customType: string;
+	customType: WakeCustomType;
 	text: string;
 	details?: Record<string, unknown>;
+	severity?: WakeSeverity;
+	toast?: boolean;
 	/** Spool identity when this entry was write-ahead-logged; delivery clears it from the spool. */
 	spoolId?: string;
+}
+
+/**
+ * Pi marker type for a wake: emitTorusCustom customTypes are `torus.`-prefixed
+ * while the WakeCustomType union is bare. Idempotent, so older callers and
+ * spool records that still carry the prefixed spelling round-trip unchanged.
+ */
+function wakeMarkerType(customType: string): string {
+	return `torus.${customType.replace(/^torus\./, "")}`;
 }
 
 interface WakeGateState {
@@ -155,12 +190,27 @@ function readSpool(sessionId: string): SpoolRecord[] {
 		if (line === "") continue;
 		try {
 			const parsed = JSON.parse(line) as SpoolRecord;
+			// Spool files written before the typed union carry the `torus.`-prefixed
+			// marker spelling; normalize so old records drain into the same gate.
+			const customType =
+				typeof parsed.entry?.customType === "string"
+					? (parsed.entry.customType.replace(/^torus\./, "") as WakeCustomType)
+					: undefined;
 			if (
 				typeof parsed.id === "string" &&
-				typeof parsed.entry?.customType === "string" &&
+				customType !== undefined &&
 				typeof parsed.entry.text === "string"
 			) {
-				out.push(parsed);
+				// The spool id lives inside the entry for gate-managed records; a
+				// hand-written old record without one still associates through record.id.
+				out.push({
+					...parsed,
+					entry: {
+						...parsed.entry,
+						customType,
+						spoolId: parsed.entry.spoolId ?? parsed.id,
+					},
+				});
 			}
 		} catch {}
 	}
@@ -268,7 +318,7 @@ export function flushWakeGate(): void {
 	const emitted = emitTorusCustom(
 		single
 			? {
-					customType: single.customType,
+					customType: wakeMarkerType(single.customType),
 					content: [{ type: "text", text: single.text }],
 					display: true,
 					details: single.details,
@@ -286,6 +336,11 @@ export function flushWakeGate(): void {
 						count: entries.length,
 						entries: entries.map((entry) => ({
 							customType: entry.customType,
+							severity: entry.severity,
+							toast: entry.toast,
+							// Per-entry text: the joined batch text is unchanged; this lets
+							// the renderer read each line on its own.
+							text: entry.text,
 							details: entry.details,
 						})),
 					},
@@ -321,6 +376,25 @@ export function drainWakeSpool(sessionId: string): void {
 		if (!inGate.has(record.id)) gateState.pending.push(record.entry);
 	}
 	if (!gateState.agentActive) flushWakeGate();
+}
+
+/**
+ * The ONE producer entry point: a typed event becomes a gate entry and, when
+ * the event opts in (`toast` is not false and a severity is present), a
+ * desktop toast per the osnotify policy. Producers never call osNotify or
+ * build toasts directly — registry's delegation-lifecycle toasts stay its own.
+ */
+export function deliverWake(event: WakeEvent): void {
+	queueWakeEntry({
+		customType: event.customType,
+		text: event.summary,
+		details: event.detail,
+		severity: event.severity,
+		toast: event.toast,
+	});
+	if (event.toast === false || event.severity === undefined) return;
+	const toast = wakeToast(event);
+	if (toast) osNotify(toast).catch(() => {});
 }
 
 /** Test-only: drain the gate immediately, dropping any armed debounce window. */

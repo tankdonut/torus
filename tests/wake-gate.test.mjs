@@ -16,6 +16,7 @@ import { after, test } from "node:test";
 // The idle-flush pins below assume instant delivery: the debounce window is
 // off here (unit-tested in the debounce tests further down).
 process.env.TORUS_WAKE_COALESCE_MS = "0";
+process.env.TORUS_NOTIFY = "0";
 
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-wake-gate-test-"));
 process.env.TORUS_HOME = HOME;
@@ -34,13 +35,13 @@ after(() => {
 });
 
 const teamEntry = (team, members) => ({
-	customType: "torus.team-wake",
+	customType: "team-wake",
 	text: `[torus] team ${team}: ${members.length} members finished`,
 	details: { team, members },
 });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const monitorEntry = (name) => ({
-	customType: "torus.monitor-fired",
+	customType: "monitor-fired",
 	text: `monitor "${name}" failed (exit 1): boom`,
 	details: { name, reason: "fail", exit: 1, tail: "boom" },
 });
@@ -80,9 +81,15 @@ test("busy session: entries are held; settle flushes ALL as one torus.wake-batch
 	assert.equal(entries.length, 3);
 	assert.deepEqual(
 		entries.map((e) => e.customType),
-		["torus.team-wake", "torus.team-wake", "torus.monitor-fired"],
+		["team-wake", "team-wake", "monitor-fired"],
 	);
 	assert.equal(entries[1].details.team, "beta");
+	assert.deepEqual(
+		entries.map((e) => e.text),
+		message.content[0].text.split("\n"),
+		"per-entry text matches the joined batch text",
+	);
+	assert.match(entries[2].text, /monitor "ci-probe"/, "the entry text is the wake line");
 	const text = message.content[0].text;
 	assert.match(text, /team alpha/);
 	assert.match(text, /team beta/);
@@ -117,7 +124,7 @@ test("dropWakeEntries removes matching held entries; the rest still flush", () =
 	gate.queueWakeEntry(monitorEntry("ci-probe"));
 
 	const dropped = gate.dropWakeEntries(
-		(e) => e.customType === "torus.team-wake" && e.details?.team === "doomed",
+		(e) => e.customType === "team-wake" && e.details?.team === "doomed",
 	);
 	assert.equal(dropped, 1, "exactly the doomed team's entry is dropped");
 
@@ -155,6 +162,37 @@ test("idle debounce: a zero window flushes instantly", () => {
 
 	gate.queueWakeEntry(teamEntry("alpha", [{ member: "one" }]));
 	assert.equal(sent.length, 1, "0 disables the debounce window");
+});
+
+test("deliverWake stamps severity and toast onto the entry it queues", () => {
+	gate._resetWakeGateForTesting();
+	sent.length = 0;
+	gate._setWakeGateActiveForTesting(true);
+
+	gate.deliverWake({
+		customType: "monitor-fired",
+		origin: { label: "ci" },
+		severity: "warning",
+		summary: '[torus] monitor "ci" output changed',
+		detail: { name: "ci" },
+	});
+	gate.deliverWake({
+		customType: "delegation-result",
+		origin: { label: "scout" },
+		toast: false,
+		summary: '[torus] delegation "scout" finished',
+		detail: { agent: "scout" },
+	});
+	gate.wakeGateAgentSettled();
+
+	assert.equal(sent.length, 1, "both events ride one wake-batch");
+	const entries = sent[0].message.details?.entries;
+	assert.equal(entries[0].customType, "monitor-fired");
+	assert.equal(entries[0].severity, "warning");
+	assert.equal(entries[0].toast, undefined, "a toastless severity fires by default");
+	assert.equal(entries[1].customType, "delegation-result");
+	assert.equal(entries[1].toast, false, "the opt-out rides the entry");
+	assert.equal(entries[1].severity, undefined);
 });
 
 test("a flush that finds no sender drops the backlog instead of replaying it later", () => {

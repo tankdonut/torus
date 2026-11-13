@@ -61,7 +61,13 @@ test("stopOn change: first check records the hash, changed output fires torus.mo
 	const { message: fired, options } = customs[0];
 	assert.equal(fired.customType, "torus.monitor-fired");
 	assert.equal(fired.display, true);
-	assert.deepEqual(fired.details, { name: "ci-probe", reason: "change", exit: 0, tail: "two" });
+	assert.deepEqual(fired.details, {
+		name: "ci-probe",
+		reason: "change",
+		exit: 0,
+		tail: "two",
+		output: "two\n",
+	});
 	assert.match(fired.content[0].text, /monitor "ci-probe" output changed \(exit 0\)/);
 	assert.match(fired.content[0].text, /two/, "output tail must ride along");
 	assert.deepEqual(
@@ -80,7 +86,13 @@ test("stopOn fail: non-zero exit fires torus.monitor-fired on the first check", 
 	assert.equal(customs.length, 1);
 	const fired = customs[0].message;
 	assert.equal(fired.customType, "torus.monitor-fired");
-	assert.deepEqual(fired.details, { name: "fail-probe", reason: "fail", exit: 3, tail: "oops" });
+	assert.deepEqual(fired.details, {
+		name: "fail-probe",
+		reason: "fail",
+		exit: 3,
+		tail: "oops",
+		output: "oops\n",
+	});
 	assert.match(fired.content[0].text, /monitor "fail-probe" failed \(exit 3\)/);
 	assert.match(fired.content[0].text, /oops/);
 });
@@ -124,6 +136,7 @@ test("torus_monitor tool fires the transcript marker on its immediate first chec
 		reason: "fail",
 		exit: 9,
 		tail: "bad",
+		output: "bad\n",
 	});
 });
 

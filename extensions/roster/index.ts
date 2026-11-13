@@ -89,8 +89,8 @@ import {
 import { RpcChild } from "../rpc.js";
 import { findSessionFile } from "../sessions/index.js";
 import {
+	deliverWake,
 	drainWakeSpool,
-	queueWakeEntry,
 	torusWake,
 	wakeGateAgentSettled,
 	wakeGateAgentStart,
@@ -1031,9 +1031,12 @@ export function fireDelegationsBackground(
 					outcome.text.length > BACKGROUND_SUMMARY_CAP
 						? `${outcome.text.slice(0, BACKGROUND_SUMMARY_CAP)}…`
 						: outcome.text;
-				queueWakeEntry({
-					customType: "torus.delegation-result",
-					text: torusWake(
+				deliverWake({
+					customType: "delegation-result",
+					origin: { label: run.handle ?? run.agent },
+					// Registry's notifyDelegation stays the delegation-lifecycle toast owner.
+					toast: false,
+					summary: torusWake(
 						"delegation",
 						run.handle ?? run.agent,
 						outcome.ok ? "finished" : "failed",
@@ -1042,7 +1045,7 @@ export function fireDelegationsBackground(
 							hint: `Full output: run torus_results${outcome.delegationId ? ` with id ${outcome.delegationId}` : " and pick this run"}.${record ? ` Log: ${record.logFile}` : ""}`,
 						},
 					),
-					details: {
+					detail: {
 						agent: run.agent,
 						handle: run.handle,
 						ok: outcome.ok,
