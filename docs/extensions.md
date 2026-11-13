@@ -527,6 +527,8 @@ No tools or commands.
 
 `torus.delegation-start` / `torus.delegation-result` render as one-line transcript entries ("▶ explore delegated · <preview>", "✓/✗ explore finished · alt+t …"). Both are wrapped in mouse regions that open the fleet browser focused on that delegation, and the `torus_delegate` call/result block reuses the same wrapper: result lines focus the run via the details `delegationId`; the call line opens the fleet list. The handle (or bare agent name) keeps its fleet entity color in every marker line, matching its strip and browser rows; team-wake member lines color each `@member` the same way. Wake markers route clicks per line: a `✓ … finished` line opens that run's detail, a team-wake episode line opens the member's (falling back to the list when the member has no live run), and monitor lines carry no target. Also renders `torus.memory-applied`, the ✿ dream/reflect summary line emitted by the memory extension after proposals are applied.
 
+Toast summaries render the same numbers through the shared theme-kit formatters: durations zero-padded (`1m 02s`, `1h 00m`) and token counts one-decimal (`180.0k`).
+
 ### `memory`
 
 Durable, git-backed memory store at `~/.torus/memory` (entries + `profile.md`, auto-init git repo).

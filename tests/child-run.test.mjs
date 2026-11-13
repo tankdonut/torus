@@ -100,9 +100,26 @@ test("timeout: resolveOnTimeout still escalates to SIGKILL so a TERM-ignoring ch
 });
 
 test("maxBuffer: stdout capture stops at the cap but the child still runs to close", async () => {
+	// status 0 proves the child was left alone until natural close: with
+	// killOnCap this same producer would die at the cap with status null.
 	const run = await runChild("sh", ["-c", "printf '%s' $(seq 1 5000)"], { maxBuffer: 100 });
 	assert.equal(run.status, 0);
 	assert.ok(run.stdout.length <= 100, `captured ${run.stdout.length} chars past the cap`);
+});
+
+test("killOnCap: the first stream to reach maxBuffer kills mid-stream with status null", async () => {
+	// the producer saturates the 1KB cap immediately, then the child sleeps —
+	// natural close would sit 5s out, so a fast resolve proves the mid-stream
+	// kill fired rather than a cap-at-close resolution.
+	const started = Date.now();
+	const run = await runChild("bash", ["-c", 'printf "%s\\n" $(seq 1 5000); sleep 5'], {
+		maxBuffer: 1024,
+		killOnCap: true,
+	});
+	const elapsed = Date.now() - started;
+	assert.equal(run.status, null);
+	assert.ok(run.stdout.length <= 1024, `captured ${run.stdout.length} chars past the cap`);
+	assert.ok(elapsed < 4000, `resolved after ${elapsed}ms — killOnCap waited for close`);
 });
 
 test("error event: a missing binary resolves with status null and the message", async () => {

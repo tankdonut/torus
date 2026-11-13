@@ -132,7 +132,8 @@ before(async () => {
 		resolveAdditionalWritableRoots(process.cwd()),
 	);
 	try {
-		// Deny every ask, as the extension does when no approval slot is live.
+		// Deny every ask, as the extension's ask callback (askNetworkTrust) does
+		// when no trust dialog is reachable (headless or TORUS_APPROVAL=0).
 		await SandboxManager.initialize(config, async () => false);
 		harness.active = true;
 	} catch (error) {

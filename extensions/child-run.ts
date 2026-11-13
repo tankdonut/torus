@@ -23,6 +23,8 @@ export interface RunChildOptions {
 	maxBuffer?: number;
 	/** On timeout resolve with status null and the buffers so far instead of waiting for close. */
 	resolveOnTimeout?: boolean;
+	/** With maxBuffer set, kill the child mid-stream the first time either captured stream reaches the cap. */
+	killOnCap?: boolean;
 }
 
 export interface RunChildResult {
@@ -40,7 +42,8 @@ export interface RunChildResult {
  * the promise resolves at the deadline but the SIGKILL escalation stays
  * armed, so a child that ignores SIGTERM cannot leak. A spawn failure arrives
  * via the async 'error' event and resolves with status null plus the error
- * message, not a rejection. All timers are unref'd.
+ * message, not a rejection. With killOnCap the first captured stream to reach
+ * maxBuffer triggers the same ladder mid-stream. All timers are unref'd.
  */
 export function runChild(
 	cmd: string,
@@ -51,6 +54,7 @@ export function runChild(
 		let stdout = "";
 		let stderr = "";
 		let settled = false;
+		let capKilled = false;
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 		let killTimer: ReturnType<typeof setTimeout> | undefined;
 		const child = spawn(cmd, args, {
@@ -88,11 +92,21 @@ export function runChild(
 			if (room <= 0) return current;
 			return current + (chunk.length > room ? chunk.slice(0, room) : chunk);
 		};
+		// killOnCap: the first stream to reach the cap kills the child mid-stream
+		// via the shared ladder; close then resolves with status null and the
+		// buffers so far, exactly like a timeout kill.
+		const capKill = () => {
+			if (settled || capKilled) return;
+			capKilled = true;
+			ladder();
+		};
 		child.stdout?.on("data", (chunk: string) => {
 			stdout = capped(stdout, chunk);
+			if (opts.killOnCap && cap !== undefined && stdout.length >= cap) capKill();
 		});
 		child.stderr?.on("data", (chunk: string) => {
 			stderr = capped(stderr, chunk);
+			if (opts.killOnCap && cap !== undefined && stderr.length >= cap) capKill();
 		});
 		child.on("error", (err) => {
 			finish(null, err.message);

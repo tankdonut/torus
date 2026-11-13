@@ -52,12 +52,16 @@ interface SgResult {
 /**
  * Async sg runner: piped stdio, both streams buffered, resolves on close so
  * the engine event loop (the TUI renders on it) never blocks. A 30s kill
- * timer bounds runaway scans, and output past the 4MB cap is discarded —
- * capped text at close with a null exit status on a kill, never a thrown
- * error.
+ * timer bounds runaway scans, and the first stream to reach the 4MB cap
+ * kills sg mid-stream (killOnCap) — capped text at close with a null exit
+ * status on a kill, never a thrown error.
  */
 async function runSg(args: string[]): Promise<SgResult> {
-	const run = await runChild("sg", args, { timeoutMs: SG_TIMEOUT_MS, maxBuffer: SG_MAX_BUFFER });
+	const run = await runChild("sg", args, {
+		timeoutMs: SG_TIMEOUT_MS,
+		maxBuffer: SG_MAX_BUFFER,
+		killOnCap: true,
+	});
 	return { stdout: run.stdout, stderr: run.stderr, status: run.status };
 }
 export function buildAstgrepArgs(
