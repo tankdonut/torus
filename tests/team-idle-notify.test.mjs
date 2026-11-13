@@ -14,8 +14,8 @@ import { after, test } from "node:test";
 
 // The per-member wake-up: when a member finishes an episode — goes idle (or
 // stops non-deliberately) while holding an unread outbox report — its episode
-// queues; pending episodes flush as ONE combined torus.team-wake marker per
-// team after a short coalescing window (tests flush it explicitly).
+// queues ONE gate entry directly; the wake gate batches them (idle debounce,
+// busy hold), so tests drain it explicitly via the flush seam.
 // Sandbox envs land before any extension import; the spawner is faked so no
 // engine runs.
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-team-idle-notify-test-"));
@@ -31,7 +31,8 @@ const gate = await import("../extensions/wake-gate.ts");
 
 const wakes = [];
 registry.setCustomSender((message, options) => {
-	if (message.customType === "torus.team-wake") wakes.push({ message, options });
+	if (message.customType === "torus.team-wake" || message.customType === "torus.wake-batch")
+		wakes.push({ message, options });
 });
 
 const spawned = [];
@@ -185,7 +186,7 @@ test("non-deliberate crash of the last member wakes the session; team_delete nev
 	void teamId;
 });
 
-test("episodes within one coalescing window flush as a single combined wake", async () => {
+test("episodes landing within one coalescing window flush as one combined gate batch", async () => {
 	registry.resetRegistryForTesting();
 	wakes.length = 0;
 	await createTeam("golf", [
@@ -201,6 +202,7 @@ test("episodes within one coalescing window flush as a single combined wake", as
 	}
 	team.flushTeamWakesForTesting();
 	assert.equal(wakes.length, 1, "two episodes in one window flush as one wake");
+	assert.equal(wakes[0].message.customType, "torus.wake-batch", "the gate batches the entries");
 	const text = wakeText(wakes[0]);
 	assert.equal(
 		(text.match(/\[torus\] team "golf"/g) ?? []).length,
@@ -211,13 +213,12 @@ test("episodes within one coalescing window flush as a single combined wake", as
 	assert.match(text, /@scan-b/);
 	assert.match(text, /scan-a done/);
 	assert.match(text, /scan-b done/);
-	assert.ok(
-		Array.isArray(wakes[0].message.details?.members),
-		"combined wake carries a members array",
-	);
+	const entries = wakes[0].message.details?.entries;
+	assert.ok(Array.isArray(entries) && entries.length === 2, "batch carries both entries");
+	assert.ok(Array.isArray(entries[0].details?.members), "each entry carries its episode");
 });
 
-test("a member back to working before the flush defers to its next episode", async () => {
+test("an idle episode queues its wake even if the member resumes before the flush", async () => {
 	registry.resetRegistryForTesting();
 	wakes.length = 0;
 	await createTeam("hotel", [{ name: "flip", agent: "builder" }]);
@@ -228,12 +229,15 @@ test("a member back to working before the flush defers to its next episode", asy
 	member("flip").onState({ status: "idle", sessionId: "s" });
 	member("flip").onState({ status: "working", sessionId: "s" });
 	team.flushTeamWakesForTesting();
-	assert.equal(wakes.length, 0, "a member back to working is not woken mid-flight");
+	assert.equal(
+		wakes.length,
+		1,
+		"the episode's wake delivers; the latch was consumed at queue time",
+	);
 
 	member("flip").onState({ status: "idle", sessionId: "s" });
 	team.flushTeamWakesForTesting();
-	assert.equal(wakes.length, 1, "the still-armed latch fires on the next idle episode");
-	assert.match(wakeText(wakes[0]), /@flip/);
+	assert.equal(wakes.length, 1, "no unread news, no second wake");
 });
 
 test("team_delete before the flush drops pending wake-ups", async () => {
@@ -274,7 +278,7 @@ test("wake tail quotes the newest outbox entry regardless of heading format", as
 	assert.doesNotMatch(text, /first entry/, "tail must not quote the oldest entry");
 });
 
-test("a busy session holds the flushed wake; agent settle delivers it once", async () => {
+test("a busy session holds the member wake; agent settle delivers it once", async () => {
 	registry.resetRegistryForTesting();
 	gate._resetWakeGateForTesting();
 	wakes.length = 0;
@@ -285,8 +289,7 @@ test("a busy session holds the flushed wake; agent settle delivers it once", asy
 	member("held").onReport("done waiting", false);
 	seedOutbox("held", "done waiting");
 	member("held").onState({ status: "idle", sessionId: "s" });
-	team.flushTeamWakesForTesting();
-	assert.equal(wakes.length, 0, "the coalesced wake must not reach pi while the agent runs");
+	assert.equal(wakes.length, 0, "the member wake must not reach pi while the agent runs");
 
 	gate.wakeGateAgentSettled();
 	assert.equal(wakes.length, 1, "settle flushes the held wake exactly once");
@@ -305,7 +308,6 @@ test("team_delete drops a wake already held for a busy session (the post-delete 
 	member("ghost").onReport("final report", false);
 	seedOutbox("ghost", "final report");
 	member("ghost").onState({ status: "idle", sessionId: "s" });
-	team.flushTeamWakesForTesting();
 	assert.equal(wakes.length, 0, "held while the lead is mid-run");
 
 	const tools = [];

@@ -26,6 +26,8 @@ process.env.TORUS_HOME = HOME;
 process.env.TORUS_TMUX = "0";
 process.env.TORUS_NOTIFY = "0";
 delete process.env.TORUS_DELEGATE_BACKGROUND;
+// Completion results deliver through the gate on an idle session; instant flush pins the unit path.
+process.env.TORUS_WAKE_COALESCE_MS = "0";
 
 const ROOT = mkdtempSync(path.join(tmpdir(), "torus-background-fixture-root-"));
 const FIXTURE_AGENTS = path.join(ROOT, "agents");

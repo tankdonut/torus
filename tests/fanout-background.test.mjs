@@ -67,6 +67,8 @@ const team = await import("../extensions/team/index.ts");
 const gate = await import("../extensions/wake-gate.ts");
 
 const PREV_ENGINE_BIN = process.env.TORUS_ENGINE_BIN;
+// The fake pi leaves the gate idle; the unit path under test flushes instantly.
+process.env.TORUS_WAKE_COALESCE_MS = "0";
 const sent = [];
 
 // Tool capture follows tests/delegation-background.test.mjs: registerRoster

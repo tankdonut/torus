@@ -38,7 +38,12 @@ import {
 	runDelegation,
 	withWarning,
 } from "../roster/index.js";
-import { dropWakeEntries, queueWakeEntry, torusWake } from "../wake-gate.js";
+import {
+	dropWakeEntries,
+	queueWakeEntry,
+	torusWake,
+	wakeGateFlushForTesting,
+} from "../wake-gate.js";
 import {
 	blockedTasks,
 	deliverMail,
@@ -656,22 +661,12 @@ const memberHasNews = sharedState(
 );
 
 /**
- * Wake coalescing: episodes collect per team and flush as ONE combined
- * torus.team-wake marker after a short window. N members finishing within
- * minutes would otherwise queue N triggerTurn follow-ups that drain one turn
- * boundary apart — each a wasted model turn, all stale by the time they land
- * (same rationale as team_create's combined delegation-start marker).
+ * Per-member wake-up: one gate entry per idle/stopped episode with an unread
+ * report. The wake gate batches them (idle debounce, busy hold), so N members
+ * finishing within a window still cost the session one turn instead of N
+ * triggerTurn follow-ups that drain one boundary apart, all stale by the time
+ * they land (same rationale as team_create's combined delegation-start marker).
  */
-const TEAM_WAKE_COALESCE_MS = 10_000;
-const pendingTeamWakes = sharedState(
-	Symbol.for("torus.team-wake-pending.v1"),
-	() => new Map<string, Set<string>>(),
-);
-const pendingWakeTimers = sharedState(
-	Symbol.for("torus.team-wake-timers.v1"),
-	() => new Map<string, ReturnType<typeof setTimeout>>(),
-);
-
 function notifyMemberEpisode(teamId: string, memberId: string): void {
 	if (!knobBoolean("TORUS_TEAM_NOTIFY", "team", "teamNotify", true, parseZeroDisables)) return;
 	const record = getTeam(teamId);
@@ -679,20 +674,35 @@ function notifyMemberEpisode(teamId: string, memberId: string): void {
 	if (!record || !member || record.status !== "active") return;
 	if (member.status !== "idle" && member.status !== "stopped") return;
 	if (!memberHasNews.get(memberId)) return;
-	let pending = pendingTeamWakes.get(teamId);
-	if (!pending) {
-		pending = new Set();
-		pendingTeamWakes.set(teamId, pending);
-	}
-	pending.add(memberId);
-	if (!pendingWakeTimers.has(teamId)) {
-		const timer = setTimeout(() => {
-			pendingWakeTimers.delete(teamId);
-			flushTeamWake(teamId);
-		}, TEAM_WAKE_COALESCE_MS);
-		timer.unref();
-		pendingWakeTimers.set(teamId, timer);
-	}
+	memberHasNews.delete(memberId);
+	const tail = outboxTail(member);
+	const reason =
+		tail.length > 0
+			? `report: ${tail}`
+			: member.status === "stopped"
+				? "stopped unexpectedly (no report read)"
+				: "new report waiting";
+	// Wake via a triggerTurn marker through the wake gate (the monitor
+	// pattern), never a bare user follow-up: a queued follow-up is only
+	// consumed by a run, so an interrupted turn strands it pending until the
+	// next user input. The gate holds the entry while the lead is mid-run and
+	// team_delete can still drop it before it reaches pi's one-at-a-time
+	// follow-up queue.
+	queueWakeEntry({
+		customType: "torus.team-wake",
+		text: torusWake("team", record.name, `@${member.name} (${member.agent}) is ${member.status}`, {
+			tail: reason,
+			hint: "Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.",
+		}),
+		details: {
+			team: record.name,
+			members: [{ member: member.name, agent: member.agent, status: member.status, reason }],
+			member: member.name,
+			agent: member.agent,
+			status: member.status,
+			reason,
+		},
+	});
 }
 
 /** Newest outbox content: outboxes are append-only, so the file tail is the
@@ -708,71 +718,6 @@ function outboxTail(member: { mailboxDir: string }): string {
 	}
 }
 
-function flushTeamWake(teamId: string): void {
-	const pending = pendingTeamWakes.get(teamId);
-	pendingTeamWakes.delete(teamId);
-	const timer = pendingWakeTimers.get(teamId);
-	if (timer) {
-		clearTimeout(timer);
-		pendingWakeTimers.delete(teamId);
-	}
-	if (!pending || pending.size === 0) return;
-	const record = getTeam(teamId);
-	if (record?.status !== "active") return;
-	const episodes: { member: string; agent: string; status: string; reason: string }[] = [];
-	for (const memberId of pending) {
-		const member = record.members.find((m) => m.id === memberId);
-		// A member back to working (respawn, new task) defers to its next idle
-		// episode: leave the latch armed and drop this stale queue entry.
-		if (!member || (member.status !== "idle" && member.status !== "stopped")) continue;
-		if (!memberHasNews.get(memberId)) continue;
-		memberHasNews.delete(memberId);
-		const tail = outboxTail(member);
-		episodes.push({
-			member: member.name,
-			agent: member.agent,
-			status: member.status,
-			reason:
-				tail.length > 0
-					? `report: ${tail}`
-					: member.status === "stopped"
-						? "stopped unexpectedly (no report read)"
-						: "new report waiting",
-		});
-	}
-	if (episodes.length === 0) return;
-	const first = episodes[0];
-	const text = episodes
-		.map((e) =>
-			torusWake("team", record.name, `@${e.member} (${e.agent}) is ${e.status}`, {
-				tail: e.reason,
-				hint: "Run team_status for the latest outbox reports, team_msg to assign more work, or team_delete to shut down.",
-			}),
-		)
-		.join("\n");
-	// Wake via a triggerTurn marker (the monitor pattern), never a bare user
-	// follow-up: a queued follow-up is only consumed by a run, so an
-	// interrupted turn strands it pending until the next user input.
-	// triggerTurn forces a run when the session is idle, and that run also
-	// drains any follow-ups orphaned before it (verified against pi 1.0.2).
-	// Delivery goes through the wake gate: an idle session flushes straight
-	// through (same triggerTurn marker as before); a busy one holds the entry
-	// so the backlog lands as one marker when the run settles, and team_delete
-	// can still drop it before it ever reaches pi's one-at-a-time follow-up
-	// queue.
-	queueWakeEntry({
-		customType: "torus.team-wake",
-		text,
-		details: {
-			team: record.name,
-			members: episodes,
-			...(episodes.length === 1 && first
-				? { member: first.member, agent: first.agent, status: first.status, reason: first.reason }
-				: {}),
-		},
-	});
-}
-
 export type MemberSpawner = typeof spawnMember;
 const spawnerState = sharedState(Symbol.for("torus.member-spawner.v1"), () => ({
 	spawn: spawnMember as MemberSpawner,
@@ -783,9 +728,9 @@ export function setMemberSpawnerForTesting(spawn: MemberSpawner | null): void {
 	spawnerState.spawn = spawn ?? spawnMember;
 }
 
-/** Test-only: flush every pending team wake-up immediately. */
+/** Test-only: drain the wake gate immediately (the gate owns wake batching now). */
 export function flushTeamWakesForTesting(): void {
-	for (const teamId of [...pendingTeamWakes.keys()]) flushTeamWake(teamId);
+	wakeGateFlushForTesting();
 }
 
 /**
@@ -1624,15 +1569,9 @@ const teamDeleteTool = defineTool({
 		record.status = "shutdown";
 		dropTeam(record.id);
 		for (const member of record.members) memberHasNews.delete(member.id);
-		pendingTeamWakes.delete(record.id);
-		const pendingWakeTimer = pendingWakeTimers.get(record.id);
-		if (pendingWakeTimer) {
-			clearTimeout(pendingWakeTimer);
-			pendingWakeTimers.delete(record.id);
-		}
-		// Wakes already handed to the wake gate (lead mid-run) are still
-		// cancellable here — unlike markers pi already queued, which drain one
-		// turn apiece and read as stale churn from a deleted team.
+		// Wakes already handed to the wake gate are still cancellable here — unlike
+		// markers pi already queued, which drain one turn apiece and read as stale
+		// churn from a deleted team.
 		dropWakeEntries(
 			(entry) => entry.customType === "torus.team-wake" && entry.details?.team === record.name,
 		);

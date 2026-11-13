@@ -11,6 +11,8 @@ const HOME = mkdtempSync(path.join(tmpdir(), "torus-monitor-fired-test-"));
 process.env.HOME = HOME;
 process.env.TORUS_HOME = HOME;
 process.env.TORUS_NOTIFY = "0";
+// Idle fires deliver instantly; the debounce window is unit-tested in wake-gate.test.mjs.
+process.env.TORUS_WAKE_COALESCE_MS = "0";
 
 const registry = await import("../extensions/registry.ts");
 const monitor = await import("../extensions/monitor/index.ts");

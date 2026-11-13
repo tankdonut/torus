@@ -13,6 +13,10 @@ import { after, test } from "node:test";
 // ("one-at-a-time") drains queued follow-ups one run each, so markers handed to
 // pi while busy trickle out one wasted turn apiece — and cannot be un-queued by
 // team_delete, which made a deleted team wake the session for a minute straight.
+// The idle-flush pins below assume instant delivery: the debounce window is
+// off here (unit-tested in the debounce tests further down).
+process.env.TORUS_WAKE_COALESCE_MS = "0";
+
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-wake-gate-test-"));
 process.env.TORUS_HOME = HOME;
 process.env.HOME = HOME;
@@ -34,6 +38,7 @@ const teamEntry = (team, members) => ({
 	text: `[torus] team ${team}: ${members.length} members finished`,
 	details: { team, members },
 });
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const monitorEntry = (name) => ({
 	customType: "torus.monitor-fired",
 	text: `monitor "${name}" failed (exit 1): boom`,
@@ -121,6 +126,35 @@ test("dropWakeEntries removes matching held entries; the rest still flush", () =
 	const entries = sent[0].message.details?.entries;
 	assert.equal(entries.length, 2, "survivors flush together");
 	assert.ok(!entries.some((e) => e.details?.team === "doomed"));
+});
+
+test("idle debounce: entries queued inside the window batch into one flush at expiry", async () => {
+	gate._resetWakeGateForTesting();
+	sent.length = 0;
+	gate._setWakeGateActiveForTesting(false);
+	process.env.TORUS_WAKE_COALESCE_MS = "50";
+	try {
+		gate.queueWakeEntry(teamEntry("alpha", [{ member: "one" }]));
+		gate.queueWakeEntry(monitorEntry("ci-probe"));
+		assert.equal(sent.length, 0, "idle entries hold for the coalesce window");
+
+		await sleep(120);
+		assert.equal(sent.length, 1, "window expiry flushes the batch exactly once");
+		assert.equal(sent[0].message.customType, "torus.wake-batch");
+		assert.equal(sent[0].message.details.entries.length, 2, "both entries ride one batch");
+	} finally {
+		process.env.TORUS_WAKE_COALESCE_MS = "0";
+	}
+});
+
+test("idle debounce: a zero window flushes instantly", () => {
+	gate._resetWakeGateForTesting();
+	sent.length = 0;
+	gate._setWakeGateActiveForTesting(false);
+	process.env.TORUS_WAKE_COALESCE_MS = "0";
+
+	gate.queueWakeEntry(teamEntry("alpha", [{ member: "one" }]));
+	assert.equal(sent.length, 1, "0 disables the debounce window");
 });
 
 test("a flush that finds no sender drops the backlog instead of replaying it later", () => {

@@ -9,7 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { knobBoolean, parseZeroDisables } from "./config/knobs.js";
+import { knobBoolean, knobNumber, parseZeroDisables } from "./config/knobs.js";
 import { projectStateDir } from "./fsutil.js";
 import { isEngineChild } from "./platform.js";
 import { currentSessionId, emitTorusCustom, sharedState } from "./registry.js";
@@ -79,8 +79,10 @@ interface WakeGateState {
  * the session is busy trickle out as N wasted turns once it settles — and pi
  * offers no way to un-queue them, which let a deleted team keep waking the
  * session for a minute straight. The gate holds entries in torus instead:
- * queued while a run is active, flushed as ONE marker when the run settles
- * (and immediately when idle). A single-entry flush keeps the original
+ * queued while a run is active, flushed as ONE marker when the run settles.
+ * Idle queues debounce for TORUS_WAKE_COALESCE_MS (default 10s, 0 = instant)
+ * so several producers landing within the window still cost one turn. A
+ * single-entry flush keeps the original
  * customType so renderers and the model see the marker they always saw; only
  * multi-entry flushes wrap in "torus.wake-batch".
  *
@@ -99,6 +101,7 @@ const gateState = sharedState(
 
 export function wakeGateAgentStart(): void {
 	gateState.agentActive = true;
+	cancelWakeCoalesce();
 }
 
 /** Settle flushes the whole backlog at once; a run aborted mid-flight settles too. */
@@ -206,7 +209,43 @@ export function queueWakeEntry(entry: WakeEntry): void {
 		appendSpool(sessionId, { id: spoolId, ts: new Date().toISOString(), entry: queued });
 	}
 	gateState.pending.push(queued);
-	if (!gateState.agentActive) flushWakeGate();
+	if (!gateState.agentActive) flushIdlePending();
+}
+
+/** Idle-side debounce window: entries queued while idle batch for this long (0 = instant). */
+const WAKE_COALESCE_MS_DEFAULT = 10_000;
+let coalesceTimer: ReturnType<typeof setTimeout> | undefined;
+
+function wakeCoalesceMs(): number {
+	const ms = knobNumber("TORUS_WAKE_COALESCE_MS", "wake", "coalesceMs", WAKE_COALESCE_MS_DEFAULT);
+	// 0 disables the window (instant flush); junk or negative env keeps the default.
+	return Number.isFinite(ms) && ms >= 0 ? Math.floor(ms) : WAKE_COALESCE_MS_DEFAULT;
+}
+
+/**
+ * First idle entry arms one unref'd timer; entries queued while it runs join
+ * the batch, expiry flushes everything pending. Mid-run the settle-flush owns
+ * the backlog, so an active start cancels the timer instead.
+ */
+function flushIdlePending(): void {
+	if (gateState.agentActive || coalesceTimer !== undefined) return;
+	const ms = wakeCoalesceMs();
+	if (ms <= 0) {
+		flushWakeGate();
+		return;
+	}
+	coalesceTimer = setTimeout(() => {
+		coalesceTimer = undefined;
+		if (!gateState.agentActive) flushWakeGate();
+	}, ms);
+	coalesceTimer.unref();
+}
+
+function cancelWakeCoalesce(): void {
+	if (coalesceTimer !== undefined) {
+		clearTimeout(coalesceTimer);
+		coalesceTimer = undefined;
+	}
 }
 
 /** Removes matching held entries (e.g. a deleted team's undelivered wake); returns the drop count. */
@@ -284,11 +323,18 @@ export function drainWakeSpool(sessionId: string): void {
 	if (!gateState.agentActive) flushWakeGate();
 }
 
+/** Test-only: drain the gate immediately, dropping any armed debounce window. */
+export function wakeGateFlushForTesting(): void {
+	cancelWakeCoalesce();
+	flushWakeGate();
+}
+
 export function _setWakeGateActiveForTesting(active: boolean): void {
 	gateState.agentActive = active;
 }
 
 export function _resetWakeGateForTesting(): void {
+	cancelWakeCoalesce();
 	gateState.pending = [];
 	gateState.agentActive = false;
 }

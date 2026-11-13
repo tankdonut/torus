@@ -19,6 +19,8 @@ const HOME = mkdtempSync(path.join(tmpdir(), "torus-wake-spool-test-"));
 process.env.TORUS_HOME = HOME;
 process.env.TORUS_NOTIFY = "0";
 delete process.env.TORUS_WAKE_SPOOL;
+// The queued-wake pins assume instant idle delivery; the debounce window is unit-tested in wake-gate.test.mjs.
+process.env.TORUS_WAKE_COALESCE_MS = "0";
 
 const gate = await import("../extensions/wake-gate.ts");
 const registry = await import("../extensions/registry.ts");

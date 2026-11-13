@@ -11,6 +11,9 @@ import { after, before, test } from "node:test";
 // queued mid-stream must drain once the run settles. A fake OpenAI-compatible
 // endpoint serves the model; an isolated PI_CODING_AGENT_DIR + cwd keep the
 // harness hermetic (no credentials, no project extensions, in-memory session).
+// The idle-wake pins assume instant delivery; the debounce window is unit-tested in wake-gate.test.mjs.
+process.env.TORUS_WAKE_COALESCE_MS = "0";
+
 const agentDir = mkdtempSync(path.join(tmpdir(), "torus-pi-wake-contract-"));
 const cwd = mkdtempSync(path.join(tmpdir(), "torus-pi-wake-cwd-"));
 const TORUS_HOME_SANDBOX = mkdtempSync(path.join(tmpdir(), "torus-wake-contract-home-"));
