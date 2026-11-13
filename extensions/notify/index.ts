@@ -6,7 +6,7 @@ import { gateExtension, type PlatformSupport } from "../platform.js";
 import { FLEET_OPENER, listExternalRuns, sanitizeRender } from "../registry.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
-	platforms: ["linux"],
+	platforms: ["linux", "darwin"],
 	deps: [{ name: "notify-send", required: true }],
 };
 

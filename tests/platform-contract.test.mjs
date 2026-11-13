@@ -13,7 +13,7 @@ const { gateExtension, resetPlatformRegistryForTests } = await import("../extens
 const KNOWN_PLATFORMS = new Set(["linux", "darwin", "win32"]);
 const SKIPS_BY_PLATFORM = {
 	linux: [],
-	darwin: ["interactive", "notify", "sandbox"],
+	darwin: ["interactive", "sandbox"],
 	win32: ["interactive", "monitor", "notify", "sandbox"],
 };
 
