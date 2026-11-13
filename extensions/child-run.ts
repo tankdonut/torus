@@ -36,7 +36,9 @@ export interface RunChildResult {
  * Spawn a child with piped stdio and resolve on close — never blocks the
  * engine event loop (the TUI renders on it). No timeout: buffers, exit
  * status, done. Timeout or abort: SIGTERM, then SIGKILL after the grace
- * period; a killed child resolves with status null. A spawn failure arrives
+ * period; a killed child resolves with status null. With resolveOnTimeout
+ * the promise resolves at the deadline but the SIGKILL escalation stays
+ * armed, so a child that ignores SIGTERM cannot leak. A spawn failure arrives
  * via the async 'error' event and resolves with status null plus the error
  * message, not a rejection. All timers are unref'd.
  */
@@ -56,11 +58,14 @@ export function runChild(
 			env: opts.env,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
-		const finish = (status: number | null, error?: string) => {
+		// keepKillTimer leaves the SIGKILL escalation armed when resolving on
+		// timeout: a child that ignores SIGTERM must still be killed after the
+		// grace period even though the promise has already resolved.
+		const finish = (status: number | null, error?: string, keepKillTimer = false) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timeoutTimer);
-			clearTimeout(killTimer);
+			if (!keepKillTimer) clearTimeout(killTimer);
 			resolve({ status, stdout, stderr, ...(error !== undefined ? { error } : {}) });
 		};
 		const ladder = () => {
@@ -70,7 +75,7 @@ export function runChild(
 		if (opts.timeoutMs !== undefined) {
 			timeoutTimer = setTimeout(() => {
 				ladder();
-				if (opts.resolveOnTimeout) finish(null);
+				if (opts.resolveOnTimeout) finish(null, undefined, true);
 			}, opts.timeoutMs).unref();
 		}
 		const cap = opts.maxBuffer;

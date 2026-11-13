@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 const { runChild, SIGKILL_GRACE_MS } = await import("../extensions/child-run.ts");
@@ -50,6 +53,50 @@ test("timeout: resolveOnTimeout returns status null and the buffers so far", asy
 	assert.equal(run.status, null);
 	assert.equal(run.stdout, "partial\n");
 	assert.ok(elapsed < 1500, `resolveOnTimeout waited ${elapsed}ms for close instead of resolving`);
+});
+
+test("timeout: resolveOnTimeout still escalates to SIGKILL so a TERM-ignoring child dies", async () => {
+	// trap "" TERM refuses SIGTERM, so only the SIGKILL escalation can end
+	// the child; the shell writes its pid to a file so the test can confirm
+	// the process is actually gone instead of trusting the resolved promise.
+	// The inner sleep outlives the assert window but not by much, so a
+	// pre-fix failure cannot hang the suite on open pipes.
+	const dir = await mkdtemp(path.join(os.tmpdir(), "child-run-"));
+	const pidFile = path.join(dir, "pid");
+	const started = Date.now();
+	const run = await runChild("bash", ["-c", 'echo $$ > "$PID_FILE"; trap "" TERM; sleep 9'], {
+		timeoutMs: 300,
+		resolveOnTimeout: true,
+		env: { ...process.env, PID_FILE: pidFile },
+	});
+	const elapsed = Date.now() - started;
+	assert.equal(run.status, null);
+	assert.ok(
+		elapsed >= 300 - 150 && elapsed < 300 + 1000,
+		`resolved after ${elapsed}ms — expected resolution at ~timeoutMs`,
+	);
+	const pid = Number.parseInt((await readFile(pidFile, "utf8")).trim(), 10);
+	const deadline = Date.now() + SIGKILL_GRACE_MS + 1500;
+	let dead = false;
+	while (Date.now() < deadline) {
+		try {
+			process.kill(pid, 0);
+		} catch {
+			dead = true;
+			break;
+		}
+		await new Promise((r) => setTimeout(r, 50));
+	}
+	// bound the leak if the escalation was cancelled so a failure fails fast
+	try {
+		process.kill(pid, "SIGKILL");
+	} catch {
+		// already reaped
+	}
+	assert.ok(
+		dead,
+		`child pid ${pid} still alive ${SIGKILL_GRACE_MS + 1500}ms past the timeout — SIGKILL escalation was cancelled`,
+	);
 });
 
 test("maxBuffer: stdout capture stops at the cap but the child still runs to close", async () => {
