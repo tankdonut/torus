@@ -1335,6 +1335,17 @@ test("attachControl persists child pid and session tags in the delegation log", 
 	registry.attachControl("tags-1", { stop: () => {}, steer: () => false, pid: 4243 });
 	assert.equal(record.childPid, 4243);
 	assert.equal(readFileSync(record.logFile, "utf8").match(/<torus:pid /g)?.length, 2);
+
+	// a respawned child's session replaces the live one and appends its tag:
+	// the record follows the leg doing work, the log keeps every leg
+	registry.attachSessionId("tags-1", "sess-tags-leg2");
+	assert.equal(
+		registry.listDelegations().find((r) => r.id === "tags-1").sessionId,
+		"sess-tags-leg2",
+	);
+	const legLog = readFileSync(record.logFile, "utf8");
+	assert.equal(legLog.match(/<torus:session /g)?.length, 2);
+	assert.match(legLog, /<torus:session id="sess-tags-leg2"/);
 	registry.resetRegistryForTesting();
 });
 
@@ -1369,6 +1380,22 @@ test("rehydrate: un-ended runs with a dead child read failed, live ones stay run
 	assert.equal(deadRec.childPid, dead);
 	assert.equal(liveRec.status, "running", "live child reads running");
 	assert.equal(liveRec.sessionId, "child-rehy-live");
+	registry.resetRegistryForTesting();
+});
+
+test("rehydrate: a chain walk's session tags recover the last leg", async () => {
+	registry.resetRegistryForTesting();
+	await registry.startDelegation("rehy-legs", "builder", "m", "sess-rehy", null);
+	const record = registry.listDelegations().find((r) => r.id === "rehy-legs");
+	registry.attachSessionId("rehy-legs", "child-leg-1");
+	registry.attachSessionId("rehy-legs", "child-leg-2");
+	const log = readFileSync(record.logFile, "utf8");
+	assert.equal(log.match(/<torus:session /g)?.length, 2);
+
+	registry.resetRegistryForTesting();
+	registry.rehydrateFromLogs("sess-rehy");
+	const recovered = registry.listDelegations().find((r) => r.id.includes("rehy-legs"));
+	assert.equal(recovered.sessionId, "child-leg-2", "the last leg wins");
 	registry.resetRegistryForTesting();
 });
 

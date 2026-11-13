@@ -49,10 +49,12 @@ writeFileSync(
 		'for a in "$@"; do [ "$prev" = "--model" ] && model="$a"; prev="$a"; done',
 		'case "$model" in',
 		"  zai/glm-5.3)",
+		'    echo \'{"type":"session","id":"child-leg-head"}\'',
 		'    echo \'{"type":"error","error":"429 rate limited"}\'',
 		"    exit 0",
 		"    ;;",
 		"  zai/glm-5.3-flash)",
+		'    echo \'{"type":"session","id":"child-leg-flash"}\'',
 		'    echo \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":""}],"usage":{"input":10,"output":20}}}\'',
 		"    exit 0",
 		"    ;;",
@@ -172,6 +174,13 @@ test("a head rejection fires onFallback with from/to/lastError and marks the coo
 	);
 	assert.equal(roster.isModelMemoFailed("zai/glm-5.3"), true, "the rejected head sits out");
 	assert.equal(roster.isModelMemoFailed("zai/glm-5.3-flash"), false);
+	const record = registry.listDelegations().find((r) => r.agent === "worker");
+	assert.ok(record, "the delegation record exists");
+	assert.equal(
+		record.sessionId,
+		"child-leg-flash",
+		"the live session follows the leg doing work, not the dead head",
+	);
 	registry.setCustomSender(() => {});
 });
 

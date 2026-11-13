@@ -900,11 +900,15 @@ export function appendAction(id: string, line: string): void {
 
 export function attachSessionId(id: string, sessionId: string): void {
 	const record = registry.get(id);
-	if (!record || record.sessionId) return;
+	if (!record) return;
+	// A chain walk's respawned children each report their own session id: the
+	// record carries the LATEST leg so the live transcript follows the child
+	// that is doing work instead of staying on a dead early attempt. Every
+	// leg's tag persists in the log so rehydrateFromLogs recovers the last one
+	// for an un-ended log (end tags carry the final id, but an orphaned run
+	// never writes one — and spend folding keys on the transcript it names).
+	if (record.sessionId === sessionId) return;
 	record.sessionId = sessionId;
-	// Persisted as a log tag so rehydrateFromLogs can recover the child session
-	// for an un-ended log (end tags carry it, but an orphaned run never writes
-	// one — and spend folding keys on the transcript it names).
 	appendFileSync(
 		record.logFile,
 		`\n<torus:session id="${escapeAttr(sessionId)}" ts="${new Date().toISOString()}" />\n`,
@@ -1148,7 +1152,11 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 		// below and for reconcileOrphanedDelegations after this process dies.
 		const pidTags = [...raw.matchAll(/^<torus:pid pid="(\d+)"[^>]*\/>/gm)];
 		const childPid = pidTags.length > 0 ? Number(pidTags[pidTags.length - 1]?.[1]) : null;
-		const sessionTag = raw.match(/^<torus:session id="([^"]*)"[^>]*\/>/m);
+		// One <torus:session> tag per chain-walk leg; the last tag is the leg
+		// that was doing work, matching attachSessionId's latest-leg record.
+		const sessionTags = [...raw.matchAll(/^<torus:session id="([^"]*)"[^>]*\/>/gm)];
+		const sessionTag =
+			sessionTags.length > 0 ? { 1: sessionTags[sessionTags.length - 1]?.[1] } : null;
 		let startedAt = Date.parse(start.groups.ts);
 		if (!Number.isFinite(startedAt)) {
 			try {
