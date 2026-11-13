@@ -432,6 +432,8 @@ export function updateExternalRun(
 const RUNS_DIR = path.join(torusHome(), "runs");
 const RUNS_PRUNE_MS = 6 * 60 * 60 * 1000;
 const RUNS_PRUNE_COUNT = 200;
+/** A "running" beacon with a dead writer pid is a zombie this long after its last write. */
+const RUNS_ZOMBIE_MS = 10 * 60 * 1000;
 
 interface RunBeacon {
 	id: string;
@@ -457,7 +459,12 @@ function beaconFile(id: string): string {
 
 function writeRunBeacon(beacon: RunBeacon): void {
 	try {
-		writeJson(beaconFile(beacon.id), { ...beacon, uid: process.getuid?.() });
+		const file = beaconFile(beacon.id);
+		// Team-member ids are "teamId/member" — a subdirectory RUNS_DIR does not
+		// have yet. Without the mkdir every member beacon write fails silently
+		// and member liveness never survives a process reload.
+		mkdirSync(path.dirname(file), { recursive: true });
+		writeJson(file, { ...beacon, uid: process.getuid?.() });
 	} catch {}
 }
 
@@ -487,6 +494,24 @@ function pruneRunBeacons(now: number): void {
 				return true;
 			}
 		});
+		// A run-beacon written "running" whose writer pid is long dead is a
+		// zombie: the driving process died before finalizing (killed sessions,
+		// aborted-before-spawn runs), and the row renders in every fleet view
+		// for the rest of the prune window — hours-old running ghosts. Age the
+		// check so a freshly spawned run is never raced.
+		for (const file of files) {
+			try {
+				const beacon = JSON.parse(readFileSync(path.join(RUNS_DIR, file), "utf8")) as RunBeacon;
+				if (
+					beacon.status === "running" &&
+					beacon.pid !== process.pid &&
+					!pidAlive(beacon.pid) &&
+					now - statSync(path.join(RUNS_DIR, file)).mtimeMs > RUNS_ZOMBIE_MS
+				) {
+					rmSync(path.join(RUNS_DIR, file));
+				}
+			} catch {}
+		}
 		const live = files.filter((f) => !stale.includes(f));
 		const excess = Math.max(0, live.length - RUNS_PRUNE_COUNT);
 		const oldest = live
