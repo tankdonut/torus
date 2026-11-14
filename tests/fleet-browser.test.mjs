@@ -295,10 +295,8 @@ test("fullscreen click: clicking a rendered list row opens its detail", () => {
 	component.dispose();
 });
 
-test("fan-out completions settle into one wake-batch with per-run entries", async () => {
+test("fan-out completions emit one direct delegation-result marker per run", async () => {
 	registry.resetRegistryForTesting();
-	const gate = await import("../extensions/wake-gate.ts");
-	gate._resetWakeGateForTesting();
 	const customs = [];
 	registry.setCustomSender((message, options) => customs.push({ message, options }));
 	const tools = [];
@@ -310,45 +308,41 @@ test("fan-out completions settle into one wake-batch with per-run entries", asyn
 		ui: { setStatus: () => {} },
 	};
 
-	// The lead is mid-run while its fanout executes: hold the gate active so
-	// both completions settle out as one batch, then flush it explicitly.
-	gate._setWakeGateActiveForTesting(true);
-	try {
-		await withEngine(EVENT_ENGINE, async () => {
-			const result = await fanoutTool.execute(
-				"call",
-				{
-					runs: [
-						{ agent: "builder", task: "probe a", handle: "alpha" },
-						{ agent: "builder", task: "probe b", handle: "beta" },
-					],
-				},
-				undefined,
-				undefined,
-				ctx,
-			);
-			assert.equal(result.details.ok, 2, "both runs succeed under the fake engine");
-		});
-	} finally {
-		gate._setWakeGateActiveForTesting(false);
-	}
-	gate.wakeGateFlushForTesting();
+	await withEngine(EVENT_ENGINE, async () => {
+		const result = await fanoutTool.execute(
+			"call",
+			{
+				runs: [
+					{ agent: "builder", task: "probe a", handle: "alpha" },
+					{ agent: "builder", task: "probe b", handle: "beta" },
+				],
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		assert.equal(result.details.ok, 2, "both runs succeed under the fake engine");
+	});
 
-	const batches = customs.filter((e) => e.message.customType === "torus.wake-batch");
-	assert.equal(batches.length, 1, "both completions settle out as one wake-batch");
-	const entries = batches[0].message.details.entries;
-	assert.equal(entries.length, 2, "one entry per run");
-	for (const entry of entries) {
-		assert.equal(entry.customType, "delegation-result");
-		assert.equal(entry.details.ok, true);
-		assert.equal(typeof entry.details.delegationId, "string", "each entry keeps its run clickable");
+	const results = customs.filter(
+		(e) =>
+			e.message.customType === "torus.delegation-result" &&
+			typeof e.message.details.handle === "string",
+	);
+	assert.equal(results.length, 2, "one directly emitted result marker per run");
+	for (const marker of results) {
+		assert.equal(marker.message.details.ok, true);
+		assert.equal(
+			typeof marker.message.details.delegationId,
+			"string",
+			"each marker keeps its run clickable",
+		);
 	}
 	assert.equal(
-		customs.filter((e) => e.message.customType === "torus.delegation-result").length,
+		customs.filter((e) => e.message.customType === "torus.wake-batch").length,
 		0,
-		"no directly emitted result marker rides along — the gate owns delivery",
+		"blocking completions bypass the wake gate — no batch wrap",
 	);
-	assert.equal(batches[0].options?.triggerTurn, true, "the wake-batch triggers its settle turn");
 	registry.setCustomSender(() => {});
 });
 

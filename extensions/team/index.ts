@@ -262,12 +262,14 @@ const fanoutTool = defineTool({
 			},
 			{ triggerTurn: false },
 		);
-		// Per-run completion wakes: each run's outcome queues ONE typed
-		// delegation-result wake entry through the wake gate — the same shape
-		// roster's background delegations emit, so fleet and notify render both
-		// identically. The gate holds entries while the turn is active and
-		// flushes them as a single wake-batch at settle; registry's
-		// notifyDelegation stays the delegation-lifecycle toast owner.
+		// Per-run completion markers: a blocking fan-out's outcome already reaches
+		// the model through the tool result, so each completion emits ONE
+		// torus.delegation-result display marker straight into the session
+		// (triggerTurn: false — pi appends it as the turn winds down, no extra
+		// wake turn) — the same shape as roster's blocking delegate and chain
+		// paths. Only background completions ride the wake gate, where the turn
+		// trigger is what delivers them; registry's notifyDelegation stays the
+		// delegation-lifecycle toast owner.
 		const wakeFanoutRun = (wake: {
 			/** Bare handle (no "@") or the agent name: the wake's origin label. */
 			label: string;
@@ -295,26 +297,32 @@ const fanoutTool = defineTool({
 						: wake.error !== undefined
 							? [wake.error, summary].filter(Boolean).join(" — ")
 							: `Full result:\n\n${summary}`;
-				deliverWake({
-					customType: "delegation-result",
-					origin: { label: wake.label },
-					severity: wake.ok ? "success" : "error",
-					toast: false,
-					summary: torusWake("delegation", wake.label, wake.ok ? "finished" : "failed", {
-						tail,
-						hint:
-							wake.delegationId || record
-								? `Full output: run torus_results${wake.delegationId ? ` with id ${wake.delegationId}` : ""}.${record ? ` Log: ${record.logFile}` : ""}`
-								: undefined,
-					}),
-					detail: {
-						agent: wake.agent,
-						handle: wake.handle,
-						ok: wake.ok,
-						...(wake.delegationId ? { delegationId: wake.delegationId } : {}),
-						durationMs: Date.now() - wake.startedAt,
+				emitTorusCustom(
+					{
+						customType: "torus.delegation-result",
+						content: [
+							{
+								type: "text",
+								text: torusWake("delegation", wake.label, wake.ok ? "finished" : "failed", {
+									tail,
+									hint:
+										wake.delegationId || record
+											? `Full output: run torus_results${wake.delegationId ? ` with id ${wake.delegationId}` : ""}.${record ? ` Log: ${record.logFile}` : ""}`
+											: undefined,
+								}),
+							},
+						],
+						display: true,
+						details: {
+							agent: wake.agent,
+							handle: wake.handle,
+							ok: wake.ok,
+							...(wake.delegationId ? { delegationId: wake.delegationId } : {}),
+							durationMs: Date.now() - wake.startedAt,
+						},
 					},
-				});
+					{ triggerTurn: false },
+				);
 			} catch {
 				// Delivery is best-effort; the tool result and the registry record keep the outcome.
 			}

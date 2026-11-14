@@ -26,9 +26,6 @@ process.env.OPENCODE_API_KEY = "torus-test-dummy";
 const registry = await import("../extensions/registry.ts");
 const roster = await import("../extensions/roster/index.ts");
 const team = await import("../extensions/team/index.ts");
-const gate = await import("../extensions/wake-gate.ts");
-// Fanout completion wakes ride the gate; the suite pins instant idle delivery.
-process.env.TORUS_WAKE_COALESCE_MS = "0";
 const runtime = await import("../extensions/team/team-runtime.ts");
 
 function fakeSpawner() {
@@ -290,10 +287,6 @@ test("fan-out with one model-error run marks it not-ok with its error text on it
 	registry.setCustomSender((message) => customs.push(message));
 	const fanoutTool = registeredTools().find((t) => t.name === "torus_fanout");
 	assert.ok(fanoutTool, "torus_fanout not registered");
-	gate._resetWakeGateForTesting();
-	// The lead is mid-run while its fanout executes: hold the gate active so
-	// both completions settle out as one batch, then flush it explicitly.
-	gate._setWakeGateActiveForTesting(true);
 	try {
 		const result = await fanoutTool.execute(
 			"call",
@@ -312,26 +305,28 @@ test("fan-out with one model-error run marks it not-ok with its error text on it
 		);
 		assert.equal(result.details.ok, 1, "exactly one run succeeds");
 	} finally {
-		gate._setWakeGateActiveForTesting(false);
 		delete process.env.TORUS_ENGINE_BIN;
 		rmSync(ENGINE_DIR, { recursive: true, force: true });
 	}
-	gate.wakeGateFlushForTesting();
 
-	const batches = customs.filter((m) => m.customType === "torus.wake-batch");
-	assert.equal(batches.length, 1, "both completions settle out as one wake-batch");
-	const entries = batches[0].details.entries;
-	assert.equal(entries.length, 2, "one entry per run");
-	const sick = entries.find((e) => e.details.handle === "sick");
-	const well = entries.find((e) => e.details.handle === "well");
-	assert.ok(sick && well, "both runs deliver an entry keyed by bare handle");
+	const results = customs.filter(
+		(m) => m.customType === "torus.delegation-result" && typeof m.details.handle === "string",
+	);
+	assert.equal(results.length, 2, "one directly emitted marker per run");
+	const sick = results.find((m) => m.details.handle === "sick");
+	const well = results.find((m) => m.details.handle === "well");
+	assert.ok(sick && well, "both runs deliver a marker keyed by bare handle");
 	assert.equal(sick.details.ok, false, "the model-error run is marked not-ok");
 	assert.equal(sick.details.agent, "builder");
-	assert.equal(typeof sick.details.delegationId, "string", "the failed entry stays clickable");
-	assert.match(sick.text, /delegation "@sick" failed/, "the failed run renders failed");
-	assert.match(sick.text, /socket hang up/, "the engine error text reaches its own line");
+	assert.equal(typeof sick.details.delegationId, "string", "the failed marker stays clickable");
+	assert.match(sick.content[0].text, /delegation "@sick" failed/, "the failed run renders failed");
+	assert.match(
+		sick.content[0].text,
+		/socket hang up/,
+		"the engine error text reaches its own line",
+	);
 	assert.equal(well.details.ok, true);
-	assert.match(well.text, /delegation "@well" finished/);
+	assert.match(well.content[0].text, /delegation "@well" finished/);
 	registry.setCustomSender(() => {});
 });
 
@@ -361,8 +356,6 @@ test("fan-out per-run wake entries resolve to registry records carrying the per-
 	registry.setCustomSender((message) => customs.push(message));
 	const fanoutTool = registeredTools().find((t) => t.name === "torus_fanout");
 	assert.ok(fanoutTool, "torus_fanout not registered");
-	gate._resetWakeGateForTesting();
-	gate._setWakeGateActiveForTesting(true);
 	try {
 		const result = await fanoutTool.execute(
 			"call",
@@ -378,23 +371,21 @@ test("fan-out per-run wake entries resolve to registry records carrying the per-
 		);
 		assert.equal(result.details.ok, 2, "both runs succeed under the fake engines");
 	} finally {
-		gate._setWakeGateActiveForTesting(false);
 		delete process.env.TORUS_ENGINE_BIN;
 		rmSync(ENGINE_DIR, { recursive: true, force: true });
 	}
-	gate.wakeGateFlushForTesting();
 
-	const batches = customs.filter((m) => m.customType === "torus.wake-batch");
-	assert.equal(batches.length, 1, "both completions settle out as one wake-batch");
-	const entries = batches[0].details.entries;
-	assert.equal(entries.length, 2, "one entry per run");
+	const results = customs.filter(
+		(m) => m.customType === "torus.delegation-result" && typeof m.details.handle === "string",
+	);
+	assert.equal(results.length, 2, "one directly emitted marker per run");
 	const records = registry.listDelegations();
 	const costOf = (handle) => {
-		const entry = entries.find((e) => e.details.handle === handle);
-		assert.ok(entry, `${handle} delivers its own entry`);
-		assert.equal(typeof entry.details.delegationId, "string", `${handle}'s entry is clickable`);
-		const record = records.find((r) => r.id === entry.details.delegationId);
-		assert.ok(record, "the entry's id resolves to its registry record");
+		const marker = results.find((m) => m.details.handle === handle);
+		assert.ok(marker, `${handle} delivers its own marker`);
+		assert.equal(typeof marker.details.delegationId, "string", `${handle}'s marker is clickable`);
+		const record = records.find((r) => r.id === marker.details.delegationId);
+		assert.ok(record, "the marker's id resolves to its registry record");
 		return record.cost;
 	};
 	assert.equal(costOf("scout"), 0.01, "the cheap run's record carries its engine cost");
@@ -426,8 +417,6 @@ test("mixed fan-out batch: the failed run's entry carries no id, the success's r
 	registry.setCustomSender((message) => customs.push(message));
 	const fanoutTool = registeredTools().find((t) => t.name === "torus_fanout");
 	assert.ok(fanoutTool, "torus_fanout not registered");
-	gate._resetWakeGateForTesting();
-	gate._setWakeGateActiveForTesting(true);
 	try {
 		const result = await fanoutTool.execute(
 			"call",
@@ -443,26 +432,28 @@ test("mixed fan-out batch: the failed run's entry carries no id, the success's r
 		);
 		assert.equal(result.details.ok, 1, "exactly one run succeeds");
 	} finally {
-		gate._setWakeGateActiveForTesting(false);
 		delete process.env.TORUS_ENGINE_BIN;
 		rmSync(ENGINE_DIR, { recursive: true, force: true });
 	}
-	gate.wakeGateFlushForTesting();
 
-	const batches = customs.filter((m) => m.customType === "torus.wake-batch");
-	assert.equal(batches.length, 1, "both completions settle out as one wake-batch");
-	const entries = batches[0].details.entries;
-	assert.equal(entries.length, 2, "both runs deliver an entry");
-	const doomed = entries.find((e) => e.details.handle === "doomed");
-	const scout = entries.find((e) => e.details.handle === "scout");
-	assert.ok(doomed && scout, "both runs deliver an entry keyed by bare handle");
+	const results = customs.filter(
+		(m) => m.customType === "torus.delegation-result" && typeof m.details.handle === "string",
+	);
+	assert.equal(results.length, 2, "one directly emitted marker per run");
+	const doomed = results.find((m) => m.details.handle === "doomed");
+	const scout = results.find((m) => m.details.handle === "scout");
+	assert.ok(doomed && scout, "both runs deliver a marker keyed by bare handle");
 	assert.equal(doomed.details.ok, false, "the unknown-agent run is marked not-ok");
 	assert.equal(
 		doomed.details.delegationId,
 		undefined,
 		"a run that never minted an id carries none",
 	);
-	assert.match(doomed.text, /delegation "@doomed" failed/, "the failed run renders failed");
+	assert.match(
+		doomed.content[0].text,
+		/delegation "@doomed" failed/,
+		"the failed run renders failed",
+	);
 	assert.equal(scout.details.ok, true);
 	assert.equal(typeof scout.details.delegationId, "string", "the success's id is a real string");
 	const record = registry.listDelegations().find((r) => r.id === scout.details.delegationId);
