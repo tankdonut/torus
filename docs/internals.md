@@ -18,7 +18,7 @@ Known srt gaps: unreliable signal/exit-code propagation (upstream #602/#603/#635
 
 | Module | Provides | Consumers |
 | --- | --- | --- |
-| `extensions/registry.ts` | DelegationRecord store (globalThis-hosted), run beacons + foreign-process scan, team records, session/persona slots, log rehydration, tmux pane mgmt, `repoRoot()`, sanitize/redact/shellQuote/name gates | roster, team, browser, fleet, notify, memory, goal, prompts, ui, engine-child |
+| `extensions/registry.ts` | DelegationRecord store (globalThis-hosted), the on-disk run-record store (beacon files carry the full run record; foreign-process scan + prune: running count-capped, finished kept 7 days), team records, session/persona slots, log rehydration, tmux pane mgmt, `repoRoot()`, sanitize/redact/shellQuote/name gates | roster, team, browser, fleet, notify, memory, goal, prompts, ui, engine-child |
 | `extensions/rpc.ts` | `RpcChild`: newline-JSON RPC client for engine children (prompt/steer/getState/kill) | roster, team-runtime, acp (serve) |
 | `extensions/engine-child.ts` | `engineChildEnv` (sets `TORUS_ENGINE_CHILD=1`, carries the pinned `TORUS_STATE_DIR`), event parse/reduce, `childExtensionArgs` (the child set), `resolveEngineBin` | roster, team-runtime, doctor, ui, acp (serve) |
 | `extensions/team/team-runtime.ts` | Team spec persistence, mailboxes, locked tasklist, member supervisor | team |

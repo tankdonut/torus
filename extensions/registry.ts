@@ -377,6 +377,30 @@ function externalRuns(): ExternalRun[] {
 	return sharedState(EXTERNAL_RUNS_KEY, () => [] as ExternalRun[]);
 }
 
+/** The team publish's ExternalRun fields mapped into their RunRecord slots; the write merges over the record startDelegation planted. */
+function externalRunBeacon(run: ExternalRun): RunRecordWrite {
+	return {
+		id: run.id,
+		status: run.state,
+		pid: process.pid,
+		source: run.source,
+		label: run.label,
+		...(run.handle !== undefined ? { handle: run.handle } : {}),
+		...(run.model !== undefined ? { model: run.model } : {}),
+		...(run.logFile !== undefined ? { logFile: run.logFile } : {}),
+		...(run.sessionId !== undefined ? { sessionId: run.sessionId } : {}),
+		...(run.memberStatus !== undefined ? { memberStatus: run.memberStatus } : {}),
+		...(run.activeSeconds !== undefined ? { activeSeconds: run.activeSeconds } : {}),
+		...(run.activeUpdatedAt !== undefined ? { activeUpdatedAt: run.activeUpdatedAt } : {}),
+		...(run.turns !== undefined ? { turns: run.turns } : {}),
+		...(run.tokensIn !== undefined ? { tokensIn: run.tokensIn } : {}),
+		...(run.tokensOut !== undefined ? { tokensOut: run.tokensOut } : {}),
+		...(run.cacheRead !== undefined ? { cacheRead: run.cacheRead } : {}),
+		...(run.cacheWrite !== undefined ? { cacheWrite: run.cacheWrite } : {}),
+		...(run.cost !== undefined ? { cost: run.cost } : {}),
+	};
+}
+
 export function publishExternalRun(
 	run: Omit<ExternalRun, "startedAt"> & { startedAt?: number },
 ): void {
@@ -387,8 +411,10 @@ export function publishExternalRun(
 		if (prior) runs[existing] = { ...prior, ...run, startedAt: prior.startedAt };
 		return;
 	}
-	runs.push({ startedAt: Date.now(), ...run });
+	const started = { startedAt: Date.now(), ...run };
+	runs.push(started);
 	while (runs.length > EXTERNAL_RUNS_LIMIT) runs.shift();
+	writeRunBeacon(externalRunBeacon(started));
 }
 
 export function updateExternalRun(
@@ -417,12 +443,20 @@ export function updateExternalRun(
 }
 
 const RUNS_DIR = path.join(torusHome(), "runs");
-const RUNS_PRUNE_MS = 6 * 60 * 60 * 1000;
+/** Finished run records are kept this long past their finish; running records are count-capped, not aged. */
+const RUNS_PRUNE_MS = 7 * 24 * 60 * 60 * 1000;
 const RUNS_PRUNE_COUNT = 200;
 /** A "running" beacon with a dead writer pid is a zombie this long after its last write. */
 const RUNS_ZOMBIE_MS = 10 * 60 * 1000;
 
-interface RunBeacon {
+/**
+ * The on-disk run record: one JSON file per run in RUNS_DIR, written by both
+ * origins (delegations from DelegationRecord, team members through
+ * publishExternalRun). Every field beyond the identity core is optional so
+ * identity-only files written by older binaries load cleanly; the scan zeroes
+ * missing stats instead of rejecting the file.
+ */
+export interface RunRecord {
 	id: string;
 	agent: string;
 	model: string;
@@ -438,20 +472,101 @@ interface RunBeacon {
 	project: string;
 	/** Action-log path so foreign runs can render output before the first turn. */
 	logFile?: string;
+	// Full-record fold-in. All optional: identity-only files load cleanly and
+	// each origin writes only the slots it knows (the write merges over the
+	// on-disk record, so origins never erase each other's fields).
+	handle?: string | null;
+	label?: string;
+	/** Origin tag (`torus-team:<id>` for members); plain delegations carry none on disk. */
+	source?: string;
+	finishedAt?: number;
+	turns?: number;
+	tokensIn?: number;
+	tokensOut?: number;
+	/** Prompt-cache tokens read/written across the run (engine usage). */
+	cacheRead?: number;
+	cacheWrite?: number;
+	/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
+	cost?: number;
+	/** Bounded head of the final text; the complete text lives in the run's log. */
+	text?: string;
+	textTruncated?: boolean;
+	stopRequested?: boolean;
+	paneId?: string | null;
+	memberStatus?: "working" | "idle" | "stopped";
+	/** Seconds of active (non-idle) work; the displayed age freezes while idle. */
+	activeSeconds?: number;
+	/** When activeSeconds was last computed (now-active members tick from this). */
+	activeUpdatedAt?: number;
+}
+
+/** Fields every write must carry; the rest merge from the on-disk record. */
+type RunRecordWrite = Pick<RunRecord, "id" | "status"> & Partial<RunRecord>;
+
+/**
+ * The full current record as a beacon write: every DelegationRecord field
+ * lands in its RunRecord slot. text keeps the same bounded head the registry
+ * holds, so the record on disk stays complete without pinning unbounded
+ * final text in a file.
+ */
+function recordBeacon(record: DelegationRecord): RunRecord {
+	return {
+		id: record.id,
+		agent: record.agent,
+		model: record.model,
+		status: record.status,
+		startedAt: record.startedAt,
+		pid: process.pid,
+		...(record.childPid !== undefined ? { childPid: record.childPid } : {}),
+		parentSession: record.parentSession,
+		sessionId: record.sessionId,
+		project: record.project,
+		logFile: record.logFile,
+		handle: record.handle,
+		paneId: record.paneId,
+		...(record.finishedAt !== undefined ? { finishedAt: record.finishedAt } : {}),
+		turns: record.turns,
+		tokensIn: record.tokensIn,
+		tokensOut: record.tokensOut,
+		cacheRead: record.cacheRead,
+		cacheWrite: record.cacheWrite,
+		cost: record.cost,
+		text: record.text.slice(0, RECORD_TEXT_CAP),
+		...(record.textTruncated || record.text.length > RECORD_TEXT_CAP
+			? { textTruncated: true }
+			: {}),
+		...(record.stopRequested ? { stopRequested: true } : {}),
+	};
 }
 
 function beaconFile(id: string): string {
 	return path.join(RUNS_DIR, `${id}.json`);
 }
 
-function writeRunBeacon(beacon: RunBeacon): void {
+function writeRunBeacon(record: RunRecordWrite): void {
 	try {
-		const file = beaconFile(beacon.id);
+		const file = beaconFile(record.id);
 		// Team-member ids are "teamId/member" — a subdirectory RUNS_DIR does not
 		// have yet. Without the mkdir every member beacon write fails silently
 		// and member liveness never survives a process reload.
 		mkdirSync(path.dirname(file), { recursive: true });
-		writeJson(file, { ...beacon, uid: process.getuid?.() });
+		// Merge over the on-disk record: two origins write the same member file
+		// (the delegation path's full record and the team publish's source/
+		// label), and each write carries only the fields its origin knows.
+		let prior: Partial<RunRecord> = {};
+		try {
+			prior = JSON.parse(readFileSync(file, "utf8")) as Partial<RunRecord>;
+		} catch {}
+		const merged: Partial<RunRecord> & { uid?: number } = {
+			...prior,
+			...record,
+			uid: process.getuid?.(),
+		};
+		// Explicit undefined slots must not erase a field the other origin wrote.
+		for (const key of Object.keys(merged) as (keyof RunRecord)[]) {
+			if (merged[key] === undefined) delete merged[key];
+		}
+		writeJson(file, merged);
 	} catch {}
 }
 
@@ -461,57 +576,68 @@ function writeRunBeacon(beacon: RunBeacon): void {
  * new fleet information — rewriting it each turn is 3 fs ops for nothing.
  */
 const BEACON_MIN_INTERVAL_MS = 10_000;
-const lastBeaconWrites = new Map<string, { status: RunBeacon["status"]; at: number }>();
+const lastBeaconWrites = new Map<string, { status: RunRecord["status"]; at: number }>();
 
-function writeRunBeaconThrottled(beacon: RunBeacon): void {
+function writeRunBeaconThrottled(record: RunRecordWrite): void {
 	const now = Date.now();
-	const last = lastBeaconWrites.get(beacon.id);
-	if (last && last.status === beacon.status && now - last.at < BEACON_MIN_INTERVAL_MS) return;
-	writeRunBeacon(beacon);
-	lastBeaconWrites.set(beacon.id, { status: beacon.status, at: now });
+	const last = lastBeaconWrites.get(record.id);
+	if (last && last.status === record.status && now - last.at < BEACON_MIN_INTERVAL_MS) return;
+	writeRunBeacon(record);
+	lastBeaconWrites.set(record.id, { status: record.status, at: now });
 }
 
-function pruneRunBeacons(now: number): void {
+/**
+ * Prune the run-record store. Finished records prune by run age (finishedAt
+ * else startedAt, RUNS_PRUNE_MS); running records are not aged but capped at
+ * RUNS_PRUNE_COUNT (oldest file mtime goes first), and a "running" record
+ * whose writer pid is long dead is a zombie: the driving process died before
+ * finalizing (killed sessions, aborted-before-spawn runs), and the row
+ * renders in every fleet view for the rest of the prune window — hours-old
+ * running ghosts. Age the zombie check so a freshly spawned run is never
+ * raced. Corrupt files keep their old mtime-based cleanup. Like the scan,
+ * this pass carries no uid filter, so it deletes other processes' finished
+ * and zombie files exactly as before — deletion scope is unchanged.
+ */
+export function pruneRunBeacons(now: number): void {
 	try {
 		const files = readdirSync(RUNS_DIR).filter((f) => f.endsWith(".json"));
-		const stale = files.filter((file) => {
-			try {
-				return now - statSync(path.join(RUNS_DIR, file)).mtimeMs > RUNS_PRUNE_MS;
-			} catch {
-				return true;
-			}
-		});
-		// A run-beacon written "running" whose writer pid is long dead is a
-		// zombie: the driving process died before finalizing (killed sessions,
-		// aborted-before-spawn runs), and the row renders in every fleet view
-		// for the rest of the prune window — hours-old running ghosts. Age the
-		// check so a freshly spawned run is never raced.
+		const stale: string[] = [];
+		const running: { file: string; mtime: number }[] = [];
 		for (const file of files) {
+			const full = path.join(RUNS_DIR, file);
+			let mtime: number;
 			try {
-				const beacon = JSON.parse(readFileSync(path.join(RUNS_DIR, file), "utf8")) as RunBeacon;
-				if (
-					beacon.status === "running" &&
-					beacon.pid !== process.pid &&
-					!pidAlive(beacon.pid) &&
-					now - statSync(path.join(RUNS_DIR, file)).mtimeMs > RUNS_ZOMBIE_MS
-				) {
-					rmSync(path.join(RUNS_DIR, file));
-				}
+				mtime = statSync(full).mtimeMs;
+			} catch {
+				continue; // vanished mid-scan
+			}
+			let record: RunRecord | undefined;
+			try {
+				record = JSON.parse(readFileSync(full, "utf8")) as RunRecord;
 			} catch {}
-		}
-		const live = files.filter((f) => !stale.includes(f));
-		const excess = Math.max(0, live.length - RUNS_PRUNE_COUNT);
-		const oldest = live
-			.map((f) => {
-				try {
-					return { f, m: statSync(path.join(RUNS_DIR, f)).mtimeMs };
-				} catch {
-					return { f, m: Infinity };
+			if (record?.status === "running") {
+				if (record.pid !== process.pid && !pidAlive(record.pid) && now - mtime > RUNS_ZOMBIE_MS) {
+					try {
+						rmSync(full);
+					} catch {}
+					continue;
 				}
-			})
-			.sort((a, b) => a.m - b.m)
+				running.push({ file, mtime });
+				continue;
+			}
+			const ageAt =
+				typeof record?.finishedAt === "number"
+					? record.finishedAt
+					: typeof record?.startedAt === "number"
+						? record.startedAt
+						: mtime;
+			if (now - ageAt > RUNS_PRUNE_MS) stale.push(file);
+		}
+		const excess = Math.max(0, running.length - RUNS_PRUNE_COUNT);
+		const oldest = running
+			.sort((a, b) => a.mtime - b.mtime)
 			.slice(0, excess)
-			.map((e) => e.f);
+			.map((e) => e.file);
 		for (const file of [...stale, ...oldest]) {
 			try {
 				rmSync(path.join(RUNS_DIR, file));
@@ -535,46 +661,14 @@ const EXTERNAL_RUNS_CACHE_TTL_MS = 1_000;
  * The fleet overlay re-renders every 80ms; without this cache the scan below
  * would readdir + JSON.parse + kill(pid, 0) the runs dir ~12.5x/sec.
  */
-let externalRunsCache: { at: number; runs: RunBeacon[] } | null = null;
-
-function foreignRunningBeacons(): RunBeacon[] {
-	const now = Date.now();
-	if (externalRunsCache && now - externalRunsCache.at < EXTERNAL_RUNS_CACHE_TTL_MS)
-		return externalRunsCache.runs;
-	const out: RunBeacon[] = [];
-	let files: string[];
-	try {
-		files = readdirSync(RUNS_DIR).filter((f) => f.endsWith(".json"));
-	} catch {
-		return out;
-	}
-	for (const file of files) {
-		let beacon: RunBeacon;
-		try {
-			beacon = JSON.parse(readFileSync(path.join(RUNS_DIR, file), "utf8")) as RunBeacon;
-		} catch {
-			continue;
-		}
-		const stem = file.slice(0, -".json".length);
-		if (beacon.id !== stem) continue;
-		const uid = process.getuid?.();
-		if (typeof beacon.uid === "number" && typeof uid === "number" && beacon.uid !== uid) continue;
-		if (beacon.pid === process.pid || beacon.status !== "running") continue;
-		// Dead-pid beacons are reported in memory only — never rewrite a foreign
-		// process's file. Consumers filter on state, so a failed entry drops out
-		// of the fleet views exactly as the on-disk rewrite used to make it.
-		out.push(pidAlive(beacon.pid) ? beacon : { ...beacon, status: "failed" });
-	}
-	externalRunsCache = { at: now, runs: out };
-	return out;
-}
 /**
- * All run beacons (any status, same uid) keyed by action-log path — rehydrate
- * cross-references these so a live member's log is not rebuilt as a duplicate
- * "failed" record next to its authoritative external row.
+ * Parse every own-uid run record in RUNS_DIR: readdir + try-parse, keeping
+ * only files whose id matches the filename stem (the traversal gate) and
+ * whose uid is ours when tagged. Corrupt JSON is skipped, not fatal.
+ * Identity-only files written by older binaries load with zeroed stats.
  */
-function beaconsByLogFile(): Map<string, RunBeacon> {
-	const out = new Map<string, RunBeacon>();
+function readRunBeacons(): RunRecord[] {
+	const out: RunRecord[] = [];
 	let files: string[];
 	try {
 		files = readdirSync(RUNS_DIR).filter((f) => f.endsWith(".json"));
@@ -583,16 +677,49 @@ function beaconsByLogFile(): Map<string, RunBeacon> {
 	}
 	const uid = process.getuid?.();
 	for (const file of files) {
-		let beacon: RunBeacon;
+		let record: RunRecord;
 		try {
-			beacon = JSON.parse(readFileSync(path.join(RUNS_DIR, file), "utf8")) as RunBeacon;
+			record = JSON.parse(readFileSync(path.join(RUNS_DIR, file), "utf8")) as RunRecord;
 		} catch {
 			continue;
 		}
-		if (beacon.id !== file.slice(0, -".json".length)) continue;
-		if (typeof beacon.uid === "number" && typeof uid === "number" && beacon.uid !== uid) continue;
-		if (typeof beacon.logFile === "string" && beacon.logFile.length > 0)
-			out.set(beacon.logFile, beacon);
+		if (record.id !== file.slice(0, -".json".length)) continue;
+		if (typeof record.uid === "number" && typeof uid === "number" && record.uid !== uid) continue;
+		record.turns ??= 0;
+		record.tokensIn ??= 0;
+		record.tokensOut ??= 0;
+		record.cacheRead ??= 0;
+		record.cacheWrite ??= 0;
+		out.push(record);
+	}
+	return out;
+}
+
+let externalRunsCache: { at: number; runs: RunRecord[] } | null = null;
+
+function foreignRunningBeacons(): RunRecord[] {
+	const now = Date.now();
+	if (externalRunsCache && now - externalRunsCache.at < EXTERNAL_RUNS_CACHE_TTL_MS)
+		return externalRunsCache.runs;
+	// Dead-pid beacons are reported in memory only — never rewrite a foreign
+	// process's file. Consumers filter on state, so a failed entry drops out
+	// of the fleet views exactly as the on-disk rewrite used to make it.
+	const out = readRunBeacons()
+		.filter((r) => r.pid !== process.pid && r.status === "running")
+		.map((r) => (pidAlive(r.pid) ? r : { ...r, status: "failed" as const }));
+	externalRunsCache = { at: now, runs: out };
+	return out;
+}
+/**
+ * All run beacons (any status, same uid) keyed by action-log path — rehydrate
+ * cross-references these so a live member's log is not rebuilt as a duplicate
+ * "failed" record next to its authoritative external row.
+ */
+function beaconsByLogFile(): Map<string, RunRecord> {
+	const out = new Map<string, RunRecord>();
+	for (const record of readRunBeacons()) {
+		if (typeof record.logFile === "string" && record.logFile.length > 0)
+			out.set(record.logFile, record);
 	}
 	return out;
 }
@@ -612,19 +739,31 @@ export function listExternalRuns(): ExternalRun[] {
 	const local = [...externalRuns()].sort((a, b) => b.startedAt - a.startedAt);
 	const foreign = foreignRunningBeacons()
 		.filter((beacon) => current === null || beacon.parentSession === current)
-		.map(
-			(beacon): ExternalRun => ({
+		.map((beacon): ExternalRun => {
+			// Disk-provided origin fields win; identity-only beacons keep the
+			// synthetic torus-run source and agent-as-label.
+			return {
 				id: beacon.id,
-				source: `torus-run:${beacon.pid}`,
-				label: beacon.agent,
+				source: beacon.source ?? `torus-run:${beacon.pid}`,
+				label: beacon.label ?? beacon.agent,
+				handle: beacon.handle ?? undefined,
 				model: beacon.model,
 				sessionId: beacon.sessionId ?? undefined,
 				logFile: beacon.logFile,
 				state:
 					beacon.status === "done" ? "done" : beacon.status === "failed" ? "failed" : "running",
 				startedAt: beacon.startedAt,
-			}),
-		);
+				memberStatus: beacon.memberStatus,
+				activeSeconds: beacon.activeSeconds,
+				activeUpdatedAt: beacon.activeUpdatedAt,
+				turns: beacon.turns,
+				tokensIn: beacon.tokensIn,
+				tokensOut: beacon.tokensOut,
+				cacheRead: beacon.cacheRead,
+				cacheWrite: beacon.cacheWrite,
+				cost: beacon.cost,
+			};
+		});
 	return [...local, ...foreign].sort((a, b) => b.startedAt - a.startedAt);
 }
 
@@ -842,18 +981,7 @@ export async function startDelegation(
 	late.timer.unref();
 	lateToasts.set(id, late);
 	pruneRunBeacons(Date.now());
-	writeRunBeaconThrottled({
-		id,
-		agent,
-		model,
-		status: "running",
-		startedAt: record.startedAt,
-		pid: process.pid,
-		parentSession,
-		sessionId: null,
-		project: projectKeyFor(cwd),
-		logFile,
-	});
+	writeRunBeaconThrottled(recordBeacon(record));
 	appendFileSync(
 		logFile,
 		`<torus:start${formatStartAttrs(agent, model, normalizedHandle, parentSession)} />\n`,
@@ -924,19 +1052,7 @@ export function updateDelegation(
 	record.cacheRead = finiteOrZero(snapshot.usage.cacheRead);
 	record.cacheWrite = finiteOrZero(snapshot.usage.cacheWrite);
 	record.cost = finiteOrZero(snapshot.usage.cost);
-	writeRunBeaconThrottled({
-		id: record.id,
-		agent: record.agent,
-		model: record.model,
-		status: "running",
-		startedAt: record.startedAt,
-		pid: process.pid,
-		...(record.childPid !== undefined ? { childPid: record.childPid } : {}),
-		parentSession: record.parentSession,
-		sessionId: record.sessionId,
-		project: record.project,
-		logFile: record.logFile,
-	});
+	writeRunBeaconThrottled(recordBeacon(record));
 	const cost = formatCost(snapshot.usage.cost, snapshot.usage.input + snapshot.usage.output > 0);
 	appendFileSync(
 		record.logFile,
@@ -982,19 +1098,7 @@ export async function finishDelegation(
 	record.textTruncated = finalText.length > RECORD_TEXT_CAP;
 	record.sessionId = sessionId;
 	controls.delete(id);
-	writeRunBeaconThrottled({
-		id: record.id,
-		agent: record.agent,
-		model: record.model,
-		status: record.status,
-		startedAt: record.startedAt,
-		pid: process.pid,
-		...(record.childPid !== undefined ? { childPid: record.childPid } : {}),
-		parentSession: record.parentSession,
-		sessionId,
-		project: record.project,
-		logFile: record.logFile,
-	});
+	writeRunBeaconThrottled(recordBeacon(record));
 	appendFileSync(
 		record.logFile,
 		`\n<torus:${record.status}${sessionId ? ` session="${escapeAttr(sessionId)}"` : ""} ts="${new Date().toISOString()}" />\n`,

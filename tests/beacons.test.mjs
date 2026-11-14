@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 
-// Run-beacon scan invariants (registry.ts foreignRunningBeacons/listExternalRuns):
-// id must match the filename stem, uid must be ours when tagged, foreign files
-// are never rewritten (dead pids fail in memory only), and the scan is TTL-cached.
+// Run-record store invariants (registry.ts readRunBeacons/foreignRunningBeacons/
+// listExternalRuns/pruneRunBeacons): id must match the filename stem, uid must be
+// ours when tagged, foreign files are never rewritten (dead pids fail in memory
+// only), the scan is TTL-cached, identity-only files load with zeroed stats, and
+// pruning is age-based for finished runs (7 days), count-capped for running ones.
 //
 // The suite sandboxes ALL torus user state via TORUS_HOME before importing the
 // registry, so planted beacons never appear in the real ~/.torus/runs (and
@@ -114,9 +124,11 @@ test("dead-pid beacons fail in memory only — foreign files are never rewritten
 				/"failed"/,
 				"file changed — if this holds across retries, a pre-merge torus host is still running",
 			);
+			rmSync(file, { force: true }); // don't leak the running beacon into later tests' scans
 			continue; // retry with a fresh id
 		}
 		assert.equal(seen.get(id), "failed", "dead pid is reported failed in memory");
+		rmSync(file, { force: true });
 		return; // clean pass: OUR scanner did not rewrite the foreign file
 	}
 	assert.fail(
@@ -252,4 +264,206 @@ test("emitTorusCustom drops the marker when the session sender ctx is stale", ()
 		registry.emitTorusCustom({ customType: "torus.delegation-start", content: [] }),
 	);
 	registry.setCustomSender(() => {});
+});
+
+test("identity-only beacons from older binaries load with zeroed stats", async () => {
+	await expireCache();
+	const id = `probe-${stamp}-legacy`;
+	const foreign = spawnLiveProbe();
+	try {
+		plant(id, { id, agent: "probe", status: "running", pid: foreign.pid });
+		await expireCache();
+		const run = registry.listExternalRuns().find((r) => r.id === id);
+		assert.ok(run, "identity-only beacon is listed");
+		assert.equal(run.turns, 0, "absent turns load zeroed");
+		assert.equal(run.tokensIn, 0, "absent tokensIn loads zeroed");
+		assert.equal(run.tokensOut, 0, "absent tokensOut loads zeroed");
+		assert.equal(run.cacheRead, 0, "absent cacheRead loads zeroed");
+		assert.equal(run.cacheWrite, 0, "absent cacheWrite loads zeroed");
+		assert.equal(run.cost, undefined, "absent cost stays absent, as fleet rendering expects");
+	} finally {
+		rmSync(path.join(RUNS, `${id}.json`), { force: true });
+		foreign.kill();
+	}
+});
+
+test("full-format beacons surface the record fields the store now carries", async () => {
+	await expireCache();
+	const id = `probe-${stamp}-fullrec`;
+	const foreign = spawnLiveProbe();
+	try {
+		plant(id, {
+			id,
+			agent: "ember",
+			status: "running",
+			pid: foreign.pid,
+			source: "torus-team:t-fullrec",
+			label: "Ember",
+			handle: "ember",
+			turns: 3,
+			tokensIn: 100,
+			tokensOut: 200,
+			cacheRead: 300,
+			cacheWrite: 400,
+			cost: 0.5,
+			memberStatus: "idle",
+			activeSeconds: 42,
+			activeUpdatedAt: Date.now() - 1000,
+		});
+		await expireCache();
+		const run = registry.listExternalRuns().find((r) => r.id === id);
+		assert.ok(run, "full-format beacon is listed");
+		assert.equal(
+			run.source,
+			"torus-team:t-fullrec",
+			"disk-provided source wins over the synthetic torus-run source",
+		);
+		assert.equal(run.label, "Ember", "disk-provided label wins over agent-as-label");
+		assert.equal(run.handle, "ember");
+		assert.equal(run.memberStatus, "idle");
+		assert.equal(run.activeSeconds, 42);
+		assert.equal(run.turns, 3);
+		assert.equal(run.tokensIn, 100);
+		assert.equal(run.tokensOut, 200);
+		assert.equal(run.cacheRead, 300);
+		assert.equal(run.cacheWrite, 400);
+		assert.equal(run.cost, 0.5);
+	} finally {
+		rmSync(path.join(RUNS, `${id}.json`), { force: true });
+		foreign.kill();
+	}
+});
+
+test("a corrupt run JSON is skipped by the scan, not fatal", async () => {
+	await expireCache();
+	const id = `probe-${stamp}-corrupt`;
+	const file = path.join(RUNS, `${id}.json`);
+	try {
+		writeFileSync(file, "{not json", "utf8");
+		await expireCache();
+		assert.ok(!probeStates().has(id), "corrupt file yields no run");
+	} finally {
+		rmSync(file, { force: true });
+	}
+});
+
+test("delegation beacons carry the full record: stats, text, and finish land on disk", async () => {
+	mkdirSync(RUNS, { recursive: true });
+	const id = `probe-${stamp}-dele`;
+	try {
+		const record = await registry.startDelegation(id, "probe", "m", null, null);
+		assert.equal(JSON.parse(readFileSync(path.join(RUNS, `${id}.json`), "utf8")).status, "running");
+		registry.updateDelegation(id, {
+			text: "partial",
+			turns: 2,
+			usage: { input: 10, output: 20, cacheRead: 5, cacheWrite: 6, cost: 0.25 },
+		});
+		await registry.finishDelegation(id, true, "final");
+		const onDisk = JSON.parse(readFileSync(path.join(RUNS, `${id}.json`), "utf8"));
+		assert.equal(onDisk.status, "done");
+		assert.equal(onDisk.agent, "probe");
+		assert.equal(onDisk.model, "m");
+		assert.equal(onDisk.logFile, record.logFile);
+		assert.equal(onDisk.turns, 2, "turn count lands on disk");
+		assert.equal(onDisk.tokensIn, 10);
+		assert.equal(onDisk.tokensOut, 20);
+		assert.equal(onDisk.cacheRead, 5);
+		assert.equal(onDisk.cacheWrite, 6);
+		assert.equal(onDisk.cost, 0.25);
+		assert.equal(onDisk.text, "final", "final text lands on disk");
+		assert.equal(typeof onDisk.finishedAt, "number", "finish time lands on disk");
+	} finally {
+		rmSync(path.join(RUNS, `${id}.json`), { force: true });
+	}
+});
+
+test("prune keeps finished runs by 7-day age and caps only running ones at 200", () => {
+	mkdirSync(RUNS, { recursive: true });
+	const now = Date.now();
+	const DAY = 24 * 60 * 60 * 1000;
+	const prefix = `prune-${stamp}`;
+	const finishedOld = `${prefix}-fin-old`;
+	const finishedNew = `${prefix}-fin-new`;
+	const running = [];
+	try {
+		plant(finishedOld, {
+			id: finishedOld,
+			agent: "probe",
+			status: "done",
+			pid: process.pid,
+			startedAt: now - 8 * DAY,
+			finishedAt: now - 8 * DAY,
+		});
+		plant(finishedNew, {
+			id: finishedNew,
+			agent: "probe",
+			status: "done",
+			pid: process.pid,
+			startedAt: now - 2 * DAY,
+			finishedAt: now - DAY,
+		});
+		for (let i = 0; i < 201; i += 1) {
+			const id = `${prefix}-run-${String(i).padStart(3, "0")}`;
+			running.push(id);
+			plant(id, {
+				id,
+				agent: "probe",
+				status: "running",
+				pid: process.pid,
+				startedAt: now,
+			});
+			// Distinct descending mtimes make the cap's oldest-first pick deterministic.
+			const at = (now - (200 - i) * 1000) / 1000;
+			utimesSync(path.join(RUNS, `${id}.json`), at, at);
+		}
+		registry.pruneRunBeacons(now);
+		assert.equal(
+			existsSync(path.join(RUNS, `${finishedOld}.json`)),
+			false,
+			"finished beacon older than 7 days is pruned",
+		);
+		assert.equal(
+			existsSync(path.join(RUNS, `${finishedNew}.json`)),
+			true,
+			"finished beacon newer than 7 days survives — the cap never touches finished runs",
+		);
+		let kept = 0;
+		for (const id of running) if (existsSync(path.join(RUNS, `${id}.json`))) kept += 1;
+		assert.equal(kept, 200, "running beacons are still count-capped at 200");
+		assert.equal(
+			existsSync(path.join(RUNS, `${prefix}-run-000.json`)),
+			false,
+			"the oldest running beacon is the one capped away",
+		);
+	} finally {
+		rmSync(path.join(RUNS, `${finishedOld}.json`), { force: true });
+		rmSync(path.join(RUNS, `${finishedNew}.json`), { force: true });
+		for (const id of running) rmSync(path.join(RUNS, `${id}.json`), { force: true });
+	}
+});
+
+test("the zombie horizon is unchanged: dead-pid running beacons die at 10min, live ones survive", () => {
+	mkdirSync(RUNS, { recursive: true });
+	const now = Date.now();
+	const prefix = `zomb-${stamp}`;
+	const deadId = `${prefix}-dead`;
+	const ownId = `${prefix}-own`;
+	const reaper = spawnSync("true"); // exited + reaped child = definitely dead pid
+	try {
+		plant(deadId, { id: deadId, agent: "probe", status: "running", pid: reaper.pid });
+		plant(ownId, { id: ownId, agent: "probe", status: "running", pid: process.pid });
+		const deadFile = path.join(RUNS, `${deadId}.json`);
+		const old = (now - 11 * 60 * 1000) / 1000;
+		utimesSync(deadFile, old, old);
+		registry.pruneRunBeacons(now);
+		assert.equal(existsSync(deadFile), false, "zombie running beacon past 10min is pruned");
+		assert.equal(
+			existsSync(path.join(RUNS, `${ownId}.json`)),
+			true,
+			"this process's own running beacon is never zombie-pruned",
+		);
+	} finally {
+		rmSync(path.join(RUNS, `${deadId}.json`), { force: true });
+		rmSync(path.join(RUNS, `${ownId}.json`), { force: true });
+	}
 });
