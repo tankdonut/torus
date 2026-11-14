@@ -511,6 +511,51 @@ test("unfinished store-backed run keeps the store's status; the dead-child heuri
 	registry.resetRegistryForTesting();
 });
 
+test("recoverSession liveness parity: a dead-writer running beacon lands failed, a live-pid one as running", async () => {
+	registry.resetRegistryForTesting();
+	const parent = `parent-ghost-${STAMP}`;
+	// Crash-before-session-attach: the engine died before ever attaching a
+	// session id or child pid, so the beacon holds the spawn-time shape.
+	const dead = spawn(process.execPath, ["-e", ""]);
+	await new Promise((resolve) => dead.on("close", resolve));
+	plantBeacon(`store-${STAMP}-ghost`, {
+		agent: "build",
+		model: "zai/glm-5.3",
+		parentSession: parent,
+		sessionId: null,
+		logFile: path.join(PROJECT_LOGS, `store-${STAMP}-ghost.log`),
+		pid: dead.pid,
+		turns: 2,
+		tokensIn: 100,
+		tokensOut: 50,
+		cost: 0.1,
+	});
+	// A live writer's running record keeps the store's status verbatim.
+	plantBeacon(`store-${STAMP}-selfrun`, {
+		agent: "build",
+		model: "zai/glm-5.3",
+		parentSession: parent,
+		sessionId: "sess-selfrun",
+		logFile: path.join(PROJECT_LOGS, `store-${STAMP}-selfrun.log`),
+		pid: process.pid,
+		turns: 3,
+		tokensIn: 200,
+		tokensOut: 90,
+		cost: 0.2,
+	});
+	registry.recoverSession(parent);
+	const records = registry.listDelegations();
+	const ghost = records.find((r) => r.id === `store-${STAMP}-ghost`);
+	assert.ok(ghost, "the dead-writer beacon must still be recovered, not dropped");
+	assert.equal(ghost.status, "failed", "fleet parity with the log scan's failed classification");
+	const live = records.find((r) => r.id === `store-${STAMP}-selfrun`);
+	assert.ok(live, "the live-pid beacon must be recovered");
+	assert.equal(live.status, "running", "live-pid running records keep the running status");
+	removeRun(`store-${STAMP}-ghost`);
+	removeRun(`store-${STAMP}-selfrun`);
+	registry.resetRegistryForTesting();
+});
+
 test("cleanup: fixtures removed and registry reset for other suites", () => {
 	for (const suffix of ["a", "b", "c", "d"]) {
 		rmSync(path.join(PROJECT_LOGS, `rehy-${STAMP}-${suffix}.log`), { force: true });

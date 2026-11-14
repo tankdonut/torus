@@ -1428,7 +1428,9 @@ export function recoverRun(id: string, sessionId?: string): DelegationRecord | u
  * no store record) recover through the log scan via recoverRun's single
  * fallback call, keyed on an identity-only beacon or a beacon-less session
  * log. A live foreign run is skipped from the cache — its external row
- * renders it, exactly as the log scan's live-beacon rule does.
+ * renders it, exactly as the log scan's live-beacon rule does. A running
+ * record whose writer and child are both dead caches failed, the scan's
+ * no-end-tag classification.
  *
  * The store records land AFTER the fallback pass on purpose: the pass is a
  * whole-session scan and also parses store-backed logs, so caching last
@@ -1461,12 +1463,25 @@ export function recoverSession(sessionId: string): void {
 		if (beacon.status === "running" && beacon.pid !== process.pid && pidAlive(beacon.pid)) {
 			continue;
 		}
+		// Liveness parity with the log scan: a running record whose writer
+		// died with no live child either had no end tag there, so the scan
+		// classified it failed. Cache the same — otherwise a run that
+		// crashed before ever attaching a session id renders as a live
+		// "running" ghost in the fleet, and reconcileOrphanedDelegations
+		// skips its sessionId-less row instead of self-healing it.
+		const record =
+			beacon.status === "running" &&
+			beacon.pid !== process.pid &&
+			!pidAlive(beacon.pid) &&
+			!(beacon.childPid !== undefined && pidAlive(beacon.childPid))
+				? { ...beacon, status: "failed" as const }
+				: beacon;
 		for (const [existingId, existing] of registry) {
-			if (existingId !== beacon.id && existing.logFile === beacon.logFile) {
+			if (existingId !== record.id && existing.logFile === record.logFile) {
 				registry.delete(existingId);
 			}
 		}
-		cacheRecoveredRecord(beacon);
+		cacheRecoveredRecord(record);
 	}
 }
 

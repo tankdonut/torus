@@ -1527,6 +1527,66 @@ test("rehydrate: un-ended runs with a dead child read failed, live ones stay run
 	registry.resetRegistryForTesting();
 });
 
+test("session_start recovery routes through the run record store, not the log parser", async () => {
+	registry.resetRegistryForTesting();
+	roster._drivenDelegationsForTesting().clear();
+	const handlers = {};
+	roster.registerRoster({
+		registerTool: () => {},
+		registerCommand: () => {},
+		on: (event, handler) => {
+			handlers[event] = handler;
+		},
+		sendMessage: () => {},
+	});
+	registry.setCustomSender(() => {});
+	// A stats-bearing running record of the session, planted only in the
+	// store: its logFile does not exist, so a log-parser recovery could not
+	// have produced this record — the store read is the only path.
+	mkdirSync(path.join(HOME, "runs"), { recursive: true });
+	const id = "wired-store-run";
+	const parent = "sess-wired";
+	writeFileSync(
+		path.join(HOME, "runs", `${id}.json`),
+		JSON.stringify({
+			id,
+			agent: "build",
+			model: "zai/glm-5.3",
+			status: "running",
+			startedAt: Date.now(),
+			pid: process.pid,
+			uid: process.getuid?.(),
+			parentSession: parent,
+			sessionId: null,
+			logFile: path.join(HOME, "runs", `${id}-no-such-log.log`),
+			turns: 9,
+			tokensIn: 5000,
+			tokensOut: 7000,
+			cost: 0.75,
+		}),
+		"utf8",
+	);
+	try {
+		handlers["session_start"](
+			{ type: "session_start", reason: "startup" },
+			{
+				sessionManager: { getSessionId: () => parent },
+				ui: { notify: () => {} },
+			},
+		);
+		const record = registry.listDelegations().find((r) => r.id === id);
+		assert.ok(record, "the store record must be recovered on session_start");
+		assert.equal(record.turns, 9, "stats came from the store");
+		assert.equal(record.tokensIn, 5000);
+		assert.equal(record.tokensOut, 7000);
+		assert.equal(record.cost, 0.75);
+	} finally {
+		rmSync(path.join(HOME, "runs", `${id}.json`), { force: true });
+		registry.resetRegistryForTesting();
+		roster._drivenDelegationsForTesting().clear();
+	}
+});
+
 test("rehydrate: a chain walk's session tags recover the last leg", async () => {
 	registry.resetRegistryForTesting();
 	await registry.startDelegation("rehy-legs", "builder", "m", "sess-rehy", null);
