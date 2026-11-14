@@ -18,7 +18,7 @@ Known srt gaps: unreliable signal/exit-code propagation (upstream #602/#603/#635
 
 | Module | Provides | Consumers |
 | --- | --- | --- |
-| `extensions/registry.ts` | DelegationRecord store (globalThis-hosted), the on-disk run-record store (beacon files carry the full run record; foreign-process scan + prune: running count-capped, finished kept 7 days), team records, session/persona slots, store-first run recovery (beacon store read-through; the log scan is the legacy fallback for pre-store runs), tmux pane mgmt, `repoRoot()`, sanitize/redact/shellQuote/name gates | roster, team, browser, fleet, notify, memory, goal, prompts, ui, engine-child |
+| `extensions/registry.ts` | DelegationRecord store (globalThis-hosted), the on-disk run-record store (beacon files carry the full run record; foreign-process scan + prune: running count-capped, finished kept 7 days), team records, session/persona slots, store-first run recovery (beacon store read-through; the log scan is the legacy fallback for pre-store runs), `repoRoot()`, sanitize/redact/shellQuote/name gates | roster, team, browser, fleet, notify, memory, goal, prompts, ui, engine-child |
 | `extensions/rpc.ts` | `RpcChild`: newline-JSON RPC client for engine children (prompt/steer/getState/kill) | roster, team-runtime, acp (serve) |
 | `extensions/engine-child.ts` | `engineChildEnv` (sets `TORUS_ENGINE_CHILD=1`, carries the pinned `TORUS_STATE_DIR`), event parse/reduce, `childExtensionArgs` (the child set), `resolveEngineBin` | roster, team-runtime, doctor, ui, acp (serve) |
 | `extensions/team/team-runtime.ts` | Team spec persistence, mailboxes, locked tasklist, member supervisor | team |
@@ -28,6 +28,7 @@ Known srt gaps: unreliable signal/exit-code propagation (upstream #602/#603/#635
 | `extensions/persona-theme.ts` | Persona-colored editor border | prompts |
 | `extensions/transcript.ts` | Session transcript location/parsing, live tail | browser |
 | `extensions/fleet/theme-kit.ts` | Shared fleet rendering (colors, spinner, tokens, icons) | browser, fleet, notify, roster |
+| `extensions/fleet/panes.ts` | Delegation tmux pane lifecycle: open a pane tailing the delegation log, kill it on finish; `TORUS_TMUX=0` opt-out | registry |
 | `extensions/hashline/core.ts` | Anchor hashing/parsing/edit semantics | hashline |
 | `extensions/platform.ts` | Platform vocabulary, `PLATFORM_SUPPORT` and `GateDecision` types, `currentPlatform()` honoring `TORUS_PLATFORM`, `gateExtension()` load gate recording decisions on a shared slot with one-time skip notices, `platformDecisions()` for `/doctor`; never throws | every extension module, doctor |
 
