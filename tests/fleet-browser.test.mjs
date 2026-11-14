@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -42,6 +43,31 @@ async function withEngine(bin, fn) {
 		else process.env.TORUS_ENGINE_BIN = PREV_ENGINE_BIN;
 	}
 }
+
+// Planted external beacons need a live writer pid: the scan reports dead-pid
+// running records as failed in memory. Each test kills its probe.
+const RUNS = path.join(HOME, "runs");
+const liveProbe = () =>
+	spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+const plantExternal = (id, fields, pid) => {
+	mkdirSync(RUNS, { recursive: true });
+	writeFileSync(
+		path.join(RUNS, `${id}.json`),
+		JSON.stringify({
+			model: "probe",
+			parentSession: null,
+			sessionId: null,
+			startedAt: Date.now(),
+			...fields,
+			id,
+			agent: "solo",
+			status: "running",
+			pid,
+		}),
+		"utf8",
+	);
+	registry.expireBeaconCacheForTesting();
+};
 
 const ESC = "\x1b";
 const ENTER = "\r";
@@ -168,17 +194,20 @@ test("alt+t flow: detail opened from the list still backs out to the list first"
 test("FLEET_OPENER focuses a team member's external run in the detail view", () => {
 	registry.resetRegistryForTesting();
 	registry.startDelegation("fb-mem-1", "builder", "zai/glm-5.3", null, "delegate-row");
-	registry.publishExternalRun({
-		id: "team-t2/scout",
-		source: "torus-team:build-t2",
-		label: "scout",
-		handle: "scout",
-		model: "zai/glm-5.3-flash",
-		state: "running",
-		memberStatus: "idle",
-		activeSeconds: 10,
-		activeUpdatedAt: Date.now(),
-	});
+	// One registration: the member's origin fields ride startDelegation now.
+	registry.startDelegation(
+		"team-t2/scout",
+		"builder",
+		"zai/glm-5.3-flash",
+		null,
+		"scout",
+		undefined,
+		{
+			source: "torus-team:build-t2",
+			label: "scout",
+			logFile: path.join(HOME, "teams", "build-t2", "scout.log"),
+		},
+	);
 	const { hooks } = registerExtension();
 	const theme = { fg: (_color, text) => text, bold: (text) => `*${text}*` };
 	const driver = makeCtx("fullscreen", theme);
@@ -337,24 +366,18 @@ test("strip: one line — count chip, entity segments with slot numbers, +N over
 	assert.ok(factory, "widget factory captured");
 
 	const memberId = "team-abc/scout";
-	registry.startDelegation(memberId, "builder", "zai/glm-5.3-flash", "sess", "scout");
-	registry.publishExternalRun({
-		id: memberId,
+	registry.startDelegation(memberId, "builder", "zai/glm-5.3-flash", "sess", "scout", undefined, {
 		source: "torus-team:myteam-abc",
 		label: "scout",
-		handle: "scout",
-		model: "zai/glm-5.3-flash",
-		state: "running",
+		logFile: path.join(HOME, "teams", "myteam-abc", "scout.log"),
+	});
+	registry.updateRunRecord(memberId, {
 		memberStatus: "idle",
 		activeSeconds: 5000,
 		activeUpdatedAt: Date.now(),
 	});
-	registry.publishExternalRun({
-		id: "ext-solo",
-		label: "solo",
-		handle: "solo",
-		state: "running",
-	});
+	const extProbe = liveProbe();
+	plantExternal("ext-solo", { label: "solo", handle: "solo" }, extProbe.pid);
 	const strip = factory(tui, theme);
 	try {
 		const lines = strip.render(200);
@@ -370,7 +393,7 @@ test("strip: one line — count chip, entity segments with slot numbers, +N over
 
 		// Back to work: the clock must resume from the banked active time, not
 		// restart at 0s or continue the wall clock since spawn.
-		registry.updateExternalRun(memberId, {
+		registry.updateRunRecord(memberId, {
 			memberStatus: "working",
 			activeSeconds: 90,
 			activeUpdatedAt: Date.now(),
@@ -383,8 +406,9 @@ test("strip: one line — count chip, entity segments with slot numbers, +N over
 	} finally {
 		strip.dispose();
 	}
+	rmSync(path.join(RUNS, "ext-solo.json"), { force: true });
+	extProbe.kill();
 
-	registry.updateExternalRun(memberId, { state: "done" });
 	registry.resetRegistryForTesting();
 	for (let i = 0; i < 7; i += 1) {
 		registry.startDelegation(`ovf-${i}`, "builder", "zai/glm-5.3-flash", "sess", `run${i}`);
@@ -419,13 +443,19 @@ test("strip: count chip, segments, overflow, and alt+t-all are click-routed", ()
 	const opened = [];
 	globalThis[registry.FLEET_OPENER] = (id) => opened.push(id ?? "list");
 	registry.startDelegation("click-1", "builder", "zai/glm-5.3", "sess", "run0");
-	registry.publishExternalRun({
-		id: "team-t3/scout",
-		source: "torus-team:build-t3",
-		label: "scout",
-		handle: "scout",
-		state: "running",
-	});
+	registry.startDelegation(
+		"team-t3/scout",
+		"builder",
+		"zai/glm-5.3-flash",
+		"sess",
+		"scout",
+		undefined,
+		{
+			source: "torus-team:build-t3",
+			label: "scout",
+			logFile: path.join(HOME, "teams", "build-t3", "scout.log"),
+		},
+	);
 	const strip = factory(tui, plain);
 	try {
 		const line = strip.render(200)[0];
@@ -483,15 +513,12 @@ test("strip: segments carry name and age; token and cost detail stays in the bro
 		turns: 3,
 		usage: { input: 1234, output: 5678 },
 	});
-	registry.publishExternalRun({
-		id: "ext-tok",
-		label: "solo",
-		handle: "solo",
-		state: "running",
-		turns: 2,
-		tokensIn: 100,
-		tokensOut: 250,
-	});
+	const tokProbe = liveProbe();
+	plantExternal(
+		"ext-tok",
+		{ label: "solo", handle: "solo", turns: 2, tokensIn: 100, tokensOut: 250 },
+		tokProbe.pid,
+	);
 	const strip = factory(tui, theme);
 	try {
 		const line = strip.render(200)[0];
@@ -501,6 +528,8 @@ test("strip: segments carry name and age; token and cost detail stays in the bro
 		assert.doesNotMatch(line, /\$/, "cost lives in the browser, not the strip");
 	} finally {
 		strip.dispose();
+		rmSync(path.join(RUNS, "ext-tok.json"), { force: true });
+		tokProbe.kill();
 	}
 });
 
@@ -951,19 +980,17 @@ test("browser list matches the strip for team members: badge, idle state, frozen
 	assert.ok(factory, "widget factory captured");
 
 	const memberId = "team-consist/scout";
-	registry.startDelegation(memberId, "builder", "zai/glm-5.3-flash", "sess", "scout");
+	registry.startDelegation(memberId, "builder", "zai/glm-5.3-flash", "sess", "scout", undefined, {
+		source: "torus-team:myteam-consist",
+		label: "scout",
+		logFile: path.join(HOME, "teams", "myteam-consist", "scout.log"),
+	});
 	registry.updateDelegation(memberId, {
 		text: "waiting",
 		turns: 4,
 		usage: { input: 900, output: 80 },
 	});
-	registry.publishExternalRun({
-		id: memberId,
-		source: "torus-team:myteam-consist",
-		label: "scout",
-		handle: "scout",
-		model: "zai/glm-5.3-flash",
-		state: "running",
+	registry.updateRunRecord(memberId, {
 		memberStatus: "idle",
 		activeSeconds: 5000,
 		activeUpdatedAt: Date.now(),

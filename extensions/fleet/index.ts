@@ -9,12 +9,11 @@ import {
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	type DelegationRecord,
-	type ExternalRun,
 	externalRunAgeSeconds,
 	FLEET_OPENER,
 	listDelegations,
 	listExternalRuns,
-	listExternalRunsExcludingDelegations,
+	type RunRecord,
 } from "../registry.js";
 import { sanitizeRender } from "../text.js";
 import {
@@ -71,7 +70,7 @@ function stableRunning(): DelegationRecord[] {
  * banked active time for runs the registry tracks (so the clock pauses over
  * idle spells), wall clock for plain delegations.
  */
-function segmentAge(run: ExternalRun | undefined, startedAt: number): string {
+function segmentAge(run: RunRecord | undefined, startedAt: number): string {
 	if (run?.memberStatus === "idle") return "idle";
 	return formatDuration(run ? externalRunAgeSeconds(run) * 1000 : Date.now() - startedAt);
 }
@@ -149,7 +148,12 @@ class FleetStrip implements Component {
 
 	render(width: number): string[] {
 		const running = stableRunning();
-		const external = listExternalRunsExcludingDelegations().filter((r) => r.state === "running");
+		// The registry cache is the freshest copy of every record; the external
+		// segments carry only runs the delegation rows above do not already show.
+		const delegated = new Set(listDelegations().map((r) => r.id));
+		const external = listExternalRuns().filter(
+			(r) => r.status === "running" && !delegated.has(r.id),
+		);
 		if (running.length === 0 && external.length === 0) {
 			this.spans = [];
 			return [];

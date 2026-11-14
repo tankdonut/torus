@@ -94,17 +94,21 @@ test("team-wake episode lines keep the member's fleet color", () => {
 
 test("wake-batch lines route each click to its own run or member", () => {
 	registry.resetRegistryForTesting();
-	registry.publishExternalRun({
-		id: "team-t1/scout",
-		source: "torus-team:build-t1",
-		label: "scout",
-		handle: "scout",
-		model: "zai/glm-5.3-flash",
-		state: "running",
-		memberStatus: "idle",
-		activeSeconds: 10,
-		activeUpdatedAt: Date.now(),
-	});
+	// A member registers through startDelegation now; the origin fields ride
+	// the registration so memberRunTarget resolves it from the unified list.
+	registry.startDelegation(
+		"team-t1/scout",
+		"builder",
+		"zai/glm-5.3-flash",
+		null,
+		"scout",
+		undefined,
+		{
+			source: "torus-team:build-t1",
+			label: "scout",
+			logFile: path.join(HOME, "teams", "build-t1", "scout.log"),
+		},
+	);
 	const component = renderers.get("torus.wake-batch")(
 		message({
 			entries: [

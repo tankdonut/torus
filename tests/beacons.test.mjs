@@ -14,10 +14,12 @@ import path from "node:path";
 import { after, test } from "node:test";
 
 // Run-record store invariants (registry.ts readRunBeacons/foreignRunningBeacons/
-// listExternalRuns/pruneRunBeacons): id must match the filename stem, uid must be
-// ours when tagged, foreign files are never rewritten (dead pids fail in memory
-// only), the scan is TTL-cached, identity-only files load with zeroed stats, and
-// pruning is age-based for finished runs (7 days), count-capped for running ones.
+// listExternalRuns/updateRunRecord/pruneRunBeacons): id must match the filename
+// stem, uid must be ours when tagged, foreign files are never rewritten (dead
+// pids fail in memory only), the scan is TTL-cached, identity-only files load
+// with zeroed stats, listExternalRuns merges the registry cache over the store
+// by id, and pruning is age-based for finished runs (7 days), count-capped for
+// running ones.
 //
 // The suite sandboxes ALL torus user state via TORUS_HOME before importing the
 // registry, so planted beacons never appear in the real ~/.torus/runs (and
@@ -58,7 +60,7 @@ const plant = (id, fields) =>
 const probeStates = () => {
 	const seen = new Map();
 	for (const run of registry.listExternalRuns()) {
-		if (run.id.startsWith(`probe-${stamp}`)) seen.set(run.id, run.state);
+		if (run.id.startsWith(`probe-${stamp}`)) seen.set(run.id, run.status);
 	}
 	return seen;
 };
@@ -154,7 +156,7 @@ test("foreign beacons expose sessionId, model, and logFile for the fleet detail 
 		await expireCache();
 		const run = registry.listExternalRuns().find((r) => r.id === id);
 		assert.ok(run, "beacon not listed");
-		assert.equal(run.sessionId, "sess-42", "sessionId must survive the beacon→ExternalRun mapping");
+		assert.equal(run.sessionId, "sess-42", "sessionId must survive the beacon→run-record mapping");
 		assert.equal(run.model, "zai/glm-5.3-flash", "model must survive the mapping");
 		assert.equal(run.logFile, logFile, "logFile must survive the mapping");
 	} finally {
@@ -465,5 +467,92 @@ test("the zombie horizon is unchanged: dead-pid running beacons die at 10min, li
 	} finally {
 		rmSync(path.join(RUNS, `${deadId}.json`), { force: true });
 		rmSync(path.join(RUNS, `${ownId}.json`), { force: true });
+	}
+});
+
+test("listExternalRuns merges a delegation's own beacon into one record", async () => {
+	mkdirSync(RUNS, { recursive: true });
+	registry.resetRegistryForTesting();
+	registry.setCurrentSession("sess-merge");
+	const foreign = spawnLiveProbe();
+	const id = `probe-${stamp}-merge`;
+	try {
+		await registry.startDelegation(id, "ember", "m", "sess-merge", "emb", undefined, {
+			source: "torus-team:t-merge",
+			label: "Ember",
+		});
+		// The same id planted by another process: the scan sees it as foreign
+		// while the registry still holds its cache entry.
+		plant(id, {
+			id,
+			agent: "ember",
+			status: "running",
+			pid: foreign.pid,
+			parentSession: "sess-merge",
+			memberStatus: "idle",
+			activeSeconds: 7,
+			activeUpdatedAt: Date.now(),
+		});
+		registry.expireBeaconCacheForTesting();
+		const runs = registry.listExternalRuns().filter((r) => r.id === id);
+		assert.equal(runs.length, 1, "the beacon and the registry entry deduplicate by id");
+		assert.equal(runs[0].source, "torus-team:t-merge", "local origin fields win over disk");
+		assert.equal(runs[0].label, "Ember", "local label wins over disk");
+		assert.equal(runs[0].memberStatus, "idle", "disk-only member fields survive the merge");
+		assert.equal(runs[0].status, "running");
+	} finally {
+		registry.setCurrentSession(null);
+		registry.resetRegistryForTesting();
+		rmSync(path.join(RUNS, `${id}.json`), { force: true });
+		foreign.kill();
+	}
+});
+
+test("member-status patches reach the store through the update path's throttle", async () => {
+	mkdirSync(RUNS, { recursive: true });
+	registry.resetRegistryForTesting();
+	const id = `probe-${stamp}-member`;
+	try {
+		const record = await registry.startDelegation(id, "ember", "m", null, "emb", undefined, {
+			source: "torus-team:t-member",
+			label: "Ember",
+		});
+		const file = path.join(RUNS, `${id}.json`);
+		// A memberStatus flip is fleet information (the strip's idle rest), so
+		// it bypasses the same-status window like a status change does.
+		registry.updateRunRecord(id, {
+			memberStatus: "idle",
+			activeSeconds: 3,
+			activeUpdatedAt: Date.now(),
+		});
+		let onDisk = JSON.parse(readFileSync(file, "utf8"));
+		assert.equal(onDisk.memberStatus, "idle", "the idle flip lands on disk immediately");
+		assert.equal(onDisk.source, "torus-team:t-member", "registration origin fields are on disk");
+		assert.equal(onDisk.label, "Ember");
+		assert.equal(onDisk.logFile, record.logFile, "the record's log path is on disk");
+
+		// Read-through: with the in-memory cache cleared, the patch still lands.
+		registry.resetRegistryForTesting();
+		assert.equal(
+			registry.updateRunRecord(id, { memberStatus: "working", activeUpdatedAt: Date.now() }),
+			true,
+			"an evicted record is patched through the store",
+		);
+		onDisk = JSON.parse(readFileSync(file, "utf8"));
+		assert.equal(onDisk.memberStatus, "working", "the read-through patch reaches disk");
+		assert.equal(
+			onDisk.status,
+			"running",
+			"the disk record's status survives the read-through patch",
+		);
+
+		assert.equal(
+			registry.updateRunRecord("no-such-run", { memberStatus: "idle" }),
+			false,
+			"a missing store record reports not-found without crashing",
+		);
+	} finally {
+		registry.resetRegistryForTesting();
+		rmSync(path.join(RUNS, `${id}.json`), { force: true });
 	}
 });

@@ -62,6 +62,15 @@ export interface DelegationRecord {
 	childPid?: number;
 	/** Set when the operator stops the run from the fleet view; the run settles failed but its outcome reports interrupted. */
 	stopRequested?: boolean;
+	/** Origin tag (`torus-team:<id>` for team members); plain delegations carry none. */
+	source?: string;
+	/** Display label (a member's name); plain delegations render the agent name. */
+	label?: string;
+	memberStatus?: "working" | "idle" | "stopped";
+	/** Seconds of active (non-idle) work; the displayed age freezes while idle. */
+	activeSeconds?: number;
+	/** When activeSeconds was last computed (now-active members tick from this). */
+	activeUpdatedAt?: number;
 }
 
 export function normalizeHandle(raw: string | null | undefined): string | null {
@@ -334,36 +343,12 @@ export function steerDelegation(id: string, text: string): boolean {
 	return delivered;
 }
 
-const EXTERNAL_RUNS_KEY = Symbol.for("torus.external-runs.v1");
-const EXTERNAL_RUNS_LIMIT = 100;
-
-export type ExternalRunState = "running" | "done" | "failed";
-
-export interface ExternalRun {
-	id: string;
-	source: string;
-	label: string;
-	handle?: string;
-	model?: string;
-	logFile?: string;
-	sessionId?: string;
-	memberStatus?: "working" | "idle" | "stopped";
-	/** Seconds of active (non-idle) work; the displayed age freezes while idle. */
-	activeSeconds?: number;
-	/** When activeSeconds was last computed (now-active members tick from this). */
-	activeUpdatedAt?: number;
-	state: ExternalRunState;
-	startedAt: number;
-	turns?: number;
-	tokensIn?: number;
-	tokensOut?: number;
-	cacheRead?: number;
-	cacheWrite?: number;
-	/** Engine-computed dollar cost; 0 when the model has no catalog pricing. */
-	cost?: number;
-}
-
-export function externalRunAgeSeconds(run: ExternalRun): number {
+/**
+ * Age in seconds for a unified run record: banked active time for member
+ * runs (the clock freezes while idle and resumes from activeUpdatedAt),
+ * wall clock since start otherwise.
+ */
+export function externalRunAgeSeconds(run: RunRecord): number {
 	if (run.activeSeconds === undefined)
 		return Math.max(0, Math.round((Date.now() - run.startedAt) / 1000));
 	const elapsed =
@@ -371,75 +356,6 @@ export function externalRunAgeSeconds(run: ExternalRun): number {
 			? 0
 			: Math.max(0, Date.now() - (run.activeUpdatedAt ?? run.startedAt));
 	return run.activeSeconds + Math.floor(elapsed / 1000);
-}
-
-function externalRuns(): ExternalRun[] {
-	return sharedState(EXTERNAL_RUNS_KEY, () => [] as ExternalRun[]);
-}
-
-/** The team publish's ExternalRun fields mapped into their RunRecord slots; the write merges over the record startDelegation planted. */
-function externalRunBeacon(run: ExternalRun): RunRecordWrite {
-	return {
-		id: run.id,
-		status: run.state,
-		pid: process.pid,
-		source: run.source,
-		label: run.label,
-		...(run.handle !== undefined ? { handle: run.handle } : {}),
-		...(run.model !== undefined ? { model: run.model } : {}),
-		...(run.logFile !== undefined ? { logFile: run.logFile } : {}),
-		...(run.sessionId !== undefined ? { sessionId: run.sessionId } : {}),
-		...(run.memberStatus !== undefined ? { memberStatus: run.memberStatus } : {}),
-		...(run.activeSeconds !== undefined ? { activeSeconds: run.activeSeconds } : {}),
-		...(run.activeUpdatedAt !== undefined ? { activeUpdatedAt: run.activeUpdatedAt } : {}),
-		...(run.turns !== undefined ? { turns: run.turns } : {}),
-		...(run.tokensIn !== undefined ? { tokensIn: run.tokensIn } : {}),
-		...(run.tokensOut !== undefined ? { tokensOut: run.tokensOut } : {}),
-		...(run.cacheRead !== undefined ? { cacheRead: run.cacheRead } : {}),
-		...(run.cacheWrite !== undefined ? { cacheWrite: run.cacheWrite } : {}),
-		...(run.cost !== undefined ? { cost: run.cost } : {}),
-	};
-}
-
-export function publishExternalRun(
-	run: Omit<ExternalRun, "startedAt"> & { startedAt?: number },
-): void {
-	const runs = externalRuns();
-	const existing = runs.findIndex((r) => r.id === run.id);
-	if (existing >= 0) {
-		const prior = runs[existing];
-		if (prior) runs[existing] = { ...prior, ...run, startedAt: prior.startedAt };
-		return;
-	}
-	const started = { startedAt: Date.now(), ...run };
-	runs.push(started);
-	while (runs.length > EXTERNAL_RUNS_LIMIT) runs.shift();
-	writeRunBeacon(externalRunBeacon(started));
-}
-
-export function updateExternalRun(
-	id: string,
-	patch: Partial<
-		Pick<
-			ExternalRun,
-			| "state"
-			| "label"
-			| "handle"
-			| "turns"
-			| "tokensIn"
-			| "tokensOut"
-			| "cacheRead"
-			| "cacheWrite"
-			| "cost"
-			| "sessionId"
-			| "memberStatus"
-			| "activeSeconds"
-			| "activeUpdatedAt"
-		>
-	>,
-): void {
-	const run = externalRuns().find((r) => r.id === id);
-	if (run) Object.assign(run, patch);
 }
 
 const RUNS_DIR = path.join(torusHome(), "runs");
@@ -450,11 +366,11 @@ const RUNS_PRUNE_COUNT = 200;
 const RUNS_ZOMBIE_MS = 10 * 60 * 1000;
 
 /**
- * The on-disk run record: one JSON file per run in RUNS_DIR, written by both
- * origins (delegations from DelegationRecord, team members through
- * publishExternalRun). Every field beyond the identity core is optional so
- * identity-only files written by older binaries load cleanly; the scan zeroes
- * missing stats instead of rejecting the file.
+ * The on-disk run record: one JSON file per run in RUNS_DIR, written by the
+ * one registration path (startDelegation; team members register through it
+ * with their origin fields). Every field beyond the identity core is optional
+ * so identity-only files written by older binaries load cleanly; the scan
+ * zeroes missing stats instead of rejecting the file.
  */
 export interface RunRecord {
 	id: string;
@@ -536,6 +452,11 @@ function recordBeacon(record: DelegationRecord): RunRecord {
 			? { textTruncated: true }
 			: {}),
 		...(record.stopRequested ? { stopRequested: true } : {}),
+		...(record.source !== undefined ? { source: record.source } : {}),
+		...(record.label !== undefined ? { label: record.label } : {}),
+		...(record.memberStatus !== undefined ? { memberStatus: record.memberStatus } : {}),
+		...(record.activeSeconds !== undefined ? { activeSeconds: record.activeSeconds } : {}),
+		...(record.activeUpdatedAt !== undefined ? { activeUpdatedAt: record.activeUpdatedAt } : {}),
 	};
 }
 
@@ -571,19 +492,76 @@ function writeRunBeacon(record: RunRecordWrite): void {
 }
 
 /**
- * Beacon-write throttle state: last status and time written per record. A
- * running delegation updates every turn, but a same-status beacon carries no
- * new fleet information — rewriting it each turn is 3 fs ops for nothing.
+ * Beacon-write throttle state: last status, member status, and time written
+ * per record. A running delegation updates every turn, but a same-status
+ * beacon carries no new fleet information — rewriting it each turn is 3 fs
+ * ops for nothing. A memberStatus flip (working↔idle) IS fleet information:
+ * the strip renders the idle rest, so it bypasses the window like a status
+ * change does.
  */
 const BEACON_MIN_INTERVAL_MS = 10_000;
-const lastBeaconWrites = new Map<string, { status: RunRecord["status"]; at: number }>();
+const lastBeaconWrites = new Map<
+	string,
+	{ status: RunRecord["status"]; memberStatus?: RunRecord["memberStatus"]; at: number }
+>();
 
 function writeRunBeaconThrottled(record: RunRecordWrite): void {
 	const now = Date.now();
 	const last = lastBeaconWrites.get(record.id);
-	if (last && last.status === record.status && now - last.at < BEACON_MIN_INTERVAL_MS) return;
+	if (
+		last &&
+		last.status === record.status &&
+		last.memberStatus === record.memberStatus &&
+		now - last.at < BEACON_MIN_INTERVAL_MS
+	)
+		return;
 	writeRunBeacon(record);
-	lastBeaconWrites.set(record.id, { status: record.status, at: now });
+	lastBeaconWrites.set(record.id, {
+		status: record.status,
+		memberStatus: record.memberStatus,
+		at: now,
+	});
+}
+
+/**
+ * Read-through loader for the run store: a record absent from the in-memory
+ * cache — evicted by the 50-record bound, or written by another process —
+ * reloads its run JSON on demand. Identity-only files load with zeroed
+ * stats, exactly like the scan path. Undefined when no file exists.
+ */
+function loadRunRecord(id: string): RunRecord | undefined {
+	try {
+		const record = JSON.parse(readFileSync(beaconFile(id), "utf8")) as RunRecord;
+		if (record.id !== id) return undefined;
+		record.turns ??= 0;
+		record.tokensIn ??= 0;
+		record.tokensOut ??= 0;
+		record.cacheRead ??= 0;
+		record.cacheWrite ??= 0;
+		return record;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The unified update path: patch one run by id, whether it lives in the
+ * in-memory cache or only in the store. The patch merges over the current
+ * record and reaches the beacon file through the same throttled write, so
+ * member status and active-time bookkeeping survive evictions and process
+ * boundaries. True when a record was found in cache or store.
+ */
+export function updateRunRecord(id: string, patch: Partial<RunRecord>): boolean {
+	const record = registry.get(id);
+	if (record) {
+		Object.assign(record, patch);
+		writeRunBeaconThrottled(recordBeacon(record));
+		return true;
+	}
+	const disk = loadRunRecord(id);
+	if (!disk) return false;
+	writeRunBeaconThrottled({ ...disk, ...patch });
+	return true;
 }
 
 /**
@@ -697,6 +675,11 @@ function readRunBeacons(): RunRecord[] {
 
 let externalRunsCache: { at: number; runs: RunRecord[] } | null = null;
 
+/** Test-only: drop the beacon-scan TTL cache so a freshly planted file is visible immediately. */
+export function expireBeaconCacheForTesting(): void {
+	externalRunsCache = null;
+}
+
 function foreignRunningBeacons(): RunRecord[] {
 	const now = Date.now();
 	if (externalRunsCache && now - externalRunsCache.at < EXTERNAL_RUNS_CACHE_TTL_MS)
@@ -724,47 +707,39 @@ function beaconsByLogFile(): Map<string, RunRecord> {
 	return out;
 }
 
-/**
- * External runs not already onboarded as delegation records: team members
- * are registered in both (startDelegation + publishExternalRun), and fleet
- * views render both lists — without this filter every member shows up twice.
- */
-export function listExternalRunsExcludingDelegations(): ExternalRun[] {
-	const delegated = new Set(registry.keys());
-	return listExternalRuns().filter((run) => !delegated.has(run.id));
-}
+/** A run record as listExternalRuns returns it: display fields guaranteed. */
+export type RunRecordView = RunRecord & { source: string; label: string };
 
-export function listExternalRuns(): ExternalRun[] {
+/**
+ * THE list API over unified run records: the in-memory registry cache (the
+ * freshest copy of every record this process drives) deduplicated against
+ * the beacon store's foreign running records — the beacon IS the record now,
+ * so a delegation's own beacon and its registry entry merge by id instead of
+ * listing twice (local wins: memory is fresher; disk-only fields survive).
+ * Foreign running beacons are session-scoped, and one whose writer pid is
+ * dead reports failed in memory only. Fleet views that also render registry
+ * rows filter the ids they already show.
+ */
+export function listExternalRuns(): RunRecordView[] {
 	const current = getCurrentSession();
-	const local = [...externalRuns()].sort((a, b) => b.startedAt - a.startedAt);
-	const foreign = foreignRunningBeacons()
-		.filter((beacon) => current === null || beacon.parentSession === current)
-		.map((beacon): ExternalRun => {
-			// Disk-provided origin fields win; identity-only beacons keep the
-			// synthetic torus-run source and agent-as-label.
-			return {
-				id: beacon.id,
-				source: beacon.source ?? `torus-run:${beacon.pid}`,
-				label: beacon.label ?? beacon.agent,
-				handle: beacon.handle ?? undefined,
-				model: beacon.model,
-				sessionId: beacon.sessionId ?? undefined,
-				logFile: beacon.logFile,
-				state:
-					beacon.status === "done" ? "done" : beacon.status === "failed" ? "failed" : "running",
-				startedAt: beacon.startedAt,
-				memberStatus: beacon.memberStatus,
-				activeSeconds: beacon.activeSeconds,
-				activeUpdatedAt: beacon.activeUpdatedAt,
-				turns: beacon.turns,
-				tokensIn: beacon.tokensIn,
-				tokensOut: beacon.tokensOut,
-				cacheRead: beacon.cacheRead,
-				cacheWrite: beacon.cacheWrite,
-				cost: beacon.cost,
-			};
-		});
-	return [...local, ...foreign].sort((a, b) => b.startedAt - a.startedAt);
+	// Display defaults for identity-only records: plain runs render a
+	// synthetic torus-run source and the agent as label.
+	const fill = (record: RunRecord): RunRecordView => ({
+		...record,
+		source: record.source ?? `torus-run:${record.pid}`,
+		label: record.label ?? record.agent,
+	});
+	const local = new Map<string, RunRecordView>();
+	for (const record of registry.values()) local.set(record.id, fill(recordBeacon(record)));
+	const foreignOnly: RunRecordView[] = [];
+	for (const beacon of foreignRunningBeacons()) {
+		if (current !== null && beacon.parentSession !== current) continue;
+		const cached = local.get(beacon.id);
+		// Local-over-disk merge: memory is fresher; disk-only fields survive.
+		if (cached) local.set(beacon.id, { ...beacon, ...cached });
+		else foreignOnly.push(fill(beacon));
+	}
+	return [...local.values(), ...foreignOnly].sort((a, b) => b.startedAt - a.startedAt);
 }
 
 const CURRENT_SESSION_KEY = Symbol.for("torus.current-session");
@@ -856,9 +831,9 @@ export function listDelegations(): DelegationRecord[] {
 export function resetRegistryForTesting(): void {
 	registry.clear();
 	controls.clear();
-	externalRuns().length = 0;
 	lateToasts.clear();
 	lastBeaconWrites.clear();
+	externalRunsCache = null;
 }
 
 /**
@@ -922,6 +897,16 @@ async function killPane(paneId: string | null): Promise<void> {
 	await runTmux(["kill-pane", "-t", paneId]);
 }
 
+/** Origin fields for runs registered against an existing log (team members). */
+export interface DelegationStartOptions {
+	/** Origin tag landing on the record and its beacon (`torus-team:<id>`). */
+	source?: string;
+	/** Display label landing on the record and its beacon (the member name). */
+	label?: string;
+	/** Existing action log to register against (the team transcript); skips creating a logsDir log. */
+	logFile?: string;
+}
+
 export async function startDelegation(
 	id: string,
 	agent: string,
@@ -929,24 +914,35 @@ export async function startDelegation(
 	parentSession: string | null = null,
 	handle: string | null = null,
 	cwd: string = process.cwd(),
+	opts: DelegationStartOptions = {},
 ): Promise<DelegationRecord> {
-	const dir = logsDir();
-	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	// chmod covers a pre-existing directory created with wider perms
-	chmodSync(dir, 0o700);
-	// The full id makes the name unique by construction: two same-agent
-	// delegations spawned in one fanout tick share a millisecond but never an
-	// id, so logs never interleave and result text read back from a log is
-	// always this run's own final message. The timestamp stays first so
-	// rehydrateFromLogs' reverse sort by recency keeps working; the id is
-	// stripped to filename-safe characters.
-	const logFile = path.join(
-		dir,
-		`${new Date().toISOString().replace(/[:.]/g, "-")}-${id.replace(/[^a-zA-Z0-9_-]/g, "")}-${agent}.log`,
-	);
-	// delegation logs capture tool args — enforce owner-only from birth
-	appendFileSync(logFile, "");
-	chmodSync(logFile, 0o600);
+	let logFile: string;
+	if (opts.logFile) {
+		// Registered against an existing log (the team transcript): the member
+		// record points there per its origin — delegations keep logsDir() logs.
+		// The transcript's dir may not exist yet (team-runtime creates it when
+		// the supervisor spawns), and the start tag below must not race it.
+		logFile = opts.logFile;
+		mkdirSync(path.dirname(logFile), { recursive: true });
+	} else {
+		const dir = logsDir();
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		// chmod covers a pre-existing directory created with wider perms
+		chmodSync(dir, 0o700);
+		// The full id makes the name unique by construction: two same-agent
+		// delegations spawned in one fanout tick share a millisecond but never an
+		// id, so logs never interleave and result text read back from a log is
+		// always this run's own final message. The timestamp stays first so
+		// rehydrateFromLogs' reverse sort by recency keeps working; the id is
+		// stripped to filename-safe characters.
+		logFile = path.join(
+			dir,
+			`${new Date().toISOString().replace(/[:.]/g, "-")}-${id.replace(/[^a-zA-Z0-9_-]/g, "")}-${agent}.log`,
+		);
+		// delegation logs capture tool args — enforce owner-only from birth
+		appendFileSync(logFile, "");
+		chmodSync(logFile, 0o600);
+	}
 	const normalizedHandle = normalizeHandle(handle);
 	const record: DelegationRecord = {
 		id,
@@ -969,6 +965,8 @@ export async function startDelegation(
 		// The pane opens asynchronously below; the record registers first so a
 		// stop or steer during the split-window race still lands on this record.
 		paneId: null,
+		...(opts.source !== undefined ? { source: opts.source } : {}),
+		...(opts.label !== undefined ? { label: opts.label } : {}),
 	};
 	registry.set(id, record);
 	const late: LateToast = { timer: null, notificationId: null };
@@ -1370,7 +1368,6 @@ export async function registryShutdown(reason: SessionEndReason = "quit"): Promi
 	await Promise.all(paneIds.map((paneId) => killPane(paneId)));
 	if (reason === "new" || reason === "resume" || reason === "fork") {
 		registry.clear();
-		externalRuns().length = 0;
 	}
 }
 

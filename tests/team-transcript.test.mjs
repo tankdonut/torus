@@ -148,19 +148,9 @@ test("unknown-team tool results carry isError so the TUI paints them red", async
 	assert.equal(result.isError, true, "unknown team must flag isError");
 });
 
-test("external runs exclude member ids already onboarded as delegation records", async () => {
-	registry.resetRegistryForTesting();
-	const { teamId } = await createTeam("india", [{ name: "solo", agent: "builder" }]);
-	const memberId = `${teamId}/solo`;
-	assert.ok(
-		registry.listExternalRuns().some((r) => r.id === memberId),
-		"member is published as an external run",
-	);
-	assert.ok(
-		!registry.listExternalRunsExcludingDelegations().some((r) => r.id === memberId),
-		"fleet views must not list the member twice",
-	);
-});
+// (dedup test removed: a member registers exactly once now — startDelegation
+// alone creates the record, the publish side-channel is gone, so a member
+// cannot appear twice in any list and there is no filter left to pin.)
 
 test("member crash emits ok:false result and fails the record with the last report as summary", async () => {
 	registry.resetRegistryForTesting();

@@ -39,12 +39,11 @@ import {
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
 	type DelegationRecord,
-	type ExternalRun,
 	externalRunAgeSeconds,
 	FLEET_OPENER,
 	listDelegations,
 	listExternalRuns,
-	listExternalRunsExcludingDelegations,
+	type RunRecordView,
 	steerDelegation,
 	stopDelegation,
 } from "../registry.js";
@@ -185,14 +184,14 @@ const WHEEL_LINES = 3;
 
 type FleetItem =
 	| { kind: "delegation"; record: DelegationRecord }
-	| { kind: "external"; run: ExternalRun };
+	| { kind: "external"; run: RunRecordView };
 
 function headerLine(
 	record: DelegationRecord,
 	theme: Theme,
 	tick: number,
 	width: number,
-	run?: ExternalRun,
+	run?: RunRecordView,
 ): string {
 	const color = entityColor(record.handle ?? record.agent);
 	const icon = delegationIcon(theme, record.status, run, tick);
@@ -304,7 +303,7 @@ class FleetBrowser implements Component {
 	private listSeen = false;
 	/** External runs by id, rebuilt each render: delegation rows read team
 	 * badge and memberStatus from them without a beacon scan per row. */
-	private externalById = new Map<string, ExternalRun>();
+	private externalById = new Map<string, RunRecordView>();
 
 	constructor(
 		tui: TUI,
@@ -325,8 +324,9 @@ class FleetBrowser implements Component {
 				// External runs render after every delegation row, in the same order
 				// render() builds the list: running externals, delegations excluded
 				// by id. A stale member id falls back to the list view.
-				const running = listExternalRunsExcludingDelegations().filter(
-					(run) => run.state === "running",
+				const delegated = new Set(records.map((record) => record.id));
+				const running = listExternalRuns().filter(
+					(run) => run.status === "running" && !delegated.has(run.id),
 				);
 				const external = running.findIndex((run) => run.id === focusDelegationId);
 				if (external >= 0) {
@@ -587,8 +587,11 @@ class FleetBrowser implements Component {
 		const theme = this.theme;
 		const records = listDelegations();
 		this.externalById = new Map(listExternalRuns().map((r) => [r.id, r] as const));
-		const runningExternals = listExternalRunsExcludingDelegations().filter(
-			(r) => r.state === "running",
+		// The registry cache is the freshest copy of every record; the external
+		// section carries only runs the delegation rows above do not already show.
+		const delegatedIds = new Set(records.map((record) => record.id));
+		const runningExternals = listExternalRuns().filter(
+			(r) => r.status === "running" && !delegatedIds.has(r.id),
 		);
 		this.items = [
 			...records.map((record) => ({ kind: "delegation" as const, record })),
@@ -623,7 +626,7 @@ class FleetBrowser implements Component {
 
 	private renderList(
 		records: DelegationRecord[],
-		externals: ExternalRun[],
+		externals: RunRecordView[],
 		theme: Theme,
 		width: number,
 	): string[] {
@@ -969,15 +972,15 @@ class FleetBrowser implements Component {
 		return this.statusHeader(head, theme, width, buttons, record.sessionId ?? "no session");
 	}
 
-	private externalHeader(run: ExternalRun, theme: Theme, width: number): string[] {
+	private externalHeader(run: RunRecordView, theme: Theme, width: number): string[] {
 		// External runs have no steer/stop controls, but the back chip below
 		// still gets its colored render and click zone.
 		const statusIcon =
-			run.memberStatus === "idle" && run.state === "running"
+			run.memberStatus === "idle" && run.status === "running"
 				? theme.fg("dim", "· idle")
-				: run.state === "running"
+				: run.status === "running"
 					? theme.fg("warning", `${SPINNER[this.tick % SPINNER.length] ?? "•"} live`)
-					: run.state === "done"
+					: run.status === "done"
 						? theme.fg("success", "✓ done")
 						: theme.fg("error", "✗ failed");
 		const badgeText = teamBadgeText(run.source);
@@ -1057,7 +1060,7 @@ class FleetBrowser implements Component {
 		return this.actionLogLines(record.logFile, theme, width);
 	}
 
-	private externalDetailBody(run: ExternalRun, theme: Theme, width: number): string[] {
+	private externalDetailBody(run: RunRecordView, theme: Theme, width: number): string[] {
 		if (run.sessionId) {
 			const lines = this.sessionTranscriptLines(run.sessionId, theme, width);
 			if (lines.length > 0) return lines;
@@ -1088,7 +1091,7 @@ export function registerBrowser(pi: ExtensionAPI): void {
 
 	(globalThis as Record<symbol, unknown>)[FLEET_OPENER] = (delegationId?: string) => {
 		const hasContent =
-			listDelegations().length > 0 || listExternalRuns().some((run) => run.state === "running");
+			listDelegations().length > 0 || listExternalRuns().some((run) => run.status === "running");
 		if (!hasContent) return;
 		if (!latestCtx) return;
 		openFleet(latestCtx, delegationId);
@@ -1119,7 +1122,7 @@ export function registerBrowser(pi: ExtensionAPI): void {
 		description: "Open torus fleet view",
 		handler: async (ctx) => {
 			const hasContent =
-				listDelegations().length > 0 || listExternalRuns().some((run) => run.state === "running");
+				listDelegations().length > 0 || listExternalRuns().some((run) => run.status === "running");
 			if (!ctx.hasUI || !hasContent) return;
 			openFleet(ctx);
 		},

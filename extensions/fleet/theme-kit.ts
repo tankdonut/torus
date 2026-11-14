@@ -8,7 +8,7 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { formatCost } from "../fsutil.js";
-import type { ExternalRun } from "../registry.js";
+import type { RunRecord } from "../registry.js";
 
 export type Theme = ExtensionContext["ui"]["theme"];
 export type ThemeColor = Parameters<Theme["fg"]>[0];
@@ -124,7 +124,7 @@ export function teamBadgeText(source: string | undefined): string {
 }
 
 /** External-run icon: idle members rest on the dim dot, everything else spins. */
-export function externalRunIcon(theme: Theme, run: ExternalRun, tick: number): string {
+export function externalRunIcon(theme: Theme, run: RunRecord, tick: number): string {
 	return run.memberStatus === "idle"
 		? statusGlyph(theme, "idle")
 		: statusGlyph(theme, "running", tick);
@@ -135,7 +135,7 @@ export function externalRunIcon(theme: Theme, run: ExternalRun, tick: number): s
 export function delegationIcon(
 	theme: Theme,
 	status: "running" | "done" | "failed",
-	run: ExternalRun | undefined,
+	run: RunRecord | undefined,
 	tick: number,
 ): string {
 	return statusGlyph(

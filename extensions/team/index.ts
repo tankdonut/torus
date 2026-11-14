@@ -18,13 +18,12 @@ import {
 	listDelegations,
 	listExternalRuns,
 	listTeams,
-	publishExternalRun,
 	registerTeam as registerTeamRecord,
 	sharedState,
 	startDelegation,
 	type TeamRecord,
 	updateDelegation,
-	updateExternalRun,
+	updateRunRecord,
 } from "../registry.js";
 import {
 	AGENTS,
@@ -784,17 +783,13 @@ async function attachMember(
 	deliberateStops.delete(memberId);
 	memberHasNews.delete(memberId);
 	const model = normalizeMemberModel(spec.model);
-	await startDelegation(memberId, spec.agent, model, parentSession, spec.name);
-	// Publish only after the registry record exists: a startDelegation throw
-	// must not strand a phantom running external run in the fleet.
-	publishExternalRun({
-		id: memberId,
+	// One registration: the member lives once in the delegation registry, its
+	// origin fields on the record and its log pointed at the team transcript.
+	// A startDelegation throw leaves no phantom run behind.
+	await startDelegation(memberId, spec.agent, model, parentSession, spec.name, undefined, {
 		source: `torus-team:${teamId}`,
 		label: spec.name,
-		handle: spec.name,
-		model,
 		logFile: path.join(teamDir(teamId), `${spec.name}.log`),
-		state: "running",
 	});
 	// Callers spawning a batch (team_create, team_respawn) emit one combined
 	// torus.delegation-start marker themselves: N per-member events would
@@ -821,10 +816,10 @@ async function attachMember(
 					// Keep the accumulation base across back-to-back working spells;
 					// idle banks the elapsed time before freezing it.
 					if (run?.memberStatus !== "working") patch.activeUpdatedAt = Date.now();
-					updateExternalRun(memberId, patch);
+					updateRunRecord(memberId, patch);
 				}
 				if (state.sessionId) {
-					updateExternalRun(memberId, { sessionId: state.sessionId });
+					updateRunRecord(memberId, { sessionId: state.sessionId });
 					attachSessionId(memberId, state.sessionId);
 				}
 				if (state.status === "idle") {
@@ -832,7 +827,7 @@ async function attachMember(
 					const banked =
 						(run?.activeSeconds ?? 0) +
 						(run?.activeUpdatedAt ? Date.now() - run.activeUpdatedAt : 0);
-					updateExternalRun(memberId, {
+					updateRunRecord(memberId, {
 						memberStatus: "idle",
 						activeSeconds: Math.max(0, banked),
 						activeUpdatedAt: Date.now(),
@@ -840,7 +835,9 @@ async function attachMember(
 					notifyMemberEpisode(teamId, memberId);
 				}
 				if (state.status === "stopped") {
-					updateExternalRun(memberId, { state: "done", memberStatus: "stopped" });
+					// memberStatus only: finishDelegation owns the record's status, and
+					// flipping it here would make the finish below bail as idempotent.
+					updateRunRecord(memberId, { memberStatus: "stopped" });
 					const deliberate = deliberateStops.delete(memberId);
 					if (!deliberate) memberHasNews.set(memberId, true);
 					const summary =
@@ -872,7 +869,6 @@ async function attachMember(
 			onStats === true
 				? (stats) => {
 						if (!isCurrentGeneration()) return;
-						updateExternalRun(memberId, stats);
 						updateDelegation(memberId, {
 							text: stats.text,
 							turns: stats.turns,
@@ -1210,7 +1206,7 @@ const teamStatusTool = defineTool({
 		// working on it, not stopped — stopped is the orphan case above) with no
 		// tasklist activity for longer than TORUS_TASK_STALE_MIN minutes. The
 		// stale clock is task.updatedAt, not the registry's member-level
-		// ExternalRun.activeUpdatedAt: it is per-task (one idle member can hold
+		// activeUpdatedAt: it is per-task (one idle member can hold
 		// several), durable in tasks.json which this tool already reads, and it
 		// survives a parent restart — run beacons are per-process shared state.
 		// Read-only: no mutation, no timer.
@@ -1516,7 +1512,8 @@ const teamDeleteTool = defineTool({
 			suppressedResultMarkers.add(member.id);
 			const handle = memberControls.get(member.id);
 			handle?.stop();
-			updateExternalRun(member.id, { state: "done" });
+			// memberStatus only: the safety-pass finish below owns the status flip.
+			updateRunRecord(member.id, { memberStatus: "stopped" });
 		}
 		for (const member of record.members) {
 			const handle = memberControls.get(member.id);
