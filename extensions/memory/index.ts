@@ -17,6 +17,7 @@ import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { flattenPreview } from "../fleet/theme-kit.js";
 import { parseFrontmatter } from "../frontmatter.js";
 import { readJson, splitList, torusHome, writeJson } from "../fsutil.js";
+import { TORUS_MARKER } from "../markers.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { gcReflectState, readReflectState, writeReflectState } from "../reflect-state.js";
 import { currentSessionId, emitTorusCustom, logsDir, recentLogFiles } from "../registry.js";
@@ -512,7 +513,7 @@ export function dreamAppliedLine(counts: DreamApplied, source: "dream" | "reflec
 
 function emitMemoryApplied(counts: DreamApplied, source: "dream" | "reflect"): void {
 	emitTorusCustom({
-		customType: "torus.memory-applied",
+		customType: TORUS_MARKER.memoryApplied,
 		content: [{ type: "text", text: dreamAppliedLine(counts, source) }],
 		display: true,
 		details: { ...counts, source },

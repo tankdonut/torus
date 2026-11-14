@@ -37,6 +37,7 @@ import {
 import { flattenPreview, formatDuration, shortModel, statusGlyphText } from "../fleet/theme-kit.js";
 import { parseFrontmatter, stripFrontmatter } from "../frontmatter.js";
 import { formatCost, pruneScratch, scratchDir, sleep, splitList } from "../fsutil.js";
+import { MARKER, TORUS_MARKER } from "../markers.js";
 import { clickable } from "../notify/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import {
@@ -1032,7 +1033,7 @@ export function fireDelegationsBackground(
 						? `${outcome.text.slice(0, BACKGROUND_SUMMARY_CAP)}…`
 						: outcome.text;
 				deliverWake({
-					customType: "delegation-result",
+					customType: MARKER.delegationResult,
 					origin: { label: run.handle ?? run.agent },
 					// Registry's notifyDelegation stays the delegation-lifecycle toast owner.
 					toast: false,
@@ -1109,7 +1110,7 @@ async function runAcpDelegation(
 	if (announcement !== null) {
 		emitTorusCustom(
 			{
-				customType: "torus.delegation-start",
+				customType: TORUS_MARKER.delegationStart,
 				content: [{ type: "text", text: announcement }],
 				display: true,
 				details: { agent: agentName, delegationId, handle },
@@ -1151,7 +1152,7 @@ async function runAcpDelegation(
 		if (emitResult) {
 			emitTorusCustom(
 				{
-					customType: "torus.delegation-result",
+					customType: TORUS_MARKER.delegationResult,
 					content: [
 						{
 							type: "text",
@@ -1206,7 +1207,7 @@ async function runAcpDelegation(
 		if (emitResult) {
 			emitTorusCustom(
 				{
-					customType: "torus.delegation-result",
+					customType: TORUS_MARKER.delegationResult,
 					content: [{ type: "text", text: `${agentName} failed` }],
 					display: true,
 					details: {
@@ -1351,7 +1352,7 @@ export async function runDelegation(
 	if (announcement !== null) {
 		emitTorusCustom(
 			{
-				customType: "torus.delegation-start",
+				customType: TORUS_MARKER.delegationStart,
 				content: [{ type: "text", text: announcement }],
 				display: true,
 				details: { agent: agent.name, delegationId, handle },
@@ -1533,7 +1534,7 @@ export async function runDelegation(
 		if (emitResult) {
 			emitTorusCustom(
 				{
-					customType: "torus.delegation-result",
+					customType: TORUS_MARKER.delegationResult,
 					content: [
 						{
 							type: "text",
@@ -1602,7 +1603,7 @@ export async function runDelegation(
 		if (emitResult) {
 			emitTorusCustom(
 				{
-					customType: "torus.delegation-result",
+					customType: TORUS_MARKER.delegationResult,
 					content: [{ type: "text", text: `${agent.name} failed` }],
 					display: true,
 					details: {

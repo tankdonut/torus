@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
 import { childSessionsRoot } from "./fsutil.js";
+import { TORUS_MARKER } from "./markers.js";
 
 export type AssistantMessageLike = ConstructorParameters<typeof AssistantMessageComponent>[0];
 
@@ -196,7 +197,7 @@ function parseLine(line: string, state: ParseState): void {
 	// through the tool-item pipeline so it draws as a compact ledger line;
 	// every other custom entry is ignored.
 	if (record["type"] === "custom") {
-		if (record["customType"] === "torus.work-ledger") {
+		if (record["customType"] === TORUS_MARKER.workLedger) {
 			const data = record["data"];
 			if (typeof data === "object" && data !== null) {
 				const row = data as Record<string, unknown>;

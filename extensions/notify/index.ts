@@ -8,6 +8,7 @@ import {
 	statusGlyph,
 	teamName,
 } from "../fleet/theme-kit.js";
+import { MARKER, parseMarkerType, TORUS_MARKER } from "../markers.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { FLEET_OPENER, listExternalRuns } from "../registry.js";
 import { sanitizeRender } from "../text.js";
@@ -146,7 +147,7 @@ function styledRunLabel(details: Record<string, unknown>, agent: string, theme: 
 }
 
 export function registerNotify(pi: ExtensionAPI): void {
-	pi.registerMessageRenderer("torus.delegation-start", (message, _options, theme) => {
+	pi.registerMessageRenderer(TORUS_MARKER.delegationStart, (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		const agent = typeof details["agent"] === "string" ? details["agent"] : "?";
 		const task = sanitizeRender(
@@ -169,7 +170,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 		);
 	});
 
-	pi.registerMessageRenderer("torus.delegation-result", (message, _options, theme) => {
+	pi.registerMessageRenderer(TORUS_MARKER.delegationResult, (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		return clickable(
 			[new Text(delegationResultLine(details, theme), 0, 0)],
@@ -177,7 +178,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 		);
 	});
 
-	pi.registerMessageRenderer("torus.memory-applied", (message, _options, theme) => {
+	pi.registerMessageRenderer(TORUS_MARKER.memoryApplied, (message, _options, theme) => {
 		const text = sanitizeRender(
 			flattenPreview(textOf(message as { content: Array<{ type: string; text?: string }> }), 90),
 		);
@@ -207,7 +208,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 	};
 
 	// Monitor lines open the fleet list (alt+t parity), like team episodes.
-	pi.registerMessageRenderer("torus.monitor-fired", (message, _options, theme) => {
+	pi.registerMessageRenderer(TORUS_MARKER.monitorFired, (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		return clickableLines([monitorLine(details, theme)], [null]);
 	});
@@ -237,7 +238,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 	};
 
 	// bg lines open the fleet list too; the log path stays in the wake text.
-	pi.registerMessageRenderer("torus.bg-exit", (message, _options, theme) => {
+	pi.registerMessageRenderer(TORUS_MARKER.bgExit, (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		return clickableLines([bgLine(details, theme)], [null]);
 	});
@@ -277,7 +278,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 		};
 	};
 
-	pi.registerMessageRenderer("torus.team-wake", (message, _options, theme) => {
+	pi.registerMessageRenderer(TORUS_MARKER.teamWake, (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		const { lines, targets } = teamWakeEntries(details, theme);
 		return clickableLines(lines, targets);
@@ -287,7 +288,7 @@ export function registerNotify(pi: ExtensionAPI): void {
 	// lines its standalone marker would have shown, and every line keeps its
 	// own click target: a completion opens its run, a member episode that
 	// member, monitor and bg lines open the fleet list.
-	pi.registerMessageRenderer("torus.wake-batch", (message, _options, theme) => {
+	pi.registerMessageRenderer(TORUS_MARKER.wakeBatch, (message, _options, theme) => {
 		const details = (message.details ?? {}) as Record<string, unknown>;
 		const lines: string[] = [];
 		const targets: Array<string | null | undefined> = [];
@@ -299,29 +300,29 @@ export function registerNotify(pi: ExtensionAPI): void {
 			// older builds carry the `torus.`-prefixed marker spelling — normalize.
 			const customType =
 				typeof record["customType"] === "string"
-					? record["customType"].replace(/^torus\./, "")
+					? (parseMarkerType(record["customType"]) ?? "")
 					: "";
 			const entryDetails =
 				typeof record["details"] === "object" && record["details"] !== null
 					? (record["details"] as Record<string, unknown>)
 					: undefined;
-			if (customType === "team-wake" && entryDetails) {
+			if (customType === MARKER.teamWake && entryDetails) {
 				const wake = teamWakeEntries(entryDetails, theme);
 				lines.push(...wake.lines);
 				targets.push(...wake.targets);
 				continue;
 			}
-			if (customType === "monitor-fired" && entryDetails) {
+			if (customType === MARKER.monitorFired && entryDetails) {
 				lines.push(monitorLine(entryDetails, theme));
 				targets.push(null);
 				continue;
 			}
-			if (customType === "bg-exit" && entryDetails) {
+			if (customType === MARKER.bgExit && entryDetails) {
 				lines.push(bgLine(entryDetails, theme));
 				targets.push(null);
 				continue;
 			}
-			if (customType === "delegation-result" && entryDetails) {
+			if (customType === MARKER.delegationResult && entryDetails) {
 				lines.push(delegationResultLine(entryDetails, theme));
 				targets.push(
 					typeof entryDetails["delegationId"] === "string" ? entryDetails["delegationId"] : null,

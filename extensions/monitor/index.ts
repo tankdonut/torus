@@ -17,6 +17,7 @@ import { runChild } from "../child-run.js";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { flattenPreview } from "../fleet/theme-kit.js";
 import { projectStateDir } from "../fsutil.js";
+import { MARKER } from "../markers.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { deliverWake, torusWake } from "../wake-gate.js";
 
@@ -96,7 +97,7 @@ function emitMonitorFired(
 	// one-at-a-time follow-up queue turns later. deliverWake also fires the
 	// toast (fail → error, change → warning) — no standalone toast call here.
 	deliverWake({
-		customType: "monitor-fired",
+		customType: MARKER.monitorFired,
 		origin: { label: entry.name },
 		severity: reason === "fail" ? "error" : "warning",
 		summary: torusWake("monitor", entry.name, what, {
@@ -233,7 +234,7 @@ function emitBgExit(entry: BgEntry, code: number | null, signal: string | null):
 	);
 	// deliverWake fires the toast (done → success, everything else → error).
 	deliverWake({
-		customType: "bg-exit",
+		customType: MARKER.bgExit,
 		origin: { label: entry.name },
 		severity: code === 0 && !entry.stopped && !entry.timedOut ? "success" : "error",
 		summary: torusWake("bg", entry.name, reason, {

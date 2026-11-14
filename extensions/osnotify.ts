@@ -19,6 +19,7 @@ import path from "node:path";
 import { runChild } from "./child-run.js";
 import { knobBoolean, parseZeroDisables } from "./config/knobs.js";
 import { formatDuration, formatTokens, shortModel, statusGlyphText } from "./fleet/theme-kit.js";
+import { MARKER } from "./markers.js";
 import { previewLine } from "./text.js";
 
 /** Runs shorter than this never announce their start; completion always toasts. */
@@ -319,7 +320,7 @@ export function wakeToast(event: {
 	const detail = event.detail ?? {};
 	const name = typeof detail["name"] === "string" ? detail["name"] : "";
 	const output = typeof detail["output"] === "string" ? detail["output"] : "";
-	if (event.customType === "bg-exit") {
+	if (event.customType === MARKER.bgExit) {
 		return bgToast(event.severity === "success" ? "done" : "failed", {
 			name,
 			exit: typeof detail["code"] === "number" ? detail["code"] : null,
@@ -329,7 +330,7 @@ export function wakeToast(event: {
 			timedOut: detail["timedOut"] === true,
 		});
 	}
-	if (event.customType === "monitor-fired") {
+	if (event.customType === MARKER.monitorFired) {
 		return monitorToast(event.severity === "error" ? "failed" : "changed", {
 			name,
 			exit: typeof detail["exit"] === "number" ? detail["exit"] : null,

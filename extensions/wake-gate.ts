@@ -11,6 +11,7 @@ import {
 import path from "node:path";
 import { knobBoolean, knobNumber, parseZeroDisables } from "./config/knobs.js";
 import { projectStateDir } from "./fsutil.js";
+import { markerType, parseMarkerType, TORUS_MARKER, type WakeMarkerType } from "./markers.js";
 import { osNotify, wakeToast } from "./osnotify.js";
 import { isEngineChild } from "./platform.js";
 import { currentSessionId, emitTorusCustom, sharedState } from "./registry.js";
@@ -57,7 +58,7 @@ export function torusWake(
 }
 
 /** The wake discriminator, typed once and shared by producers and the renderer. */
-export type WakeCustomType = "delegation-result" | "monitor-fired" | "bg-exit" | "team-wake";
+export type WakeCustomType = WakeMarkerType;
 
 /** Coarse outcome class a producer stamps on its wake; drives the toast policy. */
 export type WakeSeverity = "success" | "info" | "warning" | "error";
@@ -93,15 +94,6 @@ export interface WakeEntry {
 	spoolId?: string;
 }
 
-/**
- * Pi marker type for a wake: emitTorusCustom customTypes are `torus.`-prefixed
- * while the WakeCustomType union is bare. Idempotent, so older callers and
- * spool records that still carry the prefixed spelling round-trip unchanged.
- */
-function wakeMarkerType(customType: string): string {
-	return `torus.${customType.replace(/^torus\./, "")}`;
-}
-
 interface WakeGateState {
 	pending: WakeEntry[];
 	agentActive: boolean;
@@ -119,7 +111,7 @@ interface WakeGateState {
  * so several producers landing within the window still cost one turn. A
  * single-entry flush keeps the original
  * customType so renderers and the model see the marker they always saw; only
- * multi-entry flushes wrap in "torus.wake-batch".
+ * multi-entry flushes wrap in the wake-batch marker.
  *
  * Every queued entry is also write-ahead-logged to a per-session spool file
  * (removed on delivery): a marker that fires while no sender can receive it —
@@ -194,7 +186,7 @@ function readSpool(sessionId: string): SpoolRecord[] {
 			// marker spelling; normalize so old records drain into the same gate.
 			const customType =
 				typeof parsed.entry?.customType === "string"
-					? (parsed.entry.customType.replace(/^torus\./, "") as WakeCustomType)
+					? (parseMarkerType(parsed.entry.customType) as WakeCustomType | undefined)
 					: undefined;
 			if (
 				typeof parsed.id === "string" &&
@@ -318,13 +310,13 @@ export function flushWakeGate(): void {
 	const emitted = emitTorusCustom(
 		single
 			? {
-					customType: wakeMarkerType(single.customType),
+					customType: markerType(single.customType),
 					content: [{ type: "text", text: single.text }],
 					display: true,
 					details: single.details,
 				}
 			: {
-					customType: "torus.wake-batch",
+					customType: TORUS_MARKER.wakeBatch,
 					content: [
 						{
 							type: "text",

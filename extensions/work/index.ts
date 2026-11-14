@@ -24,6 +24,7 @@ import path from "node:path";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { displayPath, projectStateDir, readJson, torusHome, writeJson } from "../fsutil.js";
+import { TORUS_MARKER } from "../markers.js";
 import { gateExtension, isEngineChild, type PlatformSupport } from "../platform.js";
 import { currentSessionId } from "../registry.js";
 
@@ -306,7 +307,7 @@ export function appendLedgerEntry(slug: string, entry: LedgerEntry): void {
 	// break an append that already landed, so it is swallowed silently.
 	if (mirrorSessionEntry) {
 		try {
-			mirrorSessionEntry("torus.work-ledger", entry);
+			mirrorSessionEntry(TORUS_MARKER.workLedger, entry);
 		} catch {}
 	}
 }

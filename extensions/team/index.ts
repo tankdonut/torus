@@ -4,6 +4,7 @@ import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { displayPath, formatCost, projectKey, sleep } from "../fsutil.js";
+import { MARKER, TORUS_MARKER } from "../markers.js";
 import { osNotify, shutdownToast } from "../osnotify.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { DEFAULT_MEMBER_MODEL } from "../providers/index.js";
@@ -245,7 +246,7 @@ const fanoutTool = defineTool({
 		// would trickle into the transcript one turn boundary apart.
 		emitTorusCustom(
 			{
-				customType: "torus.delegation-start",
+				customType: TORUS_MARKER.delegationStart,
 				content: [
 					{
 						type: "text",
@@ -299,7 +300,7 @@ const fanoutTool = defineTool({
 							: `Full result:\n\n${summary}`;
 				emitTorusCustom(
 					{
-						customType: "torus.delegation-result",
+						customType: TORUS_MARKER.delegationResult,
 						content: [
 							{
 								type: "text",
@@ -655,7 +656,7 @@ function notifyMemberEpisode(teamId: string, memberId: string): void {
 	// team_delete can still drop it before it reaches pi's one-at-a-time
 	// follow-up queue.
 	deliverWake({
-		customType: "team-wake",
+		customType: MARKER.teamWake,
 		origin: { label: record.name },
 		// Team wakes are marker-only — no desktop toast for the team surface.
 		toast: false,
@@ -737,7 +738,7 @@ async function finishMemberDelegation(
 	}
 	if (suppressed) return;
 	emitTorusCustom({
-		customType: "torus.delegation-result",
+		customType: TORUS_MARKER.delegationResult,
 		content: [
 			{
 				type: "text",
@@ -1070,7 +1071,7 @@ const teamCreateTool = defineTool({
 		}
 		emitTorusCustom(
 			{
-				customType: "torus.delegation-start",
+				customType: TORUS_MARKER.delegationStart,
 				content: [
 					{
 						type: "text",
@@ -1545,7 +1546,7 @@ const teamDeleteTool = defineTool({
 		// markers pi already queued, which drain one turn apiece and read as stale
 		// churn from a deleted team.
 		dropWakeEntries(
-			(entry) => entry.customType === "team-wake" && entry.details?.team === record.name,
+			(entry) => entry.customType === MARKER.teamWake && entry.details?.team === record.name,
 		);
 		for (const member of record.members) {
 			memberControls.delete(member.id);
@@ -1564,7 +1565,7 @@ const teamDeleteTool = defineTool({
 		// team_create's combined start marker).
 		emitTorusCustom(
 			{
-				customType: "torus.delegation-result",
+				customType: TORUS_MARKER.delegationResult,
 				content: [
 					{
 						type: "text",
@@ -1662,7 +1663,7 @@ const teamRespawnTool = defineTool({
 		if (revivedNames.length > 0) {
 			emitTorusCustom(
 				{
-					customType: "torus.delegation-start",
+					customType: TORUS_MARKER.delegationStart,
 					content: [
 						{
 							type: "text",
