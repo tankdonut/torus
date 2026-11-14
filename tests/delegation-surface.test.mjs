@@ -1506,8 +1506,13 @@ test("rehydrate: un-ended runs with a dead child read failed, live ones stay run
 		usage: { input: 7, output: 3 },
 	});
 
+	// These pins are about the fallback's dead/live-child derivation from log
+	// tags, so the runs' store records are removed: without them the demoted
+	// order routes these pre-store-shaped ids through the log scan.
+	rmSync(path.join(HOME, "runs", "rehy-dead.json"), { force: true });
+	rmSync(path.join(HOME, "runs", "rehy-live.json"), { force: true });
 	registry.resetRegistryForTesting();
-	registry.rehydrateFromLogs("sess-rehy");
+	registry.recoverSession("sess-rehy");
 	const records = registry.listDelegations();
 	const deadRec = records.find((r) => r.id.includes("rehy-dead"));
 	const liveRec = records.find((r) => r.id.includes("rehy-live"));
@@ -1517,6 +1522,8 @@ test("rehydrate: un-ended runs with a dead child read failed, live ones stay run
 	assert.equal(deadRec.childPid, dead);
 	assert.equal(liveRec.status, "running", "live child reads running");
 	assert.equal(liveRec.sessionId, "child-rehy-live");
+	rmSync(deadRec.logFile, { force: true });
+	rmSync(liveRec.logFile, { force: true });
 	registry.resetRegistryForTesting();
 });
 
@@ -1530,9 +1537,10 @@ test("rehydrate: a chain walk's session tags recover the last leg", async () => 
 	assert.equal(log.match(/<torus:session /g)?.length, 2);
 
 	registry.resetRegistryForTesting();
-	registry.rehydrateFromLogs("sess-rehy");
+	registry.recoverSession("sess-rehy");
 	const recovered = registry.listDelegations().find((r) => r.id.includes("rehy-legs"));
 	assert.equal(recovered.sessionId, "child-leg-2", "the last leg wins");
+	rmSync(recovered.logFile, { force: true });
 	registry.resetRegistryForTesting();
 });
 
@@ -1561,7 +1569,7 @@ test("session replacement retires the registry; reload keeps it", async () => {
 		"replacement must drop the outgoing session's records",
 	);
 
-	registry.rehydrateFromLogs("sess-incoming");
+	registry.recoverSession("sess-incoming");
 	const rehydrated = registry.listDelegations();
 	assert.equal(
 		rehydrated.find((r) => r.id.includes("incoming-run"))?.parentSession,

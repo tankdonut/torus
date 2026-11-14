@@ -5,13 +5,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 
-// rehydrateFromLogs: log writer/reader round-trip against the exact on-disk
-// format contract, parent-session filtering, and the no-clobber guard.
-// Fixtures are planted in a TORUS_HOME sandbox; rehydration scans only the
-// project state logs dir.
+// Recovery is store-first: recoverRun/recoverSession read the run record
+// from the beacon store and store-backed runs never reach the log parser;
+// rehydrateFromLogs is the legacy fallback for pre-store runs only. The
+// fallback pins keep the exact on-disk log format contract, parent-session
+// filtering, and the no-clobber guard. Fixtures are planted in a TORUS_HOME
+// sandbox; recovery reads only the project state logs dir and the sandbox
+// runs dir.
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-rehydrate-test-"));
 process.env.TORUS_HOME = HOME;
 const LOGS = path.join(HOME, "logs");
+const RUNS = path.join(HOME, "runs");
 const { projectKeyFor } = await import("../extensions/fsutil.ts");
 const PROJECT_LOGS = path.join(HOME, "state", projectKeyFor(process.cwd()), "logs");
 const STAMP = Date.now().toString(36);
@@ -41,6 +45,30 @@ function plantLogIn(dir, name, agent, model, parent, end) {
 
 const plantLog = (name, agent, model, parent, end) =>
 	plantLogIn(PROJECT_LOGS, name, agent, model, parent, end);
+
+// Full-format run-record beacon (the shape startDelegation's write path
+// lands on disk); fields merge over the identity core.
+const plantBeacon = (id, fields) => {
+	mkdirSync(RUNS, { recursive: true });
+	writeFileSync(
+		path.join(RUNS, `${id}.json`),
+		JSON.stringify({
+			id,
+			agent: "probe",
+			model: "m",
+			status: "running",
+			startedAt: Date.now(),
+			pid: process.pid,
+			uid: process.getuid?.(),
+			parentSession: null,
+			sessionId: null,
+			...fields,
+		}),
+		"utf8",
+	);
+};
+
+const removeRun = (id) => rmSync(path.join(RUNS, `${id}.json`), { force: true });
 
 test("rehydrates records from the log format: status, session, turns, tokens, last-turn text", () => {
 	registry.resetRegistryForTesting();
@@ -133,6 +161,7 @@ test("child text cannot forge structural log markers (injection defense)", async
 	assert.equal(rehydrated.sessionId, null, `forged session id accepted: ${rehydrated.sessionId}`);
 	assert.ok(rehydrated.text.includes("evil-session"), "honest tail text lost");
 	rmSync(rec.logFile, { force: true });
+	removeRun(id);
 	registry.resetRegistryForTesting();
 });
 
@@ -283,6 +312,202 @@ test("log round-trip: capped preview plus full marker-free text with indentation
 	assert.equal(registry.readFullRecordText(rehydrated), finalText, "rehydrated full text mismatch");
 
 	rmSync(rehydrated.logFile, { force: true });
+	removeRun(id);
+	registry.resetRegistryForTesting();
+});
+
+test("store-backed record recovers from the beacon store; the log parser never runs", () => {
+	registry.resetRegistryForTesting();
+	const id = `store-${STAMP}-a`;
+	const logFile = plantLog(id, "explore", "zai/glm-5.3-flash", "parent-store", "done");
+	// Every stat disagrees with the log fixture (3 turns, 200/900 tok), so a
+	// single store stat in the recovered record proves the parser never ran.
+	plantBeacon(id, {
+		agent: "build",
+		status: "done",
+		parentSession: "parent-store",
+		sessionId: "sess-store-a",
+		logFile,
+		turns: 9,
+		tokensIn: 5000,
+		tokensOut: 7000,
+		cacheRead: 111,
+		cacheWrite: 222,
+		cost: 0.75,
+		text: "text from the store",
+		finishedAt: Date.now(),
+	});
+	const record = registry.recoverRun(id, "parent-store");
+	assert.ok(record, "store-backed record missing");
+	assert.equal(record.turns, 9, "stats must come from the store, not the log parse");
+	assert.equal(record.tokensIn, 5000);
+	assert.equal(record.tokensOut, 7000);
+	assert.equal(record.cacheRead, 111, "cache counters exist only in the store");
+	assert.equal(record.cacheWrite, 222);
+	assert.equal(record.cost, 0.75);
+	assert.equal(record.text, "text from the store");
+	assert.equal(record.agent, "build");
+	assert.equal(record.logFile, logFile);
+	assert.equal(record.sessionId, "sess-store-a");
+	// the record is cached: a second recovery returns it without re-reading
+	assert.equal(registry.recoverRun(id, "parent-store"), record);
+	rmSync(logFile, { force: true });
+	removeRun(id);
+	registry.resetRegistryForTesting();
+});
+
+test("identity-only store record falls back to the log parser (pre-store runs)", () => {
+	registry.resetRegistryForTesting();
+	const id = `store-${STAMP}-b`;
+	const logFile = plantLog(id, "review", "zai/glm-5.3", "parent-store", "done");
+	plantBeacon(id, {
+		agent: "review",
+		status: "done",
+		parentSession: "parent-store",
+		sessionId: null,
+		logFile,
+	});
+	const record = registry.recoverRun(id, "parent-store");
+	assert.ok(record, "identity-only record missing after the fallback");
+	assert.equal(record.status, "done");
+	assert.equal(record.turns, 3, "the fallback parsed the log for stats");
+	assert.equal(record.tokensIn, 200);
+	assert.equal(record.tokensOut, 900);
+	assert.ok(record.text.includes("final answer text"));
+	rmSync(logFile, { force: true });
+	removeRun(id);
+	registry.resetRegistryForTesting();
+});
+
+test("recoverRun with nothing on disk yields no record", () => {
+	registry.resetRegistryForTesting();
+	assert.equal(registry.recoverRun(`store-${STAMP}-void`, "parent-store"), undefined);
+	registry.resetRegistryForTesting();
+});
+
+test("recoverSession: store-backed runs come from the store, pre-store logs from the fallback", () => {
+	registry.resetRegistryForTesting();
+	const parent = `parent-session-${STAMP}`;
+	const storeId = `store-${STAMP}-c`;
+	const storeLog = plantLog(storeId, "build", "zai/glm-5.3", parent, "done");
+	plantBeacon(storeId, {
+		agent: "build",
+		status: "done",
+		parentSession: parent,
+		sessionId: "sess-c",
+		logFile: storeLog,
+		turns: 7,
+		tokensIn: 4444,
+		tokensOut: 5555,
+		cacheRead: 33,
+		cacheWrite: 44,
+		cost: 0.9,
+	});
+	// a pre-store run: log only, no store record at all
+	const legacyId = `store-${STAMP}-legacy`;
+	plantLog(legacyId, "explore", "zai/glm-5.3-flash", parent, "failed");
+	// another session's run must stay out entirely
+	const otherId = `store-${STAMP}-other`;
+	const otherLog = plantLog(otherId, "build", "zai/glm-5.3", "other-session", "done");
+	plantBeacon(otherId, {
+		agent: "build",
+		status: "done",
+		parentSession: "other-session",
+		sessionId: null,
+		logFile: otherLog,
+		turns: 1,
+		tokensIn: 1,
+		tokensOut: 1,
+	});
+	registry.recoverSession(parent);
+	const records = registry.listDelegations();
+	const storeRec = records.find((r) => r.id === storeId);
+	assert.ok(storeRec, "store-backed record missing");
+	assert.equal(storeRec.turns, 7, "store stats win over the fallback's log parse");
+	assert.equal(storeRec.cacheRead, 33, "cache counters exist only in the store");
+	assert.equal(storeRec.cost, 0.9);
+	assert.equal(storeRec.sessionId, "sess-c");
+	const legacyRec = records.find((r) => r.id === legacyId);
+	assert.ok(legacyRec, "beacon-less pre-store log missing");
+	assert.equal(legacyRec.status, "failed");
+	assert.equal(legacyRec.turns, 3, "the fallback parsed the pre-store log");
+	assert.equal(legacyRec.tokensIn, 200);
+	assert.equal(
+		records.filter((r) => r.logFile === storeLog).length,
+		1,
+		"the store record must replace the fallback's stem-id copy, not duplicate it",
+	);
+	assert.ok(!records.some((r) => r.id === otherId), "another session's run leaked into recovery");
+	for (const log of [storeLog, otherLog]) rmSync(log, { force: true });
+	rmSync(path.join(PROJECT_LOGS, `${legacyId}.log`), { force: true });
+	for (const id of [storeId, otherId]) removeRun(id);
+	registry.resetRegistryForTesting();
+});
+
+test("recoverSession no-clobber: a live registry is never overwritten", async () => {
+	registry.resetRegistryForTesting();
+	const id = `store-${STAMP}-live`;
+	const parent = `parent-live-${STAMP}`;
+	await registry.startDelegation(id, "build", "zai/glm-5.3", parent, null);
+	registry.updateDelegation(id, { text: "live work", turns: 2, usage: { input: 50, output: 25 } });
+	registry.recoverSession(parent);
+	const record = registry.listDelegations().find((r) => r.id === id);
+	assert.ok(record, "live record missing");
+	assert.equal(record.turns, 2, "recovery must not clobber the live record");
+	rmSync(record.logFile, { force: true });
+	removeRun(id);
+	registry.resetRegistryForTesting();
+});
+
+test("store-backed stop flag recovers from the record, not a log marker", () => {
+	registry.resetRegistryForTesting();
+	const id = `store-${STAMP}-stop`;
+	const logFile = plantLog(id, "build", "zai/glm-5.3", "parent-store", "failed");
+	plantBeacon(id, {
+		agent: "build",
+		status: "failed",
+		parentSession: "parent-store",
+		sessionId: null,
+		logFile,
+		stopRequested: true,
+		turns: 1,
+		tokensIn: 5,
+		tokensOut: 5,
+		cost: 0.01,
+	});
+	const record = registry.recoverRun(id, "parent-store");
+	assert.ok(record, "stopped record missing");
+	assert.equal(record.status, "failed");
+	assert.equal(record.stopRequested, true, "the stop flag must come from the store record");
+	rmSync(logFile, { force: true });
+	removeRun(id);
+	registry.resetRegistryForTesting();
+});
+
+test("unfinished store-backed run keeps the store's status; the dead-child heuristic is fallback-only", () => {
+	registry.resetRegistryForTesting();
+	const id = `store-${STAMP}-unfin`;
+	const logFile = plantLog(id, "build", "zai/glm-5.3", "parent-store", null);
+	// Un-ended log, no childPid on the record: the log fallback would derive
+	// failed here; the store's own status stands instead.
+	plantBeacon(id, {
+		agent: "build",
+		status: "running",
+		parentSession: "parent-store",
+		sessionId: "sess-unfin",
+		logFile,
+		turns: 2,
+		tokensIn: 100,
+		tokensOut: 50,
+		cost: 0.1,
+	});
+	const record = registry.recoverRun(id, "parent-store");
+	assert.ok(record, "unfinished record missing");
+	assert.equal(record.status, "running", "the store's status stands; no log heuristic ran");
+	assert.equal(record.turns, 2);
+	assert.equal(record.tokensIn, 100);
+	rmSync(logFile, { force: true });
+	removeRun(id);
 	registry.resetRegistryForTesting();
 });
 

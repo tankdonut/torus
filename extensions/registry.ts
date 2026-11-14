@@ -296,7 +296,7 @@ export function attachControl(id: string, control: DelegationControl): void {
 
 /**
  * Record the run's child pid: set on the record, appended to the log as a
- * <torus:pid> tag (rehydrateFromLogs parses it back), and carried on run
+ * <torus:pid> tag (the log fallback parses it back), and carried on run
  * beacons. A chain walk's model fallbacks respawn children, so a later attach
  * with a different pid replaces the record's value and appends a second tag —
  * rehydrate keeps the last one.
@@ -306,6 +306,10 @@ export function attachChildPid(id: string, pid: number): void {
 	if (!record || record.childPid === pid) return;
 	record.childPid = pid;
 	appendFileSync(record.logFile, `\n<torus:pid pid="${pid}" ts="${new Date().toISOString()}" />\n`);
+	// Unthrottled: child liveness is a resumption-critical field, and the
+	// same-status window could otherwise leave the store without it for the
+	// run's first 10 seconds — exactly the window a crashed run never escapes.
+	writeRunBeacon(recordBeacon(record));
 }
 
 export function stopDelegation(id: string): boolean {
@@ -1016,7 +1020,7 @@ export function attachSessionId(id: string, sessionId: string): void {
 	// A chain walk's respawned children each report their own session id: the
 	// record carries the LATEST leg so the live transcript follows the child
 	// that is doing work instead of staying on a dead early attempt. Every
-	// leg's tag persists in the log so rehydrateFromLogs recovers the last one
+	// leg's tag persists in the log so the log fallback recovers the last one
 	// for an un-ended log (end tags carry the final id, but an orphaned run
 	// never writes one — and spend folding keys on the transcript it names).
 	if (record.sessionId === sessionId) return;
@@ -1025,6 +1029,10 @@ export function attachSessionId(id: string, sessionId: string): void {
 		record.logFile,
 		`\n<torus:session id="${escapeAttr(sessionId)}" ts="${new Date().toISOString()}" />\n`,
 	);
+	// Unthrottled, same reason as attachChildPid: orphan reconciliation keys on
+	// this field, and a run that dies before the next turn write must still
+	// recover it from the store.
+	writeRunBeacon(recordBeacon(record));
 }
 
 export function updateDelegation(
@@ -1290,6 +1298,178 @@ export function rehydrateFromLogs(currentSessionId?: string): void {
 	}
 }
 
+/** A store record is recoverable by this user: untagged, or tagged with our uid — the scan's gate. */
+function ownUidRecord(record: RunRecord): boolean {
+	const uid = process.getuid?.();
+	return !(typeof record.uid === "number" && typeof uid === "number" && record.uid !== uid);
+}
+
+/**
+ * Stats presence is the store-backed marker: identity-only files written by
+ * older binaries carry none, so their runs recover through the log fallback.
+ * Zeroes count — a fresh run's beacon legitimately holds turns 0 — the
+ * trigger is absent fields, never empty ones.
+ */
+function hasRunStats(record: RunRecord): boolean {
+	return (
+		record.turns !== undefined && record.tokensIn !== undefined && record.tokensOut !== undefined
+	);
+}
+
+/**
+ * A recovered store record as a registry-cache DelegationRecord. paneId is
+ * always dropped: the pane lived in the writer process and died with it.
+ */
+function beaconToRecord(beacon: RunRecord): DelegationRecord {
+	return {
+		id: beacon.id,
+		agent: beacon.agent,
+		model: beacon.model,
+		handle: normalizeHandle(beacon.handle),
+		status: beacon.status,
+		startedAt: beacon.startedAt,
+		...(beacon.finishedAt !== undefined ? { finishedAt: beacon.finishedAt } : {}),
+		turns: beacon.turns ?? 0,
+		tokensIn: beacon.tokensIn ?? 0,
+		tokensOut: beacon.tokensOut ?? 0,
+		cacheRead: beacon.cacheRead ?? 0,
+		cacheWrite: beacon.cacheWrite ?? 0,
+		cost: beacon.cost ?? 0,
+		text: beacon.text ?? "",
+		...(beacon.textTruncated !== undefined ? { textTruncated: beacon.textTruncated } : {}),
+		logFile: beacon.logFile ?? "",
+		sessionId: beacon.sessionId,
+		parentSession: beacon.parentSession,
+		project: beacon.project,
+		paneId: null,
+		...(beacon.childPid !== undefined ? { childPid: beacon.childPid } : {}),
+		...(beacon.stopRequested ? { stopRequested: true } : {}),
+		...(beacon.source !== undefined ? { source: beacon.source } : {}),
+		...(beacon.label !== undefined ? { label: beacon.label } : {}),
+		...(beacon.memberStatus !== undefined ? { memberStatus: beacon.memberStatus } : {}),
+		...(beacon.activeSeconds !== undefined ? { activeSeconds: beacon.activeSeconds } : {}),
+		...(beacon.activeUpdatedAt !== undefined ? { activeUpdatedAt: beacon.activeUpdatedAt } : {}),
+	};
+}
+
+/** Land a recovered store record in the registry cache and notify, as the log scan does. */
+function cacheRecoveredRecord(beacon: RunRecord): DelegationRecord {
+	const record = beaconToRecord(beacon);
+	registry.set(record.id, record);
+	notifyUsageChange(record);
+	return record;
+}
+
+/**
+ * The first log in the project logs dir that belongs to the session but has
+ * no run record in the store: a pre-store run whose beacon never existed or
+ * was pruned with the 7-day finished horizon. Head probe only — the full
+ * parse is the log fallback's job.
+ */
+function firstBeaconlessSessionRun(sessionId: string, knownStems: Set<string>): string | null {
+	let files: string[];
+	try {
+		files = readdirSync(logsDir())
+			.filter((file) => file.endsWith(".log"))
+			.sort()
+			.reverse();
+	} catch {
+		return null;
+	}
+	for (const file of files) {
+		const stem = path.basename(file, ".log");
+		if (knownStems.has(stem)) continue;
+		const head = readHead(path.join(logsDir(), file), REHYDRATE_HEAD_BYTES);
+		const start = head === null ? null : parseTagStart(head);
+		if (start && (start.groups.parent ?? null) === sessionId) return stem;
+	}
+	return null;
+}
+
+/**
+ * The un-zeroed store record for the recovery gate: loadRunRecord fills
+ * absent stats with 0, which would erase exactly the identity-only signal
+ * the fallback trigger reads.
+ */
+function rawRunRecord(id: string): RunRecord | undefined {
+	try {
+		const record = JSON.parse(readFileSync(beaconFile(id), "utf8")) as RunRecord;
+		return record.id === id ? record : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Store-first recovery for one run. A live record is returned untouched:
+ * memory is fresher than the throttled store write. Otherwise the beacon
+ * store's stats-bearing record of ours is the primary path and the log
+ * parser never runs for it. The log scan is the legacy fallback for pre-store
+ * runs only: an identity-only store record, or no store record at all once
+ * finished beacons prune. The scan's own no-clobber guard keeps that a no-op
+ * once anything is cached — pre-store recovery is a session-start shape,
+ * where the registry is still empty.
+ */
+export function recoverRun(id: string, sessionId?: string): DelegationRecord | undefined {
+	const live = registry.get(id);
+	if (live) return live;
+	const disk = rawRunRecord(id);
+	if (disk && hasRunStats(disk) && ownUidRecord(disk) && disk.logFile) {
+		return cacheRecoveredRecord(disk);
+	}
+	rehydrateFromLogs(sessionId);
+	return registry.get(id);
+}
+
+/**
+ * Session-start recovery, store-first. Every stats-bearing run record of the
+ * session lands in the registry cache from the beacon store and never
+ * touches the log parser; pre-store runs (identity-only beacons, or logs with
+ * no store record) recover through the log scan via recoverRun's single
+ * fallback call, keyed on an identity-only beacon or a beacon-less session
+ * log. A live foreign run is skipped from the cache — its external row
+ * renders it, exactly as the log scan's live-beacon rule does.
+ *
+ * The store records land AFTER the fallback pass on purpose: the pass is a
+ * whole-session scan and also parses store-backed logs, so caching last
+ * means the store's copy wins and its cache counters — which exist only in
+ * the store — survive even a mixed-session fallback.
+ */
+export function recoverSession(sessionId: string): void {
+	// Same guard as the log scan: a live registry (reload keeps its records)
+	// is never overwritten by recovery.
+	if (registry.size > 0) return;
+	const beacons = readRunBeacons().filter((record) => record.parentSession === sessionId);
+	const storeBacked = beacons.filter((record) => hasRunStats(record) && record.logFile);
+	// The log scan derives ids from log filename stems, which differ from a
+	// store record's id — a run's log stem is <ts>-<id>-<agent>. So the
+	// beacon-less probe keys on the session beacons' logFile stems, and the
+	// store phase below replaces any stem-id copy the fallback pass made of a
+	// store-backed run.
+	const knownStems = new Set(
+		beacons.flatMap((record) =>
+			typeof record.logFile === "string" && record.logFile.length > 0
+				? [path.basename(record.logFile, ".log")]
+				: [],
+		),
+	);
+	const preStoreId =
+		beacons.find((record) => !hasRunStats(record))?.id ??
+		firstBeaconlessSessionRun(sessionId, knownStems);
+	if (typeof preStoreId === "string") recoverRun(preStoreId, sessionId);
+	for (const beacon of storeBacked) {
+		if (beacon.status === "running" && beacon.pid !== process.pid && pidAlive(beacon.pid)) {
+			continue;
+		}
+		for (const [existingId, existing] of registry) {
+			if (existingId !== beacon.id && existing.logFile === beacon.logFile) {
+				registry.delete(existingId);
+			}
+		}
+		cacheRecoveredRecord(beacon);
+	}
+}
+
 interface StartFields {
 	groups: {
 		ts: string;
@@ -1374,7 +1554,8 @@ export async function registryShutdown(reason: SessionEndReason = "quit"): Promi
 /**
  * Keep at most the FINISHED_RECORDS_LIMIT most recent finished records in the
  * registry — running records always stay, and evicted history remains
- * reconstructible from the log files on the next resume.
+ * reconstructible from the run store on the next resume (the log scan covers
+ * pre-store runs).
  */
 function evictFinishedRecords(): void {
 	const finished = [...registry.values()]

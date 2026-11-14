@@ -75,9 +75,9 @@ import {
 	pidAlive,
 	RECORD_TEXT_CAP,
 	readFullRecordText,
+	recoverSession,
 	redactSecrets,
 	registryShutdown,
-	rehydrateFromLogs,
 	repoRoot,
 	setCurrentSession,
 	setCustomSender,
@@ -2083,7 +2083,7 @@ export function registerRoster(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
 		setCurrentSession(sessionId);
-		rehydrateFromLogs(sessionId);
+		recoverSession(sessionId);
 		void reconcileOrphanedDelegations();
 		drainWakeSpool(sessionId);
 		// Stale-scratch sweep is best-effort — it must never break session start.
