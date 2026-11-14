@@ -20,7 +20,6 @@ import {
 	listExternalRuns,
 	listTeams,
 	registerTeam as registerTeamRecord,
-	sharedState,
 	startDelegation,
 	type TeamRecord,
 	updateDelegation,
@@ -37,6 +36,15 @@ import {
 	runDelegation,
 	withWarning,
 } from "../roster/index.js";
+import {
+	MEMBER_DELIBERATE_STOPS_KEY,
+	MEMBER_GENERATIONS_KEY,
+	MEMBER_HAS_NEWS_KEY,
+	MEMBER_SPAWNER_KEY,
+	sharedState,
+	TEAM_CONTROLS_KEY,
+	TEAM_RESULT_MARKERS_SUPPRESSED_KEY,
+} from "../shared-state.js";
 import { deliverWake, dropWakeEntries, torusWake, wakeGateFlushForTesting } from "../wake-gate.js";
 import {
 	blockedTasks,
@@ -598,22 +606,13 @@ const chainTool = defineTool({
 	},
 });
 
-const memberControls = sharedState(
-	Symbol.for("torus.team-controls.v1"),
-	() => new Map<string, MemberHandle>(),
-);
+const memberControls = sharedState(TEAM_CONTROLS_KEY, () => new Map<string, MemberHandle>());
 
 /** Members marked for deliberate shutdown (team_delete / fleet stop); other stops surface as failures. */
-const deliberateStops = sharedState(
-	Symbol.for("torus.member-deliberate-stops.v1"),
-	() => new Set<string>(),
-);
+const deliberateStops = sharedState(MEMBER_DELIBERATE_STOPS_KEY, () => new Set<string>());
 
 /** Supervisor generation per member id: a respawn invalidates the prior closure's registry writes. */
-const memberGenerations = sharedState(
-	Symbol.for("torus.member-generations.v1"),
-	() => new Map<string, number>(),
-);
+const memberGenerations = sharedState(MEMBER_GENERATIONS_KEY, () => new Map<string, number>());
 
 /**
  * Per-member wake-up state: teams are pull-based, so nothing pushes member
@@ -622,10 +621,7 @@ const memberGenerations = sharedState(
  * The news latch re-arms on the next report; bootstrap "ready" handshakes
  * never arm it (team-runtime passes the phase).
  */
-const memberHasNews = sharedState(
-	Symbol.for("torus.member-has-news.v1"),
-	() => new Map<string, boolean>(),
-);
+const memberHasNews = sharedState(MEMBER_HAS_NEWS_KEY, () => new Map<string, boolean>());
 
 /**
  * Per-member wake-up: one gate entry per idle/stopped episode with an unread
@@ -694,7 +690,7 @@ function outboxTail(member: { mailboxDir: string }): string {
 }
 
 export type MemberSpawner = typeof spawnMember;
-const spawnerState = sharedState(Symbol.for("torus.member-spawner.v1"), () => ({
+const spawnerState = sharedState(MEMBER_SPAWNER_KEY, () => ({
 	spawn: spawnMember as MemberSpawner,
 }));
 
@@ -716,7 +712,7 @@ export function flushTeamWakesForTesting(): void {
  */
 /** Members whose per-member result marker is suppressed because a batch caller (team_delete) emits one combined marker. */
 const suppressedResultMarkers = sharedState(
-	Symbol.for("torus.team-result-markers-suppressed.v1"),
+	TEAM_RESULT_MARKERS_SUPPRESSED_KEY,
 	() => new Set<string>(),
 );
 

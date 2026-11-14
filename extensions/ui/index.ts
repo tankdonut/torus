@@ -27,12 +27,18 @@ import { formatCost } from "../fsutil.js";
 import { connectedServerCount, mcpStatusText } from "../mcp/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { providerAvailabilities } from "../providers/index.js";
+import { type DelegationRecord, onDelegationUsageChange, sessionPersona } from "../registry.js";
 import {
-	type DelegationRecord,
-	onDelegationUsageChange,
-	sessionPersona,
+	CHIPS_KEY,
+	CHIPS_REPAINT_KEY,
+	FLEET_SPEND_KEY,
+	LSP_TEXT_KEY,
+	MODEL_STATE_KEY,
+	PERMISSION_KEY,
+	STATUS_WRAP_MARK,
+	setSharedState,
 	sharedState,
-} from "../registry.js";
+} from "../shared-state.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
@@ -66,9 +72,6 @@ const DOCK_GAP_WIDGET_KEY = "torus-dock-gap";
 
 /** pi-lsp-client's ctx.ui.setStatus key (sha-pinned upstream; a rename degrades to the footer chip). */
 const LSP_STATUS_KEY = "pi-lsp";
-/** The absorbed lsp display text: on the Symbol.for global, not module state, so every ui module instance renders it. */
-const LSP_TEXT_KEY = Symbol.for("torus.statusline.lsp.v1");
-const STATUS_WRAP_MARK = Symbol.for("torus.status-absorb.v1");
 
 function lspText(): string | undefined {
 	return (globalThis as Record<symbol, unknown>)[LSP_TEXT_KEY] as string | undefined;
@@ -76,15 +79,6 @@ function lspText(): string | undefined {
 
 /** Persistent session-cost chip key; `torus:`-prefixed like the delegation markers. */
 export const COST_STATUS_KEY = "torus:cost";
-
-/**
- * The torus statusline chips live on a Symbol.for global, not module state:
- * pi gives each extension file its own module instance of this file, so
- * instance-local chips would vanish or split across instances. Undefined
- * removes a chip; the store re-renders through the widget's repaint hook.
- */
-const CHIPS_KEY = Symbol.for("torus.statusline.chips.v1");
-const CHIPS_REPAINT_KEY = Symbol.for("torus.statusline.repaint.v1");
 
 function chipsStore(): Map<string, string> {
 	const store = globalThis as Record<symbol, unknown>;
@@ -132,8 +126,10 @@ function installLspStatusAbsorb(ui: ExtensionContext["ui"]): void {
 	const forward: (key: string, text: string | undefined) => void = setStatus.bind(ui);
 	const wrapped = (key: string, text: string | undefined): void => {
 		if (key === LSP_STATUS_KEY) {
-			(globalThis as Record<symbol, unknown>)[LSP_TEXT_KEY] =
-				text === undefined ? undefined : text.replaceAll("LSP ", "lsp:");
+			setSharedState(
+				LSP_TEXT_KEY,
+				text === undefined ? undefined : text.replaceAll("LSP ", "lsp:"),
+			);
 			if (ctxForStatusRefresh) refreshToruStatus(ctxForStatusRefresh);
 			forward(key, undefined);
 			return;
@@ -222,11 +218,8 @@ function statuslineCostSuppressed(): boolean {
  * Fleet spend per session: every registry run the session dispatched
  * (delegations, team members), folded per-record as a cost delta because
  * finished records evict from the registry — once a delta is folded the
- * total stands even after the record is gone. Symbol.for shared state for
- * the same reason the chip store is one: every ui module instance must see
- * the same numbers.
+ * total stands even after the record is gone.
  */
-const FLEET_SPEND_KEY = Symbol.for("torus.statusline.fleet-spend.v1");
 type FleetSpendState = Map<string, { spend: number; seen: Map<string, number> }>;
 
 function fleetSpendStore(): FleetSpendState {
@@ -312,7 +305,6 @@ function seedSessionCost(ctx: ExtensionContext): void {
  * session_start carries the engine's transient "unknown" model never
  * re-seeds here). The chip store already survives rebinds the same way.
  */
-const MODEL_STATE_KEY = Symbol.for("torus.statusline.model-state.v1");
 type ModelState = { model?: string; effort?: string; provider?: string };
 function modelState(): ModelState {
 	return sharedState(MODEL_STATE_KEY, () => ({}));
@@ -332,13 +324,7 @@ let mcpPollTimer: ReturnType<typeof setInterval> | undefined;
 export type GoalChip = "active" | "paused";
 let goalChip: GoalChip | undefined;
 
-/**
- * Permission-mode chip state pushed by the automode extension. Lives on a
- * Symbol.for global, not module state: pi gives each extension file its own
- * module instance of this file, and an instance-local chip would vanish the
- * next time a different instance repaints the torus segment.
- */
-const PERMISSION_KEY = Symbol.for("torus.status.permission.v1");
+/** Permission-mode chip state pushed by the automode extension. */
 type PermissionChip = { kind: "default" | "auto" | "bypass"; degraded: boolean };
 
 function permissionChip(): PermissionChip | undefined {
@@ -353,10 +339,10 @@ function permissionChip(): PermissionChip | undefined {
  * rides `/automode auto|default`.
  */
 export function setStatusPermission(mode: "auto" | "default" | "bypass", degraded = false): void {
-	(globalThis as Record<symbol, unknown>)[PERMISSION_KEY] = {
+	setSharedState(PERMISSION_KEY, {
 		kind: mode,
 		degraded: mode === "auto" && degraded,
-	};
+	});
 }
 
 /**
@@ -818,7 +804,7 @@ export function registerUi(pi: ExtensionAPI): void {
 		seedSessionCost(ctx);
 		paintSessionCost(ctx);
 		ctx.ui.setWidget(STATUSLINE_WIDGET_KEY, (tui, theme) => {
-			(globalThis as Record<symbol, unknown>)[CHIPS_REPAINT_KEY] = () => tui.requestRender();
+			setSharedState(CHIPS_REPAINT_KEY, () => tui.requestRender());
 			return createTorusStatusline(theme);
 		});
 		// Re-register the fleet strip after the chip rows: widget insertion

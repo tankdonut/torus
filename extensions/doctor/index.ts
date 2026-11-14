@@ -15,6 +15,7 @@ import { runChild } from "../child-run.js";
 import { type StatusState, statusGlyphText } from "../fleet/theme-kit.js";
 import { torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport, platformDecisions } from "../platform.js";
+import { SANDBOX_SLOT } from "../shared-state.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin", "win32"],
@@ -57,8 +58,6 @@ function which(bin: string): boolean {
 	whichCache.set(bin, found);
 	return found;
 }
-
-const SANDBOX_SLOT = Symbol.for("torus.sandbox.v1");
 
 type SandboxShared = { state: { mode: "off" | "full"; active: boolean } };
 

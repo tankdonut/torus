@@ -15,6 +15,8 @@
  * too — an honest fail-safe rather than a silent linux assumption.
  */
 
+import { PLATFORM_SLOT, setSharedState, sharedState } from "./shared-state.js";
+
 export type Platform = "linux" | "darwin" | "win32";
 
 export type ExtensionDep = { name: string; required: boolean; note?: string };
@@ -40,12 +42,13 @@ type PlatformRegistry = {
 
 const KNOWN_PLATFORMS: readonly Platform[] = ["linux", "darwin", "win32"];
 const known = new Set<string>(KNOWN_PLATFORMS);
-const SLOT = Symbol.for("torus.platform.v1");
 
 function registry(): PlatformRegistry {
-	const store = globalThis as Record<symbol, PlatformRegistry | undefined>;
-	store[SLOT] ??= { decisions: [], noticed: new Set(), warned: new Set() };
-	return store[SLOT];
+	return sharedState(PLATFORM_SLOT, () => ({
+		decisions: [],
+		noticed: new Set(),
+		warned: new Set(),
+	}));
 }
 
 function warnOnce(key: string, message: string): void {
@@ -105,6 +108,5 @@ export function isEngineChild(): boolean {
 
 /** Reset the shared registry so tests start from a clean slot. */
 export function resetPlatformRegistryForTests(): void {
-	const store = globalThis as Record<symbol, PlatformRegistry | undefined>;
-	store[SLOT] = { decisions: [], noticed: new Set(), warned: new Set() };
+	setSharedState(PLATFORM_SLOT, { decisions: [], noticed: new Set(), warned: new Set() });
 }

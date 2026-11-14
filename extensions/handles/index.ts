@@ -32,6 +32,7 @@ import {
 import { entityColor } from "../fleet/theme-kit.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { listDelegations, listTeams, steerDelegation } from "../registry.js";
+import { THEME_SLOT } from "../shared-state.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin", "win32"],
@@ -244,9 +245,6 @@ export function colorizeMentions(
 	}
 	return chunks.join("```");
 }
-
-/** The active session's theme, stashed on a Symbol.for slot so the markdown transformer (no theme argument) can style mentions. */
-const THEME_SLOT = Symbol.for("torus.handles.theme.v1");
 
 type PainterTheme = ExtensionContext["ui"]["theme"];
 

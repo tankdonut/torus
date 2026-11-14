@@ -19,6 +19,7 @@ import { flattenPreview } from "../fleet/theme-kit.js";
 import { projectStateDir } from "../fsutil.js";
 import { MARKER } from "../markers.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
+import { BG_KEY, MONITORS_KEY } from "../shared-state.js";
 import { deliverWake, torusWake } from "../wake-gate.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
@@ -53,8 +54,6 @@ interface MonitorEntry {
 	/** In-flight check promise: guards against overlapping ticks, and awaitable by tests. */
 	checkPromise: Promise<void> | null;
 }
-
-const MONITORS_KEY = Symbol.for("torus.monitors");
 
 function monitors(): Map<string, MonitorEntry> {
 	const existing = (globalThis as Record<symbol, unknown>)[MONITORS_KEY] as
@@ -203,8 +202,6 @@ interface BgEntry {
 	killTimer: ReturnType<typeof setTimeout> | null;
 	closePromise: Promise<void>;
 }
-
-const BG_KEY = Symbol.for("torus.bg.v1");
 
 function bgTasks(): Map<string, BgEntry> {
 	const existing = (globalThis as Record<symbol, unknown>)[BG_KEY] as

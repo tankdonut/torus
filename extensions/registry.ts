@@ -26,6 +26,19 @@ import {
 	writeJson,
 } from "./fsutil.js";
 import { type DelegationToastInfo, notifyDelegation, RUNNING_LATE_MS } from "./osnotify.js";
+import {
+	CONTROLS_KEY,
+	CURRENT_SESSION,
+	CUSTOM_SENDER_KEY,
+	OBSERVERS_KEY,
+	PERSONA_KEY,
+	REGISTRY_KEY,
+	setSharedState,
+	sharedState,
+	TEAMS_KEY,
+} from "./shared-state.js";
+
+export { CURRENT_SESSION, FLEET_OPENER } from "./shared-state.js";
 
 export interface DelegationRecord {
 	id: string;
@@ -151,25 +164,8 @@ export function recentLogFiles(n: number): string[] {
 		.map((file) => path.join(logsDir(), file));
 }
 
-/**
- * pi loads each manifest extension entry with its own module root, so a plain
- * module-level Map would be a DIFFERENT instance per entry (observed: the
- * browser entry saw an empty registry while the roster entry populated
- * another). State that must cross entries lives on globalThis instead.
- */
-export function sharedState<T>(key: symbol, init: () => T): T {
-	const store = globalThis as Record<symbol, unknown>;
-	const existing = store[key] as T | undefined;
-	if (existing !== undefined) return existing;
-	const created = init();
-	store[key] = created;
-	return created;
-}
-
-const REGISTRY_KEY = Symbol.for("torus.delegation-registry");
 const registry = sharedState(REGISTRY_KEY, () => new Map<string, DelegationRecord>());
 
-const OBSERVERS_KEY = Symbol.for("torus.delegation-observers");
 const usageObservers = sharedState(
 	OBSERVERS_KEY,
 	() => new Set<(record: DelegationRecord) => void>(),
@@ -197,26 +193,15 @@ function notifyUsageChange(record: DelegationRecord): void {
 	}
 }
 
-const CONTROLS_KEY = Symbol.for("torus.delegation-controls");
 const controls = sharedState(CONTROLS_KEY, () => new Map<string, DelegationControl>());
-
-const PERSONA_KEY = Symbol.for("torus.session-persona");
 
 export function sessionPersona(): string | null {
 	return sharedState<string | null>(PERSONA_KEY, () => null);
 }
 
 export function setSessionPersona(name: string | null): void {
-	(globalThis as Record<symbol, unknown>)[PERSONA_KEY] = name;
+	setSharedState(PERSONA_KEY, name);
 }
-
-/** Shared slot for the current session id, written on session_start. */
-export const CURRENT_SESSION = Symbol.for("torus.current-session");
-
-/** Shared slot for the fleet-overlay opener the notify layer clicks into. */
-export const FLEET_OPENER = Symbol.for("torus.fleet-opener");
-
-const CUSTOM_SENDER_KEY = Symbol.for("torus.custom-sender");
 
 export interface TorusCustomMessage {
 	customType: string;
@@ -278,7 +263,7 @@ export function currentSessionId(): string | null {
 }
 
 export function setCurrentSessionId(id: string | null): void {
-	(globalThis as Record<symbol, unknown>)[CURRENT_SESSION] = id;
+	setSharedState(CURRENT_SESSION, id);
 }
 
 export interface DelegationControl {
@@ -746,19 +731,17 @@ export function listExternalRuns(): RunRecordView[] {
 	return [...local.values(), ...foreignOnly].sort((a, b) => b.startedAt - a.startedAt);
 }
 
-const CURRENT_SESSION_KEY = Symbol.for("torus.current-session");
-
 /**
  * Foreign run-beacons are session-scoped: without this marker every torus
  * process would surface every other process's delegations in its fleet.
  * Null (headless/tests) preserves the unfiltered scan for compatibility.
  */
 export function setCurrentSession(id: string | null): void {
-	(globalThis as Record<symbol, unknown>)[CURRENT_SESSION_KEY] = id;
+	setSharedState(CURRENT_SESSION, id);
 }
 
 export function getCurrentSession(): string | null {
-	const id = (globalThis as Record<symbol, unknown>)[CURRENT_SESSION_KEY];
+	const id = (globalThis as Record<symbol, unknown>)[CURRENT_SESSION];
 	return typeof id === "string" ? id : null;
 }
 
@@ -784,8 +767,6 @@ export interface TeamRecord {
 	members: TeamMemberRecord[];
 	createdAt: number;
 }
-
-const TEAMS_KEY = Symbol.for("torus.teams.v1");
 
 function teams(): Map<string, TeamRecord> {
 	return sharedState(TEAMS_KEY, () => new Map<string, TeamRecord>());

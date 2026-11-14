@@ -55,6 +55,7 @@ import {
 import { isBypassMode } from "../automode/config.js";
 import { scratchDir, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
+import { SANDBOX_SLOT } from "../shared-state.js";
 import { setTorusChip } from "../ui/index.js";
 import {
 	askNetworkTrust,
@@ -410,9 +411,6 @@ export async function activateSandbox(
 	return { mode: "full", active: true };
 }
 
-const SANDBOX_SLOT = Symbol.for("torus.sandbox.v1");
-
-/** Shared via globalThis: pi gives each extension entry its own module root, so plain module state is invisible to /doctor. */
 function sharedSandboxState(): { state: SandboxState } {
 	const store = globalThis as Record<symbol, { state: SandboxState } | undefined>;
 	const existing = store[SANDBOX_SLOT];

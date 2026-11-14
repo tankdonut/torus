@@ -14,7 +14,8 @@ import { projectStateDir } from "./fsutil.js";
 import { markerType, parseMarkerType, TORUS_MARKER, type WakeMarkerType } from "./markers.js";
 import { osNotify, wakeToast } from "./osnotify.js";
 import { isEngineChild } from "./platform.js";
-import { currentSessionId, emitTorusCustom, sharedState } from "./registry.js";
+import { currentSessionId, emitTorusCustom } from "./registry.js";
+import { sharedState, WAKE_GATE_KEY } from "./shared-state.js";
 
 /** Optional segments for torusWake(); every absent segment leaves no empty parens or dashes. */
 export interface TorusWakeOpts {
@@ -119,7 +120,7 @@ interface WakeGateState {
  * into the transcript at the next session_start instead of vanishing.
  */
 const gateState = sharedState(
-	Symbol.for("torus.wake-gate.v1"),
+	WAKE_GATE_KEY,
 	(): WakeGateState => ({
 		pending: [],
 		agentActive: false,

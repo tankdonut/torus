@@ -10,6 +10,7 @@ import { Type } from "typebox";
 import { projectStateDir, pruneOrphanSessionFiles, readJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { sessionFileExists } from "../sessions/index.js";
+import { CURRENT_SESSION, setSharedState } from "../shared-state.js";
 import { setTorusChip } from "../ui/index.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
@@ -18,7 +19,6 @@ const STRIKE_ON = "\x1b[9m";
 const STRIKE_OFF = "\x1b[29m";
 
 const ORPHAN_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const SESSION_KEY = Symbol.for("torus.current-session");
 
 /** Paraphrase match floor for containment similarity between two items. */
 const MATCH_FLOOR = 0.8;
@@ -245,10 +245,10 @@ export function todoContextBlock(sessionId: string | null): string {
 function currentSession(ctx?: ExtensionContext): string | null {
 	if (ctx) {
 		const id = ctx.sessionManager.getSessionId();
-		(globalThis as Record<symbol, unknown>)[SESSION_KEY] = id;
+		setSharedState(CURRENT_SESSION, id);
 		return id;
 	}
-	return ((globalThis as Record<symbol, unknown>)[SESSION_KEY] as string | null) ?? null;
+	return ((globalThis as Record<symbol, unknown>)[CURRENT_SESSION] as string | null) ?? null;
 }
 
 function chipText(state: TodoState): string | undefined {
