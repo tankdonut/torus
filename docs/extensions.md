@@ -642,6 +642,21 @@ A `torus:worktree` statusline chip counts this session's live worktrees as `wt:N
 
 Same graceful shutdown as `/quit`, so `session_shutdown` events and extension disposal still fire.
 
+### `incognito`
+
+Memoryless sessions: `torus --incognito` (or `TORUS_INCOGNITO=1`) disables memory reflection and dreaming and sweeps the project state dir's derived artifacts on exit, including undelivered wake markers. Opt-in per session; a run launched without the flag writes everything normally.
+
+- **Commands:** `/incognito` (outside the mode: refuses with a restart hint; inside it: reports what the sweep removes)
+
+What the mode does:
+
+- Memory's dream consolidation and idle reflection gate off, and manual `/reflect` refuses. Dream/reflect work that was already in flight when the mode matters (a resumed incognito session) is also swept: the memory paths re-check the flag parent-side after a dreamer returns, so no proposal written after the check survives to the next session.
+- On session start and on shutdown, the incognito sweep deletes the project state dir's `logs` (delegation logs), `monitors`, `bg`, `reflect-state`, `plans`, `work`, `goal`, `todo`, and `wake-spool` directories. The rest are exactly the artifacts pi's session-search tools read, so anything left would keep the session's activity searchable; the wake spool holds undelivered result tails that would otherwise flush into a later session.
+- Two things are deliberately never swept: pi's own session transcript (pi rewrites it on every turn, so deleting it mid-run corrupts the session; deleting it on exit is the harness's call, not torus's), and the state-dir `child-sessions` root (live children still write there; the child-sessions layout already keeps those transcripts out of pi's default `/resume` tree). Run-record beacons under `~/.torus/runs` are identity-only (agent names and token counts, no task text) and stay for fleet bookkeeping.
+- Sweeps are best-effort and idempotent: every target is removed independently, survivors are reported, and repeated sweeps (start, finish-time, shutdown) are no-ops on empty dirs.
+
+The launcher strips the flag from the engine argv and exports `TORUS_INCOGNITO=1` for the session (the flag overrides a pre-set env value), mirroring `--permission-mode`. Inside the mode, a sweep fires when each delegation finishes (its log goes immediately, so a crash never leaves that session's logs behind) and on reflection completion; the shutdown sweep catches everything else.
+
 ### `session-title`
 
 Auto-naming via the same surface `/name` and `--name` use (`pi.setSessionName`), modeled on OpenCode's hidden title agent.

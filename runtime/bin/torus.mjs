@@ -28,6 +28,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { extractIncognito } from "./incognito.mjs";
 import { extractPayload, readMarker, readMarkerDeps, verifyExtracted } from "./payload-extract.mjs";
 import { extractPermissionMode } from "./permission-mode.mjs";
 import { extractTree } from "./untar.mjs";
@@ -290,6 +291,7 @@ function torusHelp(versionLine) {
 		"Usage:",
 		"  torus [options] [--] [@files...] [messages]    engine session (default)",
 		"  torus --permission-mode <auto|default|bypass>         start in a permission mode (sets TORUS_PERMISSION_MODE for the session; bypass disables all permission guards and is startup-only)",
+		"  torus --incognito                                     memoryless session: no reflection or dreaming, logs swept on exit (sets TORUS_INCOGNITO for the session)",
 		"  torus serve                                    authenticated HTTP server",
 		"  torus acp-agent                                ACP v1 agent over stdio",
 		"  torus config status                           report the unified config's effective state",
@@ -419,12 +421,17 @@ if (argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
 // and export the mode as TORUS_PERMISSION_MODE for the session (flag overrides
 // a pre-set env value). Subcommand dispatch above matched on argv[0] only, so
 // a flag before `serve`/`acp-agent` already fell through to this path.
-const { argv: engineArgv, mode, error } = extractPermissionMode(argv);
+let { argv: engineArgv, mode, error } = extractPermissionMode(argv);
 if (error) {
 	process.stderr.write(`torus: --permission-mode: ${error}\n`);
 	process.exit(2);
 }
 if (mode !== undefined) process.env["TORUS_PERMISSION_MODE"] = mode;
+// Incognito rides the same passthrough: extract the flag wherever it sits and
+// export TORUS_INCOGNITO for the session (the flag overrides a pre-set value).
+const incognito = extractIncognito(engineArgv);
+engineArgv = incognito.argv;
+if (incognito.sawFlag) process.env["TORUS_INCOGNITO"] = "1";
 
 /**
  * `npm ci` installs the engine only from a lock generated for this payload

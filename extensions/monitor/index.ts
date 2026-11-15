@@ -17,6 +17,7 @@ import { runChild } from "../child-run.js";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { flattenPreview } from "../fleet/theme-kit.js";
 import { projectStateDir } from "../fsutil.js";
+import { incognitoActive, incognitoSweep } from "../incognito.js";
 import { MARKER } from "../markers.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { BG_KEY, MONITORS_KEY } from "../shared-state.js";
@@ -527,6 +528,7 @@ export function registerMonitor(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", () => {
 		for (const name of [...monitors().keys()]) stopMonitor(name);
 		for (const entry of [...bgTasks().values()]) killBg(entry);
+		if (incognitoActive()) incognitoSweep();
 	});
 }
 

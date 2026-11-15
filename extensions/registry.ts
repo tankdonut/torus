@@ -1049,6 +1049,10 @@ export async function finishDelegation(
 	notifyUsageChange(record);
 	evictFinishedRecords();
 	await killPane(paneId);
+	if (incognitoFlag()) {
+		const { incognitoSweep } = await import("./incognito.js");
+		incognitoSweep();
+	}
 	return record;
 }
 
@@ -1465,6 +1469,11 @@ export type SessionEndReason = "quit" | "reload" | "new" | "resume" | "fork";
  * session's own logs. Reload keeps the registry: same session, and its
  * in-flight records stay live.
  */
+/** Incognito probe for finish-time sweeps; process.argv is a direct-engine fallback when no launcher env is set. */
+function incognitoFlag(): boolean {
+	return (process.env["TORUS_INCOGNITO"] ?? "") === "1" || process.argv.includes("--incognito");
+}
+
 export async function registryShutdown(reason: SessionEndReason = "quit"): Promise<void> {
 	for (const late of lateToasts.values()) {
 		if (late.timer) clearTimeout(late.timer);
@@ -1481,6 +1490,10 @@ export async function registryShutdown(reason: SessionEndReason = "quit"): Promi
 		}
 	}
 	await Promise.all(paneIds.map((paneId) => killPane(paneId)));
+	if (incognitoFlag()) {
+		const { incognitoSweep } = await import("./incognito.js");
+		incognitoSweep();
+	}
 	if (reason === "new" || reason === "resume" || reason === "fork") {
 		registry.clear();
 	}

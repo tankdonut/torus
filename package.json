@@ -41,6 +41,7 @@
       "./extensions/work",
       "./extensions/worktrees",
       "./extensions/exit",
+      "./extensions/incognito",
       "./extensions/session-title",
       "./extensions/ask",
       "./extensions/ui",

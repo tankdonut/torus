@@ -17,6 +17,7 @@ import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { flattenPreview } from "../fleet/theme-kit.js";
 import { parseFrontmatter } from "../frontmatter.js";
 import { readJson, splitList, torusHome, writeJson } from "../fsutil.js";
+import { incognitoActive, incognitoSweep } from "../incognito.js";
 import { TORUS_MARKER } from "../markers.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { gcReflectState, readReflectState, writeReflectState } from "../reflect-state.js";
@@ -1198,6 +1199,21 @@ let reflectTimer: ReturnType<typeof setTimeout> | null = null;
 let settleCount = 0;
 let reflectInFlight = false;
 
+/** Test-only gate counter: idle reflection runs that pass every early return and reach delegation prep. */
+const reflectionAttempts = { count: 0 };
+
+export function _reflectionAttempts(): number {
+	return reflectionAttempts.count;
+}
+
+/** Test-only driver so the gate ladder can be exercised without a live session event. */
+export function _runIdleReflectionForTest(
+	sessionId: string | null,
+	trigger: "idle" | "turns",
+): Promise<void> {
+	return runIdleReflection(undefined, sessionId, trigger);
+}
+
 function reflectTurnThreshold(): number {
 	const raw = knobNumber("TORUS_REFLECT_TURNS", "reflection", "reflectTurns", 12);
 	return Number.isFinite(raw) && raw > 0 ? raw : 0;
@@ -1299,10 +1315,11 @@ export function sessionActivityLogs(
 }
 
 async function runIdleReflection(
-	_pi: ExtensionAPI,
-	sessionId: string | null,
-	trigger: "idle" | "turns",
+	_pi?: ExtensionAPI,
+	sessionId?: string | null,
+	trigger: "idle" | "turns" = "idle",
 ): Promise<void> {
+	if (incognitoActive()) return;
 	if (!sessionId || reflectInFlight || isOneshotRun()) return;
 	reflectInFlight = true;
 	try {
@@ -1323,6 +1340,7 @@ async function runIdleReflection(
 		const transcript = findSessionFile(sessionId);
 		const recentLogs = sessionActivityLogs(delegations, sessionId).join(" ");
 		if (!transcript && !recentLogs) return;
+		reflectionAttempts.count += 1;
 		const task = [
 			reflectOpening(trigger),
 			`Store: ${MEMORY_ROOT} (entries/*.md with frontmatter: topic, tags, project: ${projectSlug(process.cwd())} or global, created) — read existing entries first. Profile file: ${PROFILE_FILE}.`,
@@ -1352,6 +1370,7 @@ async function runIdleReflection(
 				applyDreamProposal(parseDreamOutput(outcome.text), undefined, sessionId ?? undefined),
 				"reflect",
 			);
+			if (incognitoActive()) incognitoSweep();
 			writeReflectState(sessionId, {
 				lastReflectSettles: settleCount,
 				lastReflectAt: Date.now(),
@@ -1398,6 +1417,7 @@ export function undreamedActivity(): boolean {
 }
 
 async function dream(_pi: ExtensionAPI): Promise<void> {
+	if (incognitoActive()) return;
 	if (!knobBoolean("TORUS_DREAMING", "reflection", "dreaming", true, parseZeroDisables)) return;
 	if (isOneshotRun()) return;
 	if (Date.now() - lastDreamAt() < DREAM_INTERVAL_MS) return;
@@ -1427,6 +1447,7 @@ async function dream(_pi: ExtensionAPI): Promise<void> {
 	);
 	const proposal = parseDreamOutput(outcome.text);
 	const counts = outcome.ok ? applyDreamProposal(proposal) : emptyApplied();
+	if (counts.entryTopics.length > 0 && incognitoActive()) incognitoSweep();
 	if (outcome.ok) {
 		markDreamed();
 		emitMemoryApplied(counts, "dream");
@@ -1485,6 +1506,10 @@ export function registerMemory(pi: ExtensionAPI): void {
 	pi.registerCommand("reflect", {
 		description: "Distill recent session activity into durable memories (delegates to dreamer)",
 		handler: async (args, ctx) => {
+			if (incognitoActive()) {
+				ctx.ui.notify("reflect: disabled in incognito mode", "error");
+				return;
+			}
 			const focus = args.trim();
 			const recentLogs = recentLogFiles(4).join(" ");
 			const task = [
