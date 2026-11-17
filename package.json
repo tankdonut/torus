@@ -98,7 +98,7 @@
   },
   "overrides": {
     "katex": "0.19.1",
-    "re2js": "2.9.1",
+    "re2js": "2.10.0",
     "@anthropic-ai/sandbox-runtime": {
       "zod": "^4.6.6"
     }
