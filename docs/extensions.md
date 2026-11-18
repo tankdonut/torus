@@ -80,6 +80,12 @@ The `chains` section of the [unified config](configuration.md#the-unified-config
 
 Overridden entries ride the same provider-availability filter as the defaults: a model whose provider is not credentialed is skipped. Agent frontmatter `model:` pins still win over any chain head.
 
+#### Session chain walker
+
+The delegation walk respawns a fresh engine per chain candidate, but the main session is one long-lived engine process, so it gets the same down-chain behavior inside itself. When a run settles on an engine-signaled model-error turn (pi's auto-retry has already exhausted its same-model budget by then), the walker switches the session to the next credentialed chain candidate via `pi.setModel`, drops the failed attempt from model context (the raw error message stays in session history), and requests one boundary continuation so the next model re-runs the turn. The failed model joins the session no-work cooldown, so children and every other chain consumer skip it for the cooldown window too.
+
+The walk never fires when the session's current model sits outside both chains (a model the user picked outside torus's chains stays the engine's own business), when the chain is exhausted behind it, when the failure is a context overflow (compaction recovery owns that), or when `pi.setModel` reports no auth for the target; in each case the error surfaces as before. A quota-exhausted provider therefore degrades into the next chain leg instead of a dead session; with the built-in chains a Z.ai weekly or monthly limit on `zai/glm-5.3` hands the turn to `zai/glm-5.3-flash`, then to `opencode-go/glm-5.3-flash`.
+
 #### Concurrency caps
 
 The same section's optional `concurrency` map (`{"provider/model": <positive number>}`) sets how many parallel delegation runs a model may carry before provider account-level concurrent-session limits start rejecting requests (HTTP 429 with Z.ai business code `1302`). Providers publish no stable numbers: Z.ai's caps are per-account, per-model, in-flight request counts, tier-dependent and dynamically adjusted, so the built-in defaults in `MODEL_CONCURRENCY_DEFAULTS` (`extensions/providers`) mirror widely reported GLM Coding Plan figures (`zai/glm-5.3`: 5, `zai/glm-5.3-flash`: 50) and exist as sizing hints, not a rate limiter. A config entry wins per model and defaults fill the rest; a non-object map, or an entry that is not a positive finite number, warns naming the origin and is ignored per model.

@@ -20,13 +20,14 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { KnownApi } from "@earendil-works/pi-ai";
+import { isContextOverflow, type KnownApi } from "@earendil-works/pi-ai";
 import {
 	type ExtensionAPI,
 	getAgentDir,
 	type ProviderConfig,
 	type ProviderModelConfig,
 	readStoredCredential,
+	type TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import { configFilePath, readSection, type SectionSource } from "../config/loader.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -426,6 +427,97 @@ export function resetFailureMemoForTesting(): void {
 	failureMemo.clear();
 }
 
+// --- Main-session chain walker -------------------------------------------
+//
+// The delegation walk (roster) respawns a fresh engine per chain candidate,
+// but the main session is one long-lived engine process: pi's auto-retry
+// re-hits the SAME model and, once it gives up, the error just lands in the
+// transcript. This walker gives the session the same down-chain behavior:
+// when a run settles on an engine-signaled model-error turn, the session
+// moves to the next credentialed chain candidate and re-runs the request
+// through the agent_before_settle boundary, with the failed attempt omitted
+// from model context (pi's own retry path omits it identically).
+
+/** A failed model turn awaiting the walker's decision (the last error wins). */
+interface FailedTurn {
+	/** Persisted entry id of the errored assistant message — the context_edit target. */
+	entryId: string;
+	/** The errored assistant message (stopReason "error"). */
+	message: TurnEndEvent["message"] & { role: "assistant" };
+}
+
+let pendingFailedTurn: FailedTurn | null = null;
+
+/** Clears walker state (tests only). */
+export function resetChainWalkerForTesting(): void {
+	pendingFailedTurn = null;
+}
+
+/**
+ * Locate the current model on a chain: the primary tier when it lists the
+ * model, else the fast tier. Undefined when the model is outside both — the
+ * session is then running a model the user picked outside torus's chains,
+ * and a failure there stays the engine's own business.
+ */
+function walkChainFor(modelId: string): { chain: string[]; index: number } | undefined {
+	const primary = resolveModels("primary");
+	const index = primary.indexOf(modelId);
+	if (index >= 0) return { chain: primary, index };
+	const fast = resolveModels("fast");
+	const fastIndex = fast.indexOf(modelId);
+	if (fastIndex >= 0) return { chain: fast, index: fastIndex };
+	return undefined;
+}
+
+export function registerChainWalker(pi: ExtensionAPI): void {
+	pi.on("session_start", () => {
+		pendingFailedTurn = null;
+	});
+
+	pi.on("turn_end", (event) => {
+		const message = event.message;
+		pendingFailedTurn =
+			event.outcome === "error" && message.role === "assistant"
+				? { entryId: event.messageEntryId, message }
+				: null;
+	});
+
+	pi.on("agent_before_settle", async (_event, ctx) => {
+		const failed = pendingFailedTurn;
+		pendingFailedTurn = null;
+		if (!failed) return;
+		const current = ctx.model;
+		if (!current) return;
+		const modelId = `${current.provider}/${current.id}`;
+		const located = walkChainFor(modelId);
+		if (located === undefined) return;
+		const next = located.chain[located.index + 1];
+		if (next === undefined) return; // chain exhausted behind this model
+		// Context overflow is compaction recovery's job, not the chain's:
+		// another model changes nothing about an oversized context.
+		if (isContextOverflow(failed.message, current.contextWindow)) return;
+		const slash = next.indexOf("/");
+		const model = ctx.modelRegistry.find(next.slice(0, slash), next.slice(slash + 1));
+		if (!model) return;
+		// A false setModel means the target has no configured auth — leave the
+		// error visible instead of continuing on a model that cannot answer.
+		if (!(await pi.setModel(model))) return;
+		// Share the no-work memo: children and every other chain consumer skip
+		// this model for the cooldown window, exactly like a rejected attempt.
+		markModelFailed(modelId);
+		ctx.ui.notify(`↻ ${modelId} produced no work — falling back to ${next}`, "warning");
+		return {
+			entries: [
+				// Drop the failed attempt from model context so the boundary
+				// continuation is runnable and the next model re-runs the turn
+				// fresh (the raw error message stays in session history).
+				{ type: "context_edit", targetId: failed.entryId, replacement: null },
+			],
+			continue: true,
+		};
+	});
+}
+
 /** Chain candidates whose provider passes the availability filter (no memo applied). */
 function availabilityFilteredChain(
 	chain: ChainTier,
@@ -527,4 +619,5 @@ export function registerProviders(pi: ExtensionAPI): void {
 export default function providersExtension(pi: ExtensionAPI): void {
 	if (!gateExtension("providers", PLATFORM_SUPPORT)) return;
 	registerProviders(pi);
+	registerChainWalker(pi);
 }
