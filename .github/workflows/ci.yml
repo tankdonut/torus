@@ -122,7 +122,10 @@ jobs:
         with:
           node-version-file: .tool-versions
       - run: npm ci
-      - run: npm audit --audit-level=high
+      # High bar with a fail-closed allowlist (scripts/audit-gate.mjs): entries
+      # suppress one GHSA each and fail the gate once they suppress nothing,
+      # so an entry cannot outlive the fix that makes it removable.
+      - run: node scripts/audit-gate.mjs
 
   # The README's primary install path is `pi install git:github.com/tankdonut/torus@vX.Y.Z`:
   # the engine clones the tag and runs `npm install --omit=dev --legacy-peer-deps`

@@ -22,8 +22,8 @@ const ciWorkflow = readFileSync(path.join(root, ".github", "workflows", "ci.yml"
 test("audit job: blocking dependency scan on every push and PR", () => {
 	assert.ok(/^ {2}audit:$/m.test(ciWorkflow), "ci.yml must define an audit job");
 	assert.ok(
-		ciWorkflow.includes("npm audit --audit-level=high"),
-		"audit job must run a blocking npm audit at high severity",
+		ciWorkflow.includes("node scripts/audit-gate.mjs"),
+		"audit job must run the audit gate (npm audit at high severity behind a fail-closed allowlist)",
 	);
 });
 
