@@ -48,6 +48,7 @@ test("parseSandboxEnv: unset defaults to off; on-family opts in; explicit 0/off 
 	assert.deepEqual(parseSandboxEnv({}), {
 		mode: "off",
 		requested: "",
+		profile: "off",
 		writableExtras: [],
 		netOnly: false,
 		netAdd: [],
@@ -272,6 +273,95 @@ test("activateSandbox: initialize failure degrades with init-failed notice", asy
 	assert.match(notices[0] ?? "", /init failed: boom/);
 });
 
+function failingManager() {
+	return {
+		calls: { initialize: 0 },
+		async initialize() {
+			this.calls.initialize += 1;
+			throw new Error("boom");
+		},
+	};
+}
+
+function saveEnv(keys) {
+	const saved = {};
+	for (const key of keys) saved[key] = process.env[key];
+	return saved;
+}
+
+async function registerUnderCi(manager, probeResult = { errors: [] }) {
+	const saved = saveEnv(["TORUS_AUTOMODE_PROFILE", "TORUS_SANDBOX"]);
+	delete process.env.TORUS_SANDBOX;
+	process.env.TORUS_AUTOMODE_PROFILE = "ci";
+	const pi = handlerPi();
+	try {
+		await registerSandbox(pi, fakeDeps(manager, probeResult));
+	} finally {
+		restoreEnv(saved);
+	}
+	return pi;
+}
+
+const CI_UNAVAILABLE = (reason) =>
+	`[torus: sandbox] ci profile: sandbox unavailable (${reason}) — refusing unsandboxed execution`;
+
+test("registerSandbox: ci profile turns a dependency-probe failure fatal — every bash call blocks, other tools pass", async () => {
+	const manager = fakeManager();
+	const pi = await registerUnderCi(manager, { errors: ["bubblewrap (bwrap) not installed"] });
+	assert.equal(manager.calls.initialize, 0);
+	assert.deepEqual(getSandboxState(), {
+		mode: "full",
+		active: false,
+		fatal: "bubblewrap (bwrap) not installed",
+	});
+	const bash = await pi.handlers.tool_call({
+		type: "tool_call",
+		toolName: "bash",
+		toolCallId: "ci-probe-1",
+		input: { command: "npm test" },
+	});
+	assert.equal(bash.block, true);
+	assert.equal(bash.reason, CI_UNAVAILABLE("bubblewrap (bwrap) not installed"));
+	const write = await pi.handlers.tool_call({
+		type: "tool_call",
+		toolName: "write",
+		toolCallId: "ci-probe-2",
+		input: { path: "/x", content: "y" },
+	});
+	assert.equal(write, undefined, "non-bash tools stay usable");
+});
+
+test("registerSandbox: ci profile turns an initialize failure fatal; without the profile it still degrades", async () => {
+	const ciPi = await registerUnderCi(failingManager());
+	assert.deepEqual(getSandboxState(), { mode: "full", active: false, fatal: "boom" });
+	const bash = await ciPi.handlers.tool_call({
+		type: "tool_call",
+		toolName: "bash",
+		toolCallId: "ci-init-1",
+		input: { command: "npm test" },
+	});
+	assert.equal(bash.reason, CI_UNAVAILABLE("boom"));
+
+	const saved = saveEnv(["TORUS_AUTOMODE_PROFILE", "TORUS_SANDBOX"]);
+	delete process.env.TORUS_AUTOMODE_PROFILE;
+	process.env.TORUS_SANDBOX = "full";
+	try {
+		const degradedPi = handlerPi();
+		await registerSandbox(degradedPi, fakeDeps(failingManager()));
+		assert.deepEqual(getSandboxState(), { mode: "full", active: false });
+		const degraded = await degradedPi.handlers.tool_call({
+			type: "tool_call",
+			toolName: "bash",
+			toolCallId: "ci-init-2",
+			input: { command: "npm test" },
+		});
+		assert.equal(degraded, undefined, "off profile keeps today's degrade-with-notice path");
+		await degradedPi.handlers.session_shutdown(undefined, shutdownCtx());
+	} finally {
+		restoreEnv(saved);
+	}
+});
+
 test("registerSandbox: unset defaults to off; explicit full subscribes bash interception", async () => {
 	const previous = process.env.TORUS_SANDBOX;
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -470,6 +560,35 @@ test("tool_call: wrap failure blocks with actionable reason (fail-closed)", asyn
 	await pi.handlers.session_shutdown(undefined, {
 		ui: { setStatus() {}, theme: { fg: (_c, t) => t } },
 	});
+});
+
+test("tool_call: wrap failure under the ci profile carries the ci framing", async () => {
+	const manager = sandboxManagerFake({
+		wrapImpl: () => {
+			throw new Error("seccomp rejected");
+		},
+	});
+	const saved = saveEnv(["TORUS_AUTOMODE_PROFILE", "TORUS_SANDBOX"]);
+	process.env.TORUS_SANDBOX = "full";
+	process.env.TORUS_AUTOMODE_PROFILE = "ci";
+	try {
+		const pi = handlerPi();
+		await registerSandbox(pi, fakeDeps(manager));
+		const result = await pi.handlers.tool_call({
+			type: "tool_call",
+			toolName: "bash",
+			toolCallId: "ci-wrap-1",
+			input: { command: "curl example.com" },
+		});
+		assert.equal(result.block, true);
+		assert.match(
+			result.reason,
+			/ci profile: wrap failed: seccomp rejected — refusing unsandboxed execution/,
+		);
+		await pi.handlers.session_shutdown(undefined, shutdownCtx());
+	} finally {
+		restoreEnv(saved);
+	}
 });
 
 test("tool_call: non-bash tools pass through untouched", async () => {
@@ -891,6 +1010,46 @@ test("parseSandboxEnv: TORUS_SANDBOX_DEFAULT trials default-on without shipping 
 		"full",
 		"a non-on knob value leaves the policy mode in charge",
 	);
+});
+
+test("parseSandboxEnv: the ci profile sits on top of the stack and forces full", () => {
+	assert.equal(
+		parseSandboxEnv({ TORUS_SANDBOX: "off", TORUS_AUTOMODE_PROFILE: "ci" }).mode,
+		"full",
+		"ci overrides an explicit off",
+	);
+	assert.equal(
+		parseSandboxEnv({ TORUS_AUTOMODE_PROFILE: "ci", TORUS_SANDBOX_DEFAULT: "off" }).mode,
+		"full",
+		"ci overrides the trial default",
+	);
+	assert.equal(
+		parseSandboxEnv({ TORUS_AUTOMODE_PROFILE: "ci" }, emptyPolicy({ mode: "off" })).mode,
+		"full",
+		"ci overrides the user policy mode",
+	);
+	assert.equal(parseSandboxEnv({ TORUS_AUTOMODE_PROFILE: "ci" }).mode, "full", "ci alone opts in");
+});
+
+test("parseSandboxEnv: profile lands on the parsed env; unrecognized values stay total with an error", () => {
+	const ci = parseSandboxEnv({ TORUS_AUTOMODE_PROFILE: "ci" });
+	assert.equal(ci.profile, "ci");
+	assert.equal(ci.profileError, undefined);
+	const bad = parseSandboxEnv({ TORUS_AUTOMODE_PROFILE: "CI" });
+	assert.equal(bad.profile, "off");
+	assert.equal(bad.mode, "off", "an unrecognized profile never turns the sandbox on");
+	assert.match(bad.profileError ?? "", /TORUS_AUTOMODE_PROFILE=CI is not recognized/);
+});
+
+test("parseSandboxEnv: additive knobs still apply under the ci profile", () => {
+	const parsed = parseSandboxEnv({
+		TORUS_AUTOMODE_PROFILE: "ci",
+		TORUS_SANDBOX_WRITABLE: "/w1:/w2",
+		TORUS_SANDBOX_NET_ADD: "internal.corp",
+	});
+	assert.equal(parsed.mode, "full");
+	assert.deepEqual(parsed.writableExtras, ["/w1", "/w2"]);
+	assert.deepEqual(parsed.netAdd, ["internal.corp"]);
 });
 
 test("buildSandboxConfig: policy writable/hosts/credentials and seeded trust shape the config", () => {

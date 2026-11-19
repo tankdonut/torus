@@ -6,7 +6,10 @@
  * @anthropic-ai/sandbox-runtime (srt): writes confined to the workspace
  * (+ tmp + extras + the scratch root + git/worktree plumbing), network restricted to a
  * curated allowlist plus user additions. Degrades to unsandboxed — with a one-time notice —
- * when dependencies are missing or init fails; bash is never bricked.
+ * when dependencies are missing or init fails; bash is never bricked. Under the ci trust
+ * profile (TORUS_AUTOMODE_PROFILE=ci, which also forces full mode over every lower tier) a
+ * failed degrade is fatal instead: every bash tool call is refused while read/edit/write
+ * tools stay usable.
  *
  * srt 0.0.77 couples filesystem and network restriction (network is
  * schema-required and any defined allowlist activates isolation), so
@@ -52,7 +55,7 @@ import {
 	type ToolCallEvent,
 	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
-import { isBypassMode } from "../automode/config.js";
+import { type AutomodeProfile, isBypassMode, resolveProfileSource } from "../automode/config.js";
 import { scratchDir, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { SANDBOX_SLOT } from "../shared-state.js";
@@ -89,6 +92,10 @@ export interface SandboxEnv {
 	mode: SandboxMode;
 	/** Raw TORUS_SANDBOX value (lowercased), kept so unsupported requests can be surfaced. */
 	requested: string;
+	/** Resolved automode trust profile; "ci" forces full mode over every lower tier. */
+	profile: AutomodeProfile;
+	/** Set when TORUS_AUTOMODE_PROFILE holds an unrecognized value (profile resolves to "off"). */
+	profileError?: string;
 	writableExtras: string[];
 	netOnly: boolean;
 	netAdd: string[];
@@ -180,13 +187,20 @@ export function parseSandboxEnv(
 	const trialDefault = FULL_VALUES.has(defaultKnob);
 	const explicitFull = FULL_VALUES.has(requested);
 	const explicitOff = OFF_VALUES.has(requested);
-	const mode: SandboxMode = explicitFull
+	const baseMode: SandboxMode = explicitFull
 		? "full"
 		: explicitOff
 			? "off"
 			: trialDefault
 				? "full"
 				: (policy?.mode ?? "off");
+	// The ci trust profile is the top of the stack: it forces full mode over the
+	// explicit knob, the trial default, and the user policy alike (a CI session
+	// must not run unsandboxed just because a lower tier said so). The total
+	// profile resolution never throws — an unrecognized value surfaces via
+	// profileError with the profile resolving to "off".
+	const profileResolution = resolveProfileSource(env);
+	const mode: SandboxMode = profileResolution.profile === "ci" ? "full" : baseMode;
 	const writableExtras = (env["TORUS_SANDBOX_WRITABLE"] ?? "")
 		.split(":")
 		.map((entry) => entry.trim())
@@ -202,6 +216,8 @@ export function parseSandboxEnv(
 	return {
 		mode,
 		requested,
+		profile: profileResolution.profile,
+		...(profileResolution.error !== undefined ? { profileError: profileResolution.error } : {}),
 		writableExtras,
 		netOnly,
 		netAdd: netAdd.entries,
@@ -356,6 +372,8 @@ export interface SandboxDeps {
 export interface SandboxState {
 	mode: SandboxMode;
 	active: boolean;
+	/** Set when the ci trust profile made a degrade fatal: every bash tool call must be refused with this reason. */
+	fatal?: string;
 }
 
 export async function activateSandbox(
@@ -387,6 +405,11 @@ export async function activateSandbox(
 		);
 	}
 	if (probe.errors.length > 0) {
+		if (sandboxEnv.profile === "ci") {
+			const reason = probe.errors.join(", ");
+			sink(ciUnavailableMessage(reason));
+			return { mode: "full", active: false, fatal: reason };
+		}
 		sink(
 			`[torus: sandbox] unavailable: ${probe.errors.join(", ")} — running unsandboxed (TORUS_SANDBOX=off silences this)`,
 		);
@@ -403,12 +426,20 @@ export async function activateSandbox(
 			ask,
 		);
 	} catch (error) {
-		sink(
-			`[torus: sandbox] init failed: ${error instanceof Error ? error.message : String(error)} — running unsandboxed`,
-		);
+		const reason = error instanceof Error ? error.message : String(error);
+		if (sandboxEnv.profile === "ci") {
+			sink(ciUnavailableMessage(reason));
+			return { mode: "full", active: false, fatal: reason };
+		}
+		sink(`[torus: sandbox] init failed: ${reason} — running unsandboxed`);
 		return { mode: "full", active: false };
 	}
 	return { mode: "full", active: true };
+}
+
+/** The one-time activation notice and the per-call block share one spelling. */
+function ciUnavailableMessage(reason: string): string {
+	return `[torus: sandbox] ci profile: sandbox unavailable (${reason}) — refusing unsandboxed execution`;
 }
 
 function sharedSandboxState(): { state: SandboxState } {
@@ -422,6 +453,8 @@ function sharedSandboxState(): { state: SandboxState } {
 const shared = sharedSandboxState();
 let activationPromise: Promise<SandboxState> | null = null;
 let activeManager: SandboxManagerLike | null = null;
+/** Whether this registration runs under the ci trust profile (wrap-failure framing). */
+let activeCiProfile = false;
 /** toolCallId → original command + wrap commandId, for annotation and cleanup. */
 const activeCommands = new Map<string, { command: string; commandId: string }>();
 /**
@@ -754,8 +787,15 @@ function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 	pi.on("tool_call", async (event: ToolCallEvent) => {
 		if (event.type !== "tool_call") return undefined;
 		if (activationPromise !== null) await activationPromise;
+		const isBash = (event as BashToolCallEvent).toolName === "bash";
+		if (isBash) {
+			const fatal = shared.state.fatal;
+			if (fatal !== undefined) {
+				return { block: true, reason: ciUnavailableMessage(fatal) };
+			}
+		}
 		const manager = activeManager;
-		if (!manager || (event as BashToolCallEvent).toolName !== "bash") {
+		if (!manager || !isBash) {
 			return undefined;
 		}
 		const input = event.input as { command?: unknown };
@@ -778,9 +818,12 @@ function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 			currentCommandId = commandId;
 			return undefined;
 		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
 			return {
 				block: true,
-				reason: `[torus:sandbox] wrap failed: ${error instanceof Error ? error.message : String(error)} (TORUS_SANDBOX=off disables sandboxing)`,
+				reason: activeCiProfile
+					? `[torus:sandbox] ci profile: wrap failed: ${detail} — refusing unsandboxed execution`
+					: `[torus:sandbox] wrap failed: ${detail} (TORUS_SANDBOX=off disables sandboxing)`,
 			};
 		}
 	});
@@ -901,6 +944,10 @@ export async function registerSandbox(
 	activePolicy = policyResult.policy;
 	activeSeededHosts = deps.seededHosts;
 	const sandboxEnv = parseSandboxEnv(process.env, activePolicy);
+	if (sandboxEnv.profileError !== undefined) {
+		process.stderr.write(`${sandboxEnv.profileError}\n`);
+	}
+	activeCiProfile = sandboxEnv.profile === "ci";
 	if (sandboxEnv.mode === "off") {
 		shared.state = { mode: "off", active: false };
 		subscribeChip(_pi);
