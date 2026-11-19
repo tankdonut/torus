@@ -70,6 +70,9 @@ Unattended runner: an ask is a failed job, not a dialog.
 - Mining lens: the pipeline definition, which names every command family the job runs, beats everything; the audit log is usually empty.
 - Draft entries: environment lines for the registry, source host, and deploy targets.
 - Boundary block: asks are wrong here; prefer explicit `allow` prefix rules for exactly the command families the pipeline runs, landed by the human or the pipeline directly in config.json, plus the `softDeny` egress line naming the job's hosts.
+- With `TORUS_AUTOMODE_PROFILE=ci` exported for the run, asks and judge failures are job-fatal by design: both block the command instead of opening a dialog or running it unjudged.
+- A baseline deny floor ships with the profile: egress and exfil verbs, `git push`, and package publish deny outright, and user allow rules cannot override it. Allow rules are for command families the pipeline runs that the floor does not name.
+- Egress needs belong in the sandbox network allowlist, not automode allow rules.
 
 ## Mine, in this order
 
