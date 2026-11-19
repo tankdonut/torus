@@ -7,7 +7,11 @@
  * flag and refused from config.json) the whole permission layer is off —
  * this extension never classifies, the context guards, cc-safety-net,
  * sandbox, and approval extensions never register, and the mode cannot be
- * changed mid-session. In auto mode every bash tool
+ * changed mid-session. The trust profile (TORUS_AUTOMODE_PROFILE: "ci" or
+ * unset "off") layers on top: under "ci" a baseline deny floor leads the
+ * deny phase, bypass-mode short-circuits are ignored at the tool_call
+ * choke point, and an unreachable judge fails closed instead of running
+ * the command unjudged. In auto mode every bash tool
  * call runs one fixed pipeline: deny rules, the critical-operation floor
  * (the four privilege/destruction classes take no allow shortcut — they
  * judge, with the class riding into the prompt as a boundary, and an
@@ -48,6 +52,7 @@ import {
 import { DecisionCache, decide, pickChatModel, pickModel } from "./classify.js";
 import {
 	type AuditRow,
+	type AutomodeProfile,
 	type AutomodeRulesFile,
 	type AutomodeRulesSource,
 	appendAuditRow,
@@ -59,10 +64,12 @@ import {
 	type PermissionModeSource,
 	parseModelPin,
 	resolveModeSource,
+	resolveProfileSource,
 } from "./config.js";
 import {
 	criticalAskFloor,
 	type Decision,
+	effectiveRules,
 	findBroadAllowEntries,
 	isReadOnlyFastPath,
 	isScratchFastPath,
@@ -396,6 +403,17 @@ export function registerAutomode(pi: ExtensionAPI): void {
 	let startupMode: PermissionMode = "default";
 	let startupSource: PermissionModeSource = "default";
 	let startupWarning: string | undefined;
+	// Trust profile: the env is fixed for the engine's lifetime (the launcher
+	// sets it at spawn), so the profile is startup-only like bypass. The engine
+	// swallows registration throws — it drops the throwing extension with a
+	// load-error diagnostic and keeps booting — so an unrecognized value cannot
+	// refuse to start; instead the session runs fail-closed: the profile
+	// resolves to "ci", the resolution error surfaces loudly at startup, and
+	// every gate below stays registered.
+	const profileResolution = resolveProfileSource();
+	const profile: AutomodeProfile =
+		profileResolution.error !== undefined ? "ci" : profileResolution.profile;
+	const profileError: string | undefined = profileResolution.error;
 	let modeOverride: PermissionMode | undefined;
 	let rules: AutomodeRulesFile = {};
 	let rulesSource: AutomodeRulesSource = "default";
@@ -563,20 +581,34 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		if (startupWarning !== undefined) {
 			ctx.ui.notify(`automode: ${startupWarning}`, "warning");
 		}
-		if (startupMode === "bypass") {
-			ctx.ui.notify(
-				"automode: bypass — every permission guard (context guards, cc-safety-net, sandbox, approval, and this classifier) is off for this session; bypass is startup-only, restart without it to re-enable",
-				"warning",
-			);
-			return;
+		if (profileError !== undefined) {
+			ctx.ui.notify(`automode: ${profileError}`, "error");
 		}
-		if (startupMode !== "auto") return;
+		if (startupMode === "bypass") {
+			if (profile === "ci") {
+				// The profile wins over bypass: rules still load and the tool_call
+				// gate stays active, so the conflict must be named here.
+				ctx.ui.notify(
+					"automode: TORUS_PERMISSION_MODE=bypass conflicts with the ci trust profile — the profile wins and bash calls stay gated for this session; unset TORUS_AUTOMODE_PROFILE to bypass",
+					"warning",
+				);
+			} else {
+				ctx.ui.notify(
+					"automode: bypass — every permission guard (context guards, cc-safety-net, sandbox, approval, and this classifier) is off for this session; bypass is startup-only, restart without it to re-enable",
+					"warning",
+				);
+				return;
+			}
+		}
+		if (startupMode !== "auto" && startupMode !== "bypass") return;
 		const rulesWarnings = applyRules(loadAutomodeRules());
-		const origin = startupSource === "config" ? " (from config)" : "";
-		ctx.ui.notify(
-			`automode: on${origin} — bash calls auto-approved by ${await decisionModelLabel(ctx)}; rules: ${configFilePath()}${rulesSourceSuffix(rulesSource)}`,
-			"info",
-		);
+		if (startupMode === "auto") {
+			const origin = startupSource === "config" ? " (from config)" : "";
+			ctx.ui.notify(
+				`automode: on${origin} — bash calls auto-approved by ${await decisionModelLabel(ctx)}; rules: ${configFilePath()}${rulesSourceSuffix(rulesSource)}`,
+				"info",
+			);
+		}
 		loadAutoConfig(ctx, rulesWarnings);
 	}
 
@@ -642,7 +674,13 @@ export function registerAutomode(pi: ExtensionAPI): void {
 
 	pi.on("tool_call", async (event, ctx) => {
 		await ensureStartup(ctx);
-		if (mode() !== "auto") return undefined;
+		// Under the ci profile the profile wins over bypass at the choke point:
+		// bypass-mode short-circuits are ignored and the gate stays active.
+		// Default mode stays inert under any profile.
+		const activeMode = mode();
+		if (activeMode !== "auto" && !(activeMode === "bypass" && profile === "ci")) {
+			return undefined;
+		}
 		if (!isToolCallEventType("bash", event)) return undefined;
 		const command = event.input.command;
 		if (command.trim() === "") return undefined;
@@ -650,8 +688,11 @@ export function registerAutomode(pi: ExtensionAPI): void {
 		// (a) deny rules block outright; ask rules prompt; allow rules pass —
 		// unless classifyAllShell suspends them, in which case an allow match
 		// falls through to the decision model (the floor, fast path, and cache
-		// still apply; only rule-based allows are suspended).
-		const ruleMatch = matchRules(command, rules);
+		// still apply; only rule-based allows are suspended). Under the ci
+		// profile the baseline denials sit ahead of the user's entries in the
+		// deny phase, so a user allow can never outrank them; the floor and the
+		// fast paths below are untouched (they precede rule trust by design).
+		const ruleMatch = matchRules(command, effectiveRules(rules, profile));
 		if (ruleMatch?.verdict === "deny") {
 			intentLines.length = 0;
 			audit(command, "rule", "deny", `denied by rule "${ruleMatch.rule}"`);
@@ -771,6 +812,16 @@ export function registerAutomode(pi: ExtensionAPI): void {
 				// restores the ask floor instead of failing open.
 				if (floor !== undefined) {
 					return askUser(ctx, command, `ask floor (judge unavailable): ${floor}`);
+				}
+				// Under the ci profile an unreachable judge fails closed: the
+				// command is blocked instead of running unjudged, the tool result
+				// carries no ran-unjudged annotation, and the audit row keeps the
+				// failopen source with a deny verdict so the telemetry still
+				// distinguishes the two postures.
+				if (profile === "ci") {
+					const reason = `blocked (ci profile: decision model unavailable: ${decision.reason})`;
+					audit(command, "failopen", "deny", reason);
+					return { block: true, reason: `[automode] ${reason}` };
 				}
 				consecutiveDenies = 0;
 				failopenReasons.set(event.toolCallId, decision.reason);

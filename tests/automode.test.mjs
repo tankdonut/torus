@@ -17,6 +17,7 @@ const home = mkdtempSync(path.join(tmpdir(), "torus-automode-wiring-"));
 process.env.TORUS_HOME = home;
 delete process.env.TORUS_PERMISSION_MODE;
 delete process.env.TORUS_PERMISSION_MODEL;
+delete process.env.TORUS_AUTOMODE_PROFILE;
 
 const automode = await import("../extensions/automode/index.ts");
 const { TRUST_DIALOG_TIMEOUT_MS } = await import("../extensions/ui/index.ts");
@@ -52,6 +53,11 @@ function setConfig(config) {
 function setMode(value) {
 	if (value === undefined) delete process.env.TORUS_PERMISSION_MODE;
 	else process.env.TORUS_PERMISSION_MODE = value;
+}
+
+function setProfile(value) {
+	if (value === undefined) delete process.env.TORUS_AUTOMODE_PROFILE;
+	else process.env.TORUS_AUTOMODE_PROFILE = value;
 }
 
 /** Registry stub with no classifier; chat replies drive the decision model. */
@@ -111,6 +117,10 @@ function makePi() {
 function setup(options = {}) {
 	const mode = "mode" in options ? options.mode : "1";
 	setMode(mode);
+	// The off profile is the unset env — "off" is not an accepted value.
+	setProfile(
+		options.profile === undefined || options.profile === "off" ? undefined : options.profile,
+	);
 	setConfig(options.config);
 	const pi = makePi();
 	automode.default(pi);
@@ -457,6 +467,126 @@ test("failopen: both model paths fail, command runs with a notify and a result a
 	);
 	assert.ok(annotated.content[0].text.startsWith("build ok"));
 	assert.equal(pi.handlers.tool_result(bashResult("call-other"), ctx), undefined);
+});
+
+test("ci profile: an unreachable judge blocks fail-closed with the ci reason, no unjudged annotation", async () => {
+	resetAudit();
+	const { pi, ctx, notifications, reg } = setup({ profile: "ci", replies: ["junk not json"] });
+	const result = await call(pi, ctx, "cargo build", "ci-failclosed");
+	assert.equal(result.block, true, "ci profile never runs a command unjudged");
+	assert.match(result.reason, /ci profile/);
+	assert.match(result.reason, /decision model unavailable/);
+	assert.ok(
+		!notifications.some((n) => n.message.includes("ran unjudged")),
+		"no ran-unjudged notify under ci",
+	);
+	assert.deepEqual(
+		auditRows().map((row) => [row.source, row.verdict]),
+		[
+			["failopen", "failopen"],
+			["failopen", "deny"],
+		],
+		"the failed judgment logs first; the enforcement row keeps the failopen source with a deny verdict",
+	);
+	assert.match(auditRows()[1].reason, /ci profile/);
+	assert.equal(
+		pi.handlers.tool_result(bashResult("ci-failclosed", "built"), ctx),
+		undefined,
+		"the tool result carries no ran-unjudged annotation",
+	);
+	assert.equal(reg.calls.complete, 1, "the judge was tried before the fail-closed block");
+});
+
+test("profile off: the same dead judge still runs the command unjudged (frozen interactive contract)", async () => {
+	resetAudit();
+	const { pi, ctx, notifications } = setup({ profile: "off", replies: ["junk not json"] });
+	assert.equal(await call(pi, ctx, "cargo build", "off-failopen"), undefined);
+	assert.ok(
+		notifications.some((n) => n.message.includes("ran unjudged")),
+		"failopen notifies under the off profile",
+	);
+	const annotated = pi.handlers.tool_result(bashResult("off-failopen", "built"), ctx);
+	assert.ok(annotated, "result is rewritten");
+	assert.match(
+		annotated.content[0].text,
+		/\[automode\] ran unjudged \(decision model unavailable: .+\)/,
+	);
+});
+
+test("ci profile: the baseline deny outranks a user allow for curl; off profile allows it", async () => {
+	resetAudit();
+	const ci = setup({
+		profile: "ci",
+		config: { automode: { allow: ["curl *"] } },
+		replies: [jsonReply("allow")],
+	});
+	const denied = await call(ci.pi, ci.ctx, "curl example.com", "ci-curl");
+	assert.equal(denied.block, true, "the baseline deny beats the user allow under ci");
+	assert.match(denied.reason, /denied by rule "curl \*"/);
+	assert.deepEqual(
+		auditRows().map((row) => [row.source, row.verdict]),
+		[["rule", "deny"]],
+	);
+	assert.equal(ci.reg.calls.complete, 0, "the baseline denies without a model call");
+
+	resetAudit();
+	const off = setup({
+		profile: "off",
+		config: { automode: { allow: ["curl *"] } },
+		replies: [jsonReply("allow")],
+	});
+	assert.equal(await call(off.pi, off.ctx, "curl example.com", "off-curl"), undefined);
+	assert.equal(off.reg.calls.complete, 0, "the user allow passes with no model call");
+});
+
+test("bypass + ci: the profile wins — bypass goes inert, commands stay judged", async () => {
+	resetAudit();
+	const { pi, ctx, notifications, reg } = setup({
+		mode: "bypass",
+		profile: "ci",
+		replies: [jsonReply("deny")],
+	});
+	await pi.handlers.session_start({ type: "session_start" }, ctx);
+	assert.ok(
+		notifications.some(
+			(n) => /conflicts with the ci trust profile/.test(n.message) && /stay gated/.test(n.message),
+		),
+		"the startup notice names the bypass/profile conflict",
+	);
+	assert.ok(
+		!notifications.some((n) => n.message.startsWith("automode: bypass —")),
+		"the every-guard-off bypass notice never fires under ci",
+	);
+	const result = await call(pi, ctx, "cargo build", "bp-ci-1");
+	assert.equal(result.block, true, "bypass did not pass the command through");
+	assert.equal(reg.calls.complete, 1, "the command was judged, not short-circuited");
+});
+
+test("unrecognized profile: loud error banner, guards stay registered, gate stays active", async () => {
+	resetAudit();
+	const gated = setup({ profile: "CI", replies: [] });
+	await gated.pi.handlers.session_start({ type: "session_start" }, gated.ctx);
+	const banner = gated.notifications.find(
+		(n) => n.type === "error" && /TORUS_AUTOMODE_PROFILE=CI is not recognized/.test(n.message),
+	);
+	assert.ok(banner, "the resolution error surfaces loudly at startup");
+	// Case-sensitive: "CI" is refused, so the session runs fail-closed under
+	// the ci posture — the baseline denies curl without a judge call.
+	const denied = await call(gated.pi, gated.ctx, "curl example.com", "badprofile-1");
+	assert.equal(denied.block, true, "the gate stayed active under the errored profile");
+	assert.match(denied.reason, /denied by rule "curl \*"/);
+
+	resetAudit();
+	const bypassed = setup({ mode: "bypass", profile: "junk", replies: [jsonReply("deny")] });
+	await bypassed.pi.handlers.session_start({ type: "session_start" }, bypassed.ctx);
+	assert.ok(
+		bypassed.notifications.some(
+			(n) => n.type === "error" && /TORUS_AUTOMODE_PROFILE=junk is not recognized/.test(n.message),
+		),
+	);
+	const result = await call(bypassed.pi, bypassed.ctx, "cargo build", "badprofile-2");
+	assert.equal(result.block, true, "bypass is inert under the errored profile");
+	assert.equal(bypassed.reg.calls.complete, 1, "the command was judged, not passed through");
 });
 
 test("circuit breaker: three consecutive model denies make the fourth command a dialog", async () => {
