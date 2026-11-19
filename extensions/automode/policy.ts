@@ -12,6 +12,8 @@
  * or IO.
  */
 
+import type { AutomodeProfile } from "./config.js";
+
 export type AutomodeVerdict = "allow" | "ask" | "deny";
 
 export type Decision = {
@@ -99,6 +101,62 @@ export function matchRules(
 		}
 	}
 	return undefined;
+}
+
+/**
+ * Baked-in baseline denials for the "ci" automode profile. Egress and
+ * exfiltration verbs — the same set the scratch fast path excludes
+ * (`SCRATCH_EXCLUDED_VERBS`, minus `sudo`/`su`, which the critical ask
+ * floor already owns) — plus the publishing verbs, as Claude-Code-style
+ * prefix patterns so the bare verb itself matches too (`curl *` denies
+ * `curl` and `curl https://…`). Denials only: nothing is allow-listed
+ * here, and under the deny → ask → allow phase order of `matchRules` a
+ * merged baseline entry always beats any user allow rule, so CI cannot
+ * widen itself out of the floor. User deny and ask entries merge on top
+ * unchanged; the "off" profile never sees them, keeping interactive
+ * behavior exactly as configured.
+ */
+export const CI_BASELINE_DENY: string[] = [
+	"curl *",
+	"wget *",
+	"nc *",
+	"netcat *",
+	"socat *",
+	"ssh *",
+	"scp *",
+	"sftp *",
+	"rsync *",
+	"ftp *",
+	"tftp *",
+	"telnet *",
+	"git push *",
+	"npm publish *",
+	"pnpm publish *",
+	"yarn publish *",
+];
+
+/**
+ * The rules `matchRules` must see for a profile: the user's rules under
+ * the "off" profile (returned as-is, same reference), and under the
+ * "ci" profile the same user rules with the baseline denials prepended
+ * to the deny phase. Prepending is semantic, not cosmetic — the baseline
+ * sits in the deny phase ahead of any user entry, so a user allow rule
+ * can never outrank it, while user deny/ask entries stay in their own
+ * phases untouched. Pure: no IO, no judgment, no floor involvement —
+ * callers feed the result to `matchRules` exactly as they would user
+ * rules alone.
+ */
+export function effectiveRules(
+	rules: AutomodeRules | undefined,
+	profile: AutomodeProfile,
+): AutomodeRules {
+	if (profile === "off") {
+		return rules ?? {};
+	}
+	return {
+		...rules,
+		deny: [...CI_BASELINE_DENY, ...(rules?.deny ?? [])],
+	};
 }
 
 const FLOOR_SUDO = "privilege escalation via sudo/su";
