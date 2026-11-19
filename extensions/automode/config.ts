@@ -134,6 +134,25 @@ export function isBypassMode(
 	return (env["TORUS_PERMISSION_MODE"] ?? "").trim().toLowerCase() === "bypass";
 }
 
+/**
+ * True when bypass actually takes effect. The ci trust profile makes bypass
+ * inert: under bypass with TORUS_AUTOMODE_PROFILE=ci the session keeps every
+ * guard registered and gates bash like a ci session, so registration gates
+ * consult this instead of isBypassMode. An unrecognized profile value is
+ * startup-fatal elsewhere, so it also reads as inert here (fail closed: the
+ * guards stay registered rather than vanish on a typo).
+ */
+export function isBypassActive(
+	env: {
+		TORUS_PERMISSION_MODE?: string | undefined;
+		TORUS_AUTOMODE_PROFILE?: string | undefined;
+	} = process.env,
+): boolean {
+	if (!isBypassMode(env)) return false;
+	const { profile, error } = resolveProfileSource(env);
+	return error === undefined && profile !== "ci";
+}
+
 /** Trust profile a session runs under: "ci" enables the CI trust checks, "off" is a plain interactive session. */
 export type AutomodeProfile = "off" | "ci";
 

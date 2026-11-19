@@ -17,7 +17,8 @@
  * TORUS_GUARDS=0, or guards.enabled=false in config.json, disables everything;
  * TORUS_MAX_TOOL_OUTPUT (guards.maxToolOutput) tunes the cap. Bypass mode
  * (TORUS_PERMISSION_MODE=bypass, startup-only) skips registration entirely:
- * the session runs without the context guards like every other guard.
+ * the session runs without the context guards like every other guard — except
+ * under the ci trust profile, where bypass is inert and registration proceeds.
  */
 
 import { lstatSync, statSync } from "node:fs";
@@ -30,7 +31,7 @@ import {
 	type ToolResultEvent,
 	type WriteToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
-import { isBypassMode } from "../automode/config.js";
+import { isBypassActive } from "../automode/config.js";
 import { knobBoolean, knobNumber, parseZeroDisables } from "../config/knobs.js";
 import { projectStateDir, readFileCached, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -424,6 +425,6 @@ export function registerGuards(pi: ExtensionAPI): void {
 
 export default function guardsExtension(pi: ExtensionAPI): void {
 	if (!gateExtension("guards", PLATFORM_SUPPORT)) return;
-	if (isBypassMode()) return;
+	if (isBypassActive()) return;
 	registerGuards(pi);
 }

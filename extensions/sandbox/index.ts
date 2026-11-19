@@ -55,7 +55,7 @@ import {
 	type ToolCallEvent,
 	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
-import { type AutomodeProfile, isBypassMode, resolveProfileSource } from "../automode/config.js";
+import { type AutomodeProfile, isBypassActive, resolveProfileSource } from "../automode/config.js";
 import { scratchDir, torusHome } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { SANDBOX_SLOT } from "../shared-state.js";
@@ -978,7 +978,8 @@ export async function registerSandbox(
 export default function sandboxExtension(pi: ExtensionAPI): void {
 	if (!gateExtension("sandbox", PLATFORM_SUPPORT)) return;
 	// Bypass mode (startup-only) disables every permission guard, this
-	// isolation layer included: no handlers, no chip, no activation.
-	if (isBypassMode()) return;
+	// isolation layer included: no handlers, no chip, no activation. Under the
+	// ci trust profile bypass is inert and the sandbox registers and enforces.
+	if (isBypassActive()) return;
 	void registerSandbox(pi);
 }
