@@ -22,10 +22,7 @@ import { fileURLToPath } from "node:url";
 
 /** GHSA id -> why it does not block CI. Entries are removed, never added to,
  *  by hand once the audit stops reporting the id (the gate enforces this). */
-export const ALLOWED = {
-	"GHSA-fc5q-39xc-vjpf":
-		"picomatch ReDoS: build/lint toolchain only (astro, vite, markdownlint-cli2 trees); the advisory lists no patched release (everything <=4.0.7 affected), so no bump can clear it. Dependabot tracks the upstream fix.",
-};
+export const ALLOWED = {};
 
 /** @returns {{exit: number, lines: string[], blocking: string[], suppressed: string[], stale: string[]}} */
 export function assess(report, allowlist) {
