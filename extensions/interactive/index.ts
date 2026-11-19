@@ -22,7 +22,9 @@
  * emulator. Line-oriented programs (REPLs, prompts, pagers, progress bars)
  * render correctly; full-screen apps (vim, htop) still garble — the
  * emulator is a scrollback model, not a viewport; use tmux for those.
- * TORUS_INTERACTIVE=0 disables. Parent sessions only.
+ * TORUS_INTERACTIVE=0 disables, and the ci trust profile does not register
+ * the tool at all (it executes outside the automode judgment and the
+ * sandbox). Parent sessions only.
  */
 
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
@@ -36,6 +38,7 @@ import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tu
 import type { ITerminalInitOnlyOptions, ITerminalOptions, Terminal } from "@xterm/headless";
 import * as xtermHeadless from "@xterm/headless";
 import { Type } from "typebox";
+import { resolveProfileSource } from "../automode/config.js";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 
@@ -369,6 +372,10 @@ const interactiveBashTool = defineTool({
 
 export function registerInteractive(pi: ExtensionAPI): void {
 	if (!knobBoolean("TORUS_INTERACTIVE", "interactive", "enabled", true, parseZeroDisables)) return;
+	// Under the ci trust profile the interactive bash tool is not registered:
+	// it executes outside the automode judgment and the sandbox, so the
+	// profile cannot cover it.
+	if (resolveProfileSource().profile === "ci") return;
 	pi.registerTool(interactiveBashTool);
 	pi.on("session_shutdown", () => {
 		for (const child of liveChildren) {

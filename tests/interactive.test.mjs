@@ -5,6 +5,7 @@ import { test } from "node:test";
 
 const {
 	DETACH_KEY,
+	registerInteractive,
 	PtyOverlay,
 	buildPtyCommand,
 	childEnv,
@@ -17,6 +18,60 @@ const {
 } = await import("../extensions/interactive/index.ts");
 
 const tick = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function recordingPi() {
+	const calls = { registerTool: [], on: [] };
+	const pi = {
+		registerTool: (tool) => calls.registerTool.push(tool.name),
+		on: (name) => calls.on.push(name),
+	};
+	return { pi, calls };
+}
+
+/** Sets TORUS_* vars for the registration-time reads and restores them after. */
+function withEnv(vars, run) {
+	const prev = {};
+	for (const [key, value] of Object.entries(vars)) {
+		prev[key] = process.env[key];
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
+	try {
+		return run();
+	} finally {
+		for (const [key, value] of Object.entries(prev)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	}
+}
+
+test("registration: ci profile registers nothing (interactive_bash is unjudged and unsandboxed)", () => {
+	withEnv({ TORUS_INTERACTIVE: "1", TORUS_AUTOMODE_PROFILE: "ci" }, () => {
+		const { pi, calls } = recordingPi();
+		registerInteractive(pi);
+		assert.deepEqual(calls.registerTool, []);
+		assert.deepEqual(calls.on, []);
+	});
+});
+
+test("registration: without the profile interactive_bash registers", () => {
+	withEnv({ TORUS_INTERACTIVE: "1", TORUS_AUTOMODE_PROFILE: undefined }, () => {
+		const { pi, calls } = recordingPi();
+		registerInteractive(pi);
+		assert.deepEqual(calls.registerTool, ["interactive_bash"]);
+		assert.deepEqual(calls.on, ["session_shutdown"]);
+	});
+});
+
+test("registration: TORUS_INTERACTIVE=0 registers nothing", () => {
+	withEnv({ TORUS_INTERACTIVE: "0", TORUS_AUTOMODE_PROFILE: undefined }, () => {
+		const { pi, calls } = recordingPi();
+		registerInteractive(pi);
+		assert.deepEqual(calls.registerTool, []);
+		assert.deepEqual(calls.on, []);
+	});
+});
 
 function stubTheme() {
 	return {

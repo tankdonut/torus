@@ -33,6 +33,33 @@ function captureCustoms() {
 	return customs;
 }
 
+function recordingPi() {
+	const calls = { registerTool: [], on: [] };
+	const pi = {
+		registerTool: (tool) => calls.registerTool.push(tool.name),
+		on: (name) => calls.on.push(name),
+	};
+	return { pi, calls };
+}
+
+/** Sets TORUS_* vars for the registration-time reads and restores them after. */
+function withEnv(vars, run) {
+	const prev = {};
+	for (const [key, value] of Object.entries(vars)) {
+		prev[key] = process.env[key];
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
+	try {
+		return run();
+	} finally {
+		for (const [key, value] of Object.entries(prev)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	}
+}
+
 function fakeEntry(overrides) {
 	return {
 		name: "probe",
@@ -46,6 +73,61 @@ function fakeEntry(overrides) {
 		...overrides,
 	};
 }
+
+test("registration: ci profile registers nothing (monitor and bg commands run unjudged and unsandboxed)", () => {
+	withEnv({ TORUS_AUTOMODE_PROFILE: "ci" }, () => {
+		const { pi, calls } = recordingPi();
+		monitor.registerMonitor(pi);
+		assert.deepEqual(calls.registerTool, []);
+		assert.deepEqual(calls.on, []);
+	});
+});
+
+test("registration: without the profile all four monitor tools register", () => {
+	withEnv({ TORUS_AUTOMODE_PROFILE: undefined }, () => {
+		const { pi, calls } = recordingPi();
+		monitor.registerMonitor(pi);
+		assert.deepEqual(calls.registerTool, [
+			"torus_monitor",
+			"torus_monitor_stop",
+			"torus_bg",
+			"torus_bg_stop",
+		]);
+		assert.deepEqual(calls.on, ["session_shutdown"]);
+	});
+});
+
+test("TORUS_MONITOR=0 disables torus_monitor at execute time", async () => {
+	const tools = [];
+	monitor.registerMonitor({ registerTool: (tool) => tools.push(tool), on: () => {} });
+	const monitorTool = tools.find((t) => t.name === "torus_monitor");
+	assert.ok(monitorTool);
+
+	await withEnv({ TORUS_MONITOR: "0" }, async () => {
+		const result = await monitorTool.execute("call", {
+			name: "off-probe",
+			command: "echo never",
+		});
+		assert.equal(result.isError, true);
+		assert.equal(result.content[0].text, "monitors disabled (TORUS_MONITOR=0)");
+	});
+});
+
+test("TORUS_BG=0 disables torus_bg at execute time", async () => {
+	const tools = [];
+	monitor.registerMonitor({ registerTool: (tool) => tools.push(tool), on: () => {} });
+	const bgTool = tools.find((t) => t.name === "torus_bg");
+	assert.ok(bgTool);
+
+	await withEnv({ TORUS_BG: "0" }, async () => {
+		const result = await bgTool.execute("call", {
+			name: "off-bg",
+			command: "echo never",
+		});
+		assert.equal(result.isError, true);
+		assert.equal(result.content[0].text, "background tasks disabled (TORUS_BG=0)");
+	});
+});
 
 test("stopOn change: first check records the hash, changed output fires torus.monitor-fired", async () => {
 	const customs = captureCustoms();

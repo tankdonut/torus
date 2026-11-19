@@ -268,7 +268,7 @@ PTY-backed interactive command execution via `script -qec`.
 | `interactive_bash` | Run a command that needs interaction: password prompts, REPLs, package-manager confirmations |
 
 - **Hooks:** `session_shutdown`: kill live children
-- **Env:** `TORUS_INTERACTIVE=0` disables
+- **Env:** `TORUS_INTERACTIVE=0` disables; under the `ci` trust profile (`TORUS_AUTOMODE_PROFILE=ci`) the tool is not registered at all, because it runs commands outside the automode judgment and the sandbox (full profile behavior in [the environment-variables table](configuration.md#knob-sections-and-environment-variables))
 
 In the TUI the child streams into a bottom dialog that replaces the chat editor; typing is forwarded to the child (takeover) and `ctrl-]` detaches. When the child exits, the overlay holds the final frame briefly and any key closes it early. The captured stream is interpreted by a headless xterm emulator (`@xterm/headless`), so cursor-motion redraws (apt progress bars, survey prompt repaints, spinner rewrites) collapse to their final text and escape sequences split across chunks still parse. The PTY carries the session's winsize, and children run with `NO_COLOR=1` so prompt frameworks (gh, bubbletea, survey) do not interrogate the terminal: such queries cannot be answered through the pipes and stall device flows like `gh auth login --web`. Headless contexts run to completion synchronously and read the same emulator. Line-oriented programs render correctly; full-screen apps (vim/htop) do not, so use plain bash for those.
 
@@ -425,7 +425,7 @@ Periodic command watcher and one-shot background commands: `torus_monitor` runs 
 | `torus_bg_stop` | Stop one background task (name; SIGTERM, SIGKILL after 2s) |
 
 - **Hooks:** `session_shutdown`: stop all
-- **Env:** `TORUS_MONITOR=0` disables monitors, `TORUS_BG=0` background tasks
+- **Env:** `TORUS_MONITOR=0` disables monitors, `TORUS_BG=0` background tasks; under the `ci` trust profile (`TORUS_AUTOMODE_PROFILE=ci`) the tools are not registered at all, because they run model-supplied commands outside the automode judgment and the sandbox (full profile behavior in [the environment-variables table](configuration.md#knob-sections-and-environment-variables))
 
 Monitors stop on `stopOn: change` (output hash changed) or `stopOn: fail` (command failed); a check that runs longer than 30s is killed, so a monitor is a watcher, never a host. History lands in `$TORUS_STATE_DIR/monitors/<name>.log`; at most 5 concurrent monitors (oldest evicted). When a monitor fires, a `torus.monitor-fired` transcript notification also lands in the session (name, reason, exit code, output tail; rendered like the fleet markers) and wakes the model through the wake gate: an idle session gets the marker straight away, a mid-run one holds it so the fire joins the single settle flush instead of trickling out of the follow-up queue one turn apiece. Waiting on a monitor therefore means ending the turn rather than waiting in it: the gate holds the marker while a run is active, so in-turn sleeping or re-polling can never observe the fire. The arm-time tool result and the tool description both steer the model there.
 

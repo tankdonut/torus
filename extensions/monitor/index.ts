@@ -5,7 +5,9 @@
  * fails (torus_monitor). Run a command once in the background and wake the
  * session when it exits (torus_bg). Both live on globalThis (one map per
  * process) and are cleaned up on session shutdown. TORUS_MONITOR=0 disables
- * monitors, TORUS_BG=0 background tasks.
+ * monitors, TORUS_BG=0 background tasks, and the ci trust profile does not
+ * register the tools at all (they execute model-supplied commands outside
+ * the automode judgment and the sandbox).
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
@@ -13,6 +15,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { resolveProfileSource } from "../automode/config.js";
 import { runChild } from "../child-run.js";
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { flattenPreview } from "../fleet/theme-kit.js";
@@ -521,6 +524,10 @@ const bgStopTool = defineTool({
 });
 
 export function registerMonitor(pi: ExtensionAPI): void {
+	// Under the ci trust profile the monitor and background tools are not
+	// registered: they execute model-supplied commands outside the automode
+	// judgment and the sandbox, so the profile cannot cover them.
+	if (resolveProfileSource().profile === "ci") return;
 	pi.registerTool(monitorTool);
 	pi.registerTool(monitorStopTool);
 	pi.registerTool(bgTool);
