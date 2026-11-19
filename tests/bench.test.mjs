@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -35,6 +36,7 @@ const {
 	serializeRuns,
 	summaryRows,
 } = await import("../scripts/bench/report.mjs");
+const { benchGateReport, gateVerdicts, GATE_TOLERANCE } = await import("../scripts/bench/gate.mjs");
 
 const messageEnd = (usage, text = "done") =>
 	JSON.stringify({
@@ -611,6 +613,108 @@ test("buildMarkdown and buildHtml lead with the summary; single-config sweeps sk
 	assert.deepEqual(summaryRows(stockOnly, []), [], "no delta basis without both configs");
 	assert.ok(!buildMarkdown(stockOnly, meta, stock).includes("## Summary"), "markdown omits it");
 	assert.ok(!buildHtml(stockOnly, meta, stock, []).includes("<h2>Summary</h2>"), "html omits it");
+});
+
+// Gate fixtures: one task, one model, both configs. cacheRead/cost are the
+// gated fields; tokensIn and ms ride along in the aggregates unused.
+const gateAgg = (tokensIn, cacheRead, cost) => ({
+	turns: 2,
+	tokensIn,
+	tokensOut: 30,
+	cacheRead,
+	cacheWrite: 0,
+	cost,
+	malformed: 0,
+});
+const gateRun = (version, enginePin, stockAgg, torusAgg) => ({
+	meta: {
+		generatedAt: "2027-01-01T00:00:00.000Z",
+		models: ["m1"],
+		tasks: [{ id: "t1", tier: "trivial" }],
+		configs: ["stock", "torus"],
+		torusVersion: version,
+		enginePin,
+		runs: 1,
+		warmup: 0,
+	},
+	records: [
+		rec({ config: "stock", run: 1, aggregate: stockAgg }),
+		rec({ config: "torus", run: 1, aggregate: torusAgg }),
+	],
+});
+
+test("gateVerdicts: movement within tolerance passes; beyond tolerance fails", () => {
+	const current = gateRun("0.15.0", "1.3.0", gateAgg(100, 1000, 0.001), gateAgg(300, 20000, 0.002));
+	const prior = gateRun("0.14.0", "1.3.0", gateAgg(100, 1000, 0.001), gateAgg(300, 2000, 0.002));
+	const { rows } = gateVerdicts([prior, current]);
+	assert.equal(rows.length, 2, "one row per gated field");
+	const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+	// cacheRead: Δ 19,000 vs prior 1,000 → movement 18,000 > max(100, floor 8,000) → fail.
+	assert.equal(byKey.cacheRead.verdict, "fail");
+	assert.equal(byKey.cacheRead.movement, 18000);
+	// cost: Δ $0.0010 vs prior $0.0010 → movement 0 → pass.
+	assert.equal(byKey.cost.verdict, "pass");
+	assert.equal(byKey.cost.movement, 0);
+	assert.equal(byKey.cost.threshold, GATE_TOLERANCE.cost.floor);
+
+	// Same current run with a near-identical prior stays within tolerance.
+	const closePrior = gateRun(
+		"0.14.0",
+		"1.3.0",
+		gateAgg(100, 1000, 0.001),
+		gateAgg(300, 19000, 0.0021),
+	);
+	const passing = gateVerdicts([closePrior, current]);
+	assert.ok(passing.rows.every((r) => r.verdict === "pass"));
+	const report = benchGateReport([closePrior, current]);
+	assert.equal(report.exitCode, 0);
+	assert.ok(report.markdown.includes("## Summary"), "report carries the summary block");
+});
+
+test("gateVerdicts: skip without a prior comparable run; engine-pin change is noted, not fatal", () => {
+	const current = gateRun("0.15.0", "1.4.0", gateAgg(100, 1000, 0.001), gateAgg(300, 20000, 0.002));
+	const noPrior = gateVerdicts([current]);
+	assert.ok(noPrior.rows.every((r) => r.verdict === "skip"));
+	assert.equal(benchGateReport([current]).exitCode, 0, "first run gates nothing");
+
+	const priorOtherPin = gateRun(
+		"0.14.0",
+		"1.3.0",
+		gateAgg(100, 1000, 0.001),
+		gateAgg(300, 19000, 0.0021),
+	);
+	const { rows } = gateVerdicts([priorOtherPin, current]);
+	assert.ok(rows.every((r) => r.enginePinChanged));
+	assert.ok(
+		benchGateReport([priorOtherPin, current]).markdown.includes("Engine pin changed"),
+		"pin change surfaces in the report",
+	);
+});
+
+test("benchGateReport: no comparable data exits 2; bench-gate CLI exit codes hold end to end", () => {
+	assert.equal(benchGateReport([]).exitCode, 2);
+	const empty = { meta: { models: ["m1"], tasks: [{ id: "t1", tier: "trivial" }] }, records: [] };
+	assert.equal(benchGateReport([empty]).exitCode, 2);
+
+	const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+	const dir = mkdtempSync(path.join(tmpdir(), "torus-bench-gate-"));
+	const sidecar = path.join(dir, "bench-records.json");
+	writeFileSync(
+		sidecar,
+		serializeRuns([
+			gateRun("0.14.0", "1.3.0", gateAgg(100, 1000, 0.001), gateAgg(300, 2000, 0.002)),
+			gateRun("0.15.0", "1.3.0", gateAgg(100, 1000, 0.001), gateAgg(300, 20000, 0.002)),
+		]),
+	);
+	const run = (args) =>
+		spawnSync(process.execPath, [path.join(root, "scripts", "bench-gate.mjs"), ...args], {
+			encoding: "utf8",
+		});
+	const failing = run([sidecar]);
+	assert.equal(failing.status, 1, "regression exits 1");
+	assert.ok(failing.stdout.includes("fail"), "verdict table on stdout");
+	assert.equal(run(["--help"]).status, 0);
+	assert.equal(run([path.join(dir, "missing.json")]).status, 2);
 });
 
 test("runEngineOnce resolves with collected lines and exit code (local node, never the engine)", async () => {
