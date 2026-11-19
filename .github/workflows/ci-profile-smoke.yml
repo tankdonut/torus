@@ -1,0 +1,189 @@
+# Dispatch-only runner smoke for the ci trust profile (TORUS_AUTOMODE_PROFILE=ci).
+#
+# No pull_request or push triggers on purpose: the workflow runs only when a
+# maintainer dispatches it, so it carries zero automatic attack surface. It
+# proves the profile's runner-facing guarantees on a real GitHub-hosted VM:
+#
+#   1. the ci profile forces full sandboxing even over an explicit
+#      TORUS_SANDBOX=off (a sandboxed command observes SANDBOX_RUNTIME=1,
+#      an unsandboxed one does not)
+#   2. network egress from the agent is contained: curl cannot reach the
+#      network while the profile is on
+#   3. the off-profile control runs the same command unsandboxed, proving the
+#      profile is what changed
+#   4. when the sandbox is unavailable the session fails closed: bash is
+#      refused with the shipped `[torus: sandbox] ci profile: sandbox
+#      unavailable (...)` block instead of degrading to unsandboxed execution
+#
+# What is deliberately not asserted here: the automode deny-floor strings.
+# Under the profile every bash command runs wrapped (`bwrap ...`), so automode's
+# prefix deny rules see the wrapped text and the decision model judges it; its
+# verdict depends on ambient provider auth. The deterministic curl containment
+# asserted in step 2 is the sandbox network layer instead, and the deny-floor
+# logic itself is covered by the repo's unit suites.
+
+name: CI profile runner smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  # Least privilege default; the smoke only reads the repo.
+  contents: read
+
+jobs:
+  smoke:
+    # Pinned deliberately: the job exercises the Ubuntu 24.04
+    # unprivileged-userns AppArmor restriction and its lift below.
+    # ubuntu-latest could drift to a different base image and invalidate the
+    # AppArmor step.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Refuse to run outside tankdonut/torus
+        if: github.repository != 'tankdonut/torus'
+        run: |
+          echo "::error::CI profile runner smoke copied to ${GITHUB_REPOSITORY}"
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .tool-versions
+
+      - run: npm ci
+
+      - name: Install sandbox dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bubblewrap socat
+
+      - name: Lift the Ubuntu 24.04 unprivileged-userns AppArmor restriction
+        # 24.04 ships kernel.apparmor_restrict_unprivileged_userns=1, which
+        # breaks bubblewrap (it needs unprivileged user namespaces) for every
+        # process on the runner, including the sandboxed agent commands this
+        # job proves. The sysctl lift is the standard recipe on GH-hosted
+        # runners (anthropics/claude-code-action applies the same one). The
+        # durable alternative, an unconfined profile at /etc/apparmor.d/bwrap,
+        # is avoided here because it widens the machine for every other
+        # workload instead of just this job.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # The one-shots need at least one provider credential in the
+      # environment for the agent's chat model (the engine reads provider keys
+      # from ambient env; run `node runtime/bin/torus.mjs --help` for the
+      # list, e.g. ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY). No
+      # existing workflow in this repo passes model credentials, so the real
+      # secret names are wired here at merge time, e.g.:
+      #   - name: Prove the ci trust profile on this runner
+      #     env:
+      #       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - name: Prove the ci trust profile on this runner
+        run: |
+            set -euo pipefail
+
+            OUT="$RUNNER_TEMP/ci-profile-smoke"
+            mkdir -p "$OUT"
+            SUMMARY="$OUT/summary.md"
+            echo "## CI profile runner smoke" > "$SUMMARY"
+            echo >> "$SUMMARY"
+
+            fail() {
+              echo "SMOKE FAIL: $*" | tee -a "$SUMMARY"
+              exit 1
+            }
+            note() { echo "$*" | tee -a "$SUMMARY"; }
+            # The prompts stay single-quoted on purpose: $SANDBOX_RUNTIME and
+            # $? must reach the agent's bash tool unexpanded by the runner.
+            # shellcheck disable=SC2016
+            BENIGN_PROMPT='Use the bash tool to run exactly: echo sandbox-marker=$SANDBOX_RUNTIME then report the echo output verbatim'
+            CURL_PROMPT='Use the bash tool to run exactly: curl -sS -m 10 https://example.com -o /dev/null 2> /dev/null; echo curl-exit=$? then report the echo output verbatim'
+
+            # Optional model pin (TORUS_SMOKE_MODEL, provider/model-id):
+            # without it every one-shot uses the engine's default model
+            # selection over the ambient credentials.
+            MODEL_ARGS=()
+            if [ -n "${TORUS_SMOKE_MODEL:-}" ]; then
+              MODEL_ARGS=(--model "$TORUS_SMOKE_MODEL")
+            fi
+
+            # 1. The profile forces full sandboxing over an explicit
+            #    TORUS_SANDBOX=off: inside the wrap SANDBOX_RUNTIME=1 is set,
+            #    and no degrade notice may appear (under ci a sandbox failure
+            #    is fatal, so success alone already proves activation).
+            TORUS_SANDBOX=off TORUS_AUTOMODE_PROFILE=ci \
+              node runtime/bin/torus.mjs -a --mode json "${MODEL_ARGS[@]}" -p "$BENIGN_PROMPT" \
+              > "$OUT/a.jsonl" 2> "$OUT/a.err" \
+              || fail "profile-forced sandbox run exited nonzero (see $OUT/a.err)"
+            grep -qF 'sandbox-marker=1' "$OUT/a.jsonl" \
+              || fail "expected sandbox-marker=1 under the ci profile (TORUS_SANDBOX=off was not overridden)"
+            ! grep -qF '[torus: sandbox]' "$OUT/a.jsonl" "$OUT/a.err" \
+              || fail "sandbox degrade notice under the ci profile"
+            ! grep -qF '[automode] blocked (ci profile:' "$OUT/a.jsonl" "$OUT/a.err" \
+              || fail "fail-closed automode block under the ci profile"
+            note "profile-forced sandbox: $(grep -m1 -oF 'sandbox-marker=1' "$OUT/a.jsonl")"
+
+            # 2. Egress containment: curl runs but cannot reach the network.
+            TORUS_SANDBOX=off TORUS_AUTOMODE_PROFILE=ci \
+              node runtime/bin/torus.mjs -a --mode json "${MODEL_ARGS[@]}" -p "$CURL_PROMPT" \
+              > "$OUT/b.jsonl" 2> "$OUT/b.err" \
+              || fail "curl containment run exited nonzero (see $OUT/b.err)"
+            grep -qF 'curl-exit=' "$OUT/b.jsonl" \
+              || fail "curl run produced no exit marker"
+            ! grep -qF 'curl-exit=0' "$OUT/b.jsonl" \
+              || fail "curl reached the network under the ci profile"
+            note "curl containment: $(grep -m1 -oE 'curl-exit=[0-9]+' "$OUT/b.jsonl") (nonzero expected)"
+            ! grep -qF '[torus: sandbox]' "$OUT/b.jsonl" "$OUT/b.err" \
+              || fail "sandbox degrade notice under the ci profile"
+
+            # 3. Off-profile control: the same benign command runs unsandboxed
+            #    (no SANDBOX_RUNTIME in the environment), proving the profile
+            #    is what changed.
+            TORUS_SANDBOX=off \
+              node runtime/bin/torus.mjs -a --mode json "${MODEL_ARGS[@]}" -p "$BENIGN_PROMPT" \
+              > "$OUT/c.jsonl" 2> "$OUT/c.err" \
+              || fail "off-profile control run exited nonzero (see $OUT/c.err)"
+            grep -qF 'sandbox-marker=' "$OUT/c.jsonl" \
+              || fail "off-profile control produced no marker"
+            ! grep -qF 'sandbox-marker=1' "$OUT/c.jsonl" \
+              || fail "sandbox marker present without the ci profile"
+            note "off-profile control: ran unsandboxed (empty SANDBOX_RUNTIME)"
+
+            # 4. Fatal refusal: with the sandbox dependencies unavailable the
+            #    profile refuses unsandboxed execution instead of degrading.
+            #    The dependencies are moved aside so the probe's which-based
+            #    lookup misses them exactly the way a real missing install
+            #    does. A shadowing PATH shim cannot do this: the probe only
+            #    checks existence and the exec bit and never executes the
+            #    binaries, so an exiting-1 shim passes it and the refusal
+            #    never fires. The asserted string is the shipped block text.
+            #
+            #    This must stay the LAST probe in the job: the move happens
+            #    after every other assertion and is deliberately not reverted,
+            #    so no later step may need bwrap or socat. Nothing after this
+            #    one-shot in the smoke step or in the job summary step does.
+            sudo mv /usr/bin/bwrap /usr/bin/bwrap.disabled
+            sudo mv /usr/bin/socat /usr/bin/socat.disabled
+            TORUS_AUTOMODE_PROFILE=ci \
+              node runtime/bin/torus.mjs -a --mode json "${MODEL_ARGS[@]}" -p "$BENIGN_PROMPT" \
+              > "$OUT/d.jsonl" 2> "$OUT/d.err" \
+              || true
+            grep -qF '[torus: sandbox] ci profile: sandbox unavailable (' "$OUT/d.jsonl" "$OUT/d.err" \
+              || fail "expected the fatal ci-profile refusal when the sandbox is unavailable"
+            note "fatal refusal: $(grep -m1 -oF '[torus: sandbox] ci profile: sandbox unavailable (' "$OUT/d.err") ...)"
+
+            note ""
+            note "All four assertions passed."
+
+      - name: Job summary
+        if: always()
+        run: |
+          OUT="$RUNNER_TEMP/ci-profile-smoke"
+          {
+            echo "## CI profile runner smoke"
+            echo
+            if [ -f "$OUT/summary.md" ]; then
+              cat "$OUT/summary.md"
+            else
+              echo "The smoke step did not reach its summary (job failed before it ran)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
