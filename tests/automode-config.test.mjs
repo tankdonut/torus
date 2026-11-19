@@ -9,6 +9,8 @@ process.env.TORUS_HOME = home;
 
 const {
 	resolveMode,
+	resolveProfile,
+	resolveProfileSource,
 	validateRulesObject,
 	loadAutomodeRules,
 	parseModelPin,
@@ -70,6 +72,44 @@ test("resolveMode: junk value falls back to default with a warning naming it and
 	for (const accepted of ["1", "on", "auto", "0", "off", "default"]) {
 		assert.ok(warning?.includes(accepted), `lists accepted value ${accepted}`);
 	}
+});
+
+test("resolveProfile: unset and empty are silently the off profile", () => {
+	assert.deepEqual(resolveProfileSource({}), { profile: "off", source: "default" });
+	assert.deepEqual(resolveProfileSource({ TORUS_AUTOMODE_PROFILE: "" }), {
+		profile: "off",
+		source: "default",
+	});
+	assert.equal(resolveProfile({}), "off");
+	assert.equal(resolveProfile({ TORUS_AUTOMODE_PROFILE: "" }), "off");
+});
+
+test("resolveProfile: exactly ci selects the ci profile from env", () => {
+	assert.deepEqual(resolveProfileSource({ TORUS_AUTOMODE_PROFILE: "ci" }), {
+		profile: "ci",
+		source: "env",
+	});
+	assert.equal(resolveProfile({ TORUS_AUTOMODE_PROFILE: "ci" }), "ci");
+});
+
+test("resolveProfile: any other value fails loud naming the value and the accepted set", () => {
+	for (const value of ["CI", "Ci", "ci ", " ci", "1", "0", "prod", "yolo", "on", "true"]) {
+		assert.throws(
+			() => resolveProfile({ TORUS_AUTOMODE_PROFILE: value }),
+			(error) => {
+				assert.ok(error instanceof Error);
+				assert.ok(error.message.includes(value), `names the value ${value}`);
+				assert.ok(error.message.includes('"ci"'), "lists the accepted value");
+				return true;
+			},
+			`value ${value}`,
+		);
+	}
+	const { profile, source, error } = resolveProfileSource({ TORUS_AUTOMODE_PROFILE: "prod" });
+	assert.equal(profile, "off");
+	assert.equal(source, "env");
+	assert.ok(error?.includes("prod"), "names the bad value");
+	assert.ok(error?.includes('"ci"'), "lists the accepted value");
 });
 
 test("validateRulesObject: unknown top-level keys warn", () => {

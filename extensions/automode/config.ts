@@ -134,6 +134,52 @@ export function isBypassMode(
 	return (env["TORUS_PERMISSION_MODE"] ?? "").trim().toLowerCase() === "bypass";
 }
 
+/** Trust profile a session runs under: "ci" enables the CI trust checks, "off" is a plain interactive session. */
+export type AutomodeProfile = "off" | "ci";
+
+/** Which tier supplied the effective automode profile. */
+export type AutomodeProfileSource = "env" | "default";
+
+export type ProfileResolution = {
+	profile: AutomodeProfile;
+	source: AutomodeProfileSource;
+	error?: string;
+};
+
+/**
+ * CI trust profile: TORUS_AUTOMODE_PROFILE is unset/empty ("off", silent) or
+ * exactly "ci" (case-sensitive, no trimming — "CI", " ci" are errors). Any
+ * other non-empty value is deliberately NOT resolveMode's junk→default plus
+ * warning path: a typo'd profile must never silently run without the trust
+ * checks a CI session requires, so the resolution carries an error the
+ * caller treats as startup-fatal.
+ */
+export function resolveProfileSource(
+	env: { TORUS_AUTOMODE_PROFILE?: string | undefined } = process.env,
+): ProfileResolution {
+	const raw = env["TORUS_AUTOMODE_PROFILE"];
+	if (raw === undefined || raw === "") return { profile: "off", source: "default" };
+	if (raw === "ci") return { profile: "ci", source: "env" };
+	return {
+		profile: "off",
+		source: "env",
+		error: `TORUS_AUTOMODE_PROFILE=${raw} is not recognized; the only accepted value is "ci" (unset or empty selects the "off" profile); refusing to start rather than run without the CI trust checks`,
+	};
+}
+
+/**
+ * CI trust profile without the source tier. An unrecognized value throws —
+ * callers that resolve at startup die loudly and fixably instead of running
+ * unprotected.
+ */
+export function resolveProfile(
+	env: { TORUS_AUTOMODE_PROFILE?: string | undefined } = process.env,
+): AutomodeProfile {
+	const { profile, error } = resolveProfileSource(env);
+	if (error !== undefined) throw new Error(error);
+	return profile;
+}
+
 export type AutomodeRulesFile = {
 	allow?: string[];
 	ask?: string[];
