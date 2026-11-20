@@ -35,7 +35,8 @@
  * timing-safe) minted like the bearer token, persisted in
  * triggers-state.json, and printed once at first start. The JSON body is
  * DATA: {{payload.<field>}} values render JSON-stringified (depth-capped)
- * into the task, and every request fires a fresh delegation — webhooks are
+ * and fence-wrapped through ../untrusted.js into the task, and every request
+ * fires a fresh delegation — webhooks are
  * explicit events, so the scheduler's skip-while-active gate deliberately
  * does not apply. Responses are fire-and-ack: {delegationId} immediately.
  */
@@ -54,6 +55,7 @@ import { readJson, sleep, torusHome, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { AGENT_NAME_RE, type DelegationRecord, listDelegations, repoRoot } from "../registry.js";
 import { AGENTS, type DelegationOutcome, runDelegation } from "../roster/index.js";
+import { fenceField } from "../untrusted.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
 	platforms: ["linux", "darwin", "win32"],
@@ -332,9 +334,20 @@ const PAYLOAD_FIELD_RE = /\{\{payload\.([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)\}\}
 /**
  * Render a trigger task against a webhook body. Referenced values render
  * JSON-stringified — 42, "quoted", {"nested":true} — so a payload is always
- * data with its type visible, never merged into the task as bare prose.
- * Values nested deeper than PAYLOAD_DEPTH_CAP levels render "[truncated]";
- * missing fields render empty.
+ * data with its type visible, never merged into the task as bare prose, and
+ * each value is then wrapped in an untrusted-input fence (fenceField) so
+ * payload-controlled text cannot inject instructions into the task. The
+ * fence label is the field's dotted reference as the template wrote it,
+ * including the `payload.` prefix — e.g. {{payload.issue.title}} renders
+ * under the label `payload.issue.title`. The substitution mechanism only has
+ * the bare dotted path available (the regex capture drops the `payload.`
+ * prefix), so the prefix is re-attached here to keep the label reading as
+ * the template's own reference; labels are trusted frame text, and a
+ * reference can only match [A-Za-z0-9_-] segments joined by dots, so it can
+ * never carry a newline or `]` that would break the begin mark. Templates
+ * with no payload references render byte-identical (no fence, no preamble);
+ * missing fields still render empty with no fence. Values nested deeper
+ * than PAYLOAD_DEPTH_CAP levels render "[truncated]" inside the fence.
  */
 export function renderTaskTemplate(task: string, payload: Record<string, unknown>): string {
 	return task.replace(PAYLOAD_FIELD_RE, (_match, fieldPath: string) => {
@@ -344,7 +357,7 @@ export function renderTaskTemplate(task: string, payload: Record<string, unknown
 			current = (current as Record<string, unknown>)[segment];
 			if (current === undefined) return "";
 		}
-		return stringifyCapped(current, 1);
+		return fenceField(`payload.${fieldPath}`, stringifyCapped(current, 1));
 	});
 }
 
