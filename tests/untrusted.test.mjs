@@ -47,9 +47,17 @@ test("content containing a full nested fence stays inert", () => {
 });
 
 test("begin-mark-shaped prefixes in any casing are neutralized", () => {
-	for (const prefix of ["[untrusted:", "[UNTRUSTED:", "[ untrusted :", "[/untrusted:"]) {
+	for (const prefix of [
+		"[untrusted:",
+		"[UNTRUSTED:",
+		"[untrusted :",
+		"[/untrusted:",
+		"[/untrusted ]",
+	]) {
 		const inert = neutralizeMarkers(`x ${prefix} payload`);
-		assert.ok(!/\[untrusted:/i.test(stripInvisible(inert)), prefix);
+		const stripped = stripInvisible(inert);
+		assert.ok(!/\[untrusted:/i.test(stripped), prefix);
+		assert.ok(stripped.includes("&#91;"), `${prefix}: opening bracket rewritten to &#91;`);
 	}
 });
 
@@ -88,13 +96,23 @@ test("ANSI SGR color codes and OSC sequences are gone post-fence", () => {
 	assert.ok(out.includes("red") && out.includes("tail"));
 });
 
-test("neutralizeMarkers + stripInvisible in either order leaves no fence shape", () => {
+test("shipped order (stripInvisible then neutralizeMarkers) leaves no fence shape; reverse order resurrects a broken mark", () => {
 	const sneaky = "[\u200Buntrusted: x] and [\u200B/untrusted]";
-	const once = stripInvisible(neutralizeMarkers(stripInvisible(sneaky)));
-	assert.ok(!/\[untrusted:/i.test(once));
-	assert.ok(!/\[\/untrusted\]/.test(once));
-	const twice = neutralizeMarkers(stripInvisible(once));
-	assert.equal(twice, once, "idempotent, no resurrection");
+	// The shipped and only supported composition: strip first, then neutralize.
+	const shipped = neutralizeMarkers(stripInvisible(sneaky));
+	assert.ok(!/\[untrusted:/i.test(shipped));
+	assert.ok(!/\[\/untrusted\]/.test(shipped));
+	// The reverse order is NOT safe and is NOT shipped: a zero-width-broken
+	// mark is invisible to DANGEROUS_MARK_RE, so neutralizing first is a no-op
+	// on it and the later strip resurrects the raw mark — the evidence that
+	// disqualifies scheme (b) (zero-width inserts).
+	const reversed = stripInvisible(neutralizeMarkers(sneaky));
+	assert.ok(/\[untrusted: x\]/.test(reversed), "reverse order resurrects the begin mark");
+	assert.ok(/\[\/untrusted\]/.test(reversed), "reverse order resurrects the end mark");
+	// Idempotence: re-running the shipped composition on already-neutralized
+	// text is stable, no resurrection.
+	const twice = neutralizeMarkers(stripInvisible(shipped));
+	assert.equal(twice, shipped, "idempotent, no resurrection");
 });
 
 test("40 KiB benign field is truncated with a correct N", () => {

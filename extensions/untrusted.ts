@@ -22,11 +22,16 @@
  *    original shape entirely and the substituted marker itself becomes a
  *    collision surface for attacker text that mentions `[elided]`.
  *
- * The scheme survives stripping by construction: neutralizeMarkers runs on
- * already-stripped text and emits only characters stripInvisible does not
- * remove (`&`, `#`, digits, `;`), so neutralizeMarkers + stripInvisible in
- * either order still leaves no content substring matching a begin-mark
- * prefix or the end-mark literal.
+ * The scheme survives stripping by construction in ONE composition: the
+ * shipped and only supported order is stripInvisible THEN neutralizeMarkers
+ * — neutralizeMarkers runs on already-stripped text and emits only
+ * characters stripInvisible does not remove (`&`, `#`, digits, `;`), so no
+ * content substring can match a begin-mark prefix or the end-mark literal.
+ * The reverse order is NOT safe: a zero-width-broken mark (e.g.
+ * `[\u200Buntrusted:`) is invisible to DANGEROUS_MARK_RE, so neutralizing
+ * first is a no-op on it and stripping afterwards deletes the break and
+ * resurrects the raw mark — which is exactly why scheme (b) (zero-width
+ * inserts) is disqualified.
  */
 
 import { sanitizeRender } from "./text.js";
