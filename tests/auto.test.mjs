@@ -381,7 +381,8 @@ console.log("VERDICT: OKAY");
 
 test("unknown skills fail a one-shot stage named before any spawn", async () => {
 	// resolveSkillPaths refuses an unknown name driver-side, before the
-	// launcher child is ever spawned.
+	// launcher child is ever spawned: the argv dump must stay empty.
+	freshArgsDir();
 	const fixture = fixtureDir("skills");
 	const stateDir = projectStateDir(fixture);
 	const runner = defaultStageRunner(stateDir);
@@ -397,6 +398,11 @@ test("unknown skills fail a one-shot stage named before any spawn", async () => 
 	});
 	assert.equal(result.ok, false);
 	assert.match(result.error, /unknown-skill/);
+	assert.equal(
+		readdirSync(ARGS_DIR).length,
+		0,
+		"the refusal must happen before any engine spawn (empty argv dump)",
+	);
 });
 
 // Integration leg: one real delegation end-to-end through runDelegation with
