@@ -206,6 +206,29 @@ export function composePlanTask(objective: string, stateDir: string, roadmapBrie
 	);
 }
 
+/**
+ * The EXECUTE stage's task text. Bind-first, not a sequence of suggestions:
+ * the unattended driver gates this stage on the work state file flipping to
+ * complete, and a capable model handed a trivial plan will otherwise do the
+ * plan's work directly without ever binding — the machine signals never fire
+ * and the stage spins to its timeout while the work happens outside the
+ * contract. The path is the ABSOLUTE plan path the driver resolved; the
+ * approving authority is the driver itself (journaled approval:"assumed").
+ */
+export function composeExecuteTask(planPath: string): string {
+	return (
+		`Your FIRST tool action MUST be work_start(${planPath}, assumeApproved: true). ` +
+		`Do not read, verify, or implement anything before work_start succeeds — ` +
+		`the unattended driver gates this stage on the work state file flipping to ` +
+		`complete, and a plan worked without binding fails the stage named. ` +
+		`The approving authority is the unattended driver (journaled approval:"assumed"). ` +
+		`Then work the plan's tasks to done per the plan (the plan's Acceptance/QA ` +
+		`lines are the per-task contract). When every column-zero task is closed, ` +
+		`call work_complete. That call is what flips the signal; the stage is not ` +
+		`done until it succeeds.`
+	);
+}
+
 /** Raw plan stem (filename minus .md) — the gate report's naming key. */
 function planStem(planPath: string): string {
 	return path.basename(planPath, ".md");
@@ -488,11 +511,7 @@ export function defaultStageRunner(stateDir: string) {
 		}
 		if (stage === "execute") {
 			if (ctx.planPath === undefined) return { ok: false, error: "execute-needs-plan" };
-			const task =
-				`Bind and work the plan at ${ctx.planPath} to completion: use ` +
-				`work_start(${ctx.planPath}, assumeApproved: true) — the approving authority is the ` +
-				`unattended driver (journaled approval:"assumed") — then work every task to done ` +
-				`per the plan, then work_complete.`;
+			const task = composeExecuteTask(ctx.planPath);
 			const settled = await raceStage(
 				runPlanDelegation(task, ctx, "auto-execute"),
 				deadline.left(),

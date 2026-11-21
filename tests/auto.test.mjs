@@ -38,8 +38,15 @@ mkdirSync(ARGS_DIR, { recursive: true });
 process.env.TORUS_ENGINE_BIN = ARGS_ENGINE;
 process.env.TORUS_ARGS_DIR = ARGS_DIR;
 
-const { composeGateTask, composePlanTask, defaultStageRunner, runAutoCli, startAuto, AutoRefusal } =
-	await import("../extensions/auto/index.ts");
+const {
+	composeExecuteTask,
+	composeGateTask,
+	composePlanTask,
+	defaultStageRunner,
+	runAutoCli,
+	startAuto,
+	AutoRefusal,
+} = await import("../extensions/auto/index.ts");
 const { projectStateDir } = await import("../extensions/fsutil.ts");
 
 after(() => {
@@ -437,6 +444,21 @@ test("the gate prompt carries the no-questions directive and the absolute gate-r
 		`prompt must carry the absolute gate-report path: ${prompt}`,
 	);
 	assert.doesNotMatch(prompt, /\$TORUS_STATE_DIR/);
+});
+
+// Contract: the execute task is bind-FIRST — the unattended driver gates the
+// stage on the work state file flipping to complete, so the child's first
+// action must be work_start (a model that does the plan's work without
+// binding starves the poll and the stage times out), and work_complete is
+// what flips the signal. The task names the ABSOLUTE plan path.
+test("the execute task leads with the bind-first directive and requires work_complete", () => {
+	const planPath = path.join(projectStateDir(), "plans", "2026-01-01-execute-plan.md");
+	const task = composeExecuteTask(planPath);
+	assert.match(task, /Your FIRST tool action MUST be work_start\(/);
+	assert.ok(task.includes(planPath), `task must carry the absolute plan path: ${task}`);
+	assert.match(task, /Do not read, verify, or implement anything before work_start succeeds/);
+	assert.match(task, /call work_complete/);
+	assert.match(task, /the stage is not done until it succeeds/);
 });
 
 // Integration leg: one real delegation end-to-end through runDelegation with
