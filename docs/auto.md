@@ -12,7 +12,7 @@ torus auto "Add a --dry-run flag to the import script" --cwd ../repo-worktree
 
 Every positional word joins into the objective; everything else is a flag (the full list is under [Flags and timeouts](#flags-and-timeouts)). The objective is operator-supplied and reaches the plan child as instruction content, so compose it like a prompt rather than a document to quote.
 
-`--cwd` is required: the driver refuses to start without it. Pass a worktree or scratch copy of the repository you drive, not your live checkout: unattended execution writes plans, work state, and scratch files, and a failed stage can leave artifacts behind. A linked git worktree keys on the main checkout's state root, the same as every other torus surface.
+`--cwd` is required: the driver refuses to start without it. Pass a worktree or scratch copy of the repository you drive, not your live checkout: unattended execution writes plans, work state, and scratch files, and a failed stage can leave artifacts behind. All of those coordination artifacts live in the state root of the project you run the driver from (its invocation-cwd project), never in the driven repo: the driven checkout hosts only the code changes, and every stage signal reads that one state root.
 
 All refusals exit 2. Parse errors, namely an unknown flag, a flag missing its value, or a non-positive `--stage-timeout-ms`, print the usage text alongside the named error; the remaining startup refusals, such as missing `--cwd` or an objective and `--plan` both absent, print the named error alone.
 
@@ -20,7 +20,7 @@ All refusals exit 2. Parse errors, namely an unknown flag, a flag missing its va
 
 The chain is sequential and stops at the first failing stage. Four stages, each with one machine signal:
 
-1. **Plan**: a `builder` delegation runs `/skill:torus-plan <objective>` (stamped for the roadmap when `--roadmap` is set). The signal is a new `$TORUS_STATE_DIR/plans/<yyyy-mm-dd>-*.md` file created after the stage started; the plan path is the stage's output.
+1. **Plan**: a `builder` delegation authors the plan from a directive task: read `skills/torus-plan/SKILL.md` and follow its format (stamped for the roadmap when `--roadmap` is set). The task names the absolute plans path under the driver's state root, so the child writes the exact file the driver polls; the signal is a new `$TORUS_STATE_DIR/plans/<yyyy-mm-dd>-*.md` file created after the stage started, and the plan path is the stage's output.
 2. **Gate**: the driver reads `$TORUS_STATE_DIR/plans/gates/<stem>.gate.md`. A report whose mtime is at or before the snapshot taken before the one-shot spawned is ignored as a previous run's verdict; only a report written after the spawn can pass or block. `GATE BLOCKED` (checked first) fails the stage named `gate-blocked`; `GATE PASS` passes.
 3. **Execute**: a `builder` delegation binds the plan with `work_start(<planPath>, assumeApproved: true)`, then works it to completion. The signal is `$TORUS_STATE_DIR/work/<slug>.json` flipping to `"status": "complete"`.
 4. **Lens**: the driver accepts only typed `verified` rows appended to `$TORUS_STATE_DIR/work/<slug>.ledger.jsonl` after the stage started. Three or more rows with `"verdict": "OKAY"` and zero with `"verdict": "REJECT"` pass; any REJECT fails the stage named `lens-reject`.

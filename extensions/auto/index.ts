@@ -9,10 +9,13 @@
  *   orders the child to author a work plan per
  *   `<repoRoot>/skills/torus-plan/SKILL.md` — skill-command expansion does
  *   not fire inside delegation children, so a `/skill:` prefix would reach
- *   the model as literal text and the skill would never load). After the
- *   delegation settles ok, the driver polls `$TORUS_STATE_DIR/plans/` for a
- *   new `<yyyy-mm-dd>-*.md` file created after the stage started — the plan
- *   path is an output. Two failure paths, both named
+ *   the model as literal text and the skill would never load). The task
+ *   text names the ABSOLUTE plans path under the driver's state root, so
+ *   the child writes the exact file the driver polls regardless of the
+ *   child's own environment. After the delegation settles ok, the driver
+ *   polls `<stateDir>/plans/` for a new `<yyyy-mm-dd>-*.md` file created
+ *   after the stage started — the plan path is an output. Two failure
+ *   paths, both named
  *   `plan-artifact-missing`: the stage fails as soon as the settled
  *   delegation has produced no plan file within a 30s grace (a knowable
  *   failure must not spin silently to the timeout), and the stage timeout
@@ -23,7 +26,7 @@
  *   full package, so the gate's four-lens fanout (which needs
  *   `torus_delegate`, absent from delegation children) works; the gate
  *   skill's own convergence loop writes the report and the driver only
- *   reads: `$TORUS_STATE_DIR/plans/gates/<planStem>.gate.md` must carry
+ *   reads: `<stateDir>/plans/gates/<planStem>.gate.md` must carry
  *   `GATE PASS` (ok) or `GATE BLOCKED` (named failure). The report's mtime
  *   is snapshotted BEFORE the one-shot spawns and only a report written
  *   after that snapshot counts — the same freshness mechanism as the plan
@@ -32,10 +35,10 @@
  * - EXECUTE: a `runDelegation` child (agent `builder`) bound with
  *   `work_start(<planPath>, assumeApproved: true)` — the unattended driver
  *   is the approving authority, journaled approval:"assumed" — then polls
- *   `$TORUS_STATE_DIR/work/<slug>.json` for `"status": "complete"`.
+ *   `<stateDir>/work/<slug>.json` for `"status": "complete"`.
  * - LENS: a root one-shot (`/skill:lens-review` bound to the work slug).
  *   Acceptance, exactly: poll the bound ledger
- *   `$TORUS_STATE_DIR/work/<slug>.ledger.jsonl` for rows appended after the
+ *   `<stateDir>/work/<slug>.ledger.jsonl` for rows appended after the
  *   stage started; any `verified` row with `"verdict": "REJECT"` fails the
  *   stage named; three or more `verified` rows with `"verdict": "OKAY"` and
  *   zero REJECT pass it (the simpler ≥3-OKAY acceptance — the full
@@ -52,15 +55,19 @@
  * torus launcher, and is deliberately not used here; the spawned torus
  * launcher resolves the engine itself (TORUS_PI_BIN / payload pin).
  *
- * State root: everything keys on the DRIVEN project,
- * `projectStateDir(options.cwd)` — a linked worktree keys on its main
- * checkout, same as every other torus surface. The driver pins
- * TORUS_STATE_DIR and TORUS_SCRATCH_DIR into its own environment (mirroring
- * ensureStateDirEnv) before any stage fires so delegation children inherit
- * the pinned value and root one-shots recompute the same key from their
- * cwd. The module never reads TORUS_* knobs: behavior comes from options
- * only; the TORUS_AUTO_BOOTSTRAPPED re-exec marker lives in
- * runtime/bin/torus.mjs like TORUS_SERVE_BOOTSTRAPPED.
+ * State root: all coordination artifacts live in the DRIVER's invocation-cwd
+ * project state, `projectStateDir()` with no argument — exactly the state
+ * root the driver process itself uses; the driven repo hosts only the code
+ * changes. The driver pins TORUS_STATE_DIR and TORUS_SCRATCH_DIR into its
+ * own environment before any stage fires: root one-shots inherit the pinned
+ * value through the spawn env spread, and delegation children re-pin to the
+ * parent session's project (engineChildEnv's child-session model — engine
+ * children always share the parent project's state), so the driver's polls,
+ * the plan child's write, the execute child's work state, and the gate and
+ * lens reports all agree on one state root. The module never reads TORUS_*
+ * knobs: behavior comes from options only; the TORUS_AUTO_BOOTSTRAPPED
+ * re-exec marker lives in runtime/bin/torus.mjs like
+ * TORUS_SERVE_BOOTSTRAPPED.
  *
  * `--cwd` is REQUIRED: without it startAuto refuses (AutoRefusal) —
  * unattended execution must never land in the live checkout by accident.
@@ -86,7 +93,7 @@ export interface StageResult {
 export interface StageContext {
 	objective: string;
 	cwd: string;
-	/** The driven project's state root (plans/, work/, scratch/ live here). */
+	/** The driver's coordination state root (plans/, work/, scratch/ here). */
 	stateDir: string;
 	stageTimeoutMs: number;
 	skills: string[];
@@ -162,15 +169,17 @@ function workSlug(planPath: string): string {
  * The PLAN stage's task text. A directive, not a skill command: delegation
  * children receive the task as literal prompt text (no /skill expansion),
  * so the child is ordered to read the skill file itself and author the plan
- * artifact the driver polls for.
+ * artifact the driver polls for. The output path is the ABSOLUTE plans
+ * path under the driver's state root, not a `$TORUS_STATE_DIR` literal:
+ * the child's own environment may re-pin the state root elsewhere, and
+ * the driver polls the file it named in the task.
  */
-function composePlanTask(objective: string, roadmapBrief: string): string {
+export function composePlanTask(objective: string, stateDir: string, roadmapBrief: string): string {
 	return (
 		`You are authoring a work plan, not implementing. Read ` +
 		`${path.join(repoRoot(), "skills", "torus-plan", "SKILL.md")} and follow ` +
 		`its format exactly. Objective (the only thing the plan covers): ${objective}. ` +
-		`Write the plan to the plans directory ` +
-		`($TORUS_STATE_DIR/plans/<yyyy-mm-dd>-<slug>.md) with: wave headings, ` +
+		`Write the plan to ${stateDir}/plans/<yyyy-mm-dd>-<slug>.md with: wave headings, ` +
 		`column-zero checkbox tasks each carrying Acceptance/QA/Executor details, ` +
 		`a final verification wave with F-tasks, and a Stopping condition section. ` +
 		`Do NOT create the Approval line (the driver approves via assumeApproved). ` +
@@ -382,7 +391,7 @@ export function defaultStageRunner(stateDir: string) {
 				ctx.roadmapPath !== undefined
 					? `\n\nRoadmap brief: the plan's Destination must carry a "Roadmap: ${ctx.roadmapPath} (items R…)" stamp line naming this roadmap; roadmap sync reads that stamp.`
 					: "";
-			const task = composePlanTask(ctx.objective.trim(), roadmapBrief);
+			const task = composePlanTask(ctx.objective.trim(), stateDir, roadmapBrief);
 			const settled = await raceStage(
 				runPlanDelegation(task, ctx, "auto-plan"),
 				deadline.left(),
@@ -640,11 +649,13 @@ export async function startAuto(options: AutoOptions): Promise<AutoReport> {
 	if (planPath !== undefined && !existsSync(planPath)) {
 		refusal(`plan file not found: ${planPath}`);
 	}
-	const stateDir = projectStateDir(path.resolve(cwd));
-	// Pin the driven project's state into the environment so delegation
-	// children inherit it (engine children honor the pinned value) and root
-	// one-shots recompute the same key from their cwd — one state root for
-	// every stage signal.
+	const stateDir = projectStateDir();
+	// Coordination artifacts live in the driver's invocation-cwd project
+	// state; the driven repo hosts only the code changes. The pin into the
+	// environment makes root one-shots inherit the same root through the
+	// spawn env spread, and delegation children re-pin to the parent
+	// session's project (engineChildEnv's child-session model) — one state
+	// root for every stage signal.
 	process.env[TORUS_STATE_DIR_ENV] = stateDir;
 	process.env[TORUS_SCRATCH_DIR_ENV] = path.join(stateDir, "scratch");
 	const stageTimeoutMs = options.stageTimeoutMs ?? DEFAULT_STAGE_TIMEOUT_MS;

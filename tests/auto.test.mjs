@@ -38,7 +38,7 @@ mkdirSync(ARGS_DIR, { recursive: true });
 process.env.TORUS_ENGINE_BIN = ARGS_ENGINE;
 process.env.TORUS_ARGS_DIR = ARGS_DIR;
 
-const { defaultStageRunner, runAutoCli, startAuto, AutoRefusal } = await import(
+const { composePlanTask, defaultStageRunner, runAutoCli, startAuto, AutoRefusal } = await import(
 	"../extensions/auto/index.ts"
 );
 const { projectStateDir } = await import("../extensions/fsutil.ts");
@@ -261,7 +261,7 @@ writeFileSync(path.join(gateDir, stem + ".gate.md"), ${JSON.stringify(verdict)} 
 		["GATE BLOCKED", false, "gate-blocked"],
 	]) {
 		const fixture = fixtureDir("gate");
-		const stateDir = projectStateDir(fixture);
+		const stateDir = projectStateDir();
 		const plansDir = path.join(stateDir, "plans");
 		const planPath = path.join(plansDir, "2026-01-01-gate-plan.md");
 		mkdirSync(plansDir, { recursive: true });
@@ -320,7 +320,7 @@ appendFileSync(ledger, ${JSON.stringify(rows)}.map(r => JSON.stringify(r)).join(
 	];
 	for (const [rows, expectedOk, expectedError] of cases) {
 		const fixture = fixtureDir("lens");
-		const stateDir = projectStateDir(fixture);
+		const stateDir = projectStateDir();
 		const plansDir = path.join(stateDir, "plans");
 		const planPath = path.join(plansDir, "2026-01-01-lens-plan.md");
 		mkdirSync(plansDir, { recursive: true });
@@ -350,7 +350,7 @@ appendFileSync(ledger, ${JSON.stringify(rows)}.map(r => JSON.stringify(r)).join(
 
 test("lens falls back to the one-shot's final VERDICT line when the ledger stays empty", async () => {
 	const fixture = fixtureDir("lens-stdout");
-	const stateDir = projectStateDir(fixture);
+	const stateDir = projectStateDir();
 	const plansDir = path.join(stateDir, "plans");
 	const planPath = path.join(plansDir, "2026-01-01-lens-plan.md");
 	mkdirSync(plansDir, { recursive: true });
@@ -384,7 +384,7 @@ test("unknown skills fail a one-shot stage named before any spawn", async () => 
 	// launcher child is ever spawned: the argv dump must stay empty.
 	freshArgsDir();
 	const fixture = fixtureDir("skills");
-	const stateDir = projectStateDir(fixture);
+	const stateDir = projectStateDir();
 	const runner = defaultStageRunner(stateDir);
 	const result = await runner("gate", {
 		objective: "x",
@@ -405,6 +405,20 @@ test("unknown skills fail a one-shot stage named before any spawn", async () => 
 	);
 });
 
+// Contract: the plan task text carries the ABSOLUTE driver-state plans
+// path (the file the driver polls), never a $TORUS_STATE_DIR literal — a
+// literal would make the child resolve its own (re-pinned) state root and
+// write the plan where the driver never looks.
+test("the plan task names the absolute driver-state plans path, not a $TORUS_STATE_DIR literal", () => {
+	const stateDir = projectStateDir();
+	const task = composePlanTask("fix the flaky test", stateDir, "");
+	assert.ok(
+		task.includes(`${path.join(stateDir, "plans")}/<yyyy-mm-dd>-<slug>.md`),
+		`task must carry the absolute plans path: ${task}`,
+	);
+	assert.doesNotMatch(task, /\$TORUS_STATE_DIR/);
+});
+
 // Integration leg: one real delegation end-to-end through runDelegation with
 // the fake engine (it records argv and settles immediately) and the driver's
 // plan-artifact poll. Honest shortcut documented: the plan file is planted by
@@ -414,7 +428,7 @@ test("unknown skills fail a one-shot stage named before any spawn", async () => 
 test("plan stage drives a real delegation and polls for the new plan artifact", async () => {
 	freshArgsDir();
 	const fixture = fixtureDir("plan");
-	const stateDir = projectStateDir(fixture);
+	const stateDir = projectStateDir();
 	process.env.TORUS_STATE_DIR = stateDir;
 	const plansDir = path.join(stateDir, "plans");
 	mkdirSync(plansDir, { recursive: true });
@@ -451,6 +465,14 @@ test("plan stage drives a real delegation and polls for the new plan artifact", 
 	assert.match(joined, /torus-plan\/SKILL\.md/);
 	assert.match(joined, /planning only/);
 	assert.doesNotMatch(joined, /Task: \/skill:/);
+	// The composed task must name the ABSOLUTE driver-state plans path, so
+	// the child writes the exact file the driver polls regardless of its
+	// own environment — never a $TORUS_STATE_DIR literal.
+	assert.ok(
+		joined.includes(path.join(plansDir, "<yyyy-mm-dd>-<slug>.md")),
+		`task must carry the absolute plans path under ${plansDir}`,
+	);
+	assert.doesNotMatch(joined, /\$TORUS_STATE_DIR\/plans/);
 	assert.match(
 		joined,
 		/--append-system-prompt\n\/tmp\/torus-builder-/,
@@ -464,7 +486,7 @@ test("plan stage drives a real delegation and polls for the new plan artifact", 
 test("a settled delegation without a plan artifact fails named before the stage timeout", async () => {
 	freshArgsDir();
 	const fixture = fixtureDir("plan-missing");
-	const stateDir = projectStateDir(fixture);
+	const stateDir = projectStateDir();
 	process.env.TORUS_STATE_DIR = stateDir;
 	mkdirSync(path.join(stateDir, "plans"), { recursive: true });
 	const runner = defaultStageRunner(stateDir);
@@ -519,7 +541,7 @@ test("a stale gate report is ignored: the poll waits for the fresh verdict", asy
 	// starts; the stub writes its FRESH report only after a tick. The
 	// poll must refuse the stale mtime and accept the fresh write.
 	const fixture = fixtureDir("gate-stale-fresh");
-	const stateDir = projectStateDir(fixture);
+	const stateDir = projectStateDir();
 	const plansDir = path.join(stateDir, "plans");
 	const planPath = path.join(plansDir, "2026-01-01-stale-plan.md");
 	mkdirSync(plansDir, { recursive: true });
@@ -561,7 +583,7 @@ writeFileSync(path.join(gateDir, stem + ".gate.md"), "GATE PASS\\n");
 
 test("a never-refreshing stale gate report times out named and kills the one-shot child", async () => {
 	const fixture = fixtureDir("gate-stale-dead");
-	const stateDir = projectStateDir(fixture);
+	const stateDir = projectStateDir();
 	const plansDir = path.join(stateDir, "plans");
 	const planPath = path.join(plansDir, "2026-01-01-stale-plan.md");
 	mkdirSync(plansDir, { recursive: true });
