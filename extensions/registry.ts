@@ -75,6 +75,12 @@ export interface DelegationRecord {
 	childPid?: number;
 	/** Set when the operator stops the run from the fleet view; the run settles failed but its outcome reports interrupted. */
 	stopRequested?: boolean;
+	/** Child process exit code at settle; undefined while running or when never known. */
+	exitCode?: number;
+	/** Engine-signaled or crash error string when the run failed with a known cause. */
+	error?: string;
+	/** True when the run settled on a no-progress tail (dead connection or model). */
+	noProgress?: boolean;
 	/** Origin tag (`torus-team:<id>` for team members); plain delegations carry none. */
 	source?: string;
 	/** Display label (a member's name); plain delegations render the agent name. */
@@ -379,7 +385,9 @@ export interface RunRecord {
 	logFile?: string;
 	// Full-record fold-in. All optional: identity-only files load cleanly and
 	// each origin writes only the slots it knows (the write merges over the
-	// on-disk record, so origins never erase each other's fields).
+	// on-disk record, so origins never erase each other's fields). The per-run
+	// verdict slots (exitCode, error, noProgress) ride the same fold: the
+	// finish path writes only what the settled outcome knows.
 	handle?: string | null;
 	label?: string;
 	/** Origin tag (`torus-team:<id>` for members); plain delegations carry none on disk. */
@@ -397,6 +405,10 @@ export interface RunRecord {
 	text?: string;
 	textTruncated?: boolean;
 	stopRequested?: boolean;
+	/** Per-run verdict fold, mirroring the DelegationRecord slots. */
+	exitCode?: number;
+	error?: string;
+	noProgress?: boolean;
 	paneId?: string | null;
 	memberStatus?: "working" | "idle" | "stopped";
 	/** Seconds of active (non-idle) work; the displayed age freezes while idle. */
@@ -441,6 +453,9 @@ function recordBeacon(record: DelegationRecord): RunRecord {
 			? { textTruncated: true }
 			: {}),
 		...(record.stopRequested ? { stopRequested: true } : {}),
+		...(record.exitCode !== undefined ? { exitCode: record.exitCode } : {}),
+		...(record.error !== undefined ? { error: record.error } : {}),
+		...(record.noProgress !== undefined ? { noProgress: record.noProgress } : {}),
 		...(record.source !== undefined ? { source: record.source } : {}),
 		...(record.label !== undefined ? { label: record.label } : {}),
 		...(record.memberStatus !== undefined ? { memberStatus: record.memberStatus } : {}),
@@ -1011,7 +1026,15 @@ export async function finishDelegation(
 	ok: boolean,
 	finalText: string,
 	sessionId: string | null = null,
-	opts?: { toast?: boolean },
+	opts?: {
+		toast?: boolean;
+		/** Per-run verdict fold: these land on the record and the on-disk beacon. */
+		verdict?: {
+			exitCode?: number;
+			error?: string;
+			noProgress?: boolean;
+		};
+	},
 ): Promise<DelegationRecord | undefined> {
 	const record = registry.get(id);
 	if (!record) return undefined;
@@ -1023,6 +1046,9 @@ export async function finishDelegation(
 	record.text = finalText.slice(0, RECORD_TEXT_CAP);
 	record.textTruncated = finalText.length > RECORD_TEXT_CAP;
 	record.sessionId = sessionId;
+	if (opts?.verdict?.exitCode !== undefined) record.exitCode = opts.verdict.exitCode;
+	if (opts?.verdict?.error !== undefined) record.error = opts.verdict.error;
+	if (opts?.verdict?.noProgress !== undefined) record.noProgress = opts.verdict.noProgress;
 	controls.delete(id);
 	writeRunBeaconThrottled(recordBeacon(record));
 	appendFileSync(
@@ -1268,6 +1294,9 @@ function beaconToRecord(beacon: RunRecord): DelegationRecord {
 		paneId: null,
 		...(beacon.childPid !== undefined ? { childPid: beacon.childPid } : {}),
 		...(beacon.stopRequested ? { stopRequested: true } : {}),
+		...(beacon.exitCode !== undefined ? { exitCode: beacon.exitCode } : {}),
+		...(beacon.error !== undefined ? { error: beacon.error } : {}),
+		...(beacon.noProgress !== undefined ? { noProgress: beacon.noProgress } : {}),
 		...(beacon.source !== undefined ? { source: beacon.source } : {}),
 		...(beacon.label !== undefined ? { label: beacon.label } : {}),
 		...(beacon.memberStatus !== undefined ? { memberStatus: beacon.memberStatus } : {}),

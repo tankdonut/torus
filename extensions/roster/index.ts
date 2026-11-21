@@ -1053,6 +1053,15 @@ export function fireDelegationsBackground(
 						background: true,
 						...(outcome.delegationId ? { delegationId: outcome.delegationId } : {}),
 						durationMs: Date.now() - startedAt,
+						...(typeof outcome.details["exitCode"] === "number"
+							? { exitCode: outcome.details["exitCode"] }
+							: {}),
+						...(typeof outcome.details["error"] === "string"
+							? { error: outcome.details["error"] }
+							: {}),
+						...(outcome.details["noProgress"] !== undefined
+							? { noProgress: outcome.details["noProgress"] }
+							: {}),
 					},
 				});
 			} catch {
@@ -1148,7 +1157,9 @@ async function runAcpDelegation(
 				delegationId,
 			});
 		}
-		await finishDelegation(delegationId, run.ok, text, run.sessionId);
+		await finishDelegation(delegationId, run.ok, text, run.sessionId, {
+			verdict: { exitCode: run.ok ? 0 : 1 },
+		});
 		if (emitResult) {
 			emitTorusCustom(
 				{
@@ -1200,7 +1211,15 @@ async function runAcpDelegation(
 		// Crash path mirrors the engine branch: finish best-effort so a start
 		// marker is never stranded without a failure marker, then rethrow.
 		try {
-			await finishDelegation(delegationId, false, `acp delegation crashed: ${String(runError)}`);
+			await finishDelegation(
+				delegationId,
+				false,
+				`acp delegation crashed: ${String(runError)}`,
+				null,
+				{
+					verdict: { error: String(runError) },
+				},
+			);
 		} catch {
 			// registry finish failed (e.g. log unwritable); the marker below still goes out
 		}
@@ -1530,7 +1549,13 @@ export async function runDelegation(
 			fallbackEvents.length > 0
 				? `${walked}\n\n${fallbackEvents.map(formatFallbackNote).join("\n")}`
 				: walked;
-		await finishDelegation(delegationId, ok, text, finalResult.sessionId);
+		await finishDelegation(delegationId, ok, text, finalResult.sessionId, {
+			verdict: {
+				exitCode: finalResult.exitCode,
+				...(lastError ? { error: lastError } : {}),
+				...(noProgressTail > 0 ? { noProgress: true } : {}),
+			},
+		});
 		if (emitResult) {
 			emitTorusCustom(
 				{
@@ -1550,8 +1575,10 @@ export async function runDelegation(
 						handle,
 						durationMs: Date.now() - startedAt,
 						turns: carried.turns,
+						exitCode: finalResult.exitCode,
 						...(stopped ? { stopped: true } : {}),
 						...(lastError ? { error: lastError } : {}),
+						...(noProgressTail > 0 ? { noProgress: true } : {}),
 						...(noProgressTail > 0 ? { noProgressTail } : {}),
 					},
 				},
@@ -1596,7 +1623,9 @@ export async function runDelegation(
 		// failure marker. finishDelegation is best-effort — an unwritable log
 		// must not suppress the marker or mask the original error.
 		try {
-			await finishDelegation(delegationId, false, `delegation crashed: ${String(runError)}`);
+			await finishDelegation(delegationId, false, `delegation crashed: ${String(runError)}`, null, {
+				verdict: { error: String(runError) },
+			});
 		} catch {
 			// registry finish failed (e.g. log unwritable); the marker below still goes out
 		}

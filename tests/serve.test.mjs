@@ -154,6 +154,7 @@ test("POST /run with an unknown agent returns the roster pre-flight error and sp
 	assert.equal(body.error, "unknown-agent");
 	assert.match(body.text, /Unknown agent "no-such-agent"/);
 	assert.equal(readdirSync(ARGS_DIR).length, 0, "no engine spawn for a pre-flight refusal");
+	assert.equal("verdict" in body, false, "a pre-flight refusal carries no verdict");
 });
 
 test("POST /run starts a fleet-visible delegation: registry record + run beacon", async () => {
@@ -194,6 +195,22 @@ test("POST /run with wait:true awaits the outcome and returns ok/text/usage/mode
 	assert.equal(body.usage?.output, 20);
 	assert.equal(body.model, "zai/glm-5.3");
 	assert.equal(typeof body.delegationId, "string");
+	assert.ok(
+		body.verdict && typeof body.verdict === "object",
+		"wait:true carries the verdict block",
+	);
+	assert.deepEqual(
+		Object.keys(body.verdict).sort(),
+		["error", "exitCode", "noProgress", "ok", "stopped", "turns"],
+		"verdict carries exactly the six keys",
+	);
+	assert.equal(body.verdict.ok, body.ok);
+	for (const key of ["exitCode", "turns", "stopped", "error", "noProgress"]) {
+		assert.ok(
+			["number", "string", "boolean", "object"].includes(typeof body.verdict[key]),
+			`verdict.${key} is a value or null, not missing`,
+		);
+	}
 });
 
 test("GET /runs requires auth and lists the serve-started runs", async () => {

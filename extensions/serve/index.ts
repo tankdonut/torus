@@ -496,6 +496,9 @@ function publicRun(record: DelegationRecord): Record<string, unknown> {
 		tokensIn: record.tokensIn,
 		tokensOut: record.tokensOut,
 		cost: record.cost,
+		exitCode: record.exitCode,
+		error: record.error,
+		noProgress: record.noProgress,
 		parentSession: record.parentSession,
 	};
 }
@@ -639,6 +642,14 @@ async function handleRunRequest(req: IncomingMessage, res: ServerResponse): Prom
 			usage: outcome.details.usage ?? null,
 			model: outcome.details.model ?? null,
 			delegationId: outcome.delegationId,
+			verdict: {
+				ok: outcome.ok,
+				exitCode: outcome.details.exitCode ?? null,
+				turns: outcome.details.turns ?? null,
+				stopped: outcome.details.stopped ?? null,
+				error: outcome.details.error ?? null,
+				noProgress: outcome.details.noProgress ?? null,
+			},
 			...(outcome.ok ? {} : { error: outcome.details.error ?? "run-failed" }),
 		});
 	}

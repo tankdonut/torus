@@ -360,7 +360,9 @@ test("delegation beacons carry the full record: stats, text, and finish land on 
 			turns: 2,
 			usage: { input: 10, output: 20, cacheRead: 5, cacheWrite: 6, cost: 0.25 },
 		});
-		await registry.finishDelegation(id, true, "final");
+		await registry.finishDelegation(id, true, "final", null, {
+			verdict: { exitCode: 0, noProgress: false },
+		});
 		const onDisk = JSON.parse(readFileSync(path.join(RUNS, `${id}.json`), "utf8"));
 		assert.equal(onDisk.status, "done");
 		assert.equal(onDisk.agent, "probe");
@@ -374,6 +376,26 @@ test("delegation beacons carry the full record: stats, text, and finish land on 
 		assert.equal(onDisk.cost, 0.25);
 		assert.equal(onDisk.text, "final", "final text lands on disk");
 		assert.equal(typeof onDisk.finishedAt, "number", "finish time lands on disk");
+		assert.equal(onDisk.exitCode, 0, "verdict exit code lands on disk");
+		assert.equal(onDisk.noProgress, false, "verdict no-progress flag lands on disk");
+	} finally {
+		rmSync(path.join(RUNS, `${id}.json`), { force: true });
+	}
+});
+
+test("delegation beacons carry the per-run verdict: exitCode, error, and noProgress fold onto disk", async () => {
+	mkdirSync(RUNS, { recursive: true });
+	const id = `probe-${stamp}-verdict`;
+	try {
+		await registry.startDelegation(id, "probe", "m", null, null);
+		await registry.finishDelegation(id, false, "model never progressed", null, {
+			verdict: { exitCode: 3, error: "no-progress-tail", noProgress: true },
+		});
+		const onDisk = JSON.parse(readFileSync(path.join(RUNS, `${id}.json`), "utf8"));
+		assert.equal(onDisk.status, "failed");
+		assert.equal(onDisk.exitCode, 3, "failed run's exit code lands on disk");
+		assert.equal(onDisk.error, "no-progress-tail", "known error lands on disk");
+		assert.equal(onDisk.noProgress, true, "no-progress verdict lands on disk");
 	} finally {
 		rmSync(path.join(RUNS, `${id}.json`), { force: true });
 	}

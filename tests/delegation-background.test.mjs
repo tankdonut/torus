@@ -126,7 +126,12 @@ test("fireDelegationsBackground queues one wake entry per completed run, no dire
 		{
 			agent: "worker",
 			handle: "bg-probe",
-			start: async () => ({ ok: true, text: "probe result", details: {}, delegationId: null }),
+			start: async () => ({
+				ok: true,
+				text: "probe result",
+				details: { exitCode: 0, turns: 3 },
+				delegationId: null,
+			}),
 		},
 	]);
 	await Promise.all(settled);
@@ -145,6 +150,13 @@ test("fireDelegationsBackground queues one wake entry per completed run, no dire
 	assert.equal(message.details.ok, true);
 	assert.equal(message.details.background, true);
 	assert.equal(typeof message.details.durationMs, "number");
+	assert.equal(message.details.exitCode, 0, "outcome exit code rides the wake detail");
+	assert.equal("error" in message.details, false, "a successful run carries no error in the wake");
+	assert.equal(
+		"noProgress" in message.details,
+		false,
+		"a successful run carries no noProgress in the wake",
+	);
 	assert.equal(options?.triggerTurn, true);
 	assert.equal(options?.deliverAs, "followUp");
 });
@@ -168,6 +180,11 @@ test("a crashing background run still queues a FAILED entry instead of rejecting
 	assert.equal(outcomes[0].ok, false);
 	assert.equal(sent.length, 1);
 	assert.equal(sent[0].message.details.ok, false);
+	assert.equal(
+		sent[0].message.details.error,
+		"background-crash",
+		"the crash error rides the failed wake detail",
+	);
 	assert.match(sent[0].message.content[0].text, /delegation "worker" failed:/);
 });
 
