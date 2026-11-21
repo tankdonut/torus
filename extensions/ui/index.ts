@@ -198,9 +198,10 @@ const GOAL_WIDGET_KEY = "torus-goal";
 /**
  * The goal banner: one full-width row for the session objective, mounted last
  * in the widget dock so it renders below the dock gap, flush above the editor
- * border like a label on the input's top frame. State rides the color, not an
- * icon: the diamond and label go warning while active, dim while paused, and
- * a paused head mutes too. No goal, or a complete one, renders nothing.
+ * border like a label on the input's top frame. State rides the color and the
+ * glyph: warning with a play triangle while active, dim with a stop square
+ * while paused, and a paused head mutes too. No goal, or a complete one,
+ * renders nothing.
  */
 class GoalBanner implements Component {
 	private readonly painter: StatusPainter | undefined;
@@ -214,13 +215,16 @@ class GoalBanner implements Component {
 		if (!chip) return [];
 		const color = chip.status === "active" ? "warning" : "dim";
 		const fg = (text: string) => (this.painter ? this.painter.fg(color, text) : text);
-		const budget = Math.max(0, width - visibleWidth("◆ goal  "));
+		// play while active, stop while paused; both glyphs are one column, so
+		// the truncation budget keys off either label
+		const label = chip.status === "active" ? "▶ goal" : "■ goal";
+		const budget = Math.max(0, width - visibleWidth("▶ goal  "));
 		// truncate before styling so the ellipsis is not buried under a closing SGR tag
 		const head =
 			chip.status === "paused"
 				? fg(truncateToWidth(chip.head, budget))
 				: truncateToWidth(chip.head, budget);
-		return [`${fg("◆ goal")}  ${head}`];
+		return [`${fg(label)}  ${head}`];
 	}
 
 	invalidate(): void {}

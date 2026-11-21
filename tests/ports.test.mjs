@@ -511,13 +511,13 @@ test("goal banner: renders only with a goal, truncates to width, state rides the
 	);
 	const active = createGoalBanner(fakeTheme).render(80);
 	assert.equal(active.length, 1);
-	assert.ok(active[0].includes("<warning>◆ goal</warning>"), "active label warns");
+	assert.ok(active[0].includes("<warning>▶ goal</warning>"), "active label warns");
 	assert.ok(active[0].includes("ship the frobnicator"), "objective head renders");
 
 	setStatusExtras(null, { status: "paused", head: "y".repeat(120) });
 	const paused = createGoalBanner(fakeTheme).render(40);
 	assert.equal(paused.length, 1);
-	assert.ok(paused[0].includes("<dim>◆ goal</dim>"), "paused label dims");
+	assert.ok(paused[0].includes("<dim>■ goal</dim>"), "paused label dims");
 	const plain = paused[0].replaceAll(/<[^>]+>|\x1b\[[0-9]*m/g, "");
 	assert.ok(plain.includes("..."), "head truncates with an ellipsis");
 	assert.equal(plain.length, 40, "banner fits the terminal width exactly");
