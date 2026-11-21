@@ -461,6 +461,30 @@ test("real approved plans pass: exit 0", () => {
 	}
 });
 
+// Drift guard for the sanitized real-plan fixtures: their exit-0 lint runs
+// cannot distinguish sanitized from unsanitized content, so the three
+// containment strips (Roadmap stamp, Approval line, roadmap-item reference
+// rows) are asserted absent directly. Iterating REAL_PLANS keeps future
+// fixtures covered automatically; the positive wave-heading marker makes an
+// accidentally emptied array fail loudly instead of passing vacuously.
+test("real-plan fixtures stay sanitized: no Roadmap stamp, Approval, or roadmap-item reference lines", () => {
+	for (const [name, content] of REAL_PLANS) {
+		assert.match(content, /^### Wave \d/m, `${name}: missing a wave heading`);
+		assert.match(
+			content,
+			/^### Final verification wave$/m,
+			`${name}: missing the final verification wave heading`,
+		);
+		for (const [label, banned] of [
+			["Roadmap stamp line", /^Roadmap: /m],
+			["Approval line", /^Approval: /m],
+			["roadmap-item reference row", /^- R\d+\. /m],
+		]) {
+			assert.doesNotMatch(content, banned, `${name}: ${label} must stay stripped`);
+		}
+	}
+});
+
 test("task without an Acceptance: detail line: exit 1 naming the task's line", () => {
 	const taskLine = PLAN.split("\n").indexOf("- [ ] 2. Add the CLI wrapper") + 1;
 	expectViolation(
@@ -493,6 +517,28 @@ test("no final verification wave: exit 1", () => {
 		[["### Final verification wave", "### Wrap-up"]],
 		["no final verification wave section"],
 	);
+});
+
+// The final wave's F-task row: a non-F task row there must trip the rule
+// (its line is the wave heading), while the canonical F-task row keeps the
+// file clean.
+test("final verification wave with no F-task row: exit 1 naming the wave's line", () => {
+	const waveLine = PLAN.split("\n").indexOf("### Final verification wave") + 1;
+	expectViolation(
+		"final-wave-no-f-task",
+		[
+			["- [ ] F1. Plan-compliance review", "- [ ] 1. Plan-compliance review"],
+			["  Delegated to the reviewer.", "  Acceptance: review passes"],
+		],
+		[`${waveLine}: final verification wave has no F-task row`],
+	);
+});
+
+test("F-task row inside the final verification wave: clean", () => {
+	const file = path.join(dir, "final-wave-f-task.md");
+	writeFileSync(file, PLAN, "utf8");
+	const run = runLint([file]);
+	assert.equal(run.status, 0, `expected exit 0, got ${run.status}\nstdout:\n${run.stdout}`);
 });
 
 test("no Stopping condition section: exit 1", () => {
