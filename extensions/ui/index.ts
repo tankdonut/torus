@@ -196,9 +196,9 @@ export type StatusPainter = Pick<AppTheme, "fg" | "bold">;
 const GOAL_WIDGET_KEY = "torus-goal";
 
 /**
- * The goal banner: one full-width row for the session objective, mounted last
- * in the widget dock so it renders below the dock gap, flush above the editor
- * border like a label on the input's top frame. State rides the color and the
+ * The goal banner: one full-width row for the session objective, mounted in
+ * the widget dock between the fleet strip and the dock gap so it reads with
+ * the status band, one blank row off the editor border. State rides the color and the
  * glyph: warning with a play triangle while active, dim with a stop square
  * while paused, and a paused head mutes too. No goal, or a complete one,
  * renders nothing.
@@ -216,15 +216,19 @@ class GoalBanner implements Component {
 		const color = chip.status === "active" ? "warning" : "dim";
 		const fg = (text: string) => (this.painter ? this.painter.fg(color, text) : text);
 		// play while active, stop while paused; both glyphs are one column, so
-		// the truncation budget keys off either label
+		// the truncation budget keys off either label. The head joins with the
+		// same dim separator the statusline chips use.
 		const label = chip.status === "active" ? "▶ goal" : "■ goal";
-		const budget = Math.max(0, width - visibleWidth("▶ goal  "));
+		const sep = this.painter ? this.painter.fg("dim", " · ") : " · ";
+		// budget in visible columns: key it off the plain separator, not the
+		// styled one (test painters wrap in literal tags visibleWidth would count)
+		const budget = Math.max(0, width - visibleWidth("▶ goal") - " · ".length);
 		// truncate before styling so the ellipsis is not buried under a closing SGR tag
 		const head =
 			chip.status === "paused"
 				? fg(truncateToWidth(chip.head, budget))
 				: truncateToWidth(chip.head, budget);
-		return [`${fg(label)}  ${head}`];
+		return [`${fg(label)}${sep}${head}`];
 	}
 
 	invalidate(): void {}
@@ -863,16 +867,17 @@ export function registerUi(pi: ExtensionAPI): void {
 		// order is registration order, and the fleet extension registers
 		// before this one — without this the strip would sit above the chips.
 		ctx.ui.setWidget(FLEET_WIDGET_KEY, (tui, theme) => createFleetStrip(tui, theme));
+		// The goal banner rides right after the strip, inside the status band:
+		// flush-above-editor placement read as cramped against the input frame.
+		ctx.ui.setWidget(GOAL_WIDGET_KEY, (_tui, theme) => createGoalBanner(theme));
 		// The engine spaces the chat side of the widget dock with a leading
 		// spacer but leaves the editor side flush; one blank row keeps the
-		// chips/strip off the editor border (and its embedded working spinner).
+		// chips/strip/goal off the editor border (and its embedded working
+		// spinner).
 		ctx.ui.setWidget(DOCK_GAP_WIDGET_KEY, () => ({
 			render: () => [""],
 			invalidate: () => {},
 		}));
-		// Last in the dock, below the gap: the goal banner sits flush above the
-		// editor border, reading as a label on the input's top frame.
-		ctx.ui.setWidget(GOAL_WIDGET_KEY, (_tui, theme) => createGoalBanner(theme));
 		installStartupBanner(pi, ctx);
 		installCursorBlinkWidget(ctx);
 		if (ctx.mode === "tui") {

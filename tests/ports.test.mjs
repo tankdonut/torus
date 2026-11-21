@@ -512,6 +512,7 @@ test("goal banner: renders only with a goal, truncates to width, state rides the
 	const active = createGoalBanner(fakeTheme).render(80);
 	assert.equal(active.length, 1);
 	assert.ok(active[0].includes("<warning>▶ goal</warning>"), "active label warns");
+	assert.ok(active[0].includes("<dim> · </dim>"), "head joins with the chip separator");
 	assert.ok(active[0].includes("ship the frobnicator"), "objective head renders");
 
 	setStatusExtras(null, { status: "paused", head: "y".repeat(120) });

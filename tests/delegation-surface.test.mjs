@@ -679,10 +679,9 @@ test("session_start docks chips, then the fleet strip, then a blank-row gap", ()
 	handlers["session_start"]({ type: "session_start", reason: "startup" }, ctx);
 	assert.deepEqual(
 		registered.map(([key]) => key),
-		["torus-statusline", "torus-fleet", "torus-dock-gap", "torus-goal", "torus:cursor-blink"],
-		"docked rows render in registration order; the gap spaces the chips and " +
-			"strip off the editor border, and the goal banner lands below it, flush " +
-			"above the input box",
+		["torus-statusline", "torus-fleet", "torus-goal", "torus-dock-gap", "torus:cursor-blink"],
+		"docked rows render in registration order; the goal banner rides with " +
+			"the status band and the gap spaces the whole dock off the input box",
 	);
 	const gap = registered.find(([key]) => key === "torus-dock-gap")?.[1]?.({}, {});
 	assert.deepEqual(gap.render(140), [""], "the gap paints exactly one blank row");
