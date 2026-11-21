@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.24.1](https://github.com/tankdonut/torus/compare/v0.24.0...v0.24.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **deps:** update dependency @anthropic-ai/sandbox-runtime to v0.0.83 ([#134](https://github.com/tankdonut/torus/issues/134)) ([687ae48](https://github.com/tankdonut/torus/commit/687ae48668bfe3da57d795070dd5d0149ca36d43))
+* **extensions/providers:** walk the model chain when the main session's model fails ([8388b15](https://github.com/tankdonut/torus/commit/8388b15cfcaa8de054cb4587e101218c97177cea))
+* **scripts/audit-gate:** drop the shipped picomatch allowlist entry ([6cf0609](https://github.com/tankdonut/torus/commit/6cf0609970015a529d42d61f192a2c78af7f906b))
+
 ## [0.24.0](https://github.com/tankdonut/torus/compare/v0.23.0...v0.24.0) (2026-11-18)
 
 
