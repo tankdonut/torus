@@ -1,0 +1,286 @@
+# Advisory PR reviewer — every non-draft same-repo pull request gets exactly
+# one COMMENT review from the torus lens-review conductor, run under the ci
+# trust profile. The workflow never approves and never requests changes: it
+# posts findings and a verdict as advisory material only. Whether to act on
+# them stays with the human reviewer; nothing in this file blocks a merge.
+#
+# Credential wiring (same placeholder pattern as ci-profile-smoke.yml): the
+# one-shot conductor needs at least one provider credential in the
+# environment for the agent's chat model (the engine reads provider keys
+# from ambient env; run `node runtime/bin/torus.mjs --help` for the list,
+# e.g. ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY). No existing
+# workflow in this repo passes model credentials, so the real secret name
+# is wired here at merge time, e.g.:
+#   env:
+#     ZAI_API_KEY: ${{ secrets.CI_MODEL_KEY }}
+# Until then the job fails at the conductor step with a missing-credential
+# error; every fence and post step stays inert.
+#
+# Fork and draft skip rationale: fork PRs get no checkout of a trusted base
+# and no model spend from an untrusted head — a fork PR must not trigger a
+# run that posts comments under the repository's identity. Draft PRs are
+# not finished work; reviewing them wastes model spend and pins a verdict
+# to a change-set that is about to change. Skips exit 0 with a summary
+# note, not a failure.
+#
+# Runner facts (from ci-profile-smoke.yml): ubuntu-24.04 is pinned rather
+# than ubuntu-latest because the job exercises the 24.04 unprivileged-userns
+# AppArmor restriction and its lift below; ubuntu-latest could drift to a
+# different base image and invalidate the AppArmor step.
+
+name: PR review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+# The review is read-only over the repo and write-only over pull request
+# comments. contents: write would let the workflow push; it must never have
+# it. pull-requests: write is what posts the COMMENT review.
+permissions:
+  contents: read
+
+# One review per PR at a time: a push before the review posts would leave
+# the marker pinned to a stale head sha, so runs queue instead of
+# cancelling (same precedent as renovate-auto-approve.yaml).
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    # Same repo only: a fork PR never runs this workflow (the checkout and
+    # the fenced diff would still resolve, but the run would spend model
+    # tokens and post under the repository's identity for untrusted code).
+    # Drafts are skipped for spend, not for trust.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false
+    # Pinned deliberately: see the runner-facts comment at the top.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Refuse to run outside tankdonut/torus
+        if: github.repository != 'tankdonut/torus'
+        run: |
+          echo "::error::PR review workflow copied to ${GITHUB_REPOSITORY}"
+          exit 1
+
+      - name: Checkout the pull request head
+        # pull_request event, never its target event: the workflow checks
+        # out untrusted head code under the least-privileged default token
+        # and never exposes repository secrets to it.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .tool-versions
+
+      - run: npm ci
+
+      - name: Install sandbox dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bubblewrap socat
+
+      - name: Lift the Ubuntu 24.04 unprivileged-userns AppArmor restriction
+        # 24.04 ships kernel.apparmor_restrict_unprivileged_userns=1, which
+        # breaks bubblewrap (it needs unprivileged user namespaces) for every
+        # process on the runner, including the sandboxed agent commands this
+        # job proves. The sysctl lift is the standard recipe on GH-hosted
+        # runners (anthropics/claude-code-action applies the same one). The
+        # durable alternative, an unconfined profile at /etc/apparmor.d/bwrap,
+        # is avoided here because it widens the machine for every other
+        # workload instead of just this job.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Fence the pull request data
+        run: |
+          set -euo pipefail
+
+          OUT="$RUNNER_TEMP/pr-review"
+          mkdir -p "$OUT"
+
+          fail() {
+            echo "::error::$*"
+            exit 1
+          }
+
+          # PR title and body are attacker-controlled text; they reach the
+          # prompt only through the fence, as one multi-field block.
+          jq -n --slurpfile ev "$GITHUB_EVENT_PATH" \
+            '{fields: {
+              "payload.title": ($ev[0].pull_request.title // ""),
+              "payload.body": ($ev[0].pull_request.body // "")
+            }}' > "$OUT/fields.json"
+
+          node runtime/bin/fence.mjs < "$OUT/fields.json" > "$OUT/pri-fenced.txt"
+
+          # The diff is attacker-controlled text too; it is fenced in a
+          # separate block with a larger byte cap (the smoke default is
+          # 32 KiB per field; a real diff often outgrows it).
+          gh pr diff "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" > "$OUT/pr.diff"
+          jq -n --rawfile d "$OUT/pr.diff" \
+            '{label: "payload.diff", content: $d}' > "$OUT/diff-fields.json"
+
+          node runtime/bin/fence.mjs --max-bytes 65536 \
+            < "$OUT/diff-fields.json" > "$OUT/diff-fenced.txt"
+
+          for f in "$OUT/pri-fenced.txt" "$OUT/diff-fenced.txt"; do
+            [ -s "$f" ] || fail "fence output is empty: $f"
+            grep -qF '[untrusted: payload.' "$f" \
+              || fail "fence output missing the untrusted label: $f (stderr tail: $(tail -n 3 "$OUT/fence.err" 2> /dev/null || echo none))"
+          done
+
+      # The one-shot conductor needs at least one provider credential in the
+      # environment for the agent's chat model (the engine reads provider keys
+      # from ambient env; run `node runtime/bin/torus.mjs --help` for the
+      # list, e.g. ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY). No
+      # existing workflow in this repo passes model credentials, so the real
+      # secret names are wired here at merge time, e.g.:
+      #   env:
+      #     ZAI_API_KEY: ${{ secrets.CI_MODEL_KEY }}
+      - name: Run the lens-review conductor
+        run: |
+          set -euo pipefail
+
+          OUT="$RUNNER_TEMP/pr-review"
+          mkdir -p "$OUT"
+
+          # The prompt stays single-quoted on purpose: @-paths and any shell
+          # characters inside it must reach the agent unexpanded by the runner.
+          # shellcheck disable=SC2016
+          PROMPT='/skill:lens-review Review the change-set defined by the fenced blocks in the files @/home/runner/work/_temp/pr-review/pri-fenced.txt and @/home/runner/work/_temp/pr-review/diff-fenced.txt. The acceptance criteria are the PR title and body in the payload.title and payload.body fence fields: check the diff against that stated intent, plus general correctness and security of the change itself. The working directory is the repository checkout (the current working directory). This is review round 1. Return your aggregate findings as your final answer, ending with a single line VERDICT: OKAY or VERDICT: REJECT.'
+
+          START="$(date +%s)"
+          TORUS_AUTOMODE_PROFILE=ci TORUS_SANDBOX=off TORUS_DELEGATE_BACKGROUND=0 \
+            node runtime/bin/torus.mjs -a --mode json -p "$PROMPT" \
+            > "$OUT/conductor.jsonl" 2> "$OUT/conductor.err" \
+            || fail "conductor run exited nonzero (stderr tail: $(tail -n 5 "$OUT/conductor.err"))"
+          echo "$(( $(date +%s) - START ))" > "$OUT/duration.txt"
+
+      - name: Extract the verdict
+        run: |
+          set -euo pipefail
+
+          OUT="$RUNNER_TEMP/pr-review"
+          mkdir -p "$OUT"
+
+          # Walk the JSONL stream and pull the last assistant message's
+          # concatenated text blocks — the conductor's final answer. The
+          # message_end message field is the authoritative final message.
+          node -e '
+            const fs = require("fs");
+            const lines = fs.readFileSync(process.argv[1], "utf8").split("\n").filter(Boolean);
+            let text = null;
+            for (const line of lines) {
+              let rec;
+              try { rec = JSON.parse(line); } catch { continue; }
+              if (rec.type === "message_end" && rec.message && rec.message.role === "assistant") {
+                const content = rec.message.content;
+                if (typeof content === "string") {
+                  text = content;
+                } else if (Array.isArray(content)) {
+                  text = content.filter(b => b && b.type === "text").map(b => b.text).join("\n");
+                }
+              }
+            }
+            if (text === null || text === "") {
+              console.error("no assistant text found in the conductor stream");
+              process.exit(1);
+            }
+            fs.writeFileSync(process.argv[2], text);
+            const m = [...text.matchAll(/^VERDICT:\s*(OKAY|REJECT)\s*$/gm)];
+            if (m.length === 0) {
+              console.error("no VERDICT line in the conductor final answer:\n" + text.slice(-500));
+              process.exit(1);
+            }
+            fs.writeFileSync(process.argv[3], m[m.length - 1][1]);
+          ' "$OUT/conductor.jsonl" "$OUT/findings.txt" "$OUT/verdict.txt"
+
+      - name: Post the COMMENT review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          OUT="$RUNNER_TEMP/pr-review"
+          mkdir -p "$OUT"
+
+          fail() {
+            echo "::error::$*"
+            exit 1
+          }
+
+          MARKER="🤖 torus review (torus@${{ github.event.pull_request.head.sha }})"
+
+          # One review per PR per head sha: the marker carries the head sha,
+          # so a re-run after a force-push starts over instead of colliding
+          # with the stale marker.
+          if gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
+            | jq -e --arg m "$MARKER" '.[] | select(.body | contains($m))' > /dev/null 2>&1; then
+            echo "The review for this head sha is already posted; skipping the duplicate." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # The body is composed with jq over files, never interpolated into
+          # the shell string: findings text and marker are --arg/--rawfile
+          # arguments, so no PR or model text ever reaches a command line.
+          jq -n \
+            --arg event "COMMENT" \
+            --rawfile findings "$OUT/findings.txt" \
+            --arg marker "$MARKER" \
+            '{event: $event, body: ($findings + "\n\n" + $marker)}' \
+            > "$OUT/payload.json"
+
+          if ! gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
+            --input "$OUT/payload.json" > "$OUT/review-response.json"; then
+            fail "posting the review failed (response: $(tail -n 3 "$OUT/review-response.json" 2> /dev/null || echo none))"
+          fi
+
+          REVIEW_URL="$(jq -r '."html_url" // empty' "$OUT/review-response.json")"
+          echo "Review posted: $REVIEW_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Job summary
+        if: always()
+        run: |
+          OUT="$RUNNER_TEMP/pr-review"
+          mkdir -p "$OUT"
+
+          {
+            echo "## PR review"
+            echo
+            if [ -f "$OUT/verdict.txt" ]; then
+              echo "Verdict: $(cat "$OUT/verdict.txt")"
+            else
+              echo "Verdict: none (the conductor did not reach a verdict; the job failed before it could)"
+            fi
+            echo
+            if [ -f "$OUT/review-response.json" ]; then
+              echo "Review posted: $(jq -r '."html_url" // "posted (no html_url in the response)"' "$OUT/review-response.json")"
+            else
+              echo "Review not posted (the job failed before the post step, or the marker dedup skipped it)."
+            fi
+            echo
+            echo "Fence stats:"
+            for f in "$OUT/pri-fenced.txt" "$OUT/diff-fenced.txt"; do
+              if [ -f "$f" ]; then
+                t="$(grep -cF '[truncated:' "$f" || true)"
+                b="$(wc -c < "$f")"
+                echo "- $(basename "$f"): ${b} bytes, ${t} truncated field(s)"
+              else
+                echo "- $(basename "$f"): absent (the job failed before the fence step)"
+              fi
+            done
+            if [ -f "$OUT/duration.txt" ]; then
+              echo
+              echo "Conductor duration: $(cat "$OUT/duration.txt")s"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
