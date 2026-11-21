@@ -1,0 +1,474 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+// Sandbox first: TORUS_HOME derives every state path, and the fake engine
+// routes engine-child spawns (the serve.test.mjs pattern). Ambient TORUS_*
+// exports from the running session must not leak into the sandbox.
+const HOME = mkdtempSync(path.join(tmpdir(), "torus-auto-test-"));
+delete process.env.TORUS_STATE_DIR;
+delete process.env.TORUS_SCRATCH_DIR;
+process.env.TORUS_HOME = HOME;
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+process.env.TORUS_ROOT = REPO_ROOT;
+
+const ENGINE_DIR = mkdtempSync(path.join(tmpdir(), "torus-auto-engines-"));
+const ARGS_ENGINE = path.join(ENGINE_DIR, "args-engine.sh");
+writeFileSync(
+	ARGS_ENGINE,
+	'#!/bin/sh\nprintf \'%s\\n\' "$@" > "$TORUS_ARGS_DIR/spawn-$$.txt"\necho \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":10,"output":20}}}\'\nexit 0\n',
+	"utf8",
+);
+chmodSync(ARGS_ENGINE, 0o755);
+const ARGS_DIR = path.join(ENGINE_DIR, "argv");
+mkdirSync(ARGS_DIR, { recursive: true });
+process.env.TORUS_ENGINE_BIN = ARGS_ENGINE;
+process.env.TORUS_ARGS_DIR = ARGS_DIR;
+
+const { defaultStageRunner, runAutoCli, startAuto, AutoRefusal } = await import(
+	"../extensions/auto/index.ts"
+);
+const { projectStateDir } = await import("../extensions/fsutil.ts");
+
+after(() => {
+	rmSync(HOME, { recursive: true, force: true });
+	rmSync(ENGINE_DIR, { recursive: true, force: true });
+});
+
+function freshArgsDir() {
+	rmSync(ARGS_DIR, { recursive: true, force: true });
+	mkdirSync(ARGS_DIR, { recursive: true });
+}
+
+function fixtureDir(name) {
+	const dir = mkdtempSync(path.join(tmpdir(), `torus-auto-${name}-`));
+	mkdirSync(path.join(dir, "fixture"), { recursive: true });
+	return path.join(dir, "fixture");
+}
+
+const PLAN_FILE = "/plans/2026-01-01-fake-plan.md";
+
+/** Injected runner recording stage order; later tests override per-stage results. */
+function fakeRunner(results = {}, record = []) {
+	return async (stage, ctx) => {
+		record.push({ stage, ctx });
+		const result = results[stage];
+		if (result === "hang") return new Promise(() => {});
+		if (typeof result === "function") return result(ctx);
+		return result ?? { ok: true };
+	};
+}
+
+const BASE_OPTIONS = () => ({
+	objective: "fix the flaky test",
+	cwd: fixtureDir("opts"),
+	stageTimeoutMs: 5_000,
+});
+
+test("stages chain plan→gate→execute→lens with the plan artifact threaded through ctx", async () => {
+	const record = [];
+	const planPath = path.join(path.join(HOME, "state", "x", "plans"), "2026-01-01-fake-plan.md");
+	const report = await startAuto({
+		...BASE_OPTIONS(),
+		runStage: fakeRunner(
+			{
+				plan: { ok: true, artifact: planPath },
+				gate: (ctx) => {
+					assert.equal(ctx.planPath, planPath);
+					assert.equal(ctx.planStem, "2026-01-01-fake-plan");
+					return { ok: true, verdict: "PASS", artifact: `${planPath}.gate.md` };
+				},
+				execute: (ctx) => {
+					assert.equal(ctx.planPath, planPath);
+					assert.equal(ctx.planStem, "2026-01-01-fake-plan");
+					return { ok: true };
+				},
+				lens: (ctx) => {
+					assert.equal(ctx.planStem, "2026-01-01-fake-plan");
+					return { ok: true, verdict: "OKAY" };
+				},
+			},
+			record,
+		),
+	});
+	assert.deepEqual(
+		record.map((r) => r.stage),
+		["plan", "gate", "execute", "lens"],
+	);
+	assert.equal(report.ok, true);
+	assert.equal(report.exitCode, 0);
+	assert.deepEqual(
+		report.stages.map((s) => [s.stage, s.ok]),
+		[
+			["plan", true],
+			["gate", true],
+			["execute", true],
+			["lens", true],
+		],
+	);
+	for (const stage of report.stages) {
+		assert.equal(typeof stage.durationMs, "number");
+		assert.ok(stage.durationMs >= 0);
+	}
+});
+
+test("GATE BLOCKED fails the stage named and stops the chain with exitCode 1", async () => {
+	const record = [];
+	const report = await startAuto({
+		...BASE_OPTIONS(),
+		runStage: fakeRunner(
+			{
+				plan: { ok: true, artifact: path.join(HOME, PLAN_FILE) },
+				gate: { ok: false, verdict: "BLOCKED", error: "gate-blocked" },
+			},
+			record,
+		),
+	});
+	assert.deepEqual(
+		record.map((r) => r.stage),
+		["plan", "gate"],
+		"execute and lens must not run after a blocked gate",
+	);
+	assert.equal(report.ok, false);
+	assert.equal(report.exitCode, 1);
+	const gate = report.stages.find((s) => s.stage === "gate");
+	assert.equal(gate.ok, false);
+	assert.equal(gate.error, "gate-blocked");
+	assert.equal(gate.verdict, "BLOCKED");
+});
+
+test("a hung stage fails named stage-timeout and stops the chain", async () => {
+	const record = [];
+	const report = await startAuto({
+		...BASE_OPTIONS(),
+		stageTimeoutMs: 50,
+		runStage: fakeRunner({ plan: "hang" }, record),
+	});
+	assert.deepEqual(
+		record.map((r) => r.stage),
+		["plan"],
+	);
+	assert.equal(report.ok, false);
+	assert.equal(report.exitCode, 1);
+	const plan = report.stages[0];
+	assert.equal(plan.ok, false);
+	assert.equal(plan.error, "stage-timeout");
+	assert.ok(plan.durationMs < 5_000, "timeout path must not wait the injected hang out");
+});
+
+test("missing cwd refuses named (no default)", async () => {
+	await assert.rejects(
+		startAuto({ objective: "x" }),
+		(err) => err instanceof AutoRefusal && /--cwd is required/.test(err.message),
+	);
+	await assert.rejects(
+		startAuto({ cwd: fixtureDir("empty"), objective: "" }),
+		(err) => err instanceof AutoRefusal && /objective or --plan/.test(err.message),
+	);
+});
+
+test("an objective is not required when --plan starts the chain at gate", async () => {
+	const record = [];
+	const planPath = path.join(HOME, PLAN_FILE);
+	mkdirSync(path.dirname(planPath), { recursive: true });
+	writeFileSync(planPath, "# Plan\n");
+	const report = await startAuto({
+		cwd: fixtureDir("planless"),
+		planPath,
+		runStage: fakeRunner(
+			{
+				gate: (ctx) => {
+					assert.equal(ctx.planPath, planPath);
+					return { ok: true, verdict: "PASS" };
+				},
+				execute: { ok: true },
+				lens: { ok: true, verdict: "OKAY" },
+			},
+			record,
+		),
+	});
+	assert.deepEqual(
+		record.map((r) => r.stage),
+		["gate", "execute", "lens"],
+	);
+	assert.equal(report.ok, true);
+});
+
+test("refusals name a missing or non-absolute plan file", async () => {
+	await assert.rejects(
+		startAuto({ ...BASE_OPTIONS(), planPath: "relative/plan.md" }),
+		(err) => err instanceof AutoRefusal && /absolute/.test(err.message),
+	);
+	await assert.rejects(
+		startAuto({ ...BASE_OPTIONS(), planPath: path.join(HOME, "nope.md") }),
+		(err) => err instanceof AutoRefusal && /plan file not found/.test(err.message),
+	);
+});
+
+// ---------------------------------------------------------------------------
+// Default-runner legs. The gate/lens legs point TORUS_ROOT at a stub
+// launcher so the root one-shot spawn contract runs against a controlled
+// child; the plan leg uses the real repo launcher path with the fake engine.
+// ---------------------------------------------------------------------------
+
+/** A stub torus launcher: reacts to the prompt, writes the stage signal. */
+function stubLauncher(_dir, body) {
+	const stubRoot = mkdtempSync(path.join(tmpdir(), "torus-auto-stubroot-"));
+	mkdirSync(path.join(stubRoot, "runtime", "bin"), { recursive: true });
+	const launcher = path.join(stubRoot, "runtime", "bin", "torus.mjs");
+	writeFileSync(launcher, `#!/usr/bin/env node\n${body}\n`, "utf8");
+	chmodSync(launcher, 0o755);
+	return { stubRoot, launcher };
+}
+
+function withStubRoot(stubRoot, fn) {
+	const prev = process.env.TORUS_ROOT;
+	process.env.TORUS_ROOT = stubRoot;
+	return Promise.resolve(fn()).finally(() => {
+		if (prev === undefined) delete process.env.TORUS_ROOT;
+		else process.env.TORUS_ROOT = prev;
+	});
+}
+
+test("gate polls the machine signal: GATE PASS passes, GATE BLOCKED fails named", async () => {
+	// A fresh fixture per case: the gate report must never leak a stale
+	// verdict from the previous case into the next poll.
+	const writeGate = (verdict) => `
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const prompt = process.argv[process.argv.length - 1];
+const planPath = prompt.split(/\\s+/)[1];
+const stem = path.basename(planPath, ".md");
+const gateDir = path.join(process.env.TORUS_STATE_DIR, "plans", "gates");
+mkdirSync(gateDir, { recursive: true });
+writeFileSync(path.join(gateDir, stem + ".gate.md"), ${JSON.stringify(verdict)} + "\\n");
+`;
+	for (const [verdict, expectedOk, expectedError] of [
+		["GATE PASS", true, undefined],
+		["GATE BLOCKED", false, "gate-blocked"],
+	]) {
+		const fixture = fixtureDir("gate");
+		const stateDir = projectStateDir(fixture);
+		const plansDir = path.join(stateDir, "plans");
+		const planPath = path.join(plansDir, "2026-01-01-gate-plan.md");
+		mkdirSync(plansDir, { recursive: true });
+		writeFileSync(planPath, "# Plan\n");
+		const { stubRoot } = stubLauncher(path.join(HOME, "stub"), writeGate(verdict));
+		await withStubRoot(stubRoot, async () => {
+			process.env.TORUS_STATE_DIR = stateDir;
+			const runner = defaultStageRunner(stateDir);
+			const result = await runner("gate", {
+				objective: "x",
+				cwd: fixture,
+				stateDir,
+				stageTimeoutMs: 15_000,
+				skills: [],
+				planPath,
+				planStem: "2026-01-01-gate-plan",
+				abort: () => {},
+			});
+			assert.equal(result.ok, expectedOk, JSON.stringify(result));
+			assert.equal(result.verdict, verdict === "GATE PASS" ? "PASS" : "BLOCKED");
+			assert.equal(result.error, expectedError);
+			assert.equal(result.artifact, path.join(plansDir, "gates", "2026-01-01-gate-plan.gate.md"));
+		});
+		rmSync(stubRoot, { recursive: true, force: true });
+		rmSync(path.join(HOME, "state"), { recursive: true, force: true });
+	}
+});
+
+test("lens accepts three typed OKAY rows and rejects a typed REJECT row", async () => {
+	// A fresh fixture per case: ledger rows from the previous case must not
+	// count toward the next acceptance.
+	const appendRows = (rows) => `
+import { appendFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
+const prompt = process.argv[process.argv.length - 1];
+const planPath = prompt.split(/\\s+/)[1];
+const stem = path.basename(planPath, ".md");
+const workDir = path.join(process.env.TORUS_STATE_DIR, "work");
+mkdirSync(workDir, { recursive: true });
+const ledger = path.join(workDir, stem + ".ledger.jsonl");
+appendFileSync(ledger, ${JSON.stringify(rows)}.map(r => JSON.stringify(r)).join("\\n") + "\\n");
+`;
+	const okRows = [1, 2, 3].map((round) => ({
+		event: "verified",
+		verdict: "OKAY",
+		lens: `lens${round}`,
+		round,
+	}));
+	const cases = [
+		[okRows, true, undefined],
+		[
+			{ event: "verified", verdict: "REJECT", lens: "comprehension", round: 1 },
+			false,
+			"lens-reject",
+		],
+	];
+	for (const [rows, expectedOk, expectedError] of cases) {
+		const fixture = fixtureDir("lens");
+		const stateDir = projectStateDir(fixture);
+		const plansDir = path.join(stateDir, "plans");
+		const planPath = path.join(plansDir, "2026-01-01-lens-plan.md");
+		mkdirSync(plansDir, { recursive: true });
+		writeFileSync(planPath, "# Plan\n");
+		const { stubRoot } = stubLauncher(path.join(HOME, "stub"), appendRows([rows].flat()));
+		await withStubRoot(stubRoot, async () => {
+			process.env.TORUS_STATE_DIR = stateDir;
+			const runner = defaultStageRunner(stateDir);
+			const result = await runner("lens", {
+				objective: "x",
+				cwd: fixture,
+				stateDir,
+				stageTimeoutMs: 15_000,
+				skills: [],
+				planPath,
+				planStem: "2026-01-01-lens-plan",
+				abort: () => {},
+			});
+			assert.equal(result.ok, expectedOk, JSON.stringify(result));
+			assert.equal(result.error, expectedError);
+			assert.equal(result.verdict, expectedOk ? "OKAY" : "REJECT");
+		});
+		rmSync(stubRoot, { recursive: true, force: true });
+		rmSync(path.join(HOME, "state"), { recursive: true, force: true });
+	}
+});
+
+test("lens falls back to the one-shot's final VERDICT line when the ledger stays empty", async () => {
+	const fixture = fixtureDir("lens-stdout");
+	const stateDir = projectStateDir(fixture);
+	const plansDir = path.join(stateDir, "plans");
+	const planPath = path.join(plansDir, "2026-01-01-lens-plan.md");
+	mkdirSync(plansDir, { recursive: true });
+	writeFileSync(planPath, "# Plan\n");
+	const body = `
+console.log("...review prose...");
+console.log("VERDICT: OKAY");
+`;
+	const { stubRoot } = stubLauncher(path.join(HOME, "stub"), body);
+	await withStubRoot(stubRoot, async () => {
+		process.env.TORUS_STATE_DIR = stateDir;
+		const runner = defaultStageRunner(stateDir);
+		const result = await runner("lens", {
+			objective: "x",
+			cwd: fixture,
+			stateDir,
+			stageTimeoutMs: 15_000,
+			skills: [],
+			planPath,
+			planStem: "2026-01-01-lens-plan",
+			abort: () => {},
+		});
+		assert.equal(result.ok, true, JSON.stringify(result));
+		assert.equal(result.verdict, "OKAY");
+	});
+	rmSync(stubRoot, { recursive: true, force: true });
+});
+
+test("unknown skills fail a one-shot stage named before any spawn", async () => {
+	// resolveSkillPaths refuses an unknown name driver-side, before the
+	// launcher child is ever spawned.
+	const fixture = fixtureDir("skills");
+	const stateDir = projectStateDir(fixture);
+	const runner = defaultStageRunner(stateDir);
+	const result = await runner("gate", {
+		objective: "x",
+		cwd: fixture,
+		stateDir,
+		stageTimeoutMs: 5_000,
+		skills: ["no-such-skill"],
+		planPath: path.join(stateDir, "plans", "2026-01-01-skill-plan.md"),
+		planStem: "2026-01-01-skill-plan",
+		abort: () => {},
+	});
+	assert.equal(result.ok, false);
+	assert.match(result.error, /unknown-skill/);
+});
+
+// Integration leg: one real delegation end-to-end through runDelegation with
+// the fake engine (it records argv and settles immediately) and the driver's
+// plan-artifact poll. Honest shortcut documented: the plan file is planted by
+// the test after the engine spawn is observed — a real plan child would write
+// it via /skill:torus-plan; this leg proves the delegation + poll wiring, the
+// unit tests above prove the stage logic.
+test("plan stage drives a real delegation and polls for the new plan artifact", async () => {
+	freshArgsDir();
+	const fixture = fixtureDir("plan");
+	const stateDir = projectStateDir(fixture);
+	process.env.TORUS_STATE_DIR = stateDir;
+	const plansDir = path.join(stateDir, "plans");
+	mkdirSync(plansDir, { recursive: true });
+	const runner = defaultStageRunner(stateDir);
+	const ctx = {
+		objective: "document the fixture file's purpose",
+		cwd: fixture,
+		stateDir,
+		stageTimeoutMs: 30_000,
+		skills: [],
+		planStem: "",
+		abort: () => {},
+	};
+	const pending = runner("plan", ctx);
+	// Wait for the engine spawn, then plant the plan file as the artifact.
+	let spawned = false;
+	for (let i = 0; i < 500 && !spawned; i += 1) {
+		spawned = readdirSync(ARGS_DIR).length > 0;
+		if (!spawned) await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	assert.ok(spawned, "fake engine must have been spawned");
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	const planFile = path.join(plansDir, "2026-01-01-fixture-plan.md");
+	writeFileSync(planFile, "# Plan — fixture\n");
+	const result = await pending;
+	assert.equal(result.ok, true, JSON.stringify(result));
+	assert.equal(result.artifact, planFile);
+	// The rpc attempt dies on the fake engine and the JSON fallback spawns
+	// again; every argv dump combined must show the json-mode one-shot with
+	// the composed /skill:torus-plan task reaching the engine.
+	const argvDumps = readdirSync(ARGS_DIR).map((f) => readFileSync(path.join(ARGS_DIR, f), "utf8"));
+	const joined = argvDumps.join("\n");
+	assert.match(joined, /--mode\njson/);
+	assert.match(joined, /Task: \/skill:torus-plan/);
+	assert.match(
+		joined,
+		/--append-system-prompt\n\/tmp\/torus-builder-/,
+		"the child runs the builder agent's system prompt",
+	);
+});
+
+test("runAutoCli refuses an unknown flag named", async () => {
+	await assert.rejects(
+		runAutoCli(["objective", "--bogus"]),
+		(err) => err instanceof AutoRefusal && /unknown flag: --bogus/.test(err.message),
+	);
+});
+
+test("runAutoCli refuses a missing --cwd with exit 2 and names the flag", async () => {
+	const code = await runAutoCli(["just an objective"]);
+	assert.equal(code, 2);
+});
+
+test("torus auto --help prints usage without touching the engine", () => {
+	const run = spawnSync(
+		process.execPath,
+		[path.join(REPO_ROOT, "runtime", "bin", "torus.mjs"), "auto", "--help"],
+		{ encoding: "utf8", env: { ...process.env, TORUS_ROOT: REPO_ROOT } },
+	);
+	assert.equal(run.status, 0, run.stderr);
+	assert.match(run.stdout, /torus auto - unattended plan/);
+	assert.match(run.stdout, /--cwd is REQUIRED/);
+});

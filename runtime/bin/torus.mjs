@@ -284,6 +284,28 @@ function configHelp() {
 	].join("\n");
 }
 
+function autoHelp() {
+	return [
+		"torus auto - unattended plan → gate → execute → lens stage chain",
+		"",
+		"Usage:",
+		"  torus auto <objective> --cwd <dir> [--roadmap <path>] [--plan <path>]",
+		"             [--stage-timeout-ms <n>] [--skills <a,b>]",
+		"",
+		"--cwd is REQUIRED: the driven checkout (a worktree or scratch copy) —",
+		"the driver never lands in the current directory by default. PLAN and",
+		"EXECUTE run as delegations; GATE and LENS run as root one-shots (node",
+		"torus.mjs -a --mode json -p …). Every stage gates on a machine signal",
+		"(docs/machine-contracts.md) and races --stage-timeout-ms (default",
+		"600000); on timeout the delegation is stopped or the child killed and",
+		"the stage fails named. The report prints per-stage lines plus JSON;",
+		"exit 0 all-pass, 1 named failure, 2 refusal.",
+		"",
+		"See docs/auto.md.",
+		"",
+	].join("\n");
+}
+
 function torusHelp(versionLine) {
 	return [
 		versionLine,
@@ -294,6 +316,7 @@ function torusHelp(versionLine) {
 		"  torus --incognito                                     memoryless session: no reflection or dreaming, logs swept on exit (sets TORUS_INCOGNITO for the session)",
 		"  torus serve                                    authenticated HTTP server",
 		"  torus acp-agent                                ACP v1 agent over stdio",
+		"  torus auto <objective> --cwd <dir>            unattended plan → gate → execute → lens chain",
 		"  torus config status                           report the unified config's effective state",
 		"  torus --version, -v                            print torus + engine versions",
 		"  torus --help, -h, help                         show this help",
@@ -308,6 +331,10 @@ function torusHelp(versionLine) {
 		"  acp-agent    Agent Client Protocol v1 over stdio so ACP editors (Zed,",
 		"               JetBrains) can drive torus; stdout is protocol-only.",
 		"               See docs/serve.md. `torus acp-agent --help` for details.",
+		"  auto         Unattended stage chain — plan → gate → execute → lens —",
+		"               gated on machine signals with per-stage timeouts and a",
+		"               structured report; --cwd REQUIRED (never the live",
+		"               checkout by accident). `torus auto --help` for details.",
 		"",
 		"Everything else passes through to the pinned pi engine with the torus",
 		"extension package loaded, so all engine options and subcommands work",
@@ -346,6 +373,33 @@ if (argv[0] === "serve") {
 	// The listening socket keeps the process alive; nothing below (engine
 	// passthrough) applies to serve.
 	await new Promise(() => {});
+}
+
+// torus auto — unattended stage-chain driver. Like config (not serve), it
+// runs to completion and exits with the chain's status: the process IS the
+// driver, never an engine session. The module's root one-shot stages spawn
+// this same launcher, so TORUS_ROOT and TORUS_ENGINE_BIN are exported first
+// and the driver pins nothing about the payload itself.
+if (argv[0] === "auto" && (argv[1] === "--help" || argv[1] === "-h")) {
+	process.stdout.write(autoHelp());
+	process.exit(0);
+}
+
+if (argv[0] === "auto") {
+	if (!process.features.typescript && !process.env["TORUS_AUTO_BOOTSTRAPPED"]) {
+		reexecStripTypes("TORUS_AUTO_BOOTSTRAPPED");
+	}
+	await enableTsResolveHook();
+	process.env["TORUS_ROOT"] = root;
+	if (!process.env["TORUS_ENGINE_BIN"]) process.env["TORUS_ENGINE_BIN"] = resolveBinary();
+	const auto = await import(new URL("../../extensions/auto/index.ts", import.meta.url).href);
+	let status = 1;
+	try {
+		status = await auto.runAutoCli(argv.slice(1));
+	} catch (err) {
+		process.stderr.write(`torus: auto failed: ${err?.message ?? err}\n`);
+	}
+	process.exit(status);
 }
 
 // torus acp-agent — serve torus as an ACP v1 agent over stdio for editors
