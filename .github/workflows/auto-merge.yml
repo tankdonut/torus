@@ -1,0 +1,313 @@
+# The merge plane: approve + enroll auto-merge for exactly one lane of pull
+# requests — non-draft, same-repo PRs authored by Bot-type users that already
+# carry a fresh OKAY torus review.
+#
+# Two identities (the D2 pattern): the approving and merging identity is
+# AUTO_APPROVE_PAT, a code-owner credential distinct from any PR author, so
+# approval never collides with authorship (and a collision — the API's 422 —
+# is treated as a skip, never as a retry). The default workflow token stays
+# read-only over contents: it must never approve and never merge.
+#
+# Inert until the R7 loop exists: today the only Bot-authored PRs in this
+# repository are renovate's, and renovate self-merges its own lanes via
+# platformAutomerge — this workflow skips them by name. The plane starts
+# merging only when the R7 loop begins authoring Bot PRs of its own.
+#
+# Never merged, in every case:
+#   - human-authored PRs (the author-type gate runs first and skips them)
+#   - renovate PRs (they self-merge via platformAutomerge)
+#   - engine-pin PRs, feat(deps): (they require the release env-audit)
+#   - release PRs, chore(main): release or anything mentioning 1.0.0
+#   - any PR that touches .github/workflows/ (self-modification guard)
+#
+# Data only, no code: the gate reads PR metadata and changed file paths over
+# the GitHub API. The PR's diff is never fetched and its text never reaches a
+# command line — decisions are jq filters over API responses read from files.
+#
+# gh-only, no engine: no checkout, no sandbox, no model spend. Like
+# renovate-auto-approve.yaml this runs on ubuntu-latest with gh alone.
+#
+# Note on the metadata fetch: `gh pr view --json` cannot express draft or
+# isCrossRepository (both are unknown GraphQL JSON fields there); draft and
+# same-repo are enforced at the job-level if below, and the REST pulls
+# endpoint supplies title, draft, and user.type in one call instead.
+
+name: Auto merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+# The default token is read-only over contents; it must never approve or
+# merge. The approve/merge identity is AUTO_APPROVE_PAT, attached per step.
+permissions:
+  contents: read
+
+# Runs queue instead of cancelling: a merge decision must complete once
+# started (same precedent as renovate-auto-approve.yaml).
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  merge-plane:
+    # Forks and drafts skip silently — no steps run, no summary, no notes
+    # (the gate mirrors pr-review.yml's job-level skip style). Drafts are a
+    # spend and signal decision; forks are a trust decision.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse to run outside tankdonut/torus
+        if: github.repository != 'tankdonut/torus'
+        run: |
+          echo "::error::merge plane workflow copied to ${GITHUB_REPOSITORY}"
+          exit 1
+
+      # Data gate: author type, renovate, engine pins, releases, workflow
+      # files. Every filter failure is a skip (summary note + exit 0), not a
+      # job failure — a skip means "this PR is not the merge plane's lane".
+      - name: Data gate
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          N="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          OUT="$RUNNER_TEMP/auto-merge"
+          mkdir -p "$OUT"
+
+          skip() {
+            echo "SKIP: $1" >> "$GITHUB_STEP_SUMMARY"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=$1" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          proceed() {
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=$1" >> "$GITHUB_OUTPUT"
+          }
+
+          # PR metadata from the REST pulls endpoint: title, draft,
+          # user.login, user.type. The response is read from a file by jq;
+          # nothing from the PR ever reaches a command line.
+          if ! gh api "repos/$REPO/pulls/$N" > "$OUT/pr.json"; then
+            echo "::error::fetching PR metadata failed (response tail: $(tail -n 3 "$OUT/pr.json" 2> /dev/null || echo none))"
+            exit 1
+          fi
+
+          title="$(jq -r '.title // ""' "$OUT/pr.json")"
+          login="$(jq -r '.user.login // ""' "$OUT/pr.json")"
+          usertype="$(jq -r '.user.type // ""' "$OUT/pr.json")"
+
+          # (a) Bot-typed authors only. Human PRs are never touched: the
+          # torus review stays advisory for them, by design.
+          if [ "$usertype" != "Bot" ]; then
+            skip "human-authored PR: the merge plane applies only to Bot-authored PRs; the torus review stays advisory"
+          fi
+
+          # (b) Renovate skips: its PRs self-merge via platformAutomerge.
+          case "$login" in
+            "renovate[bot]"|"renovate-config[bot]"|"app/renovate"|"app/renovate-config")
+              skip "renovate PRs self-merge via platformAutomerge"
+              ;;
+          esac
+
+          # (c) Engine pins carry the release env-audit; never auto-merged.
+          case "$title" in
+            "feat(deps):"*)
+              skip "engine-pin PRs require the release env-audit (never auto-merged)"
+              ;;
+          esac
+
+          # (d) Releases stay human-only.
+          case "$title" in
+            "chore(main): release"*|*"1.0.0"*)
+              skip "release PRs stay human-only"
+              ;;
+          esac
+
+          # (e) Workflow-file changes are a self-modification vector; the
+          # merge plane never approves a PR that touches this directory.
+          if ! gh api "repos/$REPO/pulls/$N/files" --paginate --jq '.[].filename' \
+            > "$OUT/files.txt"; then
+            echo "::error::fetching PR files failed (response tail: $(tail -n 3 "$OUT/files.txt" 2> /dev/null || echo none))"
+            exit 1
+          fi
+          if grep -q '^\.github/workflows/' "$OUT/files.txt"; then
+            skip "workflow-file changes are never auto-merged (self-modification guard)"
+          fi
+
+          proceed "all data-gate filters passed (Bot author, not renovate, not an engine pin, not a release, no workflow files)"
+
+      # Verdict gate: a fresh torus review for the CURRENT head sha must
+      # exist and must end OKAY. Any review from an older head sha does not
+      # count — a force-push resets the requirement.
+      - name: Verdict gate
+        id: verdict
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_APPROVE_PAT }}
+        run: |
+          set -euo pipefail
+
+          N="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          OUT="$RUNNER_TEMP/auto-merge"
+          mkdir -p "$OUT"
+
+          skip() {
+            echo "SKIP: $1" >> "$GITHUB_STEP_SUMMARY"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=$1" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          proceed() {
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=$1" >> "$GITHUB_OUTPUT"
+          }
+
+          if ! gh api "repos/$REPO/pulls/$N/reviews" > "$OUT/reviews.json"; then
+            echo "::error::listing reviews failed (response tail: $(tail -n 3 "$OUT/reviews.json" 2> /dev/null || echo none))"
+            exit 1
+          fi
+
+          MARKER="🤖 torus review (torus@${{ github.event.pull_request.head.sha }})"
+          count="$(jq --arg m "$MARKER" \
+            '[.[] | select((.body // "") | contains($m))] | length' \
+            "$OUT/reviews.json")"
+          if [ "$count" -eq 0 ]; then
+            skip "no fresh torus review for this head SHA (never merge without one)"
+          fi
+
+          # The body of the newest marker-carrying review, then the LAST
+          # VERDICT line in it (same regex as pr-review.yml's conductor
+          # parser), so a reviewer's trailing correction wins.
+          verdict="$(jq -r --arg m "$MARKER" \
+            '([.[] | select((.body // "") | contains($m))] | last.body // "")
+             | [scan("(?m)^VERDICT:\\s*(OKAY|REJECT)\\s*$")]
+             | last[0] // ""' \
+            "$OUT/reviews.json")"
+          case "$verdict" in
+            "OKAY")
+              proceed "torus review OKAY for this head SHA"
+              ;;
+            "REJECT")
+              skip "torus review REJECTed this PR (never merge)"
+              ;;
+            "")
+              skip "review has no VERDICT line"
+              ;;
+            *)
+              echo "::error::unparseable verdict line (tail: $(printf '%s' "$verdict" | tail -n 3))"
+              exit 1
+              ;;
+          esac
+
+      - name: Approve the pull request
+        id: approve
+        if: steps.gate.outputs.proceed == 'true' && steps.verdict.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_APPROVE_PAT }}
+        run: |
+          set -euo pipefail
+
+          N="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          OUT="$RUNNER_TEMP/auto-merge"
+          mkdir -p "$OUT"
+
+          skip() {
+            echo "SKIP: $1" >> "$GITHUB_STEP_SUMMARY"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=$1" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          proceed() {
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=$1" >> "$GITHUB_OUTPUT"
+          }
+
+          set +e
+          out="$(gh api "repos/$REPO/pulls/$N/reviews" -f event=APPROVE 2>&1)"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            proceed "APPROVE posted under AUTO_APPROVE_PAT"
+          elif printf '%s' "$out" | grep -q "HTTP 422"; then
+            # 422 = can't approve your own PR: the author is the approving
+            # identity. Skip, never retry.
+            skip "author is the approving identity (author≠approver)"
+          else
+            echo "::error::approval failed (response tail: $(printf '%s' "$out" | tail -n 3))"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=approval failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Enroll auto-merge
+        id: merge
+        if: >-
+          steps.gate.outputs.proceed == 'true' &&
+          steps.verdict.outputs.proceed == 'true' &&
+          steps.approve.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_APPROVE_PAT }}
+        run: |
+          set -euo pipefail
+
+          N="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          OUT="$RUNNER_TEMP/auto-merge"
+          mkdir -p "$OUT"
+
+          proceed() {
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=$1" >> "$GITHUB_OUTPUT"
+          }
+
+          set +e
+          out="$(gh pr merge "$N" --repo "$REPO" --auto --squash 2>&1)"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            proceed "auto-merge enrolled (squash; merges once branch protection is satisfied)"
+            echo "MERGED: auto-merge enrolled for PR #$N" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::auto-merge enrollment failed (response tail: $(printf '%s' "$out" | tail -n 3))"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=auto-merge enrollment failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Merge plane"
+            echo
+            echo "PR: #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}"
+            echo
+            if [ -n "${{ steps.merge.outputs.reason }}" ]; then
+              echo "Merged: ${{ steps.merge.outputs.reason }}"
+            elif [ -n "${{ steps.approve.outputs.reason }}" ]; then
+              echo "Approved, merge enrolled: ${{ steps.approve.outputs.reason }}"
+            elif [ -n "${{ steps.verdict.outputs.reason }}" ]; then
+              echo "Skipped at the verdict gate: ${{ steps.verdict.outputs.reason }}"
+            elif [ -n "${{ steps.gate.outputs.reason }}" ]; then
+              echo "Skipped at the data gate: ${{ steps.gate.outputs.reason }}"
+            else
+              echo "No lane decision recorded (the job failed before the data gate)."
+            fi
+            echo
+            if [ -n "${{ steps.verdict.outputs.verdict }}" ]; then
+              echo "torus verdict: ${{ steps.verdict.outputs.verdict }}"
+            else
+              echo "torus verdict: none (no fresh review, or the gate skipped first)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
