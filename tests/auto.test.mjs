@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
 	chmodSync,
 	mkdirSync,
@@ -884,4 +884,101 @@ if (prompt.includes("torus-plan-review")) {
 	});
 	rmSync(stubRoot, { recursive: true, force: true });
 	rmSync(path.join(HOME, "state"), { recursive: true, force: true });
+});
+
+// --- the PR stage: branch, push to a local bare remote, gh argv assert ---
+
+test("a passing chain with pr config branches, pushes to the bare remote, and captures the gh pr create argv", async () => {
+	const S = mkdtempSync(path.join(tmpdir(), "auto-pr-"));
+	const fixture = path.join(S, "repo");
+	const bare = path.join(S, "origin.git");
+	mkdirSync(fixture, { recursive: true });
+	execFileSync("git", ["init", "-q", "--bare", bare]);
+	execFileSync("git", ["init", "-q", fixture]);
+	writeFileSync(path.join(fixture, "fixture.txt"), "one\ntwo\n");
+	execFileSync("git", ["-C", fixture, "add", "-A"]);
+	execFileSync("git", [
+		"-C",
+		fixture,
+		"-c",
+		"user.email=t@x",
+		"-c",
+		"user.name=t",
+		"commit",
+		"-qm",
+		"init",
+	]);
+	execFileSync("git", ["-C", fixture, "remote", "add", "origin", bare]);
+
+	const ghDir = path.join(S, "ghbin");
+	mkdirSync(ghDir, { recursive: true });
+	const ghCaptured = path.join(S, "gh-args.txt");
+	writeFileSync(
+		path.join(ghDir, "gh"),
+		`#!/bin/sh\necho "$@" >> ${ghCaptured}\necho https://fake/pr/1\n`,
+	);
+	chmodSync(path.join(ghDir, "gh"), 0o755);
+
+	const planPath = path.join(S, "plans", "2026-01-01-pr-plan.md");
+	mkdirSync(path.dirname(planPath), { recursive: true });
+	writeFileSync(
+		planPath,
+		"# Plan: pr plan\n\n## Stopping condition\n\ndone.\n\n### Wave 1\n\n- [ ] 1. task\n  Acceptance: true\n\n### Final verification wave\n\n- [ ] F1. check\n",
+	);
+
+	const stages = [];
+	const originalPath = process.env.PATH;
+	process.env.PATH = [ghDir, originalPath].join(path.delimiter);
+	try {
+		const report = await startAuto({
+			objective: "x",
+			planPath,
+			cwd: fixture,
+			stageTimeoutMs: 5000,
+			pr: {},
+			runStage: async (stage) => ({ ok: true, artifact: stage === "plan" ? planPath : undefined }),
+		});
+		assert.equal(report.ok, true);
+		assert.ok(report.pr && report.pr.ok, "pr stage ok");
+		assert.ok((report.pr.url ?? "").startsWith("https://"), "pr url captured");
+	} finally {
+		process.env.PATH = originalPath;
+	}
+	const ghArgs = readFileSync(ghCaptured, "utf8");
+	assert.ok(ghArgs.includes("pr") && ghArgs.includes("create"), "gh pr create captured");
+	assert.ok(ghArgs.includes("--title"), "--title captured");
+	const pushed = execFileSync("git", ["--git-dir", bare, "branch", "--list"], { encoding: "utf8" });
+	assert.ok(pushed.includes("torus/2026-01-01-pr-plan"), "branch pushed to the bare remote");
+});
+
+test("without pr config the chain ends at lens and the report carries no pr field", async () => {
+	const noConfigPlan = path.join(mkdtempSync(path.join(tmpdir(), "auto-pr-noconfig-")), "plan.md");
+	writeFileSync(noConfigPlan, "# Plan\n\ndone.\n");
+	const report = await startAuto({
+		objective: "x",
+		planPath: noConfigPlan,
+		cwd: process.cwd(),
+		stageTimeoutMs: 5000,
+		runStage: async () => ({ ok: true }),
+	});
+	assert.equal(report.pr, undefined);
+});
+
+test("the PR stage fails named when the driven repo has no origin remote", async () => {
+	const S = mkdtempSync(path.join(tmpdir(), "auto-pr-noorigin-"));
+	const fixture = path.join(S, "repo");
+	mkdirSync(fixture, { recursive: true });
+	execFileSync("git", ["init", "-q", fixture]);
+	const planPath = path.join(S, "plan.md");
+	writeFileSync(planPath, "# Plan\n\ndone.\n");
+	const report = await startAuto({
+		objective: "x",
+		planPath,
+		cwd: fixture,
+		stageTimeoutMs: 5000,
+		pr: {},
+		runStage: async () => ({ ok: true }),
+	});
+	assert.equal(report.ok, false);
+	assert.ok((report.pr?.error ?? "").includes("no-origin-remote"));
 });

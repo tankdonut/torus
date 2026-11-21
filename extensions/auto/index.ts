@@ -82,10 +82,11 @@
  * unattended execution must never land in the live checkout by accident.
  */
 
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, open, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { projectStateDir, sleep, TORUS_SCRATCH_DIR_ENV, TORUS_STATE_DIR_ENV } from "../fsutil.js";
 import { listDelegations, repoRoot, stopDelegation } from "../registry.js";
 import { resolveSkillPaths, runDelegation } from "../roster/index.js";
@@ -136,6 +137,12 @@ export interface AutoOptions {
 	cwd: string;
 	stageTimeoutMs?: number;
 	skills?: string[];
+	/**
+	 * Optional PR stage: after a passing lens stage, branch the driven
+	 * repo, push to its remote, and open a PR (gh pr create with the
+	 * ambient gh auth). Absent → the chain ends at lens, byte-identical.
+	 */
+	pr?: { title?: string; base?: string };
 	/** Injectable stage runner (tests fake stages without engines). */
 	runStage?: (stage: StageKind, ctx: StageContext) => Promise<StageResult>;
 }
@@ -149,6 +156,8 @@ export interface AutoReport {
 	>;
 	ok: boolean;
 	exitCode: number;
+	/** Present when options.pr was set: the post-lens PR stage's outcome. */
+	pr?: { ok: boolean; url?: string; error?: string };
 }
 
 /** Named startup refusal (missing cwd, no objective/plan, unknown plan path). */
@@ -730,6 +739,68 @@ function refusal(message: string): never {
  * the first failing stage. With `options.planPath` the chain starts at gate
  * (the plan already exists); otherwise plan → gate → execute → lens.
  */
+
+/** Promisified execFile: git and gh calls run to completion with captured output. */
+const execFileP = promisify(execFile);
+
+/** Plan H1 title: the first `# ` line, minus the marker. */
+function planTitle(markdown: string): string {
+	const line = markdown.split("\n").find((l) => l.startsWith("# "));
+	return (line ?? "").replace(/^#\s+/, "").trim();
+}
+
+/**
+ * The post-lens PR stage: branch the driven repo, commit the execute
+ * stage's changes, push to its remote, and open a PR with the ambient gh
+ * auth. The author identity is whatever holds the push credentials — the
+ * R5 merge plane's Bot-lane requires an App-typed author (operator setup);
+ * without one the human merges. Runs only after a passing lens stage.
+ */
+async function maybeOpenPr(
+	options: AutoOptions,
+	planPath: string,
+	stages: AutoReport["stages"],
+): Promise<{ ok: boolean; url?: string; error?: string }> {
+	const cwd = path.resolve(options.cwd);
+	const branch = `torus/${planStem(planPath)}`;
+	const title = options.pr?.title ?? planTitle(readFileSync(planPath, "utf8")) ?? options.objective;
+	const run = async (bin: string, args: string[], what: string) => {
+		try {
+			const { stdout } = await execFileP(bin, args, { cwd, maxBuffer: 4 * 1024 * 1024 });
+			return { ok: true as const, stdout };
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			return { ok: false as const, stdout: "", error: `${what}: ${message.split("\n")[0]}` };
+		}
+	};
+	const origin = await run("git", ["remote", "get-url", "origin"], "resolve the origin remote");
+	if (!origin.ok)
+		return { ok: false, error: "no-origin-remote: the driven repo has no origin to push to" };
+	const branchOut = await run("git", ["checkout", "-B", branch], "create the PR branch");
+	if (!branchOut.ok) return { ok: false, error: branchOut.error ?? "branch-failed" };
+	await run("git", ["add", "-A"], "stage the changes");
+	const staged = await run("git", ["diff", "--cached", "--quiet"], "check for staged changes");
+	const clean = staged.ok;
+	if (!clean) {
+		const commit = await run("git", ["commit", "-m", title], "commit the changes");
+		if (!commit.ok) return { ok: false, error: commit.error ?? "commit-failed" };
+	}
+	const push = await run("git", ["push", "-u", "origin", branch], "push the branch");
+	if (!push.ok) return { ok: false, error: push.error ?? "push-failed" };
+	const body = [
+		`Unattended run (plan: ${planPath}).`,
+		...stages.map((st) => `- ${st.stage}: ${st.ok ? "ok" : `failed (${st.error ?? "unknown"})`}`),
+	].join("\n");
+	const pr = await run(
+		"gh",
+		["pr", "create", "--title", title, "--body", body.trim() || title],
+		"open the pull request",
+	);
+	if (!pr.ok) return { ok: false, error: pr.error ?? "pr-failed" };
+	const url = (pr.stdout.match(/https:\/\/\S+/) ?? [])[0];
+	return { ok: true, url };
+}
+
 export async function startAuto(options: AutoOptions): Promise<AutoReport> {
 	// The driver's own cwd is the project anchor every root one-shot spawns
 	// under; capture it before anything else can change the directory.
@@ -795,8 +866,15 @@ export async function startAuto(options: AutoOptions): Promise<AutoReport> {
 		if (!result.ok) break;
 		if (stage === "plan") currentPlan = result.artifact;
 	}
-	const ok = stages.every((s) => s.ok);
-	return { stages, ok, exitCode: ok ? 0 : 1 };
+	let ok = stages.every((st) => st.ok);
+	let pr: AutoReport["pr"];
+	// The PR stage runs only after a fully passing chain: a blocked gate or
+	// a failed execute never opens a pull request.
+	if (ok && options.pr !== undefined && currentPlan !== undefined) {
+		pr = await maybeOpenPr(options, currentPlan, stages);
+		if (!pr.ok) ok = false;
+	}
+	return { stages, ok, exitCode: ok ? 0 : 1, ...(pr !== undefined ? { pr } : {}) };
 }
 
 function autoUsageError(message: string): never {
@@ -812,6 +890,8 @@ const AUTO_USAGE = [
 	"  --cwd <dir>             REQUIRED: the driven checkout",
 	"  --stage-timeout-ms <n>  per-stage timeout (default 600000)",
 	"  --skills <a,b>          skill names or paths passed to every stage",
+	"--pr                    open a PR from the executed work (after lens passes)",
+	"--pr-title <t>          PR title override (default: the plan H1 title)",
 ].join("\n");
 
 /** Parse the CLI surface, run the chain, and print the report. */
@@ -822,6 +902,7 @@ export async function runAutoCli(argv: string[]): Promise<number> {
 	let cwd: string | undefined;
 	let stageTimeoutMs: number | undefined;
 	let skills: string[] | undefined;
+	let pr: AutoOptions["pr"] | undefined;
 	const words: string[] = [];
 	// The parse loop sits inside the try: autoUsageError throws AutoRefusal,
 	// and a parse refusal must flow through the same exit-2 path as a

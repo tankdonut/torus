@@ -144,6 +144,54 @@ Webhooks are explicit events: **every request fires a new delegation**, even if 
 
 The per-trigger secret is the trust boundary: anyone holding it can make the trigger's agent run its (payload-templated) task with your models. The payload is rendered as data, but the templated task itself is still acted on; see the serve section of [SECURITY.md](../SECURITY.md) for the full picture (bearer boundary, prompt-injection residual, bind exposure). Bind stays loopback by default; exposing webhooks beyond localhost means putting secrets on a network; prefer a TLS-terminating reverse proxy if you must.
 
+### GitHub webhook triggers
+
+A trigger with a `github` block is event-driven instead of scheduled: `everyMinutes` becomes optional (absent means no timer; the trigger answers webhook POSTs only). The block names the repository and the operator-supplied checkout the event drives:
+
+```json
+{
+ "github": {
+  "repo": "owner/name",
+  "cwd": "/path/to/checked-out/worktree",
+  "events": ["pull_request"],
+  "actions": ["opened", "synchronize"],
+  "driver": "auto"
+ }
+}
+```
+
+A github trigger requires a `webhook.path` (the endpoint it answers at). `repo` and `cwd` are operator config: the payload's `repository.full_name` is matched against the configured `repo`, and a mismatch answers 404 without spawning anything; untrusted payload data never chooses the checkout.
+
+**Signature verification.** GitHub-class triggers verify `X-Hub-Signature-256` (HMAC-SHA256 over the raw body, keyed by the trigger's secret, timing-safe compare) before the body is parsed; invalid or missing signatures answer 401. Configure the same secret in the repository's webhook settings and in the trigger config. The static `X-Torus-Secret` path is unchanged for non-github triggers.
+
+**Event routing.** The `X-GitHub-Event` header must be in the trigger's `events`, the payload's `action` (when present) in its `actions`, and the repository must match; any miss answers 404 (`no-matching-event`) with zero engine spawn. A match renders the templated task through the same untrusted-input fence as every other webhook and fires it.
+
+**Driver mode.** With `"driver": "auto"`, the rendered task becomes the objective of the unattended stage chain ([docs/auto.md](auto.md)) run in-process with the configured `cwd` as the driven checkout: plan, gate, execute, and lens chain on the machine signals, and the produced plan artifact persists to `triggers-state.json` so a re-fire after a crash resumes from the last plan (a crash loses one stage, not the chain). Without `driver`, the trigger fires a single reviewer-class delegation like any other webhook.
+
+**Serialization.** The auto chain pins process-global state, so a second fire for the same repo while one chain is in flight answers 409 (`auto already running`) and the sender re-fires later. Different repos run concurrently.
+
+### The end-to-end loop recipe
+
+A complete unattended loop wires three shipped pieces together: this trigger class drives the stage chain, the chain's `--pr` stage opens the pull request, and the auto-merge workflow consumes Bot-authored PRs whose fresh torus review carries `VERDICT: OKAY`. The trigger listens for the labeling event on issues, the task template hands the issue payload to the chain as the objective, and the driven checkout is a worktree the operator prepared:
+
+```json
+{
+ "name": "issue-loop",
+ "agent": "builder",
+ "task": "Objective from the labeled issue:\n{{payload.issue}}",
+ "webhook": { "path": "/hook/issue-loop" },
+ "github": {
+  "repo": "owner/name",
+  "cwd": "/path/to/driven-worktree",
+  "events": ["issues"],
+  "actions": ["labeled"],
+  "driver": "auto"
+ }
+}
+```
+
+The label applied to the issue is the operator's opt-in signal (write-actors only can label); the chain plans, gates, executes in the driven worktree, and reviews; `--pr` opens the pull request; the auto-merge workflow takes it from there when the author identity satisfies its lane. See [docs/auto.md](auto.md) for the pull request stage and [docs/machine-contracts.md](machine-contracts.md) for the signals each stage consumes.
+
 ## ACP agent (`torus acp-agent`)
 
 `torus acp-agent` serves torus as an Agent Client Protocol v1 (stable) agent over stdio, so ACP-speaking editors (Zed, JetBrains) can drive it: newline-delimited JSON-RPC in on stdin, out on stdout; stdout is protocol-only, logs go to stderr. Spec pin (same as the consume half in `extensions/acp/index.ts`): github.com/agentclientprotocol/agent-client-protocol, docs/protocol/v1/ (repo formerly zed-industries), accessed 2026-10-09; initialization.mdx blob ea16b093. No `@agentclientprotocol/sdk`: the same node primitives as `extensions/rpc.ts`. The launcher intercepts the subcommand before the pi passthrough (serve pattern): the agent process is the surface, never an extension inside an engine session.
