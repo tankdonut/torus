@@ -84,6 +84,7 @@ User-level configuration lives in one file, `~/.torus/config.json` (`config.json
 | Install as a pi package (extension pack) | [docs/pi-packages.md](docs/pi-packages.md) |
 | Every configuration knob and file | [docs/configuration.md](docs/configuration.md) |
 | Every tool, command, and env var | [docs/extensions.md](docs/extensions.md) |
+| Machine signals for driving the planning loop | [docs/machine-contracts.md](docs/machine-contracts.md) |
 | The agent contract (add an agent) | [docs/writing-agents.md](docs/writing-agents.md) |
 | Skills import/export | [docs/skills.md](docs/skills.md) |
 | Container usage and flags | [docs/container.md](docs/container.md) |
