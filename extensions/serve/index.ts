@@ -41,10 +41,29 @@
  * fires a fresh delegation — webhooks are
  * explicit events, so the scheduler's skip-while-active gate deliberately
  * does not apply. Responses are fire-and-ack: {delegationId} immediately.
+ *
+ * GitHub webhook triggers: a trigger that also carries a
+ * `github: {repo, cwd, events, actions?, secret?}` block becomes a
+ * GitHub-class endpoint. Auth is HMAC over the RAW body — the bytes are
+ * captured before any JSON parse, `crypto.createHmac("sha256", secret)` is
+ * compared timing-safely against the sha256= digest in
+ * X-Hub-Signature-256, and a missing or wrong signature answers 401
+ * without parsing. The secret is the same value the operator configures in
+ * the repo's webhook settings: set it explicitly in config, or leave it
+ * off and one is minted per trigger (persisted in triggers-state.json,
+ * printed once at first start, like the static-secret path). After the
+ * signature the request routes on trusted config only: the X-GitHub-Event
+ * header must be in `events`, the payload's repository.full_name must
+ * equal `repo`, and (when configured) the payload's action must be in
+ * `actions` — any mismatch answers 404 named, no spawn. The delegation
+ * runs in `cwd`, which is operator config: the payload never chooses the
+ * checkout. GitHub-class triggers are event-driven — `everyMinutes` is
+ * optional (a present value still ticks the same scheduler), and the
+ * github block requires a webhook path to answer at.
  */
 
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { chmodSync } from "node:fs";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { chmodSync, existsSync } from "node:fs";
 import {
 	createServer,
 	type Server as HttpServer,
@@ -74,12 +93,31 @@ export interface ServeConfig {
 
 export interface ServeTrigger {
 	name: string;
-	everyMinutes: number;
+	/** Cadence in minutes; absent for event-driven (github) triggers. */
+	everyMinutes?: number;
 	agent: string;
 	task: string;
 	model?: string;
 	/** Optional webhook endpoint: POST <path> with X-Torus-Secret fires this trigger. */
 	webhook?: { path: string };
+	/**
+	 * Optional github block: turns the trigger's webhook endpoint into a
+	 * GitHub-class one — HMAC (X-Hub-Signature-256) auth instead of the
+	 * static secret, event/action/repo routing before any spawn, and the
+	 * delegation running in `cwd`.
+	 */
+	github?: {
+		/** owner/name the payload's repository.full_name must equal exactly. */
+		repo: string;
+		/** Absolute checkout path used as the delegation cwd — operator config. */
+		cwd: string;
+		/** Explicit webhook secret; absent → one is minted per trigger. */
+		secret?: string;
+		/** X-GitHub-Event values that may fire this trigger. */
+		events: string[];
+		/** Optional payload.action filter on top of the event filter. */
+		actions?: string[];
+	};
 }
 
 /** Caps for serve section triggers — max count and floor on the interval. */
@@ -91,6 +129,8 @@ const WEBHOOK_PATH_RE = /^\/hook\/[a-z0-9-]+$/;
 const WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
 /** Payload nesting rendered into a task; deeper values become "[truncated]". */
 const PAYLOAD_DEPTH_CAP = 8;
+/** GitHub repository.full_name shape: owner/name, no slashes inside either. */
+const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 const DEFAULT_CONFIG: ServeConfig = { port: 4747, bind: "127.0.0.1" };
 
@@ -139,7 +179,7 @@ function delegatableAgentNames(): string[] {
 }
 
 /** Milliseconds between ticks for a trigger — minutes × 60_000. */
-export function triggerIntervalMs(trigger: Pick<ServeTrigger, "everyMinutes">): number {
+export function triggerIntervalMs(trigger: { everyMinutes: number }): number {
 	return trigger.everyMinutes * 60_000;
 }
 
@@ -182,16 +222,28 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 				error: `serve section trigger "${name}": duplicate name — trigger names must be unique`,
 			};
 		}
-		const everyMinutes = entry.everyMinutes;
-		if (
-			typeof everyMinutes !== "number" ||
-			!Number.isInteger(everyMinutes) ||
-			everyMinutes < MIN_EVERY_MINUTES
-		) {
+		const github = entry.github;
+		if (github !== undefined && !isRecord(github)) {
 			return {
 				triggers: [],
-				error: `serve section trigger "${name}": "everyMinutes" must be an integer ≥ ${MIN_EVERY_MINUTES} (got ${JSON.stringify(everyMinutes)})`,
+				error: `serve section trigger "${name}": "github" must be an object`,
 			};
+		}
+		// Scheduled triggers need a cadence; a github trigger is event-driven,
+		// so everyMinutes is optional there (a present value still needs the
+		// sane floor — the same error names the field either way).
+		const everyMinutes = entry.everyMinutes;
+		if (everyMinutes !== undefined || !isRecord(github)) {
+			if (
+				typeof everyMinutes !== "number" ||
+				!Number.isInteger(everyMinutes) ||
+				everyMinutes < MIN_EVERY_MINUTES
+			) {
+				return {
+					triggers: [],
+					error: `serve section trigger "${name}": "everyMinutes" must be an integer ≥ ${MIN_EVERY_MINUTES} (got ${JSON.stringify(everyMinutes)})`,
+				};
+			}
 		}
 		const agent = entry.agent;
 		if (typeof agent !== "string" || agent.length === 0) {
@@ -244,14 +296,73 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 			}
 			seenWebhookPaths.set(hookPath, name);
 		}
+		if (isRecord(github)) {
+			if (webhook === undefined) {
+				return {
+					triggers: [],
+					error: `serve section trigger "${name}": a "github" trigger answers POSTs at a webhook endpoint — add a "webhook.path"`,
+				};
+			}
+			const repo = github.repo;
+			if (typeof repo !== "string" || !GITHUB_REPO_RE.test(repo)) {
+				return {
+					triggers: [],
+					error: `serve section trigger "${name}": "github.repo" must be "owner/name" (got ${JSON.stringify(repo)})`,
+				};
+			}
+			const cwd = github.cwd;
+			if (typeof cwd !== "string" || !path.isAbsolute(cwd)) {
+				return {
+					triggers: [],
+					error: `serve section trigger "${name}": "github.cwd" must be an absolute path to the repo checkout (got ${JSON.stringify(cwd)})`,
+				};
+			}
+			const secret = github.secret;
+			if (secret !== undefined && (typeof secret !== "string" || secret.length === 0)) {
+				return {
+					triggers: [],
+					error: `serve section trigger "${name}": "github.secret" must be a non-empty string (the same value configured in the repo's webhook settings)`,
+				};
+			}
+			const events = github.events;
+			if (
+				!Array.isArray(events) ||
+				events.length === 0 ||
+				events.some((e) => typeof e !== "string" || e.length === 0)
+			) {
+				return {
+					triggers: [],
+					error: `serve section trigger "${name}": "github.events" must be a non-empty array of strings (e.g. ["pull_request"])`,
+				};
+			}
+			const actions = github.actions;
+			if (
+				actions !== undefined &&
+				(!Array.isArray(actions) || actions.some((a) => typeof a !== "string" || a.length === 0))
+			) {
+				return {
+					triggers: [],
+					error: `serve section trigger "${name}": "github.actions" must be an array of strings (e.g. ["opened", "synchronize"])`,
+				};
+			}
+		}
 		seen.add(name);
 		triggers.push({
 			name,
-			everyMinutes,
+			everyMinutes: typeof everyMinutes === "number" ? everyMinutes : undefined,
 			agent,
 			task,
 			model: typeof model === "string" && model.length > 0 ? model : undefined,
 			webhook: isRecord(webhook) ? { path: webhook.path as string } : undefined,
+			github: isRecord(github)
+				? {
+						repo: github.repo as string,
+						cwd: github.cwd as string,
+						secret: typeof github.secret === "string" ? github.secret : undefined,
+						events: github.events as string[],
+						actions: Array.isArray(github.actions) ? (github.actions as string[]) : undefined,
+					}
+				: undefined,
 		});
 	}
 	return { triggers, error: null };
@@ -301,6 +412,14 @@ function loadOrMintWebhookSecrets(triggers: ServeTrigger[]): {
 	const created: { name: string; secret: string }[] = [];
 	let changed = false;
 	for (const trigger of webhookTriggers) {
+		// A github trigger's secret may be explicit config — the same value the
+		// operator pastes into the repo's webhook settings; it wins over any
+		// stale minted state and is never re-minted.
+		const explicit = trigger.github?.secret;
+		if (typeof explicit === "string" && explicit.length > 0) {
+			secrets[trigger.name] = explicit;
+			continue;
+		}
 		const existing = state[trigger.name]?.webhookSecret;
 		if (typeof existing === "string" && existing.length > 0) {
 			secrets[trigger.name] = existing;
@@ -313,7 +432,12 @@ function loadOrMintWebhookSecrets(triggers: ServeTrigger[]): {
 		changed = true;
 	}
 	if (changed) writeJson(triggersStatePath(), state);
-	chmodSync(triggersStatePath(), 0o600);
+	// An explicit-secret github trigger can leave nothing to write — the file
+	// only exists (and only needs the perms refresh) when state was minted or
+	// already held secrets.
+	if (changed || existsSync(triggersStatePath())) {
+		chmodSync(triggersStatePath(), 0o600);
+	}
 	return { secrets, created };
 }
 
@@ -322,6 +446,56 @@ function tokenMatches(provided: string, expected: string): boolean {
 	const a = createHash("sha256").update(provided).digest();
 	const b = createHash("sha256").update(expected).digest();
 	return timingSafeEqual(a, b);
+}
+
+/**
+ * Verify a GitHub webhook signature: HMAC-sha256 over the raw body with the
+ * trigger's secret, compared timing-safely against the hex digest in
+ * X-Hub-Signature-256 (the sha256= prefix is tolerated but not required).
+ * Both sides hash to fixed-length digests like tokenMatches, so a
+ * wrong-length signature leaks no length information.
+ */
+function signatureMatches(header: string, rawBody: string, secret: string): boolean {
+	const provided = header.startsWith("sha256=") ? header.slice("sha256=".length) : header;
+	const expected = createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
+	return tokenMatches(provided, expected);
+}
+
+/**
+ * The github-class routing gate: every check compares against trusted
+ * trigger config, never payload data, and any mismatch answers 404 named
+ * without spawning — the delegation's checkout comes from the trigger's
+ * own `cwd`, never from the payload. Returns the refusal message, or null
+ * when the request routes.
+ */
+function githubRouteRefusal(
+	trigger: ServeTrigger,
+	github: NonNullable<ServeTrigger["github"]>,
+	eventHeader: unknown,
+	payload: Record<string, unknown>,
+): string | null {
+	const event = typeof eventHeader === "string" ? eventHeader : "";
+	if (event.length === 0) {
+		return `missing "X-GitHub-Event" header — GitHub always sends it`;
+	}
+	if (!github.events.includes(event)) {
+		return `event "${event}" is not in trigger "${trigger.name}" events [${github.events.join(", ")}]`;
+	}
+	const repository = payload.repository;
+	const fullName =
+		typeof repository === "object" && repository !== null && !Array.isArray(repository)
+			? (repository as Record<string, unknown>).full_name
+			: undefined;
+	if (fullName !== github.repo) {
+		return `payload repository.full_name ${JSON.stringify(fullName ?? null)} does not match trigger "${trigger.name}" repo "${github.repo}" — the trigger's own cwd is the only checkout`;
+	}
+	if (github.actions !== undefined) {
+		const action = payload.action;
+		if (typeof action !== "string" || !github.actions.includes(action)) {
+			return `payload action ${JSON.stringify(action ?? null)} is not in trigger "${trigger.name}" actions [${github.actions.join(", ")}]`;
+		}
+	}
+	return null;
 }
 
 function authorized(req: IncomingMessage, token: string): boolean {
@@ -390,9 +564,35 @@ async function handleWebhookRequest(
 	res: ServerResponse,
 	route: WebhookRoute,
 ): Promise<void> {
-	let payload: Record<string, unknown>;
+	const github = route.trigger.github;
+	if (github === undefined) {
+		let payload: Record<string, unknown>;
+		try {
+			payload = await readJsonObject(req, WEBHOOK_MAX_BODY_BYTES);
+		} catch (err) {
+			if (err instanceof BodyTooLargeError) {
+				return sendJson(res, 413, { ok: false, error: "payload-too-large", message: err.message });
+			}
+			return sendJson(res, 400, {
+				ok: false,
+				error: "invalid-body",
+				message: err instanceof Error ? err.message : String(err),
+			});
+		}
+		// Webhooks are explicit events: unlike a timer tick, every request fires
+		// its own delegation — no skip-while-active gate, no lastFired bookkeeping.
+		// The task itself is config-owned; only the payload-rendered parts are
+		// caller-controlled data.
+		const task = renderTaskTemplate(route.trigger.task, payload);
+		const fired = fireRun(route.trigger.agent, task, undefined, route.trigger.model ?? null);
+		return respondFireAndForget(res, fired);
+	}
+	// GitHub-class trigger: HMAC over the RAW body BEFORE any parse — the
+	// body bytes are the authenticated surface, and parsing unverified JSON
+	// first would hand a sender a parse oracle on an unauthenticated route.
+	let rawBody: string;
 	try {
-		payload = await readJsonObject(req, WEBHOOK_MAX_BODY_BYTES);
+		rawBody = await readRawBody(req, WEBHOOK_MAX_BODY_BYTES);
 	} catch (err) {
 		if (err instanceof BodyTooLargeError) {
 			return sendJson(res, 413, { ok: false, error: "payload-too-large", message: err.message });
@@ -403,12 +603,32 @@ async function handleWebhookRequest(
 			message: err instanceof Error ? err.message : String(err),
 		});
 	}
-	// Webhooks are explicit events: unlike a timer tick, every request fires
-	// its own delegation — no skip-while-active gate, no lastFired bookkeeping.
-	// The task itself is config-owned; only the payload-rendered parts are
-	// caller-controlled data.
+	const signature = req.headers["x-hub-signature-256"];
+	if (typeof signature !== "string" || !signatureMatches(signature, rawBody, route.secret)) {
+		return sendJson(res, 401, {
+			ok: false,
+			error: "unauthorized",
+			message: "missing or invalid X-Hub-Signature-256 for this trigger's secret",
+		});
+	}
+	let payload: Record<string, unknown>;
+	try {
+		payload = parseJsonObject(rawBody);
+	} catch (err) {
+		return sendJson(res, 400, {
+			ok: false,
+			error: "invalid-body",
+			message: err instanceof Error ? err.message : String(err),
+		});
+	}
+	const refusal = githubRouteRefusal(route.trigger, github, req.headers["x-github-event"], payload);
+	if (refusal !== null) {
+		return sendJson(res, 404, { ok: false, error: "no-matching-event", message: refusal });
+	}
+	// Routed: the task template renders through the same fence as every
+	// webhook fire, and the delegation runs in the trigger config's cwd.
 	const task = renderTaskTemplate(route.trigger.task, payload);
-	const fired = fireRun(route.trigger.agent, task, undefined, route.trigger.model ?? null);
+	const fired = fireRun(route.trigger.agent, task, github.cwd, route.trigger.model ?? null);
 	return respondFireAndForget(res, fired);
 }
 
@@ -439,10 +659,7 @@ function sleepDetached(ms: number): Promise<null> {
 	});
 }
 
-async function readJsonObject(
-	req: IncomingMessage,
-	maxBytes: number,
-): Promise<Record<string, unknown>> {
+async function readRawBody(req: IncomingMessage, maxBytes: number): Promise<string> {
 	const chunks: Buffer[] = [];
 	let size = 0;
 	let tooLarge = false;
@@ -463,7 +680,10 @@ async function readJsonObject(
 	if (tooLarge) {
 		throw new BodyTooLargeError(`request body exceeds ${Math.round(maxBytes / 1024)} KiB`);
 	}
-	const raw = Buffer.concat(chunks).toString("utf8");
+	return Buffer.concat(chunks).toString("utf8");
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> {
 	if (raw.trim().length === 0) throw new BodyError("request body must be a JSON object");
 	let parsed: unknown;
 	try {
@@ -475,6 +695,13 @@ async function readJsonObject(
 		throw new BodyError("request body must be a JSON object");
 	}
 	return parsed as Record<string, unknown>;
+}
+
+async function readJsonObject(
+	req: IncomingMessage,
+	maxBytes: number,
+): Promise<Record<string, unknown>> {
+	return parseJsonObject(await readRawBody(req, maxBytes));
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -747,9 +974,14 @@ async function handleRequest(
 		if (req.method !== "POST") {
 			return sendJson(res, 405, { ok: false, error: "method-not-allowed" });
 		}
-		const provided = req.headers["x-torus-secret"];
-		if (typeof provided !== "string" || !tokenMatches(provided, route.secret)) {
-			return sendJson(res, 401, { ok: false, error: "unauthorized" });
+		// GitHub-class endpoints authenticate with HMAC over the raw body
+		// inside handleWebhookRequest; the static-secret check below is the
+		// only auth for classic webhook triggers (behavior unchanged).
+		if (route.trigger.github === undefined) {
+			const provided = req.headers["x-torus-secret"];
+			if (typeof provided !== "string" || !tokenMatches(provided, route.secret)) {
+				return sendJson(res, 401, { ok: false, error: "unauthorized" });
+			}
 		}
 		return handleWebhookRequest(req, res, route);
 	}
@@ -844,7 +1076,12 @@ export function startTriggers(
 	const attemptFire = (entry: TriggerEntry): boolean => {
 		const now = Date.now();
 		if (entry.inFlight) return false;
-		if (entry.lastFired !== null && now - entry.lastFired < triggerIntervalMs(entry.trigger)) {
+		const everyMinutes = entry.trigger.everyMinutes;
+		if (
+			everyMinutes !== undefined &&
+			entry.lastFired !== null &&
+			now - entry.lastFired < everyMinutes * 60_000
+		) {
 			return false;
 		}
 		entry.inFlight = true;
@@ -853,7 +1090,7 @@ export function startTriggers(
 		const { guarded } = fireRun(
 			entry.trigger.agent,
 			entry.trigger.task,
-			undefined,
+			entry.trigger.github?.cwd,
 			entry.trigger.model ?? null,
 		);
 		const settle = () => {
@@ -863,7 +1100,13 @@ export function startTriggers(
 		return true;
 	};
 	for (const entry of entries) {
-		const timer = setInterval(() => attemptFire(entry), triggerIntervalMs(entry.trigger));
+		// A trigger without a cadence (github-class, event-driven) schedules
+		// nothing — its fires come from its webhook endpoint.
+		if (entry.trigger.everyMinutes === undefined) continue;
+		const timer = setInterval(
+			() => attemptFire(entry),
+			triggerIntervalMs({ everyMinutes: entry.trigger.everyMinutes }),
+		);
 		timer.unref();
 		entry.timer = timer;
 	}

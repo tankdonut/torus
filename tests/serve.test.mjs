@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -88,6 +89,7 @@ after(async () => {
 	registry.resetRegistryForTesting();
 	rmSync(HOME, { recursive: true, force: true });
 	rmSync(ENGINE_DIR, { recursive: true, force: true });
+	rmSync(GH_ENGINE_DIR, { recursive: true, force: true });
 });
 
 function url(pathname) {
@@ -870,6 +872,310 @@ test("webhook endpoint: 401/404/405/413/400 rejections and a valid templated fir
 			2,
 			"no skip-while-active gate for webhooks — both delegations exist",
 		);
+	} finally {
+		clearServeConfig();
+	}
+});
+
+// ---- github webhook triggers ----
+
+const GITHUB_SECRET = "gh-fixture-0123456789abcdef0123456789abcdef";
+const GH_CHECKOUT = path.join(HOME, "checkouts", "torus");
+
+// The github engine appends pwd to the argv file, so the config cwd (never
+// payload data) is assertable alongside the fenced task text.
+const GH_ENGINE_DIR = mkdtempSync(path.join(tmpdir(), "torus-serve-gh-engines-"));
+const GH_ARGS_ENGINE = path.join(GH_ENGINE_DIR, "args-engine.sh");
+writeFileSync(
+	GH_ARGS_ENGINE,
+	'#!/bin/sh\nprintf \'%s\\n\' "$@" > "$TORUS_ARGS_DIR/spawn-$$.txt"\npwd >> "$TORUS_ARGS_DIR/spawn-$$.txt"\necho \'{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":10,"output":20}}}\'\nexit 0\n',
+	"utf8",
+);
+chmodSync(GH_ARGS_ENGINE, 0o755);
+const GH_ARGS_DIR = path.join(GH_ENGINE_DIR, "argv");
+mkdirSync(GH_ARGS_DIR, { recursive: true });
+
+function ghSpawnArgsText() {
+	return readdirSync(GH_ARGS_DIR)
+		.map((f) => readFileSync(path.join(GH_ARGS_DIR, f), "utf8"))
+		.join("\n");
+}
+
+/** GitHub's own signing recipe over the RAW body string — the fixture side. */
+function hmacSignature(rawBody, secret) {
+	return `sha256=${createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")}`;
+}
+
+function githubPayload(overrides = {}) {
+	return {
+		action: "opened",
+		repository: { full_name: "tankdonut/torus" },
+		pull_request: { title: "feat: github trigger class" },
+		...overrides,
+	};
+}
+
+function writeGithubServeConfig(githubExtra = {}) {
+	writeServe({
+		triggers: [
+			{
+				name: "gh-pr",
+				agent: "builder",
+				task: "Review {{payload.pull_request.title}} on {{payload.repository.full_name}} now.",
+				webhook: { path: "/hook/gh" },
+				github: {
+					repo: "tankdonut/torus",
+					cwd: GH_CHECKOUT,
+					secret: GITHUB_SECRET,
+					events: ["pull_request"],
+					actions: ["opened", "synchronize"],
+					...githubExtra,
+				},
+			},
+		],
+	});
+}
+
+async function postGithub(hookUrl, event, rawBody, secret = GITHUB_SECRET) {
+	const headers = { "content-type": "application/json", "x-github-event": event };
+	if (secret !== null) headers["x-hub-signature-256"] = hmacSignature(rawBody, secret);
+	return fetch(hookUrl, { method: "POST", headers, body: rawBody });
+}
+
+test("validateTriggers validates the github block fail-loud", () => {
+	const ok = serve.validateTriggers([
+		{
+			name: "gh",
+			agent: "builder",
+			task: "t",
+			webhook: { path: "/hook/gh" },
+			github: { repo: "o/r", cwd: "/abs/checkout", events: ["pull_request"] },
+		},
+	]).triggers[0];
+	assert.equal(ok.everyMinutes, undefined, "a github trigger needs no everyMinutes");
+	assert.equal(ok.github.repo, "o/r");
+	assert.equal(ok.github.actions, undefined, "omitted actions stay unset");
+	assert.equal(
+		serve.validateTriggers([
+			{
+				name: "gh",
+				everyMinutes: 5,
+				agent: "builder",
+				task: "t",
+				webhook: { path: "/hook/gh" },
+				github: { repo: "o/r", cwd: "/abs/checkout", events: ["pull_request"] },
+			},
+		]).triggers[0].everyMinutes,
+		5,
+		"an explicit cadence on a github trigger still schedules",
+	);
+	const cases = [
+		[{ name: "gh", agent: "builder", task: "t", github: 5 }, /"github" must be an object/],
+		[
+			{
+				name: "gh",
+				agent: "builder",
+				task: "t",
+				github: { repo: "o/r", cwd: "/c", events: ["push"] },
+			},
+			/a "github" trigger answers POSTs at a webhook endpoint/,
+		],
+		[
+			{
+				name: "gh",
+				agent: "builder",
+				task: "t",
+				webhook: { path: "/hook/gh" },
+				github: { repo: "nope", cwd: "/c", events: ["push"] },
+			},
+			/"github.repo" must be "owner\/name" \(got "nope"\)/,
+		],
+		[
+			{
+				name: "gh",
+				agent: "builder",
+				task: "t",
+				webhook: { path: "/hook/gh" },
+				github: { repo: "o/r", cwd: "relative/checkout", events: ["push"] },
+			},
+			/"github.cwd" must be an absolute path/,
+		],
+		[
+			{
+				name: "gh",
+				agent: "builder",
+				task: "t",
+				webhook: { path: "/hook/gh" },
+				github: { repo: "o/r", cwd: "/c", events: [] },
+			},
+			/"github.events" must be a non-empty array/,
+		],
+		[
+			{
+				name: "gh",
+				agent: "builder",
+				task: "t",
+				webhook: { path: "/hook/gh" },
+				github: { repo: "o/r", cwd: "/c", events: "push" },
+			},
+			/"github.events" must be a non-empty array/,
+		],
+		[
+			{
+				name: "gh",
+				agent: "builder",
+				task: "t",
+				webhook: { path: "/hook/gh" },
+				github: { repo: "o/r", cwd: "/c", events: ["push"], actions: "opened" },
+			},
+			/"github.actions" must be an array of strings/,
+		],
+		[
+			{
+				name: "gh",
+				agent: "builder",
+				task: "t",
+				webhook: { path: "/hook/gh" },
+				github: {
+					repo: "o/r",
+					cwd: "/c",
+					events: ["push"],
+					actions: ["opened", ""],
+				},
+			},
+			/"github.actions" must be an array of strings/,
+		],
+	];
+	for (const [entry, pattern] of cases) {
+		assert.match(serve.validateTriggers([entry]).error, pattern);
+	}
+});
+
+test("a github trigger with a relative cwd refuses startServe naming the field", async () => {
+	writeGithubServeConfig({ cwd: "relative/checkout" });
+	try {
+		await assert.rejects(
+			() => serve.startServe({ port: 0 }),
+			(err) => {
+				assert.match(err.message, /"github.cwd" must be an absolute path/);
+				assert.match(err.message, /gh-pr/);
+				return true;
+			},
+		);
+	} finally {
+		clearServeConfig();
+	}
+});
+
+test("a github trigger without an explicit secret has one minted into triggers-state", async () => {
+	freshTriggersState();
+	writeGithubServeConfig({ secret: undefined });
+	try {
+		const boot = await captureStdout(() => serve.startServe({ port: 0 }));
+		await boot.result.close();
+		const secret = webhookSecretFromState("gh-pr");
+		assert.match(secret ?? "", /^[0-9a-f]{64}$/, "github secrets share the static-secret store");
+		assert.ok(
+			boot.output.includes(`webhook secret for gh-pr: ${secret}`),
+			"first start prints the minted github secret",
+		);
+	} finally {
+		clearServeConfig();
+	}
+});
+
+test("github webhook: a signed matching payload fires the fenced delegation in the config cwd", async () => {
+	registry.resetRegistryForTesting();
+	freshTriggersState();
+	mkdirSync(GH_CHECKOUT, { recursive: true });
+	const prevBin = process.env.TORUS_ENGINE_BIN;
+	const prevArgsDir = process.env.TORUS_ARGS_DIR;
+	process.env.TORUS_ENGINE_BIN = GH_ARGS_ENGINE;
+	process.env.TORUS_ARGS_DIR = GH_ARGS_DIR;
+	writeGithubServeConfig();
+	const boot = await captureStdout(() => serve.startServe({ port: 0 }));
+	const started = boot.result;
+	openHandles.push(started);
+	try {
+		const hookUrl = `http://127.0.0.1:${started.port}/hook/gh`;
+		const raw = JSON.stringify(githubPayload());
+		const res = await postGithub(hookUrl, "pull_request", raw);
+		assert.equal(res.status, 200, "a signed matching payload fires");
+		const { delegationId } = await res.json();
+		const record = registry.listDelegations().find((r) => r.id === delegationId);
+		assert.ok(record, "the github fire created a registry record");
+		assert.match(record.handle ?? "", /^srv-/, "the github fire carries the serve handle tag");
+		await waitForRunDone(record.id);
+		const args = ghSpawnArgsText();
+		assert.ok(
+			args.includes('payload.pull_request.title]\n"feat: github trigger class"'),
+			"the payload field renders inside its fence",
+		);
+		assert.ok(args.includes(untrusted.PREAMBLE), "the untrusted preamble reaches the engine");
+		assert.ok(args.includes("now."), "the trusted template tail survives the fenced payload");
+		assert.ok(
+			args.includes(GH_CHECKOUT),
+			"the delegation ran in the trigger config's cwd, never a payload path",
+		);
+	} finally {
+		process.env.TORUS_ENGINE_BIN = prevBin;
+		process.env.TORUS_ARGS_DIR = prevArgsDir;
+		clearServeConfig();
+	}
+});
+
+test("github webhook rejects: invalid/missing signature 401, wrong event/action/repo 404 named, no spawn", async () => {
+	registry.resetRegistryForTesting();
+	freshArgsDir();
+	writeGithubServeConfig();
+	const boot = await captureStdout(() => serve.startServe({ port: 0 }));
+	const started = boot.result;
+	openHandles.push(started);
+	try {
+		const hookUrl = `http://127.0.0.1:${started.port}/hook/gh`;
+		const raw = JSON.stringify(githubPayload());
+
+		const tampered = await postGithub(hookUrl, "pull_request", raw, "wrong-secret");
+		assert.equal(tampered.status, 401, "a wrong-secret signature is rejected");
+		assert.equal((await tampered.json()).error, "unauthorized");
+
+		const missing = await postGithub(hookUrl, "pull_request", raw, null);
+		assert.equal(missing.status, 401, "a missing signature header is rejected");
+		assert.equal((await missing.json()).error, "unauthorized");
+
+		const wrongEvent = await postGithub(hookUrl, "issues", raw);
+		assert.equal(wrongEvent.status, 404, "an event outside `events` is refused");
+		const wrongEventBody = await wrongEvent.json();
+		assert.equal(wrongEventBody.error, "no-matching-event");
+		assert.match(wrongEventBody.message, /event "issues" is not in trigger "gh-pr"/);
+
+		const wrongAction = await postGithub(
+			hookUrl,
+			"pull_request",
+			JSON.stringify(githubPayload({ action: "closed" })),
+		);
+		assert.equal(wrongAction.status, 404, "an action outside `actions` is refused");
+		const wrongActionBody = await wrongAction.json();
+		assert.equal(wrongActionBody.error, "no-matching-event");
+		assert.match(
+			wrongActionBody.message,
+			/payload action "closed" is not in trigger "gh-pr" actions \[opened, synchronize\]/,
+		);
+
+		const wrongRepo = await postGithub(
+			hookUrl,
+			"pull_request",
+			JSON.stringify(githubPayload({ repository: { full_name: "attacker/torus" } })),
+		);
+		assert.equal(wrongRepo.status, 404, "a payload repo mismatch is refused");
+		const wrongRepoBody = await wrongRepo.json();
+		assert.equal(wrongRepoBody.error, "no-matching-event");
+		assert.match(
+			wrongRepoBody.message,
+			/repository\.full_name "attacker\/torus" does not match trigger "gh-pr" repo "tankdonut\/torus"/,
+		);
+
+		assert.equal(readdirSync(ARGS_DIR).length, 0, "no engine spawn for any refused github request");
 	} finally {
 		clearServeConfig();
 	}
