@@ -330,6 +330,8 @@ test("torus serve section documents routes, auth, config, and the kill switch", 
 		"triggers",
 		"everyMinutes",
 		"triggers-state.json",
+		"X-Hub-Signature-256",
+		"github",
 	]) {
 		assert.ok(section.includes(token), `serve section missing token: ${token}`);
 	}

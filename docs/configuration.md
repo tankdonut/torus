@@ -20,7 +20,7 @@ User-level torus config lives in one file: `config.json` under the torus home (`
 | --- | --- |
 | `chains` | Model chains per tier plus compatible-provider endpoints; built-in chain providers are credential-gated at resolution (presence-only across the provider's env var, the engine's auth.json, and a models.json `apiKey`; no credential value is ever read or logged), a credential-less provider prints one startup notice naming its env var and its chain entries filter out, chain models a delegation walk or member bootstrap judged no-work, or an ambient title call watched fail to answer, sit out 5 minutes in one shared session-scoped memo that every chain consumer resolves through (naming a model explicitly bypasses the cooldown), and walk rejections surface in the transcript as fallback notes (live in the delegate tool block and trailing the result text) |
 | `automode` | Auto permission-mode rules and circuit-breaker settings |
-| `serve` | HTTP server bind, port, token path, and scheduled triggers (auth is runtime state) |
+| `serve` | HTTP server bind, port, token path, scheduled triggers, and GitHub webhook triggers (auth is runtime state) |
 | `keywords` | Keyword rows injected into the system prompt |
 | `permissionMode` | Default permission mode (top-level key, not an object) |
 | `roster` | Delegation knobs: background execution, child session storage |
@@ -94,7 +94,7 @@ The remaining files are behavior side-effects, state rather than config: torus w
 | Path | Holds |
 | --- | --- |
 | `~/.torus/serve/auth.json` | The serve bearer token, minted at first start ([docs/serve.md](serve.md)) |
-| `~/.torus/serve/triggers-state.json` | Per-trigger `lastFired` times and webhook secrets ([docs/serve.md](serve.md)) |
+| `~/.torus/serve/triggers-state.json` | Per-trigger `lastFired` times, webhook secrets, and driver-class last-plan artifacts ([docs/serve.md](serve.md)) |
 | `$TORUS_STATE_DIR/sandbox-hosts.json` | Hosts approved "Always allow (this project)" in the sandbox trust dialog (`$TORUS_STATE_DIR` is the per-project state root under `~/.torus/state/`) |
 | `~/.torus/teams.json` | The global team index: team id to project key |
 | `~/.torus/memory/` | The git-backed memory store |
