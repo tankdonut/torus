@@ -25,6 +25,7 @@ import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { displayPath, projectStateDir, readJson, torusHome, writeJson } from "../fsutil.js";
 import { TORUS_MARKER } from "../markers.js";
+import { lintPlan } from "../plangrammar.js";
 import { gateExtension, isEngineChild, type PlatformSupport } from "../platform.js";
 import { currentSessionId } from "../registry.js";
 
@@ -472,6 +473,21 @@ export function approvalBlocker(markdown: string): string | null {
 }
 
 /**
+ * Gate for work_start: null when the plan passes the grammar lint (lintPlan),
+ * otherwise a blocking string listing up to five line-addressed violations.
+ * Runs unconditionally — assumeApproved does not bypass it.
+ */
+export function planLintBlocker(markdown: string): string | null {
+	const violations = lintPlan(markdown);
+	if (violations.length === 0) return null;
+	const shown = violations
+		.slice(0, 5)
+		.map((violation) => `line ${violation.line}: ${violation.message}`);
+	const more = violations.length - shown.length;
+	return `plan lint: ${shown.join("; ")}${more > 0 ? ` + ${more} more` : ""}`;
+}
+
+/**
  * Resolve a slug the way a dispatch text carries it: exact, else a unique
  * substring match (leads paraphrase dated stems — "release-workflow-
  * implementation" for "2026-10-04-release-workflow-implementation").
@@ -631,6 +647,14 @@ export function registerWork(pi: ExtensionAPI): void {
 							content: [
 								{ type: "text", text: `cannot read plan: ${displayPath(resolved.planPath)}` },
 							],
+							details: {},
+							isError: true,
+						};
+					}
+					const lint = planLintBlocker(markdown);
+					if (lint) {
+						return {
+							content: [{ type: "text", text: `REFUSED — ${lint}` }],
 							details: {},
 							isError: true,
 						};

@@ -20,6 +20,7 @@ const {
 	parsePlanTasks,
 	completionBlocker,
 	approvalBlocker,
+	planLintBlocker,
 	registerWork,
 	resolvePlan,
 	readWorkState,
@@ -51,6 +52,59 @@ function plantPlanIn(dir, name, body) {
 
 function plantPlan(name, body) {
 	return plantPlanIn(path.join(projectDir(), "plans"), name, body);
+}
+
+/**
+ * A minimal plan that passes the plan-lint grammar: a wave heading, task rows
+ * with Acceptance: detail, a final verification wave with an F-task, and a
+ * Stopping condition section. `approval` may be null to omit the marker (the
+ * lint does not check approval — the work_start approval gate does).
+ */
+function validPlanBody({
+	approval = "Approval: tankdonut 2026-10-07",
+	tasks = ["- [ ] 1. A"],
+} = {}) {
+	const rows = [];
+	if (approval !== null) rows.push(approval, "");
+	rows.push("### Wave 1 — execute", "");
+	for (const task of tasks) rows.push(task, "  Acceptance: the task's check passes");
+	rows.push(
+		"",
+		"### Final verification wave",
+		"",
+		"- [ ] F1. Verify the work end to end",
+		"  Acceptance: verification evidence recorded",
+		"",
+		"## Stopping condition",
+		"",
+		"All waves closed with evidence.",
+	);
+	return `${rows.join("\n")}\n`;
+}
+
+/**
+ * validPlanBody's grammar with the first wave task's Acceptance: detail
+ * stripped — a known lint failure whose offending line is computable: the
+ * task row lands on line 5 with an approval marker, line 3 without.
+ */
+function malformedPlanBody(approval = "Approval: tankdonut 2026-10-07") {
+	const rows = [];
+	if (approval !== null) rows.push(approval, "");
+	rows.push(
+		"### Wave 1 — execute",
+		"",
+		"- [ ] 1. A",
+		"",
+		"### Final verification wave",
+		"",
+		"- [ ] F1. Verify the work end to end",
+		"  Acceptance: verification evidence recorded",
+		"",
+		"## Stopping condition",
+		"",
+		"All waves closed with evidence.",
+	);
+	return `${rows.join("\n")}\n`;
 }
 
 function plantState(overrides) {
@@ -138,6 +192,21 @@ test("approvalBlocker: null on marker or recorded escape, blocker otherwise; che
 	// a checkbox row is task grammar, never an approval marker — and it still parses as a task
 	assert.ok(approvalBlocker("- [ ] Approval: fake\n") !== null);
 	assert.equal(parsePlanTasks("- [ ] Approval: fake\n").tasks.length, 1);
+});
+
+test("planLintBlocker: null on a grammar-valid plan, line-addressed violations otherwise, five shown with a +N more tail", () => {
+	assert.equal(planLintBlocker(validPlanBody()), null);
+	assert.equal(
+		planLintBlocker("# nothing\n"),
+		"plan lint: line 0: no wave heading; line 0: no column-zero task row; line 0: no final verification wave section; line 0: no Stopping condition section",
+	);
+	const rows = [
+		"### Wave 1 — w",
+		...Array.from({ length: 7 }, (_, i) => `- [ ] ${i + 1}. T${i + 1}`),
+	].join("\n");
+	const blocker = planLintBlocker(`${rows}\n`);
+	assert.ok(blocker.endsWith(" + 4 more"), `trims to the first five: ${blocker}`);
+	assert.equal(blocker.split("; ").length, 5, `five violations shown: ${blocker}`);
 });
 
 test("resolvePlan: exact stem beats prefix, unique prefix resolves, ambiguity errors with candidates", () => {
@@ -425,7 +494,7 @@ test("work_start refuses unmarked plans: exact REFUSED text, no state file, no s
 	setCurrentSessionId("ses-gate");
 	const { work_start } = workTools();
 
-	plantPlan("gate-unmarked", "# plan\n\n- [ ] 1. A\n- [ ] 2. B\n");
+	plantPlan("gate-unmarked", validPlanBody({ approval: null }));
 	const refused = await work_start.execute("t", { plan: "gate-unmarked" });
 	assert.equal(refused.isError, true);
 	assert.equal(
@@ -436,7 +505,10 @@ test("work_start refuses unmarked plans: exact REFUSED text, no state file, no s
 	assert.deepEqual(readLedger("gate-unmarked", 5), [], "no start row on refusal");
 
 	// a checkbox-shaped fake is a task row, not approval — the plan has tasks yet still refuses
-	plantPlan("gate-fake", "- [ ] Approval: fake\n");
+	plantPlan(
+		"gate-fake",
+		validPlanBody({ approval: null, tasks: ["- [ ] Approval: fake", "- [ ] 1. A"] }),
+	);
 	const fakeRefused = await work_start.execute("t", { plan: "gate-fake" });
 	assert.equal(fakeRefused.isError, true);
 	assert.match(fakeRefused.content[0].text, /REFUSED — plan lacks an approval marker/);
@@ -446,7 +518,7 @@ test("work_start binds approved plans: marker text, skipped escape, and assumeAp
 	setCurrentSessionId("ses-gate");
 	const { work_start } = workTools();
 
-	plantPlan("gate-marked", "# plan\n\nApproval: tankdonut 2026-10-07\n\n- [ ] 1. A\n");
+	plantPlan("gate-marked", validPlanBody());
 	const marked = await work_start.execute("t", { plan: "gate-marked" });
 	assert.equal(marked.isError, undefined);
 	assert.ok(readWorkState("gate-marked"), "state written on bind");
@@ -454,26 +526,82 @@ test("work_start binds approved plans: marker text, skipped escape, and assumeAp
 	assert.equal(markedRows.at(-1)?.event, "start");
 	assert.equal(markedRows.at(-1)?.approval, "tankdonut 2026-10-07");
 
-	plantPlan("gate-skipped", "Approval: skipped (--yes)\n- [ ] 1. A\n");
+	plantPlan("gate-skipped", validPlanBody({ approval: "Approval: skipped (--yes)" }));
 	const skipped = await work_start.execute("t", { plan: "gate-skipped" });
 	assert.equal(skipped.isError, undefined);
 	assert.equal(readLedger("gate-skipped", 1).at(-1)?.approval, "skipped (--yes)");
 
-	plantPlan("gate-assume", "# plan\n\n- [ ] 1. A\n");
+	plantPlan("gate-assume", validPlanBody({ approval: null }));
 	const assumed = await work_start.execute("t", { plan: "gate-assume", assumeApproved: true });
 	assert.equal(assumed.isError, undefined);
 	assert.ok(readWorkState("gate-assume"), "escape hatch still binds state");
 	assert.equal(readLedger("gate-assume", 1).at(-1)?.approval, "assumed");
 });
 
+test("work_start refuses plans that fail the plan lint: exact text names the offending line, no state, no start row", async () => {
+	setCurrentSessionId("ses-lint");
+	const { work_start } = workTools();
+
+	plantPlan("lint-bad", malformedPlanBody());
+	const refused = await work_start.execute("t", { plan: "lint-bad" });
+	assert.equal(refused.isError, true);
+	assert.equal(
+		refused.content[0].text,
+		"REFUSED — plan lint: line 5: task row has no Acceptance: detail line",
+	);
+	assert.equal(readWorkState("lint-bad"), null, "no state file on lint refusal");
+	assert.deepEqual(readLedger("lint-bad", 5), [], "no start row on lint refusal");
+});
+
+test("work_start binds a grammar-valid plan: slug returned, state written, start row journaled", async () => {
+	setCurrentSessionId("ses-lint-ok");
+	const { work_start } = workTools();
+
+	plantPlan("lint-ok", validPlanBody());
+	const out = await work_start.execute("t", { plan: "lint-ok" });
+	assert.equal(out.isError, undefined);
+	assert.equal(out.details.slug, "lint-ok");
+	assert.match(out.content[0].text, /^Started:/);
+	assert.ok(readWorkState("lint-ok"), "state written on bind");
+	assert.equal(readLedger("lint-ok", 1).at(-1)?.event, "start");
+});
+
+test("assumeApproved does not bypass the plan lint: a malformed plan still refuses", async () => {
+	setCurrentSessionId("ses-lint-assume");
+	const { work_start } = workTools();
+
+	plantPlan("lint-assume", malformedPlanBody(null));
+	const refused = await work_start.execute("t", { plan: "lint-assume", assumeApproved: true });
+	assert.equal(refused.isError, true);
+	assert.equal(
+		refused.content[0].text,
+		"REFUSED — plan lint: line 3: task row has no Acceptance: detail line",
+	);
+	assert.equal(readWorkState("lint-assume"), null, "no state file on lint refusal");
+});
+
+test("the plan lint gate runs before the approval gate: a plan failing both refuses with the lint", async () => {
+	setCurrentSessionId("ses-lint-order");
+	const { work_start } = workTools();
+
+	plantPlan("lint-order", malformedPlanBody(null));
+	const refused = await work_start.execute("t", { plan: "lint-order" });
+	assert.equal(refused.isError, true);
+	assert.match(refused.content[0].text, /REFUSED — plan lint/);
+	assert.ok(
+		!refused.content[0].text.includes("approval marker"),
+		"the lint refusal wins over the approval refusal",
+	);
+});
+
 test("work_start skips gap-closed rows when reporting the next task", async () => {
 	setCurrentSessionId("ses-start-gap");
 	const { work_start } = workTools();
-	plantPlan("start-gap", "Approval: tankdonut 2026-10-07\n- [~] 1. A\n- [ ] 2. B\n");
+	plantPlan("start-gap", validPlanBody({ tasks: ["- [~] 1. A", "- [ ] 2. B"] }));
 	const out = await work_start.execute("t", { plan: "start-gap" });
 	assert.equal(out.isError, undefined);
-	assert.match(out.content[0].text, /1\/2 tasks checked/);
-	assert.match(out.content[0].text, /Next: L3 2\. B/);
+	assert.match(out.content[0].text, /1\/3 tasks checked/);
+	assert.match(out.content[0].text, /Next: L7 2\. B/);
 });
 
 test("work_note admits converge rows: append via the tool, tail keeps the event intact", async () => {
@@ -546,7 +674,7 @@ test("a throwing session mirror never breaks the file append", async () => {
 test("work_start with a stem resolves the plan from the project dir and writes state under the project work dir", async () => {
 	setCurrentSessionId("ses-bind");
 	const { work_start } = workTools();
-	const file = plantPlan("proj-bind", "# plan\n\nApproval: tankdonut 2026-10-07\n\n- [ ] 1. A\n");
+	const file = plantPlan("proj-bind", validPlanBody());
 
 	const out = await work_start.execute("t", { plan: "proj-bind" });
 	assert.equal(out.isError, undefined);
@@ -604,7 +732,7 @@ test("two project cwds with the same plan stem create separate work states and l
 	try {
 		process.chdir(projA);
 		const cwdA = process.cwd();
-		plantPlan("shared-stem", "# plan\n\nApproval: tankdonut 2026-10-07\n\n- [ ] 1. A\n");
+		plantPlan("shared-stem", validPlanBody());
 		setCurrentSessionId("ses-a");
 		const startedA = await workTools().work_start.execute("t", { plan: "shared-stem" });
 		assert.equal(startedA.isError, undefined);
@@ -615,7 +743,7 @@ test("two project cwds with the same plan stem create separate work states and l
 
 		process.chdir(projB);
 		const cwdB = process.cwd();
-		plantPlan("shared-stem", "# plan\n\nApproval: tankdonut 2026-10-07\n\n- [ ] 1. B\n");
+		plantPlan("shared-stem", validPlanBody({ tasks: ["- [ ] 1. B"] }));
 		setCurrentSessionId("ses-b");
 		const startedB = await workTools().work_start.execute("t", { plan: "shared-stem" });
 		assert.equal(startedB.isError, undefined);
