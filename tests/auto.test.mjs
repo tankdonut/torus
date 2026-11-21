@@ -240,6 +240,20 @@ function stubLauncher(_dir, body) {
 	return { stubRoot, launcher };
 }
 
+/** Poll until the pid is gone; the pid-liveness assert for killed stubs. */
+async function assertChildDead(pid) {
+	assert.ok(Number.isInteger(pid) && pid > 0, "the stub must have recorded its pid");
+	for (let i = 0; i < 100; i += 1) {
+		try {
+			process.kill(pid, 0);
+		} catch {
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	assert.ok(false, "the one-shot child must be killed, not left running");
+}
+
 function withStubRoot(stubRoot, fn) {
 	const prev = process.env.TORUS_ROOT;
 	process.env.TORUS_ROOT = stubRoot;
@@ -676,6 +690,123 @@ setInterval(() => {}, 1_000);
 			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
 		assert.ok(dead, "the one-shot child must be killed, not left running");
+	});
+	rmSync(stubRoot, { recursive: true, force: true });
+	rmSync(path.join(HOME, "state"), { recursive: true, force: true });
+});
+
+test("gate kills the one-shot on the first fresh verdict: an intermediate BLOCKED report must not be overwritten by a live child", async () => {
+	// The empirical race: the conductor writes an INTERMEDIATE report
+	// (GATE BLOCKED), the poll resolves the stage on it, and the still-
+	// running convergence loop later overwrites the report with a
+	// different verdict. The stage must kill the child when it resolves,
+	// so the on-disk artifact stays coherent with the recorded outcome.
+	const fixture = fixtureDir("gate-intermediate");
+	const stateDir = projectStateDir();
+	const plansDir = path.join(stateDir, "plans");
+	const planPath = path.join(plansDir, "2026-01-01-inter-plan.md");
+	mkdirSync(plansDir, { recursive: true });
+	writeFileSync(planPath, "# Plan\n");
+	const body = `
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const stateDir = process.env.TORUS_STATE_DIR;
+mkdirSync(stateDir, { recursive: true });
+writeFileSync(path.join(stateDir, "stub-pid.txt"), String(process.pid));
+const prompt = process.argv[process.argv.length - 1];
+const planPath = prompt.split(/\\s+/)[1];
+const stem = path.basename(planPath, ".md");
+const gateDir = path.join(stateDir, "plans", "gates");
+mkdirSync(gateDir, { recursive: true });
+const gateFile = path.join(gateDir, stem + ".gate.md");
+writeFileSync(gateFile, "GATE BLOCKED\\n");
+setTimeout(() => { writeFileSync(gateFile, "GATE PASS\\n"); }, 2_000);
+setInterval(() => {}, 1_000);
+`;
+	const { stubRoot } = stubLauncher(path.join(HOME, "stub"), body);
+	await withStubRoot(stubRoot, async () => {
+		process.env.TORUS_STATE_DIR = stateDir;
+		const runner = defaultStageRunner(stateDir);
+		const result = await runner("gate", {
+			objective: "x",
+			cwd: fixture,
+			invocationDir: process.cwd(),
+			stateDir,
+			stageTimeoutMs: 10_000,
+			skills: [],
+			planPath,
+			planStem: "2026-01-01-inter-plan",
+			abort: () => {},
+		});
+		assert.equal(result.ok, false, JSON.stringify(result));
+		assert.equal(result.error, "gate-blocked");
+		assert.equal(result.verdict, "BLOCKED");
+		const pid = Number(readFileSync(path.join(stateDir, "stub-pid.txt"), "utf8").trim());
+		await assertChildDead(pid);
+		const onDisk = readFileSync(
+			path.join(plansDir, "gates", "2026-01-01-inter-plan.gate.md"),
+			"utf8",
+		);
+		assert.ok(onDisk.includes("GATE BLOCKED"), "the recorded verdict must stay on disk");
+		assert.ok(!onDisk.includes("GATE PASS"), "a dead child must not overwrite the report");
+	});
+	rmSync(stubRoot, { recursive: true, force: true });
+	rmSync(path.join(HOME, "state"), { recursive: true, force: true });
+});
+
+test("lens kills the one-shot on the first fresh verdict: no rows land after the stage resolves", async () => {
+	// Same-shape race for the lens poll: three OKAY rows resolve the stage;
+	// a still-running child appending a later REJECT row would contradict
+	// the recorded outcome. The kill must prevent it.
+	const fixture = fixtureDir("lens-intermediate");
+	const stateDir = projectStateDir();
+	const plansDir = path.join(stateDir, "plans");
+	const planPath = path.join(plansDir, "2026-01-01-inter-lens.md");
+	mkdirSync(plansDir, { recursive: true });
+	writeFileSync(planPath, "# Plan\n");
+	const body = `
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const stateDir = process.env.TORUS_STATE_DIR;
+mkdirSync(stateDir, { recursive: true });
+writeFileSync(path.join(stateDir, "stub-pid.txt"), String(process.pid));
+const prompt = process.argv[process.argv.length - 1];
+const planPath = prompt.split(/\\s+/)[1];
+const stem = path.basename(planPath, ".md");
+const workDir = path.join(stateDir, "work");
+mkdirSync(workDir, { recursive: true });
+const ledger = path.join(workDir, stem + ".ledger.jsonl");
+const okay = (round) => JSON.stringify({ event: "verified", verdict: "OKAY", lens: "l" + round, round });
+appendFileSync(ledger, [1, 2, 3].map(okay).join("\\n") + "\\n");
+setTimeout(() => {
+	appendFileSync(ledger, JSON.stringify({ event: "verified", verdict: "REJECT", lens: "late", round: 4 }) + "\\n");
+}, 2_000);
+setInterval(() => {}, 1_000);
+`;
+	const { stubRoot } = stubLauncher(path.join(HOME, "stub"), body);
+	await withStubRoot(stubRoot, async () => {
+		process.env.TORUS_STATE_DIR = stateDir;
+		const runner = defaultStageRunner(stateDir);
+		const result = await runner("lens", {
+			objective: "x",
+			cwd: fixture,
+			invocationDir: process.cwd(),
+			stateDir,
+			stageTimeoutMs: 10_000,
+			skills: [],
+			planPath,
+			planStem: "2026-01-01-inter-lens",
+			abort: () => {},
+		});
+		assert.equal(result.ok, true, JSON.stringify(result));
+		assert.equal(result.verdict, "OKAY");
+		const pid = Number(readFileSync(path.join(stateDir, "stub-pid.txt"), "utf8").trim());
+		await assertChildDead(pid);
+		const ledgerText = readFileSync(
+			path.join(stateDir, "work", "2026-01-01-inter-lens.ledger.jsonl"),
+			"utf8",
+		);
+		assert.ok(!ledgerText.includes("REJECT"), "a dead child must not append rows after resolution");
 	});
 	rmSync(stubRoot, { recursive: true, force: true });
 	rmSync(path.join(HOME, "state"), { recursive: true, force: true });

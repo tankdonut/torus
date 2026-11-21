@@ -624,7 +624,14 @@ async function pollGateReport(
 	});
 	for (;;) {
 		const verdict = await readFreshGateReport(gateFile, baselineMtime);
-		if (verdict !== null) return verdict;
+		if (verdict !== null) {
+			// First fresh verdict resolves the stage: stop the child BEFORE
+			// returning so its convergence loop cannot outlive the stage and
+			// overwrite the report (an on-disk artifact contradicting the
+			// recorded outcome). kill() is a no-op on an already-exited child.
+			shot.kill();
+			return verdict;
+		}
 		if (deadline.past()) {
 			// The body can win the race against the outer timer; stop the
 			// child here too so no one-shot is left running unattended.
@@ -636,7 +643,12 @@ async function pollGateReport(
 			const graceEnd = Date.now() + EXIT_GRACE_MS;
 			while (Date.now() < graceEnd) {
 				const final = await readFreshGateReport(gateFile, baselineMtime);
-				if (final !== null) return final;
+				if (final !== null) {
+					// Uniform resolution-path kill: a no-op here, since the
+					// child has already exited (shot.exited resolved).
+					shot.kill();
+					return final;
+				}
 				await sleep(POLL_MS);
 			}
 			return { ok: false, error: "gate-report-missing" };
@@ -669,7 +681,12 @@ async function pollLensVerdict(
 	});
 	for (;;) {
 		const accepted = await ledgerVerdict();
-		if (accepted !== null) return accepted;
+		if (accepted !== null) {
+			// Same resolution-path kill as the gate: the lens child must not
+			// outlive the stage and append rows after the outcome is recorded.
+			shot.kill();
+			return accepted;
+		}
 		if (deadline.past()) {
 			// Same body-side race as the gate: stop the child here too.
 			shot.kill();
@@ -679,16 +696,25 @@ async function pollLensVerdict(
 			// Child gone: one final ledger read, then the stdout VERDICT
 			// fallback (an unbound session lands verdicts in its final answer).
 			const late = await ledgerVerdict();
-			if (late !== null) return late;
+			if (late !== null) {
+				// Uniform resolution-path kill: a no-op — the child already
+				// exited (shot.exited resolved) before this branch runs.
+				shot.kill();
+				return late;
+			}
 			const stdout = await readFileIfExists(shot.stdoutFile);
 			const verdicts = [...(stdout ?? "").matchAll(/VERDICT:\s*(OKAY|REJECT)/g)];
 			const last = verdicts[verdicts.length - 1];
 			if (last?.[1] === "OKAY") {
+				shot.kill();
 				return { ok: true, verdict: "OKAY", artifact: shot.stdoutFile };
 			}
 			if (last?.[1] === "REJECT") {
+				shot.kill();
 				return { ok: false, verdict: "REJECT", artifact: shot.stdoutFile, error: "lens-reject" };
 			}
+			// Missing path: only reachable after the child exited, so there
+			// is nothing left to kill.
 			return { ok: false, error: "lens-verdict-missing" };
 		}
 		await sleep(POLL_MS);
