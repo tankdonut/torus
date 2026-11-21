@@ -4,24 +4,31 @@
 # posts findings and a verdict as advisory material only. Whether to act on
 # them stays with the human reviewer; nothing in this file blocks a merge.
 #
-# Credential wiring (same placeholder pattern as ci-profile-smoke.yml): the
-# one-shot conductor needs at least one provider credential in the
-# environment for the agent's chat model (the engine reads provider keys
-# from ambient env; run `node runtime/bin/torus.mjs --help` for the list,
-# e.g. ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY). No existing
-# workflow in this repo passes model credentials, so the real secret name
-# is wired here at merge time, e.g.:
-#   env:
-#     ZAI_API_KEY: ${{ secrets.CI_MODEL_KEY }}
-# Until then the job fails at the conductor step with a missing-credential
-# error; every fence and post step stays inert.
+# Base-checkout architecture: the job checks out the BASE ref
+# (github.base_ref), never the PR head. The conductor, the torus engine,
+# the guard stack (ci automode profile, the fence, the lens-review skill),
+# the sandbox dependencies, and every npm package therefore run trusted
+# base code — human-reviewed code that a PR cannot touch. The PR arrives
+# only as data: its diff comes over the GitHub API (`gh pr diff`) and is
+# fenced as untrusted text before the agent sees it, next to the
+# already-fenced title and body. A same-repo author cannot weaken any
+# guard layer from inside a PR.
 #
-# Fork and draft skip rationale: fork PRs get no checkout of a trusted base
-# and no model spend from an untrusted head — a fork PR must not trigger a
-# run that posts comments under the repository's identity. Draft PRs are
-# not finished work; reviewing them wastes model spend and pins a verdict
-# to a change-set that is about to change. Skips exit 0 with a summary
-# note, not a failure.
+# Token scoping follows the same split: steps that execute code (checkout,
+# npm ci, the conductor) run with GITHUB_TOKEN/GH_TOKEN emptied from their
+# environment; the GitHub API token is present only on the steps that call
+# the API (the diff fence, the dedup list, the post).
+#
+# Fork and draft skip: the whole job is gated by a job-level if (same repo
+# and not a draft). When the if is false the job skips entirely — no step
+# runs, so there is no summary step and no skip note anywhere; the run just
+# shows as skipped. Fork PRs get no model spend and no comment under the
+# repository's identity; drafts are skipped for spend, not for trust.
+#
+# What still only runs for the first real PR after merge (everything else
+# in this file runs in CI on every PR): (1) posting the COMMENT review
+# under pull-requests: write with a live github.token, and (2) the
+# conductor with a wired model credential.
 #
 # Runner facts (from ci-profile-smoke.yml): ubuntu-24.04 is pinned rather
 # than ubuntu-latest because the job exercises the 24.04 unprivileged-userns
@@ -49,10 +56,9 @@ concurrency:
 
 jobs:
   review:
-    # Same repo only: a fork PR never runs this workflow (the checkout and
-    # the fenced diff would still resolve, but the run would spend model
-    # tokens and post under the repository's identity for untrusted code).
-    # Drafts are skipped for spend, not for trust.
+    # Same repo only: a fork PR never runs this workflow (it would spend
+    # model tokens and post under the repository's identity for untrusted
+    # code). Drafts are skipped for spend, not for trust.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.draft == false
@@ -68,20 +74,35 @@ jobs:
           echo "::error::PR review workflow copied to ${GITHUB_REPOSITORY}"
           exit 1
 
-      - name: Checkout the pull request head
-        # pull_request event, never its target event: the workflow checks
-        # out untrusted head code under the least-privileged default token
-        # and never exposes repository secrets to it.
+      - name: Checkout the base ref
+        # Base, never the PR head: everything below runs base code (see the
+        # architecture note at the top). The token env is emptied because
+        # this step precedes every code-executing step; persist-credentials:
+        # false keeps the fetch token out of .git/config, where the
+        # conductor's agent could otherwise read it. The checkout action's
+        # own token input (unaffected by ambient env) stays scoped to the
+        # fetch of the trusted base ref.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 2
+          ref: ${{ github.base_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .tool-versions
 
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+        # Lifecycle scripts are code execution; the tree is base-trusted,
+        # but --ignore-scripts is defense-in-depth against a compromised
+        # registry dependency, and the token env is emptied so no install
+        # step can reach the GitHub API.
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
 
       - name: Install sandbox dependencies
         run: |
@@ -100,6 +121,8 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Fence the pull request data
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -119,42 +142,66 @@ jobs:
               "payload.body": ($ev[0].pull_request.body // "")
             }}' > "$OUT/fields.json"
 
-          node runtime/bin/fence.mjs < "$OUT/fields.json" > "$OUT/pri-fenced.txt"
+          node runtime/bin/fence.mjs < "$OUT/fields.json" \
+            > "$OUT/pri-fenced.txt" 2> "$OUT/fence.err"
 
           # The diff is attacker-controlled text too; it is fenced in a
           # separate block with a larger byte cap (the smoke default is
-          # 32 KiB per field; a real diff often outgrows it).
+          # 32 KiB per field; a real diff often outgrows it). The diff
+          # arrives over the API — the PR head is never checked out.
           gh pr diff "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" > "$OUT/pr.diff"
+            --repo "${{ github.repository }}" > "$OUT/pr.diff" 2>> "$OUT/fence.err" \
+            || fail "gh pr diff failed (stderr tail: $(tail -n 3 "$OUT/fence.err" 2> /dev/null || echo none))"
           jq -n --rawfile d "$OUT/pr.diff" \
             '{label: "payload.diff", content: $d}' > "$OUT/diff-fields.json"
 
           node runtime/bin/fence.mjs --max-bytes 65536 \
-            < "$OUT/diff-fields.json" > "$OUT/diff-fenced.txt"
+            < "$OUT/diff-fields.json" > "$OUT/diff-fenced.txt" 2>> "$OUT/fence.err"
 
           for f in "$OUT/pri-fenced.txt" "$OUT/diff-fenced.txt"; do
-            [ -s "$f" ] || fail "fence output is empty: $f"
+            tail="$(tail -n 3 "$OUT/fence.err" 2> /dev/null || echo none)"
+            [ -s "$f" ] || fail "fence output is empty: $f (stderr tail: $tail)"
             grep -qF '[untrusted: payload.' "$f" \
-              || fail "fence output missing the untrusted label: $f (stderr tail: $(tail -n 3 "$OUT/fence.err" 2> /dev/null || echo none))"
+              || fail "fence output missing the untrusted label: $f (stderr tail: $tail)"
+            grep -qF '[/untrusted]' "$f" \
+              || fail "fence output missing the closing marker: $f (stderr tail: $tail)"
           done
 
-      # The one-shot conductor needs at least one provider credential in the
-      # environment for the agent's chat model (the engine reads provider keys
-      # from ambient env; run `node runtime/bin/torus.mjs --help` for the
-      # list, e.g. ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY). No
-      # existing workflow in this repo passes model credentials, so the real
-      # secret names are wired here at merge time, e.g.:
-      #   env:
-      #     ZAI_API_KEY: ${{ secrets.CI_MODEL_KEY }}
       - name: Run the lens-review conductor
+        # The one-shot conductor needs at least one provider credential in
+        # the environment for the agent's chat model (the engine reads
+        # provider keys from ambient env; run `node runtime/bin/torus.mjs
+        # --help` for the list, e.g. ANTHROPIC_API_KEY, GEMINI_API_KEY,
+        # OPENAI_API_KEY). No existing workflow in this repo passes model
+        # credentials, so the real secret name is wired here at merge time,
+        # e.g.:
+        #   env:
+        #     ZAI_API_KEY: ${{ secrets.CI_MODEL_KEY }}
+        # A model credential here is safe from PR code: the conductor runs
+        # base code and the PR head is never checked out (base-checkout
+        # architecture note at the top). Until then this step fails with a
+        # missing-credential error; every fence and post step stays inert.
+        # The GitHub token env is emptied: the agent never reaches the API.
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
         run: |
           set -euo pipefail
+
+          fail() {
+            echo "::error::$*"
+            exit 1
+          }
 
           OUT="$RUNNER_TEMP/pr-review"
           mkdir -p "$OUT"
 
           # The prompt stays single-quoted on purpose: @-paths and any shell
           # characters inside it must reach the agent unexpanded by the runner.
+          # The @paths inside -p are literal text in the prompt string — the
+          # conductor does not expand them at the shell; the agent reads the
+          # files through its read tool at the given absolute paths (verified
+          # working in a live conductor run).
           # shellcheck disable=SC2016
           PROMPT='/skill:lens-review Review the change-set defined by the fenced blocks in the files @/home/runner/work/_temp/pr-review/pri-fenced.txt and @/home/runner/work/_temp/pr-review/diff-fenced.txt. The acceptance criteria are the PR title and body in the payload.title and payload.body fence fields: check the diff against that stated intent, plus general correctness and security of the change itself. The working directory is the repository checkout (the current working directory). This is review round 1. Return your aggregate findings as your final answer, ending with a single line VERDICT: OKAY or VERDICT: REJECT.'
 
@@ -222,9 +269,16 @@ jobs:
 
           # One review per PR per head sha: the marker carries the head sha,
           # so a re-run after a force-push starts over instead of colliding
-          # with the stale marker.
-          if gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
-            | jq -e --arg m "$MARKER" '.[] | select(.body | contains($m))' > /dev/null 2>&1; then
+          # with the stale marker. The list call is captured to a file with
+          # an explicit exit-code branch, so a transient API failure fails
+          # the step instead of being read as no-marker (which would
+          # double-post); only a parsed no-match proceeds to the post.
+          if ! gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
+            > "$OUT/reviews.json"; then
+            fail "listing existing reviews failed (response tail: $(tail -n 3 "$OUT/reviews.json" 2> /dev/null || echo none))"
+          fi
+          if jq -e --arg m "$MARKER" 'any(.[]; (.body // "") | contains($m))' \
+            "$OUT/reviews.json" > /dev/null; then
             echo "The review for this head sha is already posted; skipping the duplicate." \
               >> "$GITHUB_STEP_SUMMARY"
             exit 0
