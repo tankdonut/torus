@@ -272,6 +272,7 @@ writeFileSync(path.join(gateDir, stem + ".gate.md"), ${JSON.stringify(verdict)} 
 			const result = await runner("gate", {
 				objective: "x",
 				cwd: fixture,
+				invocationDir: process.cwd(),
 				stateDir,
 				stageTimeoutMs: 15_000,
 				skills: [],
@@ -331,6 +332,7 @@ appendFileSync(ledger, ${JSON.stringify(rows)}.map(r => JSON.stringify(r)).join(
 			const result = await runner("lens", {
 				objective: "x",
 				cwd: fixture,
+				invocationDir: process.cwd(),
 				stateDir,
 				stageTimeoutMs: 15_000,
 				skills: [],
@@ -365,6 +367,7 @@ console.log("VERDICT: OKAY");
 		const result = await runner("lens", {
 			objective: "x",
 			cwd: fixture,
+			invocationDir: process.cwd(),
 			stateDir,
 			stageTimeoutMs: 15_000,
 			skills: [],
@@ -388,6 +391,7 @@ test("unknown skills fail a one-shot stage named before any spawn", async () => 
 	const result = await runner("gate", {
 		objective: "x",
 		cwd: fixture,
+		invocationDir: process.cwd(),
 		stateDir,
 		stageTimeoutMs: 5_000,
 		skills: ["no-such-skill"],
@@ -452,6 +456,7 @@ test("plan stage drives a real delegation and polls for the new plan artifact", 
 	const ctx = {
 		objective: "document the fixture file's purpose",
 		cwd: fixture,
+		invocationDir: process.cwd(),
 		stateDir,
 		stageTimeoutMs: 30_000,
 		skills: [],
@@ -509,6 +514,7 @@ test("a settled delegation without a plan artifact fails named before the stage 
 	const ctx = {
 		objective: "document the fixture file's purpose",
 		cwd: fixture,
+		invocationDir: process.cwd(),
 		stateDir,
 		stageTimeoutMs: 60_000,
 		skills: [],
@@ -583,6 +589,7 @@ writeFileSync(path.join(gateDir, stem + ".gate.md"), "GATE PASS\\n");
 		const result = await runner("gate", {
 			objective: "x",
 			cwd: fixture,
+			invocationDir: process.cwd(),
 			stateDir,
 			stageTimeoutMs: 10_000,
 			skills: [],
@@ -624,6 +631,7 @@ setInterval(() => {}, 1_000);
 		const result = await runner("gate", {
 			objective: "x",
 			cwd: fixture,
+			invocationDir: process.cwd(),
 			stateDir,
 			stageTimeoutMs: 800,
 			skills: [],
@@ -660,4 +668,67 @@ test("torus auto --help prints usage without touching the engine", () => {
 	assert.equal(run.status, 0, run.stderr);
 	assert.match(run.stdout, /torus auto - unattended plan/);
 	assert.match(run.stdout, /--cwd is REQUIRED/);
+});
+
+// Contract: the gate and lens one-shot children spawn in the driver's
+// invocation directory — a session's project anchor is its cwd, so the
+// children must anchor to the project their coordination artifacts live
+// in (spawned in the driven cwd instead, the foreign-state-key guard
+// blocks the gate report and it lands where the driver never polls).
+// The stub records its cwd on every spawn; both stages must record the
+// test process's cwd, never the fixture.
+test("gate and lens one-shots spawn in the driver's invocation directory, not the driven cwd", async () => {
+	const fixture = fixtureDir("one-shot-anchor");
+	const stateDir = projectStateDir();
+	const plansDir = path.join(stateDir, "plans");
+	const planPath = path.join(plansDir, "2026-01-01-anchor-plan.md");
+	mkdirSync(plansDir, { recursive: true });
+	writeFileSync(planPath, "# Plan\n");
+	const body = `
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const dir = path.join(process.env.TORUS_STATE_DIR, "cwd-records");
+mkdirSync(dir, { recursive: true });
+appendFileSync(path.join(dir, "cwd.txt"), process.cwd() + "\\n");
+const prompt = process.argv[process.argv.length - 1];
+if (prompt.includes("torus-plan-review")) {
+	const planPath = prompt.split(/\\s+/)[1];
+	const stem = path.basename(planPath, ".md");
+	const gateDir = path.join(process.env.TORUS_STATE_DIR, "plans", "gates");
+	mkdirSync(gateDir, { recursive: true });
+	writeFileSync(path.join(gateDir, stem + ".gate.md"), "GATE PASS\\n");
+} else {
+	console.log("VERDICT: OKAY");
+}
+`;
+	const { stubRoot } = stubLauncher(path.join(HOME, "stub"), body);
+	await withStubRoot(stubRoot, async () => {
+		process.env.TORUS_STATE_DIR = stateDir;
+		const runner = defaultStageRunner(stateDir);
+		const ctx = {
+			objective: "x",
+			cwd: fixture,
+			invocationDir: process.cwd(),
+			stateDir,
+			stageTimeoutMs: 15_000,
+			skills: [],
+			planPath,
+			planStem: "2026-01-01-anchor-plan",
+			abort: () => {},
+		};
+		const gate = await runner("gate", ctx);
+		assert.equal(gate.ok, true, JSON.stringify(gate));
+		const lens = await runner("lens", ctx);
+		assert.equal(lens.ok, true, JSON.stringify(lens));
+		const recorded = readFileSync(path.join(stateDir, "cwd-records", "cwd.txt"), "utf8")
+			.trim()
+			.split("\n");
+		assert.equal(recorded.length, 2, "both one-shot spawns must record their cwd");
+		for (const cwd of recorded) {
+			assert.equal(cwd, process.cwd(), "the one-shot must anchor to the invocation directory");
+			assert.notEqual(cwd, fixture, "the one-shot must not anchor to the driven cwd");
+		}
+	});
+	rmSync(stubRoot, { recursive: true, force: true });
+	rmSync(path.join(HOME, "state"), { recursive: true, force: true });
 });

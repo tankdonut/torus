@@ -30,7 +30,7 @@ Each stage races its per-stage timeout; on timeout the stage fails named `stage-
 Two stage kinds run under the hood:
 
 - **Delegation stages** (plan, execute): `runDelegation` children that carry the work tools. The plan child is pinned to the torus-plan skill; the execute child is pinned to the bind-and-complete instruction.
-- **Root one-shots** (gate, lens): the driver spawns `node runtime/bin/torus.mjs -a --mode json -p <prompt>` itself. The gate's four-lens fanout and the lens protocol need `torus_delegate`, which delegation children lack, so these stages run in a full root session instead.
+- **Root one-shots** (gate, lens): the driver spawns `node runtime/bin/torus.mjs -a --mode json -p <prompt>` itself. The gate's four-lens fanout and the lens protocol need `torus_delegate`, which delegation children lack, so these stages run in a full root session instead. They anchor to the driver's invocation directory: their project is the artifact root, so their writes to the driver's state are legal, and the driven repo is reached via absolute paths only (both prompts carry it).
 
 The approver seat: execute binds with `assumeApproved: true`, so the unattended driver is the approving authority and the work ledger journals `approval: "assumed"`. Run `torus auto` only where you accept that contract: every plan that passes the gate executes without a human approval.
 
