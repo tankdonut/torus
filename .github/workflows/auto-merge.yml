@@ -27,10 +27,11 @@
 # gh-only, no engine: no checkout, no sandbox, no model spend. Like
 # renovate-auto-approve.yaml this runs on ubuntu-latest with gh alone.
 #
-# Note on the metadata fetch: `gh pr view --json` cannot express draft or
-# isCrossRepository (both are unknown GraphQL JSON fields there); draft and
-# same-repo are enforced at the job-level if below, and the REST pulls
-# endpoint supplies title, draft, and user.type in one call instead.
+# Note on the metadata fetch: `gh pr view --json` can express draft (as
+# isDraft) and isCrossRepository; the REST pulls endpoint is chosen
+# because a single call supplies title, draft, user.login, and user.type
+# together, and same-repo is additionally enforced at the job-level if
+# below.
 
 name: Auto merge
 
@@ -99,9 +100,12 @@ jobs:
             exit 1
           fi
 
-          title="$(jq -r '.title // ""' "$OUT/pr.json")"
-          login="$(jq -r '.user.login // ""' "$OUT/pr.json")"
-          usertype="$(jq -r '.user.type // ""' "$OUT/pr.json")"
+          if ! title="$(jq -r '.title // ""' "$OUT/pr.json")" \
+            || ! login="$(jq -r '.user.login // ""' "$OUT/pr.json")" \
+            || ! usertype="$(jq -r '.user.type // ""' "$OUT/pr.json")"; then
+            echo "::error::jq failed: extracting title/login/user.type from pr.json"
+            exit 1
+          fi
 
           # (a) Bot-typed authors only. Human PRs are never touched: the
           # torus review stays advisory for them, by design.
@@ -109,7 +113,9 @@ jobs:
             skip "human-authored PR: the merge plane applies only to Bot-authored PRs; the torus review stays advisory"
           fi
 
-          # (b) Renovate skips: its PRs self-merge via platformAutomerge.
+          # (b) Renovate skips: the filter keys on the PR author's login
+          # (not the event actor); renovate PRs self-merge via
+          # platformAutomerge.
           case "$login" in
             "renovate[bot]"|"renovate-config[bot]"|"app/renovate"|"app/renovate-config")
               skip "renovate PRs self-merge via platformAutomerge"
@@ -145,7 +151,11 @@ jobs:
 
       # Verdict gate: a fresh torus review for the CURRENT head sha must
       # exist and must end OKAY. Any review from an older head sha does not
-      # count — a force-push resets the requirement.
+      # count — a force-push resets the requirement. The review counts
+      # only when posted by the reviewer workflow's identity
+      # (github-actions[bot], the token pr-review.yml posts through);
+      # marker text in any other account's review body is ignored as a
+      # forgery attempt.
       - name: Verdict gate
         id: verdict
         if: steps.gate.outputs.proceed == 'true'
@@ -176,21 +186,39 @@ jobs:
           fi
 
           MARKER="🤖 torus review (torus@${{ github.event.pull_request.head.sha }})"
-          count="$(jq --arg m "$MARKER" \
-            '[.[] | select((.body // "") | contains($m))] | length' \
-            "$OUT/reviews.json")"
+          # Identity AND body must both match: a review body is
+          # forgeable (the PR author can self-comment the marker text —
+          # only self-approval is 422-blocked), but the reviewer
+          # workflow's login is not. The marker embeds the current head
+          # sha, so at most one fresh match exists; `last` takes it
+          # deterministically.
+          if ! count="$(jq --arg m "$MARKER" \
+            '[.[] | select(.user.login == "github-actions[bot]" and
+                        ((.body // "") | contains($m)))] | length' \
+            "$OUT/reviews.json")"; then
+            echo "::error::jq failed: filtering reviews.json by identity and marker"
+            exit 1
+          fi
           if [ "$count" -eq 0 ]; then
             skip "no fresh torus review for this head SHA (never merge without one)"
           fi
 
-          # The body of the newest marker-carrying review, then the LAST
-          # VERDICT line in it (same regex as pr-review.yml's conductor
-          # parser), so a reviewer's trailing correction wins.
-          verdict="$(jq -r --arg m "$MARKER" \
-            '([.[] | select((.body // "") | contains($m))] | last.body // "")
+          # The body of the newest identity+marker-matching review,
+          # then the LAST VERDICT line in it (same regex as
+          # pr-review.yml's conductor parser), so a reviewer's trailing
+          # correction wins.
+          if ! verdict="$(jq -r --arg m "$MARKER" \
+            '([.[] | select(.user.login == "github-actions[bot]" and
+                         ((.body // "") | contains($m)))] | last.body // "")
              | [scan("(?m)^VERDICT:\\s*(OKAY|REJECT)\\s*$")]
              | last[0] // ""' \
-            "$OUT/reviews.json")"
+            "$OUT/reviews.json")"; then
+            echo "::error::jq failed: extracting the verdict from reviews.json"
+            exit 1
+          fi
+          # Recorded on every lane so the summary reports the true
+          # verdict, never a stale or invented one.
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
           case "$verdict" in
             "OKAY")
               proceed "torus review OKAY for this head SHA"
@@ -230,6 +258,12 @@ jobs:
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "reason=$1" >> "$GITHUB_OUTPUT"
           }
+
+          # No belt-and-braces dismissal of stale approvals here: the
+          # branch protection's dismiss_stale_reviews: true already
+          # dismisses approvals that predate the current head sha on
+          # every push (verified live against the branch-protection
+          # API), so this step only ever approves the current head.
 
           set +e
           out="$(gh api "repos/$REPO/pulls/$N/reviews" -f event=APPROVE 2>&1)"
@@ -293,13 +327,17 @@ jobs:
             echo
             echo "PR: #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}"
             echo
-            if [ -n "${{ steps.merge.outputs.reason }}" ]; then
+            if [ "${{ steps.merge.outputs.proceed }}" = "true" ]; then
               echo "Merged: ${{ steps.merge.outputs.reason }}"
-            elif [ -n "${{ steps.approve.outputs.reason }}" ]; then
+            elif [ "${{ steps.merge.outputs.proceed }}" = "false" ]; then
+              echo "Auto-merge enrollment failed: ${{ steps.merge.outputs.reason }}"
+            elif [ "${{ steps.approve.outputs.proceed }}" = "true" ]; then
               echo "Approved, merge enrolled: ${{ steps.approve.outputs.reason }}"
-            elif [ -n "${{ steps.verdict.outputs.reason }}" ]; then
+            elif [ "${{ steps.approve.outputs.proceed }}" = "false" ]; then
+              echo "Skipped at approval: ${{ steps.approve.outputs.reason }}"
+            elif [ "${{ steps.verdict.outputs.proceed }}" = "false" ]; then
               echo "Skipped at the verdict gate: ${{ steps.verdict.outputs.reason }}"
-            elif [ -n "${{ steps.gate.outputs.reason }}" ]; then
+            elif [ "${{ steps.gate.outputs.proceed }}" = "false" ]; then
               echo "Skipped at the data gate: ${{ steps.gate.outputs.reason }}"
             else
               echo "No lane decision recorded (the job failed before the data gate)."
