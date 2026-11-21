@@ -38,9 +38,8 @@ mkdirSync(ARGS_DIR, { recursive: true });
 process.env.TORUS_ENGINE_BIN = ARGS_ENGINE;
 process.env.TORUS_ARGS_DIR = ARGS_DIR;
 
-const { composePlanTask, defaultStageRunner, runAutoCli, startAuto, AutoRefusal } = await import(
-	"../extensions/auto/index.ts"
-);
+const { composeGateTask, composePlanTask, defaultStageRunner, runAutoCli, startAuto, AutoRefusal } =
+	await import("../extensions/auto/index.ts");
 const { projectStateDir } = await import("../extensions/fsutil.ts");
 
 after(() => {
@@ -417,6 +416,23 @@ test("the plan task names the absolute driver-state plans path, not a $TORUS_STA
 		`task must carry the absolute plans path: ${task}`,
 	);
 	assert.doesNotMatch(task, /\$TORUS_STATE_DIR/);
+});
+
+// Contract: the gate prompt bounds the conductor to unattended operation
+// (no user to answer questions) and names the ABSOLUTE gate report path —
+// the file the driver polls — never a $TORUS_STATE_DIR literal.
+test("the gate prompt carries the no-questions directive and the absolute gate-report path", () => {
+	const stateDir = projectStateDir();
+	const planPath = path.join(stateDir, "plans", "2026-01-01-gate-plan.md");
+	const prompt = composeGateTask(planPath, stateDir);
+	assert.match(prompt, /UNATTENDED one-shot run: there is no user to answer questions/);
+	assert.ok(
+		prompt.includes(
+			path.join(stateDir, "plans", "gates", "2026-01-01-gate-plan.gate.md") + " (absolute path)",
+		),
+		`prompt must carry the absolute gate-report path: ${prompt}`,
+	);
+	assert.doesNotMatch(prompt, /\$TORUS_STATE_DIR/);
 });
 
 // Integration leg: one real delegation end-to-end through runDelegation with
