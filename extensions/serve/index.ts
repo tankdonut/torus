@@ -12,7 +12,9 @@
  * and are fleet-visible like any other delegation. Each request tags its run
  * with a unique `srv-` handle: that is how the server maps a response to its
  * registry record before the run's outcome exists, and it reads as a label
- * in fleet views.
+ * in fleet views. The body may carry `skills: string[]` — resolved through
+ * roster's skill-root containment, refusals surface as pre-flight 400s —
+ * and GET /runs/:id reads a single run's public record.
  *
  * TRUST BOUNDARY: delegations inherit this process's environment — provider
  * credentials included — so the bearer token is the entire boundary. Anyone
@@ -545,6 +547,7 @@ function fireRun(
 	task: string,
 	cwd: string | undefined,
 	model: string | null,
+	skills?: string[],
 ): { handleTag: string; guarded: Promise<GuardedOutcome> } {
 	const handleTag = `srv-${randomUUID().slice(0, 8)}`;
 	// parentSession null: no session to attribute in a headless server.
@@ -557,7 +560,7 @@ function fireRun(
 		undefined,
 		null,
 		handleTag,
-		undefined,
+		skills,
 		false,
 		false,
 		{ model },
@@ -576,7 +579,7 @@ async function handleRunRequest(req: IncomingMessage, res: ServerResponse): Prom
 			message: err instanceof Error ? err.message : String(err),
 		});
 	}
-	const { agent, task, model, cwd, wait } = body;
+	const { agent, task, model, cwd, skills, wait } = body;
 	if (typeof agent !== "string" || agent.length === 0) {
 		return sendJson(res, 400, {
 			ok: false,
@@ -612,12 +615,30 @@ async function handleRunRequest(req: IncomingMessage, res: ServerResponse): Prom
 			message: '"wait" must be a boolean',
 		});
 	}
+	// Absent skills means no skills (roster treats it as unset); present, it
+	// must be an array of non-empty strings. Containment (which paths are
+	// allowed at all) is roster's pre-flight job, not ours.
+	let skillPaths: string[] | undefined;
+	if (skills !== undefined) {
+		if (
+			!Array.isArray(skills) ||
+			skills.some((entry) => typeof entry !== "string" || entry.length === 0)
+		) {
+			return sendJson(res, 400, {
+				ok: false,
+				error: "invalid-request",
+				message: '"skills" must be an array of non-empty strings',
+			});
+		}
+		skillPaths = skills;
+	}
 
 	const { handleTag, guarded } = fireRun(
 		agent,
 		task,
 		typeof cwd === "string" ? cwd : undefined,
 		typeof model === "string" && model.trim().length > 0 ? model : null,
+		skillPaths,
 	);
 
 	if (wait === true) {
@@ -700,13 +721,23 @@ async function handleRequest(
 		}
 		return sendJson(res, 200, { ok: true, version: VERSION });
 	}
-	if (url.pathname === "/run" || url.pathname === "/runs") {
+	const runIdMatch = /^\/runs\/([^/]+)$/.exec(url.pathname);
+	if (url.pathname === "/run" || url.pathname === "/runs" || runIdMatch) {
 		if (!authorized(req, token)) {
 			return sendJson(res, 401, { ok: false, error: "unauthorized" });
 		}
 		if (url.pathname === "/runs") {
 			if (req.method !== "GET") return sendJson(res, 404, { ok: false, error: "not-found" });
 			return sendJson(res, 200, { runs: listDelegations().map(publicRun) });
+		}
+		if (runIdMatch) {
+			if (req.method !== "GET") return sendJson(res, 404, { ok: false, error: "not-found" });
+			const id = runIdMatch[1];
+			const record = listDelegations().find((r) => r.id === id);
+			if (!record) {
+				return sendJson(res, 404, { ok: false, error: "run-not-found", id });
+			}
+			return sendJson(res, 200, { run: publicRun(record) });
 		}
 		if (req.method !== "POST") return sendJson(res, 404, { ok: false, error: "not-found" });
 		return handleRunRequest(req, res);

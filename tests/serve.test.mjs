@@ -226,6 +226,102 @@ test("GET /runs requires auth and lists the serve-started runs", async () => {
 	assert.equal(started.parentSession, null);
 });
 
+// ---- per-run lookup + the skills param ----
+
+test("GET /runs/:id returns the run record; unknown id and missing auth are rejected", async () => {
+	registry.resetRegistryForTesting();
+	freshArgsDir();
+	const fired = await fetch(url("/run"), {
+		method: "POST",
+		headers: authHeaders(),
+		body: JSON.stringify({ agent: "builder", task: "lookup probe" }),
+	});
+	assert.equal(fired.status, 200);
+	const { delegationId } = await fired.json();
+
+	const unauth = await fetch(url(`/runs/${delegationId}`));
+	assert.equal(unauth.status, 401, "per-run lookup requires the bearer token");
+	assert.equal((await unauth.json()).error, "unauthorized");
+
+	const res = await fetch(url(`/runs/${delegationId}`), { headers: authHeaders() });
+	assert.equal(res.status, 200);
+	const body = await res.json();
+	assert.equal(body.run.delegationId, delegationId, "the record is the requested run");
+	assert.ok(["done", "running"].includes(body.run.status), "status is a real run status");
+	assert.equal(body.run.parentSession, null);
+
+	const missing = await fetch(url("/runs/no-such-run"), { headers: authHeaders() });
+	assert.equal(missing.status, 404);
+	const missingBody = await missing.json();
+	assert.equal(missingBody.error, "run-not-found");
+	assert.equal(missingBody.id, "no-such-run");
+});
+
+test("POST /run skills reaches the child argv; junk shapes and bogus paths 400", async () => {
+	registry.resetRegistryForTesting();
+	freshArgsDir();
+	const skillCwd = path.join(HOME, "skill-fixture");
+	const skillPath = path.join(skillCwd, ".pi", "skills", "probe");
+	mkdirSync(skillPath, { recursive: true });
+	writeFileSync(
+		path.join(skillPath, "SKILL.md"),
+		"---\nname: probe\ndescription: fixture skill\n---\nprobe\n",
+		"utf8",
+	);
+
+	const res = await fetch(url("/run"), {
+		method: "POST",
+		headers: authHeaders(),
+		body: JSON.stringify({
+			agent: "builder",
+			task: "skill probe",
+			cwd: skillCwd,
+			skills: [skillPath],
+		}),
+	});
+	assert.equal(res.status, 200);
+	const { delegationId } = await res.json();
+	const record = await waitForRunDone(delegationId);
+	assert.ok(record, "the skills run completed");
+	assert.equal(record.status, "done");
+	assert.ok(
+		spawnArgsText().includes(`--skill\n${skillPath}`),
+		"the resolved skill path rides the child argv as --skill",
+	);
+
+	const junk = await fetch(url("/run"), {
+		method: "POST",
+		headers: authHeaders(),
+		body: JSON.stringify({ agent: "builder", task: "junk", skills: "probe" }),
+	});
+	assert.equal(junk.status, 400);
+	const junkBody = await junk.json();
+	assert.equal(junkBody.ok, false);
+	assert.match(junkBody.message, /"skills" must be an array of non-empty strings/);
+
+	const junkEntry = await fetch(url("/run"), {
+		method: "POST",
+		headers: authHeaders(),
+		body: JSON.stringify({ agent: "builder", task: "junk", skills: ["ok", 42] }),
+	});
+	assert.equal(junkEntry.status, 400, "non-string entries are rejected");
+
+	const bogus = await fetch(url("/run"), {
+		method: "POST",
+		headers: authHeaders(),
+		body: JSON.stringify({
+			agent: "builder",
+			task: "bogus",
+			cwd: skillCwd,
+			skills: [path.join(skillCwd, "no-such-skill")],
+		}),
+	});
+	assert.equal(bogus.status, 400, "a skill path that resolves to nothing is a pre-flight refusal");
+	const bogusBody = await bogus.json();
+	assert.equal(bogusBody.error, "unknown-skill");
+	assert.match(bogusBody.text, /Unknown skill/);
+});
+
 test("TORUS_SERVE=0 refuses to start", async () => {
 	const prev = process.env.TORUS_SERVE;
 	process.env.TORUS_SERVE = "0";
