@@ -57,7 +57,7 @@ Rework happens in the author session: fixes land on the change-set, then the nex
 
 ## Evidence
 
-Land one `work_note` per lens verdict yourself, from the lens's returned text (event: `verified`, `verifiedBy: reviewer`): the text names the lens, its verdict, the round, and the top blocking finding when there is one (e.g. `security REJECT round 2 — injection at <file>:<line>, user input reaches a shell unquoted`). The conductor writes the row, never the lens. When no work is bound to this session, or `work_note` is not in this session's toolset, the verdicts land in the final chat answer instead. Never invent a slug.
+Land one `work_note` per lens verdict yourself, from the lens's returned text (event: `verified`, `verifiedBy: reviewer`): the text names the lens, its verdict, the round, and the top blocking finding when there is one (e.g. `security REJECT round 2 — injection at <file>:<line>, user input reaches a shell unquoted`). Verified rows SHOULD carry the same facts as typed params: `lens` (the lens name), `verdict` (`OKAY` or `REJECT`), and `round` (the review round), via `work_note`'s dedicated params; the text still names them. The conductor writes the row, never the lens. When no work is bound to this session, or `work_note` is not in this session's toolset, the verdicts land in the final chat answer instead; that answer MUST end with a single machine-greppable line `VERDICT: <OKAY|REJECT>` summarizing the aggregate verdict, so an unattended driver can gate on it. Never invent a slug.
 
 The final answer carries the aggregate: per-lens verdicts by round, the blocking findings with their IDs and `file:line`, and what would clear each one.
 

@@ -97,6 +97,27 @@ test("lens-review verdict contract cannot drift", () => {
 	);
 });
 
+test("lens-review typed verdict rows cannot drift", () => {
+	assert.ok(
+		lensSkill.includes(
+			"Verified rows SHOULD carry the same facts as typed params: `lens` (the lens name), `verdict` (`OKAY` or `REJECT`), and `round` (the review round)",
+		),
+		"lens-review lost the typed-row guidance for lens verdicts",
+	);
+	assert.ok(
+		lensSkill.includes(
+			"that answer MUST end with a single machine-greppable line `VERDICT: <OKAY|REJECT>` summarizing the aggregate verdict, so an unattended driver can gate on it",
+		),
+		"lens-review lost the unbound-path VERDICT line requirement",
+	);
+	assert.ok(
+		lensSkill.includes(
+			"the text names the lens, its verdict, the round, and the top blocking finding",
+		),
+		"lens-review lost the prose row-text requirement",
+	);
+});
+
 test("lens-review triage dispositions cannot drift", () => {
 	assert.ok(
 		lensSkill.includes("Triage belongs to the author session, never to a lens"),

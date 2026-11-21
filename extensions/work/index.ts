@@ -109,6 +109,13 @@ export interface LedgerEntry {
 	verifiedBy?: string;
 	/** How the plan was approved at binding: the marker text, or "assumed" (assumeApproved). */
 	approval?: string;
+	/**
+	 * Lens-review typing (verified rows only): the lens that produced the
+	 * verdict, the verdict itself, and the review round.
+	 */
+	lens?: string;
+	verdict?: "OKAY" | "REJECT";
+	round?: number;
 }
 
 export interface ParsedTask {
@@ -722,7 +729,7 @@ export function registerWork(pi: ExtensionAPI): void {
 			name: "work_note",
 			label: "Work Note",
 			description:
-				"Append a typed evidence row to a work ledger ($TORUS_STATE_DIR/work/<slug>.ledger.jsonl). Without slug: the session's active work. With slug: that work — how delegated builders journal gotchas and decisions (the ledger is the plan's shared notepad; rows carry the writer's session id). Events: task-done (verification + evidence), verified (verifiedBy: lead|reviewer), blocked (blocker), wave-gate (command + exit code), note (anything durable), converge (cross-wave synthesis). Returns the tail for confirmation.",
+				"Append a typed evidence row to a work ledger ($TORUS_STATE_DIR/work/<slug>.ledger.jsonl). Without slug: the session's active work. With slug: that work — how delegated builders journal gotchas and decisions (the ledger is the plan's shared notepad; rows carry the writer's session id). Events: task-done (verification + evidence), verified (verifiedBy: lead|reviewer; lens verdict rows may also carry lens, verdict, round), blocked (blocker), wave-gate (command + exit code), note (anything durable), converge (cross-wave synthesis). Returns the tail for confirmation.",
 			parameters: Type.Object({
 				event: Type.Union(
 					[
@@ -745,6 +752,13 @@ export function registerWork(pi: ExtensionAPI): void {
 				verifiedBy: Type.Optional(
 					Type.String({ description: "lead or reviewer (the verifying context)" }),
 				),
+				lens: Type.Optional(
+					Type.String({ description: "Which lens produced the verdict (verified rows only)" }),
+				),
+				verdict: Type.Optional(Type.String({ description: "OKAY or REJECT (verified rows only)" })),
+				round: Type.Optional(
+					Type.Integer({ description: "Review round number (verified rows only)" }),
+				),
 				slug: Type.Optional(
 					Type.String({
 						description:
@@ -753,6 +767,55 @@ export function registerWork(pi: ExtensionAPI): void {
 				),
 			}),
 			async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+				let verdict: "OKAY" | "REJECT" | undefined;
+				if (params.verdict !== undefined) {
+					if (params.verdict !== "OKAY" && params.verdict !== "REJECT") {
+						return {
+							content: [
+								{ type: "text", text: `invalid verdict: ${params.verdict} (OKAY or REJECT)` },
+							],
+							details: {},
+							isError: true,
+						};
+					}
+					verdict = params.verdict;
+				}
+				if (
+					params.lens !== undefined &&
+					(params.lens.length === 0 || params.lens.includes("\n") || params.lens.includes("\r"))
+				) {
+					return {
+						content: [
+							{ type: "text", text: "invalid lens: must be a non-empty single-line string" },
+						],
+						details: {},
+						isError: true,
+					};
+				}
+				if (params.round !== undefined && (!Number.isInteger(params.round) || params.round < 1)) {
+					return {
+						content: [{ type: "text", text: "invalid round: must be a positive integer" }],
+						details: {},
+						isError: true,
+					};
+				}
+				if (
+					(params.lens !== undefined ||
+						params.verdict !== undefined ||
+						params.round !== undefined) &&
+					params.event !== "verified"
+				) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `REFUSED — lens, verdict, and round may only ride the verified event (got ${params.event})`,
+							},
+						],
+						details: {},
+						isError: true,
+					};
+				}
 				const sessionId = currentSessionId() ?? "unknown";
 				let slug: string;
 				let touch: WorkState | null = null;
@@ -792,6 +855,9 @@ export function registerWork(pi: ExtensionAPI): void {
 					...(params.verification !== undefined && { verification: params.verification }),
 					...(params.evidence !== undefined && { evidence: params.evidence }),
 					...(params.verifiedBy !== undefined && { verifiedBy: params.verifiedBy }),
+					...(params.lens !== undefined && { lens: params.lens }),
+					...(verdict !== undefined && { verdict }),
+					...(params.round !== undefined && { round: params.round }),
 				};
 				appendLedgerEntry(slug, entry);
 				if (touch) writeWorkState(touch);

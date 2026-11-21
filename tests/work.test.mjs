@@ -308,6 +308,17 @@ test("readLedger: valid-JSON rows missing a string text/event are skipped, not c
 		readLedger("t", 10).map((e) => e.text),
 		["first", "second", "third"],
 	);
+	appendFileSync(
+		path.join(projectDir(), "work", "t.ledger.jsonl"),
+		`${JSON.stringify({ ts: "6", sessionId: "s", event: "verified", text: "old-shape verified row", verifiedBy: "reviewer" })}\n`,
+		"utf-8",
+	);
+	const oldRow = readLedger("t", 10).at(-1);
+	assert.equal(oldRow?.event, "verified");
+	assert.equal(oldRow?.text, "old-shape verified row");
+	assert.equal(oldRow?.lens, undefined);
+	assert.equal(oldRow?.verdict, undefined);
+	assert.equal(oldRow?.round, undefined);
 });
 
 test("readLedger: a ledger over 64KB reads only the tail window and matches the full parse", () => {
@@ -626,6 +637,106 @@ test("work_note admits converge rows: append via the tool, tail keeps the event 
 		readLedger("open-cv", 1).map((e) => e.event),
 		["converge"],
 	);
+});
+
+test("work_note verified rows carry lens, verdict, and round onto the ledger row", async () => {
+	plantState({ slug: "typed-verdict" });
+	const { work_note } = workTools();
+
+	const out = await work_note.execute("t", {
+		event: "verified",
+		text: "security REJECT round 2 — injection at src/shell.ts:41, user input reaches a shell unquoted",
+		verifiedBy: "reviewer",
+		lens: "security",
+		verdict: "REJECT",
+		round: 2,
+		slug: "typed-verdict",
+	});
+	assert.equal(out.isError, undefined);
+	assert.match(out.content[0].text, /\[verified\] security REJECT round 2/);
+
+	const row = readLedger("typed-verdict", 1).at(-1);
+	assert.equal(row?.lens, "security");
+	assert.equal(row?.verdict, "REJECT");
+	assert.equal(row?.round, 2);
+
+	// the raw JSONL line carries the typed fields, not just the parsed view
+	const raw = readFileSync(path.join(projectDir(), "work", "typed-verdict.ledger.jsonl"), "utf-8")
+		.split("\n")
+		.filter((line) => line.trim().length > 0)
+		.at(-1);
+	const parsed = JSON.parse(raw);
+	assert.equal(parsed.lens, "security");
+	assert.equal(parsed.verdict, "REJECT");
+	assert.equal(parsed.round, 2);
+});
+
+test("work_note refuses a junk verdict by name", async () => {
+	plantState({ slug: "junk-verdict" });
+	const { work_note } = workTools();
+
+	const refused = await work_note.execute("t", {
+		event: "verified",
+		text: "security MAYBE round 2",
+		lens: "security",
+		verdict: "MAYBE",
+		round: 2,
+		slug: "junk-verdict",
+	});
+	assert.equal(refused.isError, true);
+	assert.equal(refused.content[0].text, "invalid verdict: MAYBE (OKAY or REJECT)");
+	assert.deepEqual(readLedger("junk-verdict", 5), [], "no row on refusal");
+});
+
+test("work_note refuses lens/verdict/round on a non-verified event by name", async () => {
+	plantState({ slug: "typed-task-done" });
+	const { work_note } = workTools();
+
+	const refused = await work_note.execute("t", {
+		event: "task-done",
+		text: "typed facts do not ride task-done",
+		lens: "security",
+		verdict: "OKAY",
+		round: 1,
+		slug: "typed-task-done",
+	});
+	assert.equal(refused.isError, true);
+	assert.match(
+		refused.content[0].text,
+		/REFUSED — lens, verdict, and round may only ride the verified event \(got task-done\)/,
+	);
+	assert.deepEqual(readLedger("typed-task-done", 5), [], "no row on refusal");
+});
+
+test("work_note refuses an empty or multiline lens and a non-positive or fractional round", async () => {
+	plantState({ slug: "typed-invalid" });
+	const { work_note } = workTools();
+
+	for (const lens of ["", "security\nreview"]) {
+		const refused = await work_note.execute("t", {
+			event: "verified",
+			text: "bad lens",
+			lens,
+			verdict: "OKAY",
+			round: 1,
+			slug: "typed-invalid",
+		});
+		assert.equal(refused.isError, true);
+		assert.equal(refused.content[0].text, "invalid lens: must be a non-empty single-line string");
+	}
+	for (const round of [0, 1.5, -2]) {
+		const refused = await work_note.execute("t", {
+			event: "verified",
+			text: "bad round",
+			lens: "security",
+			verdict: "OKAY",
+			round,
+			slug: "typed-invalid",
+		});
+		assert.equal(refused.isError, true);
+		assert.equal(refused.content[0].text, "invalid round: must be a positive integer");
+	}
+	assert.deepEqual(readLedger("typed-invalid", 5), [], "no row on any refusal");
 });
 
 test("work_note mirrors each ledger row into the session as one torus.work-ledger entry", async () => {
