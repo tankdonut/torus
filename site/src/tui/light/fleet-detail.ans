@@ -1,31 +1,32 @@
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[39m │ [38;2;167;152;215mRECORD_TEXT_CAP[39m                                 │ const       │ 4000-char bounded head of final text kept on finished/rehydrated   │
- │                                                 │             │ records.                                                           │
- ├─────────────────────────────────────────────────┼─────────────┼────────────────────────────────────────────────────────────────────┤
- │ [38;2;167;152;215mparseLastTurnText(raw)[39m                          │ function    │ Extract the last turn block from a raw log, undoing the two-space  │
- │                                                 │             │ child indent and stripping markers.                                │
- ├─────────────────────────────────────────────────┼─────────────┼────────────────────────────────────────────────────────────────────┤
- │ [38;2;167;152;215mreadFullRecordText(record)[39m                      │ function    │ A record's complete final text read back from its log; null when   │
- │                                                 │             │ unreadable.                                                        │
- ├─────────────────────────────────────────────────┼─────────────┼────────────────────────────────────────────────────────────────────┤
- │ [38;2;167;152;215mrehydrateFromLogs(currentSessionId?)[39m            │ function    │ Rebuild registry records from the project's delegation logs after  │
- │                                                 │             │ a resume (capped at 50, skips live foreign beacons).               │
- ├─────────────────────────────────────────────────┼─────────────┼────────────────────────────────────────────────────────────────────┤
- │ [38;2;167;152;215mSessionEndReason[39m                                │ type        │ [38;2;167;152;215m"quit" | "reload" | "new" | "resume" | "fork"[39m — pi                 │
- │                                                 │             │ session-shutdown reasons.                                          │
- ├─────────────────────────────────────────────────┼─────────────┼────────────────────────────────────────────────────────────────────┤
- │ [38;2;167;152;215mregistryShutdown(reason)[39m                        │ async       │ Session-shutdown cleanup: kill panes, drop toasts/controls; clears │
- │                                                 │ function    │ records for replacement reasons.                                   │
- └─────────────────────────────────────────────────┴─────────────┴────────────────────────────────────────────────────────────────────┘
+[39m[48;2;37;65;49m [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:851-1250[39m
 
- </answer>
 
- <next_steps>
- Both files are shared modules imported by the extension set (`registry.ts` imports `fsutil.js` directly). If you need per-symbol call
- sites, grep for the symbol name across `extensions/` — most consumers are the delegation, fleet, roster, and memory extensions.
- </next_steps>
- </results>
 
-[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;104;183;141m✓ done[39m [38;2;126;136;142m6t · 31.0k→3.2k · $0.0090 · 38s · j/k scroll · g/G ends · [38;2;167;152;215m[esc] back[38;2;126;136;142m · 01a1d240-5902-748e-9[39m…
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:1251-1550[39m
+
+
+[49m [3m[38;2;150;160;164mI still have gaps in the middle: lines ~250–320 of the second read (pidAlive, expireBeaconCacheForTesting, RunRecordView,
+[0m [3m[38;2;150;160;164mlistExternalRuns), lines ~1049–1110 (RECORD_TEXT_CAP, parseLastTurnText, readFullRecordText, rehydrateFromLogs header), and lines
+[0m [3m[38;2;150;160;164m~583–680 partial pruneRunBeacons/pidAlive. Let me grab the remaining doc comments for the exports I haven't seen: pidAlive,
+[0m [3m[38;2;150;160;164mexpireBeaconCacheForTesting, RunRecordView, listExternalRuns, RECORD_TEXT_CAP, parseLastTurnText, readFullRecordText,
+[0m [3m[38;2;150;160;164mrehydrateFromLogs header, emitTorusCustom, setCustomSender, currentSessionId, setCurrentSessionId, DelegationControl, attachControl,
+[0m [3m[38;2;150;160;164mattachChildPid, stopDelegation, delegationStopRequested.[0m
+
+ A few doc comments in the middle chunks were truncated; let me grab those.
+
+[48;2;37;65;49m
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:251-320[39m
+
+
+
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:625-759[39m
+
+
+
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:1085-1149[39m
+
+
+[38;2;205;154;34m[49m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠴ live[39m [38;2;126;136;142mt7 · 37.5k→762 · $0.0089 · 50s · j/k scroll · g/G ends · [38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[39m
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

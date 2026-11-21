@@ -86,10 +86,14 @@ function summary(state: GoalState | null): string {
 	return `${statusGlyphText(GOAL_STATES[state.status])} ${flattenPreview(state.goal, 80)}`;
 }
 
-/** Compact statusline chip: active/paused goals only, head truncated to 48 chars. */
+/**
+ * Goal banner payload: active/paused only, head collapsed to one line. The
+ * banner truncates to terminal width at render, so the cap here is generous.
+ */
 export function goalChipFor(state: GoalState | null): GoalChip | undefined {
 	if (!state || state.goal.trim().length === 0) return undefined;
-	return state.status === "active" || state.status === "paused" ? state.status : undefined;
+	if (state.status !== "active" && state.status !== "paused") return undefined;
+	return { status: state.status, head: flattenPreview(state.goal, 240) };
 }
 
 export function registerGoal(pi: ExtensionAPI): void {

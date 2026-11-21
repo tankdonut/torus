@@ -192,6 +192,44 @@ export function createTorusStatusline(painter?: StatusPainter): Component {
 type AppTheme = ExtensionContext["ui"]["theme"];
 export type StatusPainter = Pick<AppTheme, "fg" | "bold">;
 
+const GOAL_WIDGET_KEY = "torus-goal";
+
+/**
+ * The goal banner: one full-width row for the session objective, mounted last
+ * in the widget dock so it renders below the dock gap, flush above the editor
+ * border like a label on the input's top frame. State rides the color, not an
+ * icon: the diamond and label go warning while active, dim while paused, and
+ * a paused head mutes too. No goal, or a complete one, renders nothing.
+ */
+class GoalBanner implements Component {
+	private readonly painter: StatusPainter | undefined;
+
+	constructor(painter?: StatusPainter) {
+		this.painter = painter;
+	}
+
+	render(width: number): string[] {
+		const chip = goalChip;
+		if (!chip) return [];
+		const color = chip.status === "active" ? "warning" : "dim";
+		const fg = (text: string) => (this.painter ? this.painter.fg(color, text) : text);
+		const budget = Math.max(0, width - visibleWidth("◆ goal  "));
+		// truncate before styling so the ellipsis is not buried under a closing SGR tag
+		const head =
+			chip.status === "paused"
+				? fg(truncateToWidth(chip.head, budget))
+				: truncateToWidth(chip.head, budget);
+		return [`${fg("◆ goal")}  ${head}`];
+	}
+
+	invalidate(): void {}
+}
+
+/** The goal banner factory; session_start mounts it with the live theme and tests drive it directly. */
+export function createGoalBanner(painter?: StatusPainter): Component {
+	return new GoalBanner(painter);
+}
+
 /**
  * Session-cost tallies behind the `torus:cost` chip, keyed by session id so a
  * switch back to an earlier in-process session restores its own total. Fed
@@ -320,8 +358,15 @@ let mcpCounts = { connected: 0, registered: 0 };
  */
 let mcpPollTimer: ReturnType<typeof setInterval> | undefined;
 
-/** Goal state marker pushed by the goal extension; complete/unset drops the segment. */
-export type GoalChip = "active" | "paused";
+/**
+ * Goal banner payload pushed by the goal extension: state plus the collapsed
+ * objective head. Complete/unset drops the banner; the statusline itself never
+ * carries the goal (it dominated the line), the banner widget does.
+ */
+export interface GoalChip {
+	status: "active" | "paused";
+	head: string;
+}
 let goalChip: GoalChip | undefined;
 
 /** Permission-mode chip state pushed by the automode extension. */
@@ -377,7 +422,7 @@ export function setStatusModel(model: string | undefined, effort: string | undef
 	state.provider = undefined;
 }
 
-/** Test/interop hook: set the MCP counts and goal chip the statusline renders. */
+/** Test/interop hook: set the MCP counts and goal chip the status surfaces render. */
 export function setStatusExtras(
 	mcp: { connected: number; registered: number } | null,
 	goal: GoalChip | null,
@@ -386,7 +431,7 @@ export function setStatusExtras(
 	goalChip = goal ?? undefined;
 }
 
-/** Prod hook for the goal extension: replace the rendered goal chip. */
+/** Prod hook for the goal extension: replace the rendered goal chip payload. */
 export function setStatusGoal(goal: GoalChip | undefined): void {
 	goalChip = goal;
 }
@@ -477,12 +522,8 @@ export function buildStatus(theme?: StatusPainter): string {
 	// the mcp count so the two health chips read as one group
 	const lsp = lspText();
 	if (lsp) segments.push(lsp);
-	if (goalChip) {
-		// state rides the color, not an icon: warning while active, dim while paused
-		const color = goalChip === "active" ? "warning" : "dim";
-		const text = `goal:${goalChip}`;
-		segments.push(theme ? theme.fg(color, text) : text);
-	}
+	// the objective never rides this line (it dominated it): an active goal
+	// paints the torus-goal banner widget instead, so its absence here is design
 	return segments.join(sep);
 }
 
@@ -818,6 +859,9 @@ export function registerUi(pi: ExtensionAPI): void {
 			render: () => [""],
 			invalidate: () => {},
 		}));
+		// Last in the dock, below the gap: the goal banner sits flush above the
+		// editor border, reading as a label on the input's top frame.
+		ctx.ui.setWidget(GOAL_WIDGET_KEY, (_tui, theme) => createGoalBanner(theme));
 		installStartupBanner(pi, ctx);
 		installCursorBlinkWidget(ctx);
 		if (ctx.mode === "tui") {

@@ -21,6 +21,7 @@ const {
 	setStatusPermission,
 	torusChips,
 	createTorusStatusline,
+	createGoalBanner,
 	setTorusChip,
 } = await import("../extensions/ui/index.ts");
 const { goalChipFor } = await import("../extensions/goal/index.ts");
@@ -180,17 +181,17 @@ test("buildStatus: MCP count and goal chip render on the torus line", () => {
 	};
 	const bare = buildStatus(fakeTheme);
 	assert.ok(!bare.includes("mcp"), "MCP segment should drop when none registered");
-	assert.ok(!bare.includes("goal:"), "goal segment should drop when unset");
 
-	setStatusExtras({ connected: 0, registered: 2 }, "active");
+	setStatusExtras(
+		{ connected: 0, registered: 2 },
+		{ status: "active", head: "ship the frobnicator" },
+	);
 	const loaded = buildStatus(fakeTheme);
 	assert.ok(loaded.includes("<warning>mcp:0</warning>"), "down servers should warn");
-	assert.ok(loaded.includes("<warning>goal:active</warning>"), "active goal chip");
-
-	setStatusExtras({ connected: 2, registered: 2 }, "paused");
-	const healthy = buildStatus(fakeTheme);
-	assert.ok(healthy.includes("<success>mcp:2</success>"), "connected servers should be success");
-	assert.ok(healthy.includes("<dim>goal:paused</dim>"), "paused goal chip should dim");
+	assert.ok(
+		!loaded.includes("goal"),
+		"the objective never rides the statusline; the banner widget carries it",
+	);
 	setStatusExtras(null, null);
 	setSessionPersona(null);
 });
@@ -474,14 +475,14 @@ test("statusline cost chip: TORUS_STATUSLINE_COST=0 never touches the cost key",
 	}
 });
 
-test("goalChipFor: state marker only; complete and empty drop", () => {
-	assert.equal(
-		goalChipFor({ goal: "x".repeat(60), status: "active", createdAt: 0, notes: [] }),
-		"active",
+test("goalChipFor: banner payload for active/paused, collapsed head; complete and empty drop", () => {
+	assert.deepEqual(
+		goalChipFor({ goal: "x".repeat(300), status: "active", createdAt: 0, notes: [] }),
+		{ status: "active", head: `${"x".repeat(239)}…` },
 	);
-	assert.equal(
-		goalChipFor({ goal: "multi\nline goal", status: "paused", createdAt: 0, notes: [] }),
-		"paused",
+	assert.deepEqual(
+		goalChipFor({ goal: "multi\nline   goal", status: "paused", createdAt: 0, notes: [] }),
+		{ status: "paused", head: "multi line goal" },
 	);
 	assert.equal(
 		goalChipFor({ goal: "done thing", status: "complete", createdAt: 0, notes: [] }),
@@ -489,6 +490,31 @@ test("goalChipFor: state marker only; complete and empty drop", () => {
 	);
 	assert.equal(goalChipFor(null), undefined);
 	assert.equal(goalChipFor({ goal: "   ", status: "active", createdAt: 0, notes: [] }), undefined);
+});
+
+test("goal banner: renders only with a goal, truncates to width, state rides the color", () => {
+	const fakeTheme = {
+		fg: (color, text) => `<${color}>${text}</${color}>`,
+		bold: (text) => `*${text}*`,
+	};
+	setStatusExtras(null, null);
+	assert.deepEqual(createGoalBanner(fakeTheme).render(80), [], "no goal, no banner row");
+
+	setStatusExtras(null, { status: "active", head: "ship the frobnicator" });
+	const active = createGoalBanner(fakeTheme).render(80);
+	assert.equal(active.length, 1);
+	assert.ok(active[0].includes("<warning>◆ goal</warning>"), "active label warns");
+	assert.ok(active[0].includes("ship the frobnicator"), "objective head renders");
+
+	setStatusExtras(null, { status: "paused", head: "y".repeat(120) });
+	const paused = createGoalBanner(fakeTheme).render(40);
+	assert.equal(paused.length, 1);
+	assert.ok(paused[0].includes("<dim>◆ goal</dim>"), "paused label dims");
+	const plain = paused[0].replaceAll(/<[^>]+>|\x1b\[[0-9]*m/g, "");
+	assert.ok(plain.includes("..."), "head truncates with an ellipsis");
+	assert.equal(plain.length, 40, "banner fits the terminal width exactly");
+
+	setStatusExtras(null, null);
 });
 
 test("built-in keywords: trio present, user file overrides same key, new keys merge", () => {

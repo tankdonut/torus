@@ -1,31 +1,32 @@
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[39m │ 1242 │ [38;2;167;152;215mSessionEndReason[39m (type)                              │ [38;2;167;152;215m"quit" | "reload" | "new" | "resume" | "fork"[39m — pi's                 │
- │      │                                                      │ session_shutdown reasons.                                            │
- ├──────┼──────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
- │ 1257 │ [38;2;167;152;215mregistryShutdown(reason?): Promise<void>[39m             │ Session-shutdown cleanup: kill panes, clear toast timers, stop       │
- │      │                                                      │ controls; replacement reasons also retire in-memory records.         │
- └──────┴──────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────┘
+[39m[48;2;37;65;49m [38;2;157;165;169mregistry.ts:107: export function shellQuote(value: string): string {
+[39m [38;2;157;165;169m... (264 more lines,[39m [38;2;126;136;142mctrl+o[38;2;157;165;169m to expand)[39m
 
- <results>
- <files>
- - /home/user/torus/extensions/fsutil.ts - shared filesystem/formatting/timing helpers; 20
- exported symbols listed above
- - /home/user/torus/extensions/registry.ts - delegation registry; 58 exported symbols (types,
- functions, constants) listed above
- </files>
 
- <answer>
- Complete export inventories for both files with one-line summaries per symbol, derived from full reads of both files plus their doc
- comments. fsutil.ts is the state/filesystem foundation (project keys, state/scratch dirs, JSON IO, pruning, caching, formatting);
- registry.ts is the delegation/fleet runtime (records, tmux panes, beacons, steering, rehydration, teams, external runs).
- </answer>
+[49m [3m[38;2;150;160;164mLet me check remaining exports I may have missed. In fsutil.ts, also there may be exports between lines 50-115 (canonicalProjectDir
+[0m [3m[38;2;150;160;164mmaybe not exported? It said "export function projectKeyFor" and canonicalProjectDir used but maybe internal). Check for exports like
+[0m [38;2;167;152;215mexport const[3m[38;2;150;160;164m elsewhere in fsutil — grep ^export caught all at line starts. fsutil exports list: torusHome, projectKey, projectKeyFor,
+[0m [3m[38;2;150;160;164mprojectStateDir, TORUS_STATE_DIR_ENV, childSessionsRoot, TORUS_SCRATCH_DIR_ENV, ensureStateDirEnv, scratchDir, displayPath, readJson,
+[0m [3m[38;2;150;160;164mwriteJson, pruneOrphanSessionFiles, pruneScratch, readHead, readFileCached, _readCacheStats, sleep, splitList, formatCost. Check
+[0m [3m[38;2;150;160;164mformatCost end and any after line 417.[0m
 
- <next_steps>
- Ready to proceed — no follow-up needed. If you want cross-references (who imports each symbol), say which symbol and I can grep usage
- sites.
- </next_steps>
- </results>
+ [3m[38;2;150;160;164mregistry.ts: check after 1508 and also exports not at line start? grep only line-start; there may be [0m[38;2;167;152;215mexport const[3m[38;2;150;160;164m mid... all shown.
+[0m [3m[38;2;150;160;164mAlso check registry exports between lines 400-556 (e.g., RUNS_DIR? externalRunAgeSeconds at 346; RunRecord at 370; something between
+[0m [3m[38;2;150;160;164m400-556 like externalRuns?). Let me grep for export with not-line-start too, and read the tail of registry (after 1508) and the
+[0m [3m[38;2;150;160;164msection 400-560.[0m
 
-[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;104;183;141m✓ done[39m [38;2;126;136;142m8t · 29.2k→3.9k · $0.0109 · 50s · j/k scroll · g/G ends · [38;2;167;152;215m[esc] back[38;2;126;136;142m · 01a1d241-3385-769d-a[39m…
+[48;2;37;65;49m
+ [1m[38;2;222;224;225m$ grep -n "export" extensions/fsutil.ts | grep -v "^\s*[0-9]*:\s*\*" ; echo ---; grep -n "export" extensions/registry.ts | grep -v
+[0m[48;2;37;65;49m [1m[38;2;222;224;225m"^\s*[0-9]*:\s*\*"[0m[38;2;157;165;169m[48;2;37;65;49m (timeout 30s)[39m
+
+ [38;2;157;165;169m... (75 earlier lines,[39m [38;2;126;136;142mctrl+o[38;2;157;165;169m to expand)[39m
+ [38;2;157;165;169m1145:export function rehydrateFromLogs(currentSessionId?: string): void {[39m
+ [38;2;157;165;169m1366:export function recoverRun(id: string, sessionId?: string): DelegationRecord | undefined {[39m
+ [38;2;157;165;169m1393:export function recoverSession(sessionId: string): void {[39m
+ [38;2;157;165;169m1486:export type SessionEndReason = "quit" | "reload" | "new" | "resume" | "fork";[39m
+ [38;2;157;165;169m1506:export async function registryShutdown(reason: SessionEndReason = "quit"): Promise<void> {[39m
+
+
+[38;2;205;154;34m[49m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠇ live[39m [38;2;126;136;142mt3 · 14.7k→552 · $0.0029 · 20s · j/k scroll · g/G ends · [38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[39m
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
