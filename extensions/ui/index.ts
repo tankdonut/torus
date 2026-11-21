@@ -32,6 +32,7 @@ import {
 	CHIPS_KEY,
 	CHIPS_REPAINT_KEY,
 	FLEET_SPEND_KEY,
+	GOAL_CHIP_KEY,
 	LSP_TEXT_KEY,
 	MODEL_STATE_KEY,
 	PERMISSION_KEY,
@@ -209,7 +210,7 @@ class GoalBanner implements Component {
 	}
 
 	render(width: number): string[] {
-		const chip = goalChip;
+		const chip = goalChip();
 		if (!chip) return [];
 		const color = chip.status === "active" ? "warning" : "dim";
 		const fg = (text: string) => (this.painter ? this.painter.fg(color, text) : text);
@@ -361,13 +362,19 @@ let mcpPollTimer: ReturnType<typeof setInterval> | undefined;
 /**
  * Goal banner payload pushed by the goal extension: state plus the collapsed
  * objective head. Complete/unset drops the banner; the statusline itself never
- * carries the goal (it dominated the line), the banner widget does.
+ * carries the goal (it dominated the line), the banner widget does. Lives on
+ * shared state, not a module local: pi loads each manifest entry with its own
+ * module root, so the goal extension's push and this entry's banner read are
+ * different instances of this file.
  */
 export interface GoalChip {
 	status: "active" | "paused";
 	head: string;
 }
-let goalChip: GoalChip | undefined;
+
+function goalChip(): GoalChip | undefined {
+	return sharedState<GoalChip | undefined>(GOAL_CHIP_KEY, () => undefined);
+}
 
 /** Permission-mode chip state pushed by the automode extension. */
 type PermissionChip = { kind: "default" | "auto" | "bypass"; degraded: boolean };
@@ -428,12 +435,12 @@ export function setStatusExtras(
 	goal: GoalChip | null,
 ): void {
 	mcpCounts = mcp ?? { connected: 0, registered: 0 };
-	goalChip = goal ?? undefined;
+	setSharedState(GOAL_CHIP_KEY, goal);
 }
 
 /** Prod hook for the goal extension: replace the rendered goal chip payload. */
 export function setStatusGoal(goal: GoalChip | undefined): void {
-	goalChip = goal;
+	setSharedState(GOAL_CHIP_KEY, goal);
 }
 
 /** Test/interop hook: whether the post-session_start MCP settle-poll is still running. */

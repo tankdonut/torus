@@ -58,6 +58,8 @@ export const FLEET_SPEND_KEY = Symbol.for("torus.statusline.fleet-spend.v1");
 export const MODEL_STATE_KEY = Symbol.for("torus.statusline.model-state.v1");
 /** Permission-mode chip state pushed by the automode extension. */
 export const PERMISSION_KEY = Symbol.for("torus.status.permission.v1");
+/** Goal banner payload ({ status, head }), pushed by the goal extension's own module root. */
+export const GOAL_CHIP_KEY = Symbol.for("torus.goal.chip.v1");
 
 // --- monitor/index.ts ---
 

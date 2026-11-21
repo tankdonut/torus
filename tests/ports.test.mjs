@@ -17,6 +17,7 @@ const {
 	personaFg,
 	registerUi,
 	setStatusExtras,
+	setStatusGoal,
 	setStatusModel,
 	setStatusPermission,
 	torusChips,
@@ -25,6 +26,7 @@ const {
 	setTorusChip,
 } = await import("../extensions/ui/index.ts");
 const { goalChipFor } = await import("../extensions/goal/index.ts");
+const { GOAL_CHIP_KEY } = await import("../extensions/shared-state.ts");
 const { AGENTS } = await import("../extensions/roster/index.ts");
 const registry = await import("../extensions/registry.ts");
 const { setSessionPersona } = await import("../extensions/registry.js");
@@ -498,9 +500,15 @@ test("goal banner: renders only with a goal, truncates to width, state rides the
 		bold: (text) => `*${text}*`,
 	};
 	setStatusExtras(null, null);
+	setStatusGoal(undefined);
 	assert.deepEqual(createGoalBanner(fakeTheme).render(80), [], "no goal, no banner row");
 
-	setStatusExtras(null, { status: "active", head: "ship the frobnicator" });
+	setStatusGoal({ status: "active", head: "ship the frobnicator" });
+	assert.equal(
+		globalThis[GOAL_CHIP_KEY]?.head,
+		"ship the frobnicator",
+		"payload lives on the Symbol.for slot, not a module local: pi gives each manifest entry its own module root",
+	);
 	const active = createGoalBanner(fakeTheme).render(80);
 	assert.equal(active.length, 1);
 	assert.ok(active[0].includes("<warning>◆ goal</warning>"), "active label warns");
