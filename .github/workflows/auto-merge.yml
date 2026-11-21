@@ -2,7 +2,7 @@
 # requests — non-draft, same-repo PRs authored by Bot-type users that already
 # carry a fresh OKAY torus review.
 #
-# Two identities (the D2 pattern): the approving and merging identity is
+# Two identities: the approving and merging identity is
 # AUTO_APPROVE_PAT, a code-owner credential distinct from any PR author, so
 # approval never collides with authorship (and a collision — the API's 422 —
 # is treated as a skip, never as a retry). The default workflow token stays
@@ -180,7 +180,24 @@ jobs:
             echo "reason=$1" >> "$GITHUB_OUTPUT"
           }
 
-          if ! gh api "repos/$REPO/pulls/$N/reviews" > "$OUT/reviews.json"; then
+          # TOCTOU guard: the PR head can move between this run's event
+          # and everything below (a synchronize push lands mid-run). The
+          # review must cover the live head, not the event's snapshot —
+          # otherwise the gate matches a review for the old sha while the
+          # pushed head is never reviewed. Re-fetched with the default
+          # token: a read, no PAT needed.
+          EVENT_SHA="${{ github.event.pull_request.head.sha }}"
+          if ! GH_TOKEN="${{ github.token }}" gh api "repos/$REPO/pulls/$N" --jq .head.sha > "$OUT/current-head.txt"; then
+            echo "::error::fetching the live head sha failed (response tail: $(tail -n 3 "$OUT/current-head.txt" 2> /dev/null || echo none))"
+            exit 1
+          fi
+          if [ "$(cat "$OUT/current-head.txt")" != "$EVENT_SHA" ]; then
+            skip "head moved during run (the review may cover a different head)"
+          fi
+
+          # --paginate: a PR with more than 30 reviews pushes the fresh
+          # review off page 1; gh concatenates array pages into one array.
+          if ! gh api "repos/$REPO/pulls/$N/reviews" --paginate > "$OUT/reviews.json"; then
             echo "::error::listing reviews failed (response tail: $(tail -n 3 "$OUT/reviews.json" 2> /dev/null || echo none))"
             exit 1
           fi
@@ -216,8 +233,11 @@ jobs:
             echo "::error::jq failed: extracting the verdict from reviews.json"
             exit 1
           fi
-          # Recorded on every lane so the summary reports the true
-          # verdict, never a stale or invented one.
+          # Recorded on the verdict-extraction lanes (OKAY, REJECT, and
+          # the empty-verdict lane) so the summary reports the true
+          # verdict, never a stale or invented one. The earlier skips —
+          # no fresh review, or the head moving before the fetch — exit
+          # above this line and report no verdict.
           echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
           case "$verdict" in
             "OKAY")
@@ -265,6 +285,20 @@ jobs:
           # every push (verified live against the branch-protection
           # API), so this step only ever approves the current head.
 
+          # TOCTOU guard, again: the head can move between the verdict
+          # gate and this approval. The verdict matched the event sha,
+          # but a push since then means this approval would post on
+          # content no review ever covered (and dismiss_stale_reviews
+          # cannot help — the approval would land after the push).
+          EVENT_SHA="${{ github.event.pull_request.head.sha }}"
+          if ! GH_TOKEN="${{ github.token }}" gh api "repos/$REPO/pulls/$N" --jq .head.sha > "$OUT/current-head.txt"; then
+            echo "::error::fetching the live head sha failed (response tail: $(tail -n 3 "$OUT/current-head.txt" 2> /dev/null || echo none))"
+            exit 1
+          fi
+          if [ "$(cat "$OUT/current-head.txt")" != "$EVENT_SHA" ]; then
+            skip "head moved since review (never approve unreviewed content)"
+          fi
+
           set +e
           out="$(gh api "repos/$REPO/pulls/$N/reviews" -f event=APPROVE 2>&1)"
           status=$?
@@ -299,10 +333,28 @@ jobs:
           OUT="$RUNNER_TEMP/auto-merge"
           mkdir -p "$OUT"
 
+          skip() {
+            echo "SKIP: $1" >> "$GITHUB_STEP_SUMMARY"
+            { echo "proceed=false"; echo "skipped=true"; echo "reason=$1"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          }
           proceed() {
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "reason=$1" >> "$GITHUB_OUTPUT"
           }
+
+          # TOCTOU guard, once more: the head can move between the
+          # approval and this merge. --auto would enroll the never-
+          # reviewed head, so the live sha is re-verified against the
+          # event sha immediately before the merge call.
+          EVENT_SHA="${{ github.event.pull_request.head.sha }}"
+          if ! GH_TOKEN="${{ github.token }}" gh api "repos/$REPO/pulls/$N" --jq .head.sha > "$OUT/current-head.txt"; then
+            echo "::error::fetching the live head sha failed (response tail: $(tail -n 3 "$OUT/current-head.txt" 2> /dev/null || echo none))"
+            exit 1
+          fi
+          if [ "$(cat "$OUT/current-head.txt")" != "$EVENT_SHA" ]; then
+            skip "head moved since approval (never merge unreviewed content)"
+          fi
 
           set +e
           out="$(gh pr merge "$N" --repo "$REPO" --auto --squash 2>&1)"
@@ -329,10 +381,12 @@ jobs:
             echo
             if [ "${{ steps.merge.outputs.proceed }}" = "true" ]; then
               echo "Merged: ${{ steps.merge.outputs.reason }}"
+            elif [ "${{ steps.merge.outputs.skipped }}" = "true" ]; then
+              echo "Skipped at merge: ${{ steps.merge.outputs.reason }}"
             elif [ "${{ steps.merge.outputs.proceed }}" = "false" ]; then
               echo "Auto-merge enrollment failed: ${{ steps.merge.outputs.reason }}"
             elif [ "${{ steps.approve.outputs.proceed }}" = "true" ]; then
-              echo "Approved, merge enrolled: ${{ steps.approve.outputs.reason }}"
+              echo "Approved: ${{ steps.approve.outputs.reason }}"
             elif [ "${{ steps.approve.outputs.proceed }}" = "false" ]; then
               echo "Skipped at approval: ${{ steps.approve.outputs.reason }}"
             elif [ "${{ steps.verdict.outputs.proceed }}" = "false" ]; then
@@ -345,6 +399,8 @@ jobs:
             echo
             if [ -n "${{ steps.verdict.outputs.verdict }}" ]; then
               echo "torus verdict: ${{ steps.verdict.outputs.verdict }}"
+            elif [ "${{ steps.verdict.outputs.reason }}" = "review has no VERDICT line" ]; then
+              echo "torus verdict: none (a fresh review exists but carries no VERDICT line)"
             else
               echo "torus verdict: none (no fresh review, or the gate skipped first)"
             fi
