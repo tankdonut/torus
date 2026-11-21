@@ -16,7 +16,11 @@
  *   `torus_delegate`, absent from delegation children) works; the gate
  *   skill's own convergence loop writes the report and the driver only
  *   reads: `$TORUS_STATE_DIR/plans/gates/<planStem>.gate.md` must carry
- *   `GATE PASS` (ok) or `GATE BLOCKED` (named failure).
+ *   `GATE PASS` (ok) or `GATE BLOCKED` (named failure). The report's mtime
+ *   is snapshotted BEFORE the one-shot spawns and only a report written
+ *   after that snapshot counts — the same freshness mechanism as the plan
+ *   stage's set-difference listing, so re-running the chain with
+ *   `--plan <path>` cannot accept the previous run's verdict.
  * - EXECUTE: a `runDelegation` child (agent `builder`) bound with
  *   `work_start(<planPath>, assumeApproved: true)` — the unattended driver
  *   is the approving authority, journaled approval:"assumed" — then polls
@@ -56,7 +60,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, open, readdir, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { projectStateDir, sleep, TORUS_SCRATCH_DIR_ENV, TORUS_STATE_DIR_ENV } from "../fsutil.js";
 import { listDelegations, repoRoot, stopDelegation } from "../registry.js";
@@ -370,6 +374,9 @@ export function defaultStageRunner(stateDir: string) {
 			const skills = resolveOneShotSkills(ctx);
 			if ("error" in skills) return { ok: false, error: skills.error };
 			const gateFile = path.join(plansDir, "gates", `${planStem(ctx.planPath)}.gate.md`);
+			// Snapshot the report's freshness BEFORE spawning: an existing file
+			// is a previous run's verdict and must never be accepted.
+			const baselineMtime = await gateMtime(gateFile);
 			const shot = await spawnOneShot(
 				torusMjs,
 				`/skill:torus-plan-review ${ctx.planPath}`,
@@ -377,7 +384,7 @@ export function defaultStageRunner(stateDir: string) {
 				skills.paths,
 			);
 			ctx.abort = shot.kill;
-			return pollGateReport(gateFile, shot, deadline);
+			return pollGateReport(gateFile, baselineMtime, shot, deadline);
 		}
 		if (stage === "execute") {
 			if (ctx.planPath === undefined) return { ok: false, error: "execute-needs-plan" };
@@ -440,6 +447,35 @@ function resolveOneShotSkills(ctx: StageContext): { paths: string[] } | { error:
 	return { paths: resolved.paths };
 }
 
+/** The gate report's mtime, or 0 when absent — the freshness baseline. */
+async function gateMtime(file: string): Promise<number> {
+	try {
+		return (await stat(file)).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
+/**
+ * Freshness guard: read the gate report only if it is newer than the
+ * pre-spawn baseline mtime (0 = the file was absent). A report whose mtime
+ * is <= the baseline is a previous run's verdict and reads as no signal,
+ * mirroring the plan stage's set-difference against its pre-stage listing.
+ */
+async function readFreshGateReport(
+	gateFile: string,
+	baselineMtime: number,
+): Promise<StageResult | null> {
+	try {
+		const mtime = (await stat(gateFile)).mtimeMs;
+		if (mtime <= baselineMtime) return null;
+		return gateVerdict(await readFile(gateFile, "utf8"), gateFile);
+	} catch {
+		// vanished between stat and read (or unreadable): no signal yet
+		return null;
+	}
+}
+
 function gateVerdict(text: string, gateFile: string): StageResult | null {
 	// Fail-safe ordering: BLOCKED wins when a report somehow carries both.
 	if (text.includes("GATE BLOCKED")) {
@@ -453,6 +489,7 @@ function gateVerdict(text: string, gateFile: string): StageResult | null {
 
 async function pollGateReport(
 	gateFile: string,
+	baselineMtime: number,
 	shot: OneShot,
 	deadline: Deadline,
 ): Promise<StageResult> {
@@ -465,16 +502,19 @@ async function pollGateReport(
 		exited = true;
 	});
 	for (;;) {
-		const text = await readFileIfExists(gateFile);
-		const verdict = text !== null ? gateVerdict(text, gateFile) : null;
+		const verdict = await readFreshGateReport(gateFile, baselineMtime);
 		if (verdict !== null) return verdict;
-		if (deadline.past()) return { ok: false, error: "stage-timeout" };
+		if (deadline.past()) {
+			// The body can win the race against the outer timer; stop the
+			// child here too so no one-shot is left running unattended.
+			shot.kill();
+			return { ok: false, error: "stage-timeout" };
+		}
 		await sleep(POLL_MS);
 		if (exited) {
 			const graceEnd = Date.now() + EXIT_GRACE_MS;
 			while (Date.now() < graceEnd) {
-				const late = await readFileIfExists(gateFile);
-				const final = late !== null ? gateVerdict(late, gateFile) : null;
+				const final = await readFreshGateReport(gateFile, baselineMtime);
 				if (final !== null) return final;
 				await sleep(POLL_MS);
 			}
@@ -509,7 +549,11 @@ async function pollLensVerdict(
 	for (;;) {
 		const accepted = await ledgerVerdict();
 		if (accepted !== null) return accepted;
-		if (deadline.past()) return { ok: false, error: "stage-timeout" };
+		if (deadline.past()) {
+			// Same body-side race as the gate: stop the child here too.
+			shot.kill();
+			return { ok: false, error: "stage-timeout" };
+		}
 		if (exited) {
 			// Child gone: one final ledger read, then the stdout VERDICT
 			// fallback (an unbound session lands verdicts in its final answer).
@@ -626,45 +670,48 @@ export async function runAutoCli(argv: string[]): Promise<number> {
 	let stageTimeoutMs: number | undefined;
 	let skills: string[] | undefined;
 	const words: string[] = [];
-	for (let i = 0; i < argv.length; i += 1) {
-		const arg = argv[i];
-		if (arg === undefined) break;
-		if (arg === "--help" || arg === "-h") {
-			process.stdout.write(autoHelp());
-			return 0;
-		}
-		const value = (): string => {
-			const v = argv[i + 1];
-			if (v === undefined || v.startsWith("--")) {
-				autoUsageError(`torus auto: ${arg} needs a value\n\n${AUTO_USAGE}`);
-			}
-			i += 1;
-			return v;
-		};
-		if (arg === "--roadmap") roadmapPath = path.resolve(value());
-		else if (arg === "--plan") planPath = path.resolve(value());
-		else if (arg === "--cwd") cwd = value();
-		else if (arg === "--stage-timeout-ms") {
-			const raw = value();
-			const parsed = Number(raw);
-			if (!Number.isFinite(parsed) || parsed <= 0) {
-				autoUsageError(`--stage-timeout-ms must be a positive number, got "${raw}"`);
-			}
-			stageTimeoutMs = parsed;
-		} else if (arg === "--skills") {
-			const raw = value();
-			skills = raw
-				.split(",")
-				.map((s) => s.trim())
-				.filter((s) => s.length > 0);
-		} else if (arg.startsWith("--")) {
-			autoUsageError(`unknown flag: ${arg}`);
-		} else {
-			words.push(arg);
-		}
-	}
-	objective = words.join(" ").trim();
+	// The parse loop sits inside the try: autoUsageError throws AutoRefusal,
+	// and a parse refusal must flow through the same exit-2 path as a
+	// startup refusal (docs/auto.md), not escape to the launcher's catch.
 	try {
+		for (let i = 0; i < argv.length; i += 1) {
+			const arg = argv[i];
+			if (arg === undefined) break;
+			if (arg === "--help" || arg === "-h") {
+				process.stdout.write(autoHelp());
+				return 0;
+			}
+			const value = (): string => {
+				const v = argv[i + 1];
+				if (v === undefined || v.startsWith("--")) {
+					autoUsageError(`torus auto: ${arg} needs a value\n\n${AUTO_USAGE}`);
+				}
+				i += 1;
+				return v;
+			};
+			if (arg === "--roadmap") roadmapPath = path.resolve(value());
+			else if (arg === "--plan") planPath = path.resolve(value());
+			else if (arg === "--cwd") cwd = value();
+			else if (arg === "--stage-timeout-ms") {
+				const raw = value();
+				const parsed = Number(raw);
+				if (!Number.isFinite(parsed) || parsed <= 0) {
+					autoUsageError(`--stage-timeout-ms must be a positive number, got "${raw}"`);
+				}
+				stageTimeoutMs = parsed;
+			} else if (arg === "--skills") {
+				const raw = value();
+				skills = raw
+					.split(",")
+					.map((s) => s.trim())
+					.filter((s) => s.length > 0);
+			} else if (arg.startsWith("--")) {
+				autoUsageError(`unknown flag: ${arg}`);
+			} else {
+				words.push(arg);
+			}
+		}
+		objective = words.join(" ").trim();
 		if (cwd === undefined) {
 			refusal(
 				"--cwd is required: pass the driven checkout (a worktree or scratch copy) — the driver never lands in the current directory by default",

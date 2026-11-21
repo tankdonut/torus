@@ -450,16 +450,129 @@ test("plan stage drives a real delegation and polls for the new plan artifact", 
 	);
 });
 
-test("runAutoCli refuses an unknown flag named", async () => {
-	await assert.rejects(
-		runAutoCli(["objective", "--bogus"]),
-		(err) => err instanceof AutoRefusal && /unknown flag: --bogus/.test(err.message),
+test("runAutoCli refuses parse errors with exit 2 (unknown flag, missing value, bad timeout)", async () => {
+	// Parse refusals must take the same exit-2 path as startup refusals,
+	// not escape runAutoCli and exit 1 from the launcher's catch.
+	assert.equal(await runAutoCli(["objective", "--bogus"]), 2);
+	assert.equal(await runAutoCli(["objective", "--cwd"]), 2);
+	assert.equal(
+		await runAutoCli(["objective", "--cwd", fixtureDir("cli-refusal"), "--stage-timeout-ms", "0"]),
+		2,
 	);
+});
+
+test("the launcher exits 2 on a parse refusal", () => {
+	const run = spawnSync(
+		process.execPath,
+		[path.join(REPO_ROOT, "runtime", "bin", "torus.mjs"), "auto", "objective", "--bogus"],
+		{ encoding: "utf8", env: { ...process.env, TORUS_ROOT: REPO_ROOT } },
+	);
+	assert.equal(run.status, 2, `stdout=${run.stdout} stderr=${run.stderr}`);
+	assert.match(run.stderr, /unknown flag: --bogus/);
 });
 
 test("runAutoCli refuses a missing --cwd with exit 2 and names the flag", async () => {
 	const code = await runAutoCli(["just an objective"]);
 	assert.equal(code, 2);
+});
+
+test("a stale gate report is ignored: the poll waits for the fresh verdict", async () => {
+	// The previous run's verdict sits in the gate file before the stage
+	// starts; the stub writes its FRESH report only after a tick. The
+	// poll must refuse the stale mtime and accept the fresh write.
+	const fixture = fixtureDir("gate-stale-fresh");
+	const stateDir = projectStateDir(fixture);
+	const plansDir = path.join(stateDir, "plans");
+	const planPath = path.join(plansDir, "2026-01-01-stale-plan.md");
+	mkdirSync(plansDir, { recursive: true });
+	writeFileSync(planPath, "# Plan\n");
+	const gateFile = path.join(plansDir, "gates", "2026-01-01-stale-plan.gate.md");
+	mkdirSync(path.dirname(gateFile), { recursive: true });
+	writeFileSync(gateFile, "GATE BLOCKED\n");
+	const body = `
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const prompt = process.argv[process.argv.length - 1];
+const planPath = prompt.split(/\\s+/)[1];
+const stem = path.basename(planPath, ".md");
+const gateDir = path.join(process.env.TORUS_STATE_DIR, "plans", "gates");
+mkdirSync(gateDir, { recursive: true });
+await new Promise((resolve) => setTimeout(resolve, 400));
+writeFileSync(path.join(gateDir, stem + ".gate.md"), "GATE PASS\\n");
+`;
+	const { stubRoot } = stubLauncher(path.join(HOME, "stub"), body);
+	await withStubRoot(stubRoot, async () => {
+		process.env.TORUS_STATE_DIR = stateDir;
+		const runner = defaultStageRunner(stateDir);
+		const result = await runner("gate", {
+			objective: "x",
+			cwd: fixture,
+			stateDir,
+			stageTimeoutMs: 10_000,
+			skills: [],
+			planPath,
+			planStem: "2026-01-01-stale-plan",
+			abort: () => {},
+		});
+		assert.equal(result.ok, true, JSON.stringify(result));
+		assert.equal(result.verdict, "PASS", "the fresh verdict must win over the stale one");
+	});
+	rmSync(stubRoot, { recursive: true, force: true });
+	rmSync(path.join(HOME, "state"), { recursive: true, force: true });
+});
+
+test("a never-refreshing stale gate report times out named and kills the one-shot child", async () => {
+	const fixture = fixtureDir("gate-stale-dead");
+	const stateDir = projectStateDir(fixture);
+	const plansDir = path.join(stateDir, "plans");
+	const planPath = path.join(plansDir, "2026-01-01-stale-plan.md");
+	mkdirSync(plansDir, { recursive: true });
+	writeFileSync(planPath, "# Plan\n");
+	const gateFile = path.join(plansDir, "gates", "2026-01-01-stale-plan.gate.md");
+	mkdirSync(path.dirname(gateFile), { recursive: true });
+	writeFileSync(gateFile, "GATE PASS\n");
+	// The child records its pid and never writes anything: the stage must
+	// fail named on the body-side deadline AND kill the child (no orphan).
+	const body = `
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const pidDir = process.env.TORUS_STATE_DIR;
+mkdirSync(pidDir, { recursive: true });
+writeFileSync(path.join(pidDir, "stub-pid.txt"), String(process.pid));
+setInterval(() => {}, 1_000);
+`;
+	const { stubRoot } = stubLauncher(path.join(HOME, "stub"), body);
+	await withStubRoot(stubRoot, async () => {
+		process.env.TORUS_STATE_DIR = stateDir;
+		const runner = defaultStageRunner(stateDir);
+		const result = await runner("gate", {
+			objective: "x",
+			cwd: fixture,
+			stateDir,
+			stageTimeoutMs: 800,
+			skills: [],
+			planPath,
+			planStem: "2026-01-01-stale-plan",
+			abort: () => {},
+		});
+		assert.equal(result.ok, false, JSON.stringify(result));
+		assert.equal(result.error, "stage-timeout");
+		const pid = Number(readFileSync(path.join(stateDir, "stub-pid.txt"), "utf8").trim());
+		assert.ok(Number.isInteger(pid) && pid > 0, "the stub must have recorded its pid");
+		let dead = false;
+		for (let i = 0; i < 100 && !dead; i += 1) {
+			try {
+				process.kill(pid, 0);
+			} catch {
+				dead = true;
+				break;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		assert.ok(dead, "the one-shot child must be killed, not left running");
+	});
+	rmSync(stubRoot, { recursive: true, force: true });
+	rmSync(path.join(HOME, "state"), { recursive: true, force: true });
 });
 
 test("torus auto --help prints usage without touching the engine", () => {
