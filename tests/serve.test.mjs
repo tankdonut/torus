@@ -1181,6 +1181,257 @@ test("github webhook rejects: invalid/missing signature 401, wrong event/action/
 	}
 });
 
+// ---- driver-class github triggers (github.driver: "auto") ----
+
+const fsutil = await import("../extensions/fsutil.ts");
+
+/** Mirror of the driver's work-state slug (extensions/auto workSlug). */
+function workSlugForPlan(planPath) {
+	return (
+		path
+			.basename(planPath, ".md")
+			.replace(/[^a-zA-Z0-9._-]/g, "-")
+			.replace(/-+/g, "-")
+			.slice(0, 120) || "plan"
+	);
+}
+
+function writeDriverServeConfig() {
+	writeGithubServeConfig({ driver: "auto" });
+}
+
+/**
+ * Driver tests pin the process env like startAuto does (its state pin is
+ * process-global); restore the ambient values so later tests stay clean.
+ */
+function restoreStateEnv(prevStateDir, prevScratchDir) {
+	if (prevStateDir === undefined) delete process.env.TORUS_STATE_DIR;
+	else process.env.TORUS_STATE_DIR = prevStateDir;
+	if (prevScratchDir === undefined) delete process.env.TORUS_SCRATCH_DIR;
+	else process.env.TORUS_SCRATCH_DIR = prevScratchDir;
+}
+
+/** Poll until `cond` holds or ~10s pass. */
+async function pollUntil(cond) {
+	for (let i = 0; i < 500; i += 1) {
+		if (cond()) return true;
+		await sleep(20);
+	}
+	return cond();
+}
+
+function autoPlanState() {
+	const state = JSON.parse(readFileSync(triggersStateFile(), "utf8"));
+	return state["tankdonut/torus"]?.autoPlanPath;
+}
+
+test("validateTriggers accepts driver auto and refuses any other value", () => {
+	const ok = serve.validateTriggers([
+		{
+			name: "gh",
+			agent: "builder",
+			task: "t",
+			webhook: { path: "/hook/gh" },
+			github: { repo: "o/r", cwd: "/abs/checkout", events: ["push"], driver: "auto" },
+		},
+	]).triggers[0];
+	assert.equal(ok.github.driver, "auto");
+	assert.equal(
+		serve.validateTriggers([
+			{
+				name: "gh",
+				agent: "builder",
+				task: "t",
+				webhook: { path: "/hook/gh" },
+				github: { repo: "o/r", cwd: "/c", events: ["push"], driver: "bogus" },
+			},
+		]).error,
+		'serve section trigger "gh": "github.driver" must be "auto" (got "bogus")',
+	);
+});
+
+test("a driver-class fire runs the auto chain in-process via the injected runner", async () => {
+	registry.resetRegistryForTesting();
+	freshTriggersState();
+	mkdirSync(GH_CHECKOUT, { recursive: true });
+	const prevStateDir = process.env.TORUS_STATE_DIR;
+	const prevScratchDir = process.env.TORUS_SCRATCH_DIR;
+	const record = [];
+	const planArtifact = path.join(HOME, "state", "plans", "2026-01-01-driver-plan.md");
+	serve.setAutoRunnerForTesting(async (stage, ctx) => {
+		record.push({ stage, ctx });
+		if (stage === "plan") return { ok: true, artifact: planArtifact };
+		return { ok: true };
+	});
+	writeDriverServeConfig();
+	try {
+		const boot = await captureStdout(() => serve.startServe({ port: 0 }));
+		const started = boot.result;
+		openHandles.push(started);
+		const hookUrl = `http://127.0.0.1:${started.port}/hook/gh`;
+		const raw = JSON.stringify(githubPayload());
+		const res = await postGithub(hookUrl, "pull_request", raw);
+		assert.equal(res.status, 200, "a signed driver-class fire is acknowledged");
+		const body = await res.json();
+		assert.match(body.auto, /^srv-/, "the fire answers with a run-id analog");
+		assert.equal(body.resumed, undefined, "a chain without persisted state is not a resume");
+		assert.ok(
+			await pollUntil(() => record.length >= 4),
+			"the stage chain ran plan→gate→execute→lens",
+		);
+		assert.deepEqual(
+			record.map((r) => r.stage),
+			["plan", "gate", "execute", "lens"],
+		);
+		const plan = record[0];
+		assert.equal(plan.ctx.cwd, path.resolve(GH_CHECKOUT), "the driven checkout is the config cwd");
+		assert.ok(
+			plan.ctx.objective.includes(untrusted.PREAMBLE),
+			"the payload field renders inside its fence",
+		);
+		assert.ok(
+			plan.ctx.objective.includes('"feat: github trigger class"'),
+			"the fenced payload value reaches the objective",
+		);
+		assert.ok(plan.ctx.objective.includes("now."), "the trusted template tail survives");
+		assert.ok(
+			await pollUntil(() => autoPlanState() === planArtifact),
+			"the plan stage's artifact persists under the repo",
+		);
+		assert.ok(readdirSync(ARGS_DIR).length === 0, "no engine spawn for the injected chain");
+	} finally {
+		serve.setAutoRunnerForTesting(null);
+		clearServeConfig();
+		restoreStateEnv(prevStateDir, prevScratchDir);
+	}
+});
+
+test("a second fire for the same repo while the chain is in flight answers 409 named", async () => {
+	registry.resetRegistryForTesting();
+	freshTriggersState();
+	mkdirSync(GH_CHECKOUT, { recursive: true });
+	const prevStateDir = process.env.TORUS_STATE_DIR;
+	const prevScratchDir = process.env.TORUS_SCRATCH_DIR;
+	const record = [];
+	const planArtifact = path.join(HOME, "state", "plans", "2026-01-01-serialize-plan.md");
+	mkdirSync(path.dirname(planArtifact), { recursive: true });
+	writeFileSync(planArtifact, "# plan\n", "utf8");
+	let hang = true;
+	serve.setAutoRunnerForTesting(async (stage, ctx) => {
+		record.push({ stage, ctx });
+		while (hang) await sleep(20);
+		if (stage === "plan") return { ok: true, artifact: planArtifact };
+		return { ok: true };
+	});
+	writeDriverServeConfig();
+	try {
+		const boot = await captureStdout(() => serve.startServe({ port: 0 }));
+		const started = boot.result;
+		openHandles.push(started);
+		const hookUrl = `http://127.0.0.1:${started.port}/hook/gh`;
+		const raw = JSON.stringify(githubPayload());
+		const first = await postGithub(hookUrl, "pull_request", raw);
+		assert.equal(first.status, 200, "the first fire starts the chain");
+		await first.arrayBuffer();
+		assert.ok(await pollUntil(() => record.length >= 1), "the chain's first stage started");
+
+		const second = await postGithub(hookUrl, "pull_request", raw);
+		assert.equal(second.status, 409, "a second fire while in flight is refused");
+		await second.arrayBuffer();
+		const secondBody = await postGithub(hookUrl, "pull_request", raw);
+		assert.equal(secondBody.status, 409, "the lane stays closed while the chain runs");
+		await secondBody.arrayBuffer();
+
+		hang = false;
+		assert.ok(await pollUntil(() => record.length >= 4), "the chain settled after release");
+
+		// The lane clears when the chain settles — and the produced plan now
+		// persists, so the next fire resumes instead of re-planning.
+		let third = await postGithub(hookUrl, "pull_request", raw);
+		for (let i = 0; i < 100 && third.status === 409; i += 1) {
+			await third.arrayBuffer();
+			await sleep(50);
+			third = await postGithub(hookUrl, "pull_request", raw);
+		}
+		assert.equal(third.status, 200, "the lane reopens once the chain settles");
+		const thirdBody = await third.json();
+		assert.equal(thirdBody.resumed, true, "the persisted plan resumes the chain");
+		assert.ok(await pollUntil(() => record.length >= 7), "the resumed chain ran gate→execute→lens");
+		const lastGate = record.filter((r) => r.stage === "gate").pop();
+		assert.equal(lastGate.ctx.planPath, planArtifact, "the resume starts from the persisted plan");
+		assert.equal(
+			record.filter((r) => r.stage === "plan").length,
+			1,
+			"the resumed chain skips the plan stage",
+		);
+	} finally {
+		serve.setAutoRunnerForTesting(null);
+		clearServeConfig();
+		restoreStateEnv(prevStateDir, prevScratchDir);
+	}
+});
+
+test("a persisted plan with no completed work state resumes via planPath", async () => {
+	registry.resetRegistryForTesting();
+	freshTriggersState();
+	mkdirSync(GH_CHECKOUT, { recursive: true });
+	const prevStateDir = process.env.TORUS_STATE_DIR;
+	const prevScratchDir = process.env.TORUS_SCRATCH_DIR;
+	const record = [];
+	serve.setAutoRunnerForTesting(async (stage, ctx) => {
+		record.push({ stage, ctx });
+		if (stage === "plan") return { ok: true, artifact: ctx.planPath ?? "" };
+		return { ok: true };
+	});
+	writeDriverServeConfig();
+	// A crashed prior run left its plan artifact and the persistence behind.
+	const stateDir = fsutil.projectStateDir();
+	const crashedPlan = path.join(stateDir, "plans", "2026-01-01-crashed-plan.md");
+	mkdirSync(path.dirname(crashedPlan), { recursive: true });
+	writeFileSync(crashedPlan, "# plan\n", "utf8");
+	writeFileSync(
+		triggersStateFile(),
+		JSON.stringify({ "tankdonut/torus": { autoPlanPath: crashedPlan } }),
+		"utf8",
+	);
+	try {
+		const boot = await captureStdout(() => serve.startServe({ port: 0 }));
+		const started = boot.result;
+		openHandles.push(started);
+		const hookUrl = `http://127.0.0.1:${started.port}/hook/gh`;
+		const raw = JSON.stringify(githubPayload());
+
+		const resumed = await postGithub(hookUrl, "pull_request", raw);
+		assert.equal(resumed.status, 200);
+		assert.equal((await resumed.json()).resumed, true, "the fire reports the resume");
+		assert.ok(await pollUntil(() => record.length >= 3), "the resumed chain ran gate→execute→lens");
+		assert.deepEqual(
+			record.map((r) => r.stage),
+			["gate", "execute", "lens"],
+		);
+		assert.equal(record[0].ctx.planPath, crashedPlan, "the resume carries the persisted plan");
+		assert.equal(record[0].ctx.planStem, "2026-01-01-crashed-plan");
+
+		// A completed chain (work state reads complete) re-fires fresh.
+		const workState = path.join(stateDir, "work", `${workSlugForPlan(crashedPlan)}.json`);
+		mkdirSync(path.dirname(workState), { recursive: true });
+		writeFileSync(workState, JSON.stringify({ status: "complete" }), "utf8");
+		record.length = 0;
+		const fresh = await postGithub(hookUrl, "pull_request", raw);
+		assert.equal(fresh.status, 200);
+		assert.equal((await fresh.json()).resumed, undefined, "a completed chain re-plans");
+		assert.ok(await pollUntil(() => record.length >= 4), "the fresh chain ran all stages");
+		assert.ok(
+			record.some((r) => r.stage === "plan"),
+			"the fresh chain starts at plan",
+		);
+	} finally {
+		serve.setAutoRunnerForTesting(null);
+		clearServeConfig();
+		restoreStateEnv(prevStateDir, prevScratchDir);
+	}
+});
+
 // ---- unified config ----
 
 function configPath() {

@@ -60,6 +60,17 @@
  * checkout. GitHub-class triggers are event-driven — `everyMinutes` is
  * optional (a present value still ticks the same scheduler), and the
  * github block requires a webhook path to answer at.
+ *
+ * Driver-class github triggers (`github.driver: "auto"`) skip fireRun:
+ * the rendered task becomes the objective of an in-process startAuto
+ * stage chain (plan → gate → execute → lens) running in this process with
+ * the trigger's cwd as the driven checkout. startAuto pins
+ * TORUS_STATE_DIR process-globally, so a second fire for the same repo
+ * while one chain is in flight answers 409 and the sender re-fires
+ * later; the in-flight entry clears when the chain settles. Each chain's
+ * produced plan artifact persists in triggers-state.json under the repo,
+ * and a fire that lands while the chain's work state is not complete
+ * resumes from that plan (a crash loses one stage, not the chain).
  */
 
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -71,8 +82,9 @@ import {
 	type ServerResponse,
 } from "node:http";
 import path from "node:path";
+import { type AutoOptions, startAuto } from "../auto/index.js";
 import { configFilePath, readSection } from "../config/loader.js";
-import { readJson, sleep, torusHome, writeJson } from "../fsutil.js";
+import { projectStateDir, readJson, sleep, torusHome, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { AGENT_NAME_RE, type DelegationRecord, listDelegations, repoRoot } from "../registry.js";
 import { AGENTS, type DelegationOutcome, runDelegation } from "../roster/index.js";
@@ -117,6 +129,12 @@ export interface ServeTrigger {
 		events: string[];
 		/** Optional payload.action filter on top of the event filter. */
 		actions?: string[];
+		/**
+		 * "auto" turns the fire into an in-process startAuto stage chain
+		 * instead of a fireRun delegation (crash-resumable, serialized per
+		 * repo). Absent → reviewer-class: the fireRun path, unchanged.
+		 */
+		driver?: "auto";
 	};
 }
 
@@ -345,6 +363,13 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 					error: `serve section trigger "${name}": "github.actions" must be an array of strings (e.g. ["opened", "synchronize"])`,
 				};
 			}
+			const driver = github.driver;
+			if (driver !== undefined && driver !== "auto") {
+				return {
+					triggers: [],
+					error: `serve section trigger "${name}": "github.driver" must be "auto" (got ${JSON.stringify(driver)})`,
+				};
+			}
 		}
 		seen.add(name);
 		triggers.push({
@@ -361,6 +386,7 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 						secret: typeof github.secret === "string" ? github.secret : undefined,
 						events: github.events as string[],
 						actions: Array.isArray(github.actions) ? (github.actions as string[]) : undefined,
+						driver: github.driver === "auto" ? "auto" : undefined,
 					}
 				: undefined,
 		});
@@ -392,6 +418,8 @@ function loadOrMintToken(file: string): { token: string; created: boolean } {
 interface WebhookSecretState {
 	lastFired?: unknown;
 	webhookSecret?: unknown;
+	/** Last-known plan artifact for driver-class github triggers, keyed by repo. */
+	autoPlanPath?: unknown;
 }
 
 /**
@@ -552,6 +580,125 @@ function stringifyCapped(value: unknown, depth: number): string {
 	return `{${entries.map(([key, val]) => `${JSON.stringify(key)}:${stringifyCapped(val, depth + 1)}`).join(",")}}`;
 }
 
+/** The stage-runner half of AutoOptions — the test seam's type. */
+type AutoStageRunner = NonNullable<AutoOptions["runStage"]>;
+
+let autoRunnerForTesting: AutoStageRunner | null = null;
+
+/** Test-only: substitute the auto stage runner (null restores the real one). */
+export function setAutoRunnerForTesting(runner: AutoStageRunner | null): void {
+	autoRunnerForTesting = runner;
+}
+
+/**
+ * In-flight auto chains keyed by the trigger's configured repo. startAuto
+ * pins TORUS_STATE_DIR process-globally (its env pin is not per-call), so
+ * two chains running concurrently in one serve process would fight over
+ * the pin — a second fire for a repo while one chain is in flight answers
+ * 409 and the sender re-fires later. The entry clears when the chain's
+ * promise settles (success, failure, or refusal).
+ */
+const autoRunsInFlight = new Map<string, Promise<void>>();
+
+/**
+ * Work-state slug for a plan path — the same restriction auto's workSlug
+ * applies, so the crash-resume poll reads the state file work_start binds.
+ */
+function workSlugForPlan(planPath: string): string {
+	const slug = path
+		.basename(planPath, ".md")
+		.replace(/[^a-zA-Z0-9._-]/g, "-")
+		.replace(/-+/g, "-")
+		.slice(0, 120);
+	return slug.length > 0 ? slug : "plan";
+}
+
+/**
+ * The driver's completion signal for a plan's chain: the work state file
+ * under the same state root startAuto pins, status "complete". Only a
+ * present file that reads complete counts — anything else (missing,
+ * active, paused) leaves the chain resumable.
+ */
+function workChainComplete(stateDir: string, planPath: string): boolean {
+	const file = path.join(stateDir, "work", `${workSlugForPlan(planPath)}.json`);
+	const state = readJson<{ status?: unknown } | null>(file, null);
+	return state !== null && state.status === "complete";
+}
+
+/** The last persisted plan artifact for a repo, or null when none. */
+function readAutoPlanState(repo: string): string | null {
+	const state = readJson<Record<string, WebhookSecretState>>(triggersStatePath(), {});
+	const persisted = state[repo]?.autoPlanPath;
+	return typeof persisted === "string" && persisted.length > 0 ? persisted : null;
+}
+
+/** Record the last-known plan artifact for a repo in triggers-state.json. */
+function persistAutoPlan(repo: string, planPath: string): void {
+	const state = readJson<Record<string, WebhookSecretState>>(triggersStatePath(), {});
+	state[repo] = { ...state[repo], autoPlanPath: planPath };
+	writeJson(triggersStatePath(), state);
+	// The file holds webhook secrets too — keep it owner-only like the
+	// secret minter does.
+	chmodSync(triggersStatePath(), 0o600);
+}
+
+/**
+ * Driver-class fire: the rendered task becomes an in-process startAuto
+ * objective and the chain runs in this process's background. The response
+ * acknowledges with a run-id analog (the chain is not a delegation, so
+ * there is no delegationId to await) — the serialization map is the
+ * overlap gate, and the chain's plan artifact persists for crash-resume
+ * when it settles.
+ */
+async function fireAutoRun(
+	res: ServerResponse,
+	trigger: ServeTrigger,
+	github: NonNullable<ServeTrigger["github"]>,
+	payload: Record<string, unknown>,
+): Promise<void> {
+	const repo = github.repo;
+	if (autoRunsInFlight.has(repo)) {
+		return sendJson(res, 409, {
+			ok: false,
+			error: "auto-already-running",
+			message: `auto already running for ${repo} — the run settles on its own; fire again later`,
+		});
+	}
+	// The rendered task IS the objective: fenced payload fields exactly like
+	// every webhook fire, with the driven checkout coming from operator
+	// config — the payload never names a path.
+	const objective = renderTaskTemplate(trigger.task, payload);
+	const persistedPlan = readAutoPlanState(repo);
+	// The same state root startAuto is about to pin: the work state file it
+	// would have completed lives there.
+	const stateDir = projectStateDir();
+	const resume = persistedPlan !== null && !workChainComplete(stateDir, persistedPlan);
+	const runId = `srv-${randomUUID().slice(0, 8)}`;
+	const autoRunner = autoRunnerForTesting ?? undefined;
+	const run = startAuto({
+		objective,
+		cwd: github.cwd,
+		...(resume && persistedPlan !== null ? { planPath: persistedPlan } : {}),
+		...(autoRunner !== undefined ? { runStage: autoRunner } : {}),
+	})
+		.then((report) => {
+			const planStage = report.stages.find((stage) => stage.stage === "plan");
+			if (planStage?.ok === true && typeof planStage.artifact === "string") {
+				persistAutoPlan(repo, planStage.artifact);
+			}
+		})
+		.catch((err: unknown) => {
+			process.stderr.write(
+				`torus serve: auto run ${runId} for ${repo} failed: ${err instanceof Error ? err.message : String(err)}\n`,
+			);
+		})
+		.finally(() => {
+			autoRunsInFlight.delete(repo);
+		});
+	autoRunsInFlight.set(repo, run);
+	return sendJson(res, 200, { ok: true, auto: runId, ...(resume ? { resumed: true } : {}) });
+}
+
 /** A registered webhook endpoint: one per trigger with a webhook block. */
 interface WebhookRoute {
 	path: string;
@@ -624,6 +771,9 @@ async function handleWebhookRequest(
 	const refusal = githubRouteRefusal(route.trigger, github, req.headers["x-github-event"], payload);
 	if (refusal !== null) {
 		return sendJson(res, 404, { ok: false, error: "no-matching-event", message: refusal });
+	}
+	if (github.driver === "auto") {
+		return fireAutoRun(res, route.trigger, github, payload);
 	}
 	// Routed: the task template renders through the same fence as every
 	// webhook fire, and the delegation runs in the trigger config's cwd.
