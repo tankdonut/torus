@@ -409,8 +409,8 @@ test("unknown skills fail a one-shot stage named before any spawn", async () => 
 // the fake engine (it records argv and settles immediately) and the driver's
 // plan-artifact poll. Honest shortcut documented: the plan file is planted by
 // the test after the engine spawn is observed — a real plan child would write
-// it via /skill:torus-plan; this leg proves the delegation + poll wiring, the
-// unit tests above prove the stage logic.
+// it from the directive task; this leg proves the delegation + poll wiring,
+// the unit tests above prove the stage logic.
 test("plan stage drives a real delegation and polls for the new plan artifact", async () => {
 	freshArgsDir();
 	const fixture = fixtureDir("plan");
@@ -444,15 +444,47 @@ test("plan stage drives a real delegation and polls for the new plan artifact", 
 	assert.equal(result.artifact, planFile);
 	// The rpc attempt dies on the fake engine and the JSON fallback spawns
 	// again; every argv dump combined must show the json-mode one-shot with
-	// the composed /skill:torus-plan task reaching the engine.
+	// the composed directive task reaching the engine.
 	const argvDumps = readdirSync(ARGS_DIR).map((f) => readFileSync(path.join(ARGS_DIR, f), "utf8"));
 	const joined = argvDumps.join("\n");
 	assert.match(joined, /--mode\njson/);
-	assert.match(joined, /Task: \/skill:torus-plan/);
+	assert.match(joined, /torus-plan\/SKILL\.md/);
+	assert.match(joined, /planning only/);
+	assert.doesNotMatch(joined, /Task: \/skill:/);
 	assert.match(
 		joined,
 		/--append-system-prompt\n\/tmp\/torus-builder-/,
 		"the child runs the builder agent's system prompt",
+	);
+});
+
+// Failure leg: the delegation settles ok but no plan file ever appears —
+// the stage must fail named as soon as the settle grace expires, not spin
+// silently to the stage timeout.
+test("a settled delegation without a plan artifact fails named before the stage timeout", async () => {
+	freshArgsDir();
+	const fixture = fixtureDir("plan-missing");
+	const stateDir = projectStateDir(fixture);
+	process.env.TORUS_STATE_DIR = stateDir;
+	mkdirSync(path.join(stateDir, "plans"), { recursive: true });
+	const runner = defaultStageRunner(stateDir);
+	const ctx = {
+		objective: "document the fixture file's purpose",
+		cwd: fixture,
+		stateDir,
+		stageTimeoutMs: 60_000,
+		skills: [],
+		planStem: "",
+		abort: () => {},
+	};
+	const started = Date.now();
+	const result = await runner("plan", ctx);
+	const durationMs = Date.now() - started;
+	assert.equal(result.ok, false);
+	assert.equal(result.error, "plan-artifact-missing");
+	assert.ok(
+		durationMs < 45_000,
+		`settled-without-artifact must fail well under the 60s timeout, took ${durationMs}ms`,
 	);
 });
 

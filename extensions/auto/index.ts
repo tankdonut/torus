@@ -5,10 +5,18 @@
  * structured report. Every stage gates on a machine signal from
  * docs/machine-contracts.md — no prose parsing:
  *
- * - PLAN: a `runDelegation` child (agent `builder`, task `/skill:torus-plan
- *   <objective>` + the roadmap stamp brief). After the delegation settles ok,
- *   the driver polls `$TORUS_STATE_DIR/plans/` for a new `<yyyy-mm-dd>-*.md`
- *   file created after the stage started — the plan path is an output.
+ * - PLAN: a `runDelegation` child (agent `builder`, task a DIRECTIVE that
+ *   orders the child to author a work plan per
+ *   `<repoRoot>/skills/torus-plan/SKILL.md` — skill-command expansion does
+ *   not fire inside delegation children, so a `/skill:` prefix would reach
+ *   the model as literal text and the skill would never load). After the
+ *   delegation settles ok, the driver polls `$TORUS_STATE_DIR/plans/` for a
+ *   new `<yyyy-mm-dd>-*.md` file created after the stage started — the plan
+ *   path is an output. Two failure paths, both named
+ *   `plan-artifact-missing`: the stage fails as soon as the settled
+ *   delegation has produced no plan file within a 30s grace (a knowable
+ *   failure must not spin silently to the timeout), and the stage timeout
+ *   remains the backstop for a delegation that never settles.
  * - GATE: a ROOT one-shot spawned from the driver process
  *   (`spawn(process.execPath, [torusMjs, "-a", "--mode", "json", "-p",
  *   prompt], { cwd, env: { ...process.env } })`). Root one-shots load the
@@ -132,6 +140,8 @@ const DEFAULT_STAGE_TIMEOUT_MS = 600_000;
 const POLL_MS = 250;
 /** After a one-shot exits, keep polling this long for the signal file. */
 const EXIT_GRACE_MS = 5_000;
+/** After a settled plan delegation, keep polling this long for the plan file. */
+const PLAN_SETTLE_GRACE_MS = 30_000;
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
 
 /**
@@ -146,6 +156,27 @@ function workSlug(planPath: string): string {
 		.replace(/-+/g, "-")
 		.slice(0, 120);
 	return slug.length > 0 ? slug : "plan";
+}
+
+/**
+ * The PLAN stage's task text. A directive, not a skill command: delegation
+ * children receive the task as literal prompt text (no /skill expansion),
+ * so the child is ordered to read the skill file itself and author the plan
+ * artifact the driver polls for.
+ */
+function composePlanTask(objective: string, roadmapBrief: string): string {
+	return (
+		`You are authoring a work plan, not implementing. Read ` +
+		`${path.join(repoRoot(), "skills", "torus-plan", "SKILL.md")} and follow ` +
+		`its format exactly. Objective (the only thing the plan covers): ${objective}. ` +
+		`Write the plan to the plans directory ` +
+		`($TORUS_STATE_DIR/plans/<yyyy-mm-dd>-<slug>.md) with: wave headings, ` +
+		`column-zero checkbox tasks each carrying Acceptance/QA/Executor details, ` +
+		`a final verification wave with F-tasks, and a Stopping condition section. ` +
+		`Do NOT create the Approval line (the driver approves via assumeApproved). ` +
+		`Do NOT implement anything — planning only.` +
+		roadmapBrief
+	);
 }
 
 /** Raw plan stem (filename minus .md) — the gate report's naming key. */
@@ -351,14 +382,20 @@ export function defaultStageRunner(stateDir: string) {
 				ctx.roadmapPath !== undefined
 					? `\n\nRoadmap brief: the plan's Destination must carry a "Roadmap: ${ctx.roadmapPath} (items R…)" stamp line naming this roadmap; roadmap sync reads that stamp.`
 					: "";
-			const task = `/skill:torus-plan ${ctx.objective.trim()}${roadmapBrief}`;
+			const task = composePlanTask(ctx.objective.trim(), roadmapBrief);
 			const settled = await raceStage(
 				runPlanDelegation(task, ctx, "auto-plan"),
 				deadline.left(),
 				ctx.abort,
 			);
 			if (!settled.ok) return settled;
-			while (!deadline.past()) {
+			// The delegation settled: the plan file, if the child wrote one,
+			// lands within a short grace (writes can trail the settle by a
+			// moment). Past the grace with no artifact the stage fails named
+			// instead of spinning to the stage timeout; the timeout stays the
+			// backstop for a delegation that never settles.
+			const graceEnds = Date.now() + Math.min(PLAN_SETTLE_GRACE_MS, deadline.left());
+			while (Date.now() < graceEnds) {
 				const files = (await listDir(plansDir))
 					.filter((f) => PLAN_FILE_PATTERN.test(f) && !before.has(f))
 					.map((f) => path.join(plansDir, f))
