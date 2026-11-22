@@ -65,12 +65,15 @@
  * the rendered task becomes the objective of an in-process startAuto
  * stage chain (plan → gate → execute → lens) running in this process with
  * the trigger's cwd as the driven checkout. startAuto pins
- * TORUS_STATE_DIR process-globally, so a second fire for the same repo
- * while one chain is in flight answers 409 and the sender re-fires
- * later; the in-flight entry clears when the chain settles. Each chain's
- * produced plan artifact persists in triggers-state.json under the repo,
- * and a fire that lands while the chain's work state is not complete
- * resumes from that plan (a crash loses one stage, not the chain).
+ * TORUS_STATE_DIR process-globally (one shared state root for every
+ * trigger), so driver-auto chains serialize process-wide: a second fire
+ * while any chain is in flight answers 409 and the sender re-fires
+ * later; the sentinel clears when the chain settles. Each chain's
+ * produced plan artifact persists in triggers-state.json under the repo
+ * the moment the plan stage lands, and a fire that lands while the
+ * chain's work state is not complete resumes from that plan (a crash
+ * loses one stage, not the chain). An optional github.pr block passes
+ * the PR stage's title override to the chain.
  */
 
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -82,7 +85,7 @@ import {
 	type ServerResponse,
 } from "node:http";
 import path from "node:path";
-import { type AutoOptions, startAuto } from "../auto/index.js";
+import { type AutoOptions, defaultStageRunner, startAuto } from "../auto/index.js";
 import { configFilePath, readSection } from "../config/loader.js";
 import { projectStateDir, readJson, sleep, torusHome, writeJson } from "../fsutil.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -131,10 +134,18 @@ export interface ServeTrigger {
 		actions?: string[];
 		/**
 		 * "auto" turns the fire into an in-process startAuto stage chain
-		 * instead of a fireRun delegation (crash-resumable, serialized per
-		 * repo). Absent → reviewer-class: the fireRun path, unchanged.
+		 * instead of a fireRun delegation (crash-resumable, serialized
+		 * process-wide). Absent → reviewer-class: the fireRun path,
+		 * unchanged.
 		 */
 		driver?: "auto";
+		/**
+		 * Optional PR stage for driver-class chains: opens the pull
+		 * request after a fully passing lens stage, `title` overriding the
+		 * plan's H1 (docs/auto.md). Absent → the chain ends at lens,
+		 * unchanged.
+		 */
+		pr?: { title?: string };
 	};
 }
 
@@ -370,6 +381,20 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 					error: `serve section trigger "${name}": "github.driver" must be "auto" (got ${JSON.stringify(driver)})`,
 				};
 			}
+			const pr = github.pr;
+			if (pr !== undefined && !isRecord(pr)) {
+				return {
+					triggers: [],
+					error: `serve section trigger "${name}": "github.pr" must be an object`,
+				};
+			}
+			const prTitle = isRecord(pr) ? pr.title : undefined;
+			if (prTitle !== undefined && (typeof prTitle !== "string" || prTitle.length === 0)) {
+				return {
+					triggers: [],
+					error: `serve section trigger "${name}": "github.pr.title" must be a non-empty string when present`,
+				};
+			}
 		}
 		seen.add(name);
 		triggers.push({
@@ -387,6 +412,9 @@ export function validateTriggers(raw: unknown): { triggers: ServeTrigger[]; erro
 						events: github.events as string[],
 						actions: Array.isArray(github.actions) ? (github.actions as string[]) : undefined,
 						driver: github.driver === "auto" ? "auto" : undefined,
+						pr: isRecord(github.pr)
+							? { title: typeof github.pr.title === "string" ? github.pr.title : undefined }
+							: undefined,
 					}
 				: undefined,
 		});
@@ -591,14 +619,17 @@ export function setAutoRunnerForTesting(runner: AutoStageRunner | null): void {
 }
 
 /**
- * In-flight auto chains keyed by the trigger's configured repo. startAuto
- * pins TORUS_STATE_DIR process-globally (its env pin is not per-call), so
- * two chains running concurrently in one serve process would fight over
- * the pin — a second fire for a repo while one chain is in flight answers
- * 409 and the sender re-fires later. The entry clears when the chain's
- * promise settles (success, failure, or refusal).
+ * The in-flight auto chain sentinel. startAuto pins TORUS_STATE_DIR
+ * process-globally (its env pin is not per-call) and every trigger shares
+ * one state root, so the plan stage's set-difference poll would race any
+ * other chain's plan child: two concurrent chains could adopt each
+ * other's plan and gate on the same stem. Driver-auto chains therefore
+ * serialize process-wide — a second fire while ANY chain is in flight
+ * answers 409 and the sender re-fires later. The sentinel clears when
+ * the chain's promise settles (success, failure, or refusal). Per-repo
+ * concurrency is future scope with per-repo state roots.
  */
-const autoRunsInFlight = new Map<string, Promise<void>>();
+let autoRunInFlight = false;
 
 /**
  * Work-state slug for a plan path — the same restriction auto's workSlug
@@ -646,9 +677,9 @@ function persistAutoPlan(repo: string, planPath: string): void {
  * Driver-class fire: the rendered task becomes an in-process startAuto
  * objective and the chain runs in this process's background. The response
  * acknowledges with a run-id analog (the chain is not a delegation, so
- * there is no delegationId to await) — the serialization map is the
- * overlap gate, and the chain's plan artifact persists for crash-resume
- * when it settles.
+ * there is no delegationId to await) — the sentinel is the overlap gate,
+ * and the chain's plan artifact persists for crash-resume the moment the
+ * plan stage completes.
  */
 async function fireAutoRun(
 	res: ServerResponse,
@@ -657,11 +688,11 @@ async function fireAutoRun(
 	payload: Record<string, unknown>,
 ): Promise<void> {
 	const repo = github.repo;
-	if (autoRunsInFlight.has(repo)) {
+	if (autoRunInFlight) {
 		return sendJson(res, 409, {
 			ok: false,
 			error: "auto-already-running",
-			message: `auto already running for ${repo} — the run settles on its own; fire again later`,
+			message: "auto already running — the chain settles on its own; fire again later",
 		});
 	}
 	// The rendered task IS the objective: fenced payload fields exactly like
@@ -675,11 +706,25 @@ async function fireAutoRun(
 	const resume = persistedPlan !== null && !workChainComplete(stateDir, persistedPlan);
 	const runId = `srv-${randomUUID().slice(0, 8)}`;
 	const autoRunner = autoRunnerForTesting ?? undefined;
+	// Crash-resume: the plan artifact persists the moment the plan stage
+	// lands, not when the chain settles — a run killed at GATE or
+	// mid-execute leaves a resumable plan behind. The settle-time persist
+	// below stays as a fallback. The wrapper runs whether the stage runner
+	// is injected (tests) or the default one.
+	const baseRunner = autoRunner ?? defaultStageRunner(stateDir);
+	const runStage: AutoStageRunner = async (stage, ctx) => {
+		const result = await baseRunner(stage, ctx);
+		if (stage === "plan" && result.ok && typeof result.artifact === "string") {
+			persistAutoPlan(repo, result.artifact);
+		}
+		return result;
+	};
 	const run = startAuto({
 		objective,
 		cwd: github.cwd,
 		...(resume && persistedPlan !== null ? { planPath: persistedPlan } : {}),
-		...(autoRunner !== undefined ? { runStage: autoRunner } : {}),
+		...(github.pr ? { pr: { title: github.pr.title } } : {}),
+		runStage,
 	})
 		.then((report) => {
 			const planStage = report.stages.find((stage) => stage.stage === "plan");
@@ -693,9 +738,9 @@ async function fireAutoRun(
 			);
 		})
 		.finally(() => {
-			autoRunsInFlight.delete(repo);
+			autoRunInFlight = false;
 		});
-	autoRunsInFlight.set(repo, run);
+	autoRunInFlight = true;
 	return sendJson(res, 200, { ok: true, auto: runId, ...(resume ? { resumed: true } : {}) });
 }
 

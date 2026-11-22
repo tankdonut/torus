@@ -141,8 +141,10 @@ export interface AutoOptions {
 	 * Optional PR stage: after a passing lens stage, branch the driven
 	 * repo, push to its remote, and open a PR (gh pr create with the
 	 * ambient gh auth). Absent → the chain ends at lens, byte-identical.
+	 * The serve webhook path supplies this from a trigger's github.pr
+	 * (title override only); the CLI surface takes --pr/--pr-title.
 	 */
-	pr?: { title?: string; base?: string };
+	pr?: { title?: string };
 	/** Injectable stage runner (tests fake stages without engines). */
 	runStage?: (stage: StageKind, ctx: StageContext) => Promise<StageResult>;
 }
@@ -763,7 +765,10 @@ async function maybeOpenPr(
 ): Promise<{ ok: boolean; url?: string; error?: string }> {
 	const cwd = path.resolve(options.cwd);
 	const branch = `torus/${planStem(planPath)}`;
-	const title = options.pr?.title ?? planTitle(readFileSync(planPath, "utf8")) ?? options.objective;
+	// pr.title wins, then the plan's H1. planTitle returns "" (not nullish)
+	// for an H1-less plan, so the fallback chain is ||: an empty title would
+	// abort the git commit and gh pr create.
+	const title = options.pr?.title || planTitle(readFileSync(planPath, "utf8")) || options.objective;
 	const run = async (bin: string, args: string[], what: string) => {
 		try {
 			const { stdout } = await execFileP(bin, args, { cwd, maxBuffer: 4 * 1024 * 1024 });
@@ -939,6 +944,11 @@ export async function runAutoCli(argv: string[]): Promise<number> {
 					.split(",")
 					.map((s) => s.trim())
 					.filter((s) => s.length > 0);
+			} else if (arg === "--pr") {
+				pr = { ...(pr ?? {}) };
+			} else if (arg === "--pr-title") {
+				const titleValue = value();
+				pr = { ...(pr ?? {}), title: titleValue };
 			} else if (arg.startsWith("--")) {
 				autoUsageError(`unknown flag: ${arg}`);
 			} else {
@@ -959,6 +969,7 @@ export async function runAutoCli(argv: string[]): Promise<number> {
 				cwd,
 				stageTimeoutMs,
 				skills,
+				pr,
 			}),
 		);
 	} catch (err) {

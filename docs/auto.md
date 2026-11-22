@@ -64,7 +64,7 @@ Exit codes: `0` when every attempted stage passed, `1` on the first named stage 
 
 ## Pull request stage
 
-With `--pr` (or the `pr` config field), one more stage runs after a fully passing lens stage: the driver branches the driven repository at its current state (`torus/<plan-stem>`), commits the execute stage's changes, pushes to the repo's `origin`, and opens a pull request with `gh pr create` using the ambient gh auth. The PR title is the plan's H1 title (overridable with `--pr-title`); the body carries the stage report.
+With `--pr` (or a serve trigger's `github.pr` block: the webhook path's equivalent, whose `title` overrides the plan H1), one more stage runs after a fully passing lens stage: the driver branches the driven repository at its current state (`torus/<plan-stem>`), commits the execute stage's changes, pushes to the repo's `origin`, and opens a pull request with `gh pr create` using the ambient gh auth. The PR title is the plan's H1 title, falling back to the objective when the plan has no H1 (overridable with `--pr-title` or `github.pr.title`); the body carries the stage report.
 
 The author identity is whatever holds the driven repository's push credentials. The merge plane's Bot-authored lane (see the auto-merge workflow) requires an App-typed author (operator setup, like the provider credentials). Without one, the loop ends at the opened PR and the human merges.
 

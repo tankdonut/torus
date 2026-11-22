@@ -166,13 +166,13 @@ A github trigger requires a `webhook.path` (the endpoint it answers at). `repo` 
 
 **Event routing.** The `X-GitHub-Event` header must be in the trigger's `events`, the payload's `action` (when present) in its `actions`, and the repository must match; any miss answers 404 (`no-matching-event`) with zero engine spawn. A match renders the templated task through the same untrusted-input fence as every other webhook and fires it.
 
-**Driver mode.** With `"driver": "auto"`, the rendered task becomes the objective of the unattended stage chain ([docs/auto.md](auto.md)) run in-process with the configured `cwd` as the driven checkout: plan, gate, execute, and lens chain on the machine signals, and the produced plan artifact persists to `triggers-state.json` so a re-fire after a crash resumes from the last plan (a crash loses one stage, not the chain). Without `driver`, the trigger fires a single reviewer-class delegation like any other webhook.
+**Driver mode.** With `"driver": "auto"`, the rendered task becomes the objective of the unattended stage chain ([docs/auto.md](auto.md)) run in-process with the configured `cwd` as the driven checkout: plan, gate, execute, and lens chain on the machine signals, and the produced plan artifact persists to `triggers-state.json` the moment the plan stage lands, so a re-fire after a crash resumes from the last plan (a crash loses one stage, not the chain). An optional `pr: { title }` block opens the pull request after a fully passing chain, `title` overriding the plan's H1 ([docs/auto.md](auto.md)). Without `driver`, the trigger fires a single reviewer-class delegation like any other webhook.
 
-**Serialization.** The auto chain pins process-global state, so a second fire for the same repo while one chain is in flight answers 409 (`auto already running`) and the sender re-fires later. Different repos run concurrently.
+**Serialization.** The auto chain pins a process-global state root (one per serve process, shared by every trigger), so a second fire while any chain is in flight answers 409 (`auto-already-running`) and the sender re-fires later. Chains serialize process-wide; per-repo concurrency is future scope with per-repo state roots.
 
 ### The end-to-end loop recipe
 
-A complete unattended loop wires three shipped pieces together: this trigger class drives the stage chain, the chain's `--pr` stage opens the pull request, and the auto-merge workflow consumes Bot-authored PRs whose fresh torus review carries `VERDICT: OKAY`. The trigger listens for the labeling event on issues, the task template hands the issue payload to the chain as the objective, and the driven checkout is a worktree the operator prepared:
+A complete unattended loop wires three shipped pieces together: this trigger class drives the stage chain, the trigger's `pr` block opens the pull request (the webhook path's `--pr` equivalent, with an optional `title` override), and the auto-merge workflow consumes Bot-authored PRs whose fresh torus review carries `VERDICT: OKAY`. The trigger listens for the labeling event on issues, the task template hands the issue payload to the chain as the objective, and the driven checkout is a worktree the operator prepared:
 
 ```json
 {
@@ -185,12 +185,13 @@ A complete unattended loop wires three shipped pieces together: this trigger cla
   "cwd": "/path/to/driven-worktree",
   "events": ["issues"],
   "actions": ["labeled"],
-  "driver": "auto"
+  "driver": "auto",
+  "pr": {}
  }
 }
 ```
 
-The label applied to the issue is the operator's opt-in signal (write-actors only can label); the chain plans, gates, executes in the driven worktree, and reviews; `--pr` opens the pull request; the auto-merge workflow takes it from there when the author identity satisfies its lane. See [docs/auto.md](auto.md) for the pull request stage and [docs/machine-contracts.md](machine-contracts.md) for the signals each stage consumes.
+The label applied to the issue is the operator's opt-in signal (write-actors only can label); the chain plans, gates, executes in the driven worktree, and reviews; the trigger's `pr` block opens the pull request; the auto-merge workflow takes it from there when the author identity satisfies its lane. See [docs/auto.md](auto.md) for the pull request stage and [docs/machine-contracts.md](machine-contracts.md) for the signals each stage consumes.
 
 ## ACP agent (`torus acp-agent`)
 

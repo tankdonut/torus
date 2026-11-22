@@ -947,8 +947,90 @@ test("a passing chain with pr config branches, pushes to the bare remote, and ca
 	const ghArgs = readFileSync(ghCaptured, "utf8");
 	assert.ok(ghArgs.includes("pr") && ghArgs.includes("create"), "gh pr create captured");
 	assert.ok(ghArgs.includes("--title"), "--title captured");
+	assert.ok(ghArgs.includes("--body"), "--body captured");
+	assert.ok(ghArgs.includes("--title Plan: pr plan"), "the plan's H1 is the default title");
 	const pushed = execFileSync("git", ["--git-dir", bare, "branch", "--list"], { encoding: "utf8" });
 	assert.ok(pushed.includes("torus/2026-01-01-pr-plan"), "branch pushed to the bare remote");
+	const pushedCommits = execFileSync(
+		"git",
+		["--git-dir", bare, "rev-list", "--count", "torus/2026-01-01-pr-plan"],
+		{ encoding: "utf8" },
+	).trim();
+	assert.equal(
+		pushedCommits,
+		"1",
+		"the clean tree skips the commit: the branch carries only the fixture's init commit",
+	);
+});
+
+test("the PR title resolves pr.title, then the plan H1, then the objective", async () => {
+	const S = mkdtempSync(path.join(tmpdir(), "auto-pr-title-"));
+	const fixture = path.join(S, "repo");
+	const bare = path.join(S, "origin.git");
+	mkdirSync(fixture, { recursive: true });
+	execFileSync("git", ["init", "-q", "--bare", bare]);
+	execFileSync("git", ["init", "-q", fixture]);
+	execFileSync("git", [
+		"-C",
+		fixture,
+		"-c",
+		"user.email=t@x",
+		"-c",
+		"user.name=t",
+		"commit",
+		"--allow-empty",
+		"-qm",
+		"init",
+	]);
+	execFileSync("git", ["-C", fixture, "remote", "add", "origin", bare]);
+
+	const ghDir = path.join(S, "ghbin");
+	mkdirSync(ghDir, { recursive: true });
+	const ghCaptured = path.join(S, "gh-args.txt");
+	writeFileSync(
+		path.join(ghDir, "gh"),
+		`#!/bin/sh\necho "$@" >> ${ghCaptured}\necho https://fake/pr/1\n`,
+	);
+	chmodSync(path.join(ghDir, "gh"), 0o755);
+
+	const h1Plan = path.join(S, "h1-plan.md");
+	writeFileSync(h1Plan, "# Plan: h1 title\n\ndone.\n", "utf8");
+	const noH1Plan = path.join(S, "no-h1-plan.md");
+	writeFileSync(noH1Plan, "no heading here\n\ndone.\n", "utf8");
+
+	const originalPath = process.env.PATH;
+	process.env.PATH = [ghDir, originalPath].join(path.delimiter);
+	try {
+		const override = await startAuto({
+			objective: "x",
+			planPath: h1Plan,
+			cwd: fixture,
+			stageTimeoutMs: 5000,
+			pr: { title: "Override wins" },
+			runStage: async (stage) => ({ ok: true, artifact: stage === "plan" ? h1Plan : undefined }),
+		});
+		assert.equal(override.ok, true, JSON.stringify(override));
+		const fallback = await startAuto({
+			objective: "the objective fallback",
+			planPath: noH1Plan,
+			cwd: fixture,
+			stageTimeoutMs: 5000,
+			pr: {},
+			runStage: async (stage) => ({ ok: true, artifact: stage === "plan" ? noH1Plan : undefined }),
+		});
+		assert.equal(fallback.ok, true, JSON.stringify(fallback));
+	} finally {
+		process.env.PATH = originalPath;
+	}
+	const ghArgs = readFileSync(ghCaptured, "utf8");
+	// The --body value carries embedded newlines, so count invocations by
+	// the subcommand pair instead of line count.
+	assert.equal((ghArgs.match(/pr create/g) ?? []).length, 2, "both chains opened a PR");
+	assert.ok(ghArgs.includes("--title Override wins"), "an explicit pr.title wins over the plan H1");
+	assert.ok(
+		ghArgs.includes("--title the objective fallback"),
+		"an H1-less plan falls back to the objective as the title",
+	);
 });
 
 test("without pr config the chain ends at lens and the report carries no pr field", async () => {

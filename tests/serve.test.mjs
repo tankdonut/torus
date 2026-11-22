@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import {
 	chmodSync,
@@ -1337,10 +1338,15 @@ test("a second fire for the same repo while the chain is in flight answers 409 n
 
 		const second = await postGithub(hookUrl, "pull_request", raw);
 		assert.equal(second.status, 409, "a second fire while in flight is refused");
-		await second.arrayBuffer();
-		const secondBody = await postGithub(hookUrl, "pull_request", raw);
-		assert.equal(secondBody.status, 409, "the lane stays closed while the chain runs");
-		await secondBody.arrayBuffer();
+		const secondBody = await second.json();
+		assert.equal(
+			secondBody.error,
+			"auto-already-running",
+			"the 409 names the overlap, not just the status",
+		);
+		const thirdWhileHanging = await postGithub(hookUrl, "pull_request", raw);
+		assert.equal(thirdWhileHanging.status, 409, "the lane stays closed while the chain runs");
+		assert.equal((await thirdWhileHanging.json()).error, "auto-already-running");
 
 		hang = false;
 		assert.ok(await pollUntil(() => record.length >= 4), "the chain settled after release");
@@ -1365,6 +1371,7 @@ test("a second fire for the same repo while the chain is in flight answers 409 n
 			"the resumed chain skips the plan stage",
 		);
 	} finally {
+		hang = false;
 		serve.setAutoRunnerForTesting(null);
 		clearServeConfig();
 		restoreStateEnv(prevStateDir, prevScratchDir);
@@ -1429,6 +1436,250 @@ test("a persisted plan with no completed work state resumes via planPath", async
 		serve.setAutoRunnerForTesting(null);
 		clearServeConfig();
 		restoreStateEnv(prevStateDir, prevScratchDir);
+	}
+});
+
+test("a crash after the plan stage persists the plan at plan completion and resumes at gate", async () => {
+	registry.resetRegistryForTesting();
+	freshTriggersState();
+	mkdirSync(GH_CHECKOUT, { recursive: true });
+	const prevStateDir = process.env.TORUS_STATE_DIR;
+	const prevScratchDir = process.env.TORUS_SCRATCH_DIR;
+	const planArtifact = path.join(HOME, "state", "plans", "2026-01-01-crash-resume-plan.md");
+	mkdirSync(path.dirname(planArtifact), { recursive: true });
+	writeFileSync(planArtifact, "# plan\n", "utf8");
+	const record = [];
+	let crashed = false;
+	serve.setAutoRunnerForTesting(async (stage, ctx) => {
+		record.push({ stage, ctx });
+		if (stage === "plan") return { ok: true, artifact: planArtifact };
+		if (!crashed) {
+			// The chain dies after the plan stage landed, before any work
+			// state completes: the crash-resume shape.
+			crashed = true;
+			await sleep(500);
+			throw new Error("simulated crash");
+		}
+		return { ok: true };
+	});
+	writeDriverServeConfig();
+	try {
+		const boot = await captureStdout(() => serve.startServe({ port: 0 }));
+		const started = boot.result;
+		openHandles.push(started);
+		const hookUrl = `http://127.0.0.1:${started.port}/hook/gh`;
+		const raw = JSON.stringify(githubPayload());
+
+		const first = await postGithub(hookUrl, "pull_request", raw);
+		assert.equal(first.status, 200, "the first fire starts the chain");
+		await first.arrayBuffer();
+		assert.ok(await pollUntil(() => record.some((r) => r.stage === "plan")), "the plan stage ran");
+		assert.ok(
+			await pollUntil(() => autoPlanState() === planArtifact),
+			"the plan artifact persists the moment the plan stage lands",
+		);
+
+		// The chain is still in flight when the plan has landed: a second
+		// fire answers 409 while the crash has not settled yet.
+		const second = await postGithub(hookUrl, "pull_request", raw);
+		assert.equal(second.status, 409, "the crashed chain still holds the lane");
+		await second.arrayBuffer();
+
+		let resumed = await postGithub(hookUrl, "pull_request", raw);
+		for (let i = 0; i < 100 && resumed.status === 409; i += 1) {
+			await resumed.arrayBuffer();
+			await sleep(50);
+			resumed = await postGithub(hookUrl, "pull_request", raw);
+		}
+		assert.equal(resumed.status, 200, "the lane reopens once the crash settles");
+		assert.equal((await resumed.json()).resumed, true, "the crashed chain resumes from the plan");
+		assert.ok(
+			await pollUntil(() => record.some((r) => r.stage === "lens")),
+			"the resumed chain runs to lens",
+		);
+		assert.equal(
+			record.filter((r) => r.stage === "plan").length,
+			1,
+			"the resumed chain skips the plan stage",
+		);
+		const lastGate = record.filter((r) => r.stage === "gate").pop();
+		assert.equal(lastGate.ctx.planPath, planArtifact, "the resume gates on the persisted plan");
+	} finally {
+		serve.setAutoRunnerForTesting(null);
+		clearServeConfig();
+		restoreStateEnv(prevStateDir, prevScratchDir);
+	}
+});
+
+test("driver fires serialize process-wide: a fire for a different repo also answers 409", async () => {
+	registry.resetRegistryForTesting();
+	freshTriggersState();
+	mkdirSync(GH_CHECKOUT, { recursive: true });
+	const prevStateDir = process.env.TORUS_STATE_DIR;
+	const prevScratchDir = process.env.TORUS_SCRATCH_DIR;
+	const record = [];
+	let hang = true;
+	serve.setAutoRunnerForTesting(async (stage) => {
+		record.push(stage);
+		while (hang) await sleep(20);
+		if (stage === "plan") {
+			return {
+				ok: true,
+				artifact: path.join(HOME, "state", "plans", "2026-01-01-crossrepo-plan.md"),
+			};
+		}
+		return { ok: true };
+	});
+	writeServe({
+		triggers: [
+			{
+				name: "gh-a",
+				agent: "builder",
+				task: "t",
+				webhook: { path: "/hook/gh-a" },
+				github: {
+					repo: "tankdonut/torus",
+					cwd: GH_CHECKOUT,
+					secret: GITHUB_SECRET,
+					events: ["pull_request"],
+					actions: ["opened", "synchronize"],
+					driver: "auto",
+				},
+			},
+			{
+				name: "gh-b",
+				agent: "builder",
+				task: "t",
+				webhook: { path: "/hook/gh-b" },
+				github: {
+					repo: "other/other",
+					cwd: GH_CHECKOUT,
+					secret: GITHUB_SECRET,
+					events: ["pull_request"],
+					actions: ["opened", "synchronize"],
+					driver: "auto",
+				},
+			},
+		],
+	});
+	try {
+		const boot = await captureStdout(() => serve.startServe({ port: 0 }));
+		const started = boot.result;
+		openHandles.push(started);
+		const rawA = JSON.stringify(githubPayload());
+		const rawB = JSON.stringify(githubPayload({ repository: { full_name: "other/other" } }));
+		const first = await postGithub(
+			`http://127.0.0.1:${started.port}/hook/gh-a`,
+			"pull_request",
+			rawA,
+		);
+		assert.equal(first.status, 200, "the first repo's fire starts the chain");
+		await first.arrayBuffer();
+		assert.ok(await pollUntil(() => record.length >= 1), "the chain's first stage started");
+
+		const second = await postGithub(
+			`http://127.0.0.1:${started.port}/hook/gh-b`,
+			"pull_request",
+			rawB,
+		);
+		assert.equal(second.status, 409, "a fire for a different repo serializes too");
+		const secondBody = await second.json();
+		assert.equal(
+			secondBody.error,
+			"auto-already-running",
+			"the 409 names the process-wide overlap",
+		);
+
+		hang = false;
+		let reopen = await postGithub(
+			`http://127.0.0.1:${started.port}/hook/gh-b`,
+			"pull_request",
+			rawB,
+		);
+		for (let i = 0; i < 100 && reopen.status === 409; i += 1) {
+			await reopen.arrayBuffer();
+			await sleep(50);
+			reopen = await postGithub(`http://127.0.0.1:${started.port}/hook/gh-b`, "pull_request", rawB);
+		}
+		assert.equal(reopen.status, 200, "the lane reopens for the other repo once the chain settles");
+	} finally {
+		hang = false;
+		serve.setAutoRunnerForTesting(null);
+		clearServeConfig();
+		restoreStateEnv(prevStateDir, prevScratchDir);
+	}
+});
+
+test("a driver fire with github.pr opens the PR with the configured title override", async () => {
+	registry.resetRegistryForTesting();
+	freshTriggersState();
+	const prevStateDir = process.env.TORUS_STATE_DIR;
+	const prevScratchDir = process.env.TORUS_SCRATCH_DIR;
+	// The PR stage needs a driven repo with an origin to push to.
+	const bare = path.join(HOME, "pr-bare.git");
+	execFileSync("git", ["init", "-q", GH_CHECKOUT]);
+	execFileSync("git", ["init", "-q", "--bare", bare]);
+	writeFileSync(path.join(GH_CHECKOUT, "pr-fixture.txt"), "one\n");
+	execFileSync("git", ["-C", GH_CHECKOUT, "add", "-A"]);
+	execFileSync("git", [
+		"-C",
+		GH_CHECKOUT,
+		"-c",
+		"user.email=t@x",
+		"-c",
+		"user.name=t",
+		"commit",
+		"-qm",
+		"init",
+	]);
+	execFileSync("git", ["-C", GH_CHECKOUT, "remote", "add", "origin", bare]);
+
+	const ghDir = path.join(HOME, "ghbin");
+	mkdirSync(ghDir, { recursive: true });
+	const ghCaptured = path.join(HOME, "gh-args.txt");
+	writeFileSync(
+		path.join(ghDir, "gh"),
+		`#!/bin/sh\necho "$@" >> ${ghCaptured}\necho https://fake/pr/1\n`,
+	);
+	chmodSync(path.join(ghDir, "gh"), 0o755);
+
+	const planArtifact = path.join(HOME, "state", "plans", "2026-01-01-webhook-pr-plan.md");
+	mkdirSync(path.dirname(planArtifact), { recursive: true });
+	writeFileSync(planArtifact, "# Plan: webhook pr plan\n\ndone.\n", "utf8");
+	const record = [];
+	serve.setAutoRunnerForTesting(async (stage) => {
+		record.push(stage);
+		if (stage === "plan") return { ok: true, artifact: planArtifact };
+		return { ok: true };
+	});
+	writeGithubServeConfig({ driver: "auto", pr: { title: "Webhook override title" } });
+	const originalPath = process.env.PATH;
+	process.env.PATH = [ghDir, originalPath].join(path.delimiter);
+	try {
+		const boot = await captureStdout(() => serve.startServe({ port: 0 }));
+		const started = boot.result;
+		openHandles.push(started);
+		const hookUrl = `http://127.0.0.1:${started.port}/hook/gh`;
+		const raw = JSON.stringify(githubPayload());
+
+		const res = await postGithub(hookUrl, "pull_request", raw);
+		assert.equal(res.status, 200, "the driver fire is acknowledged");
+		await res.arrayBuffer();
+		assert.ok(
+			await pollUntil(() => existsSync(ghCaptured)),
+			"the chain's PR stage ran gh pr create",
+		);
+		const ghArgs = readFileSync(ghCaptured, "utf8");
+		assert.ok(
+			ghArgs.includes("--title Webhook override title"),
+			"the config title override reaches gh",
+		);
+		assert.doesNotMatch(ghArgs, /--title Plan: webhook pr plan/, "the override beats the plan H1");
+	} finally {
+		serve.setAutoRunnerForTesting(null);
+		clearServeConfig();
+		restoreStateEnv(prevStateDir, prevScratchDir);
+		process.env.PATH = originalPath;
 	}
 });
 
