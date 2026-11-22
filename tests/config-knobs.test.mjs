@@ -11,6 +11,9 @@ import { after, test } from "node:test";
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-knobs-test-"));
 process.env.HOME = HOME;
 process.env.TORUS_HOME = HOME;
+// keep osnotify's session-bus transport off the real desktop so the shim
+// below stays the toast path under test
+process.env.DBUS_SESSION_BUS_ADDRESS = "unix:path=/tmp/torus-test-absent-bus";
 
 const BIN = path.join(HOME, "bin");
 const CALLS = path.join(HOME, "calls");

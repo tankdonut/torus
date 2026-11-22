@@ -4,13 +4,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 
-// The spawn layer, against a fake notify-send: HOME is redirected so the
-// desktop-entry write lands in tmp, and a shim on PATH answers the --help
-// capability probe, records argv, and prints a chainable id. Summaries
-// containing fail-hard / say-nothing steer the shim into the two
-// null-return branches. osNotify is async, so every call is awaited.
+// The spawn fallback, against a fake notify-send: HOME is redirected so the
+// desktop-entry write lands in tmp, a shim on PATH answers the --help
+// capability probe, records argv, and prints a chainable id, and the session
+// bus address points at a socket nothing serves so osnotify's transport
+// disables itself and every call lands here. Summaries containing fail-hard /
+// say-nothing steer the shim into the two null-return branches. osNotify is
+// async, so every call is awaited.
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-osnotify-spawn-test-"));
 process.env.HOME = HOME;
+process.env.DBUS_SESSION_BUS_ADDRESS = "unix:path=/tmp/torus-test-absent-bus";
 
 const BIN = path.join(HOME, "bin");
 const CALLS = path.join(HOME, "calls");
@@ -46,6 +49,21 @@ test("TORUS_NOTIFY=0 short-circuits before any spawn", async () => {
 	process.env["TORUS_NOTIFY"] = "0";
 	assert.equal(await osnotify.osNotify(TOAST), null);
 	assert.equal(existsSync(CALLS), false);
+});
+
+test("the desktop entry carries a resolvable Exec and gets regenerated", async () => {
+	process.env["TORUS_NOTIFY"] = "1";
+	const entry = path.join(HOME, ".local", "share", "applications", "torus.desktop");
+	mkdirSync(path.dirname(entry), { recursive: true });
+	// an entry from before the Exec fix: GLib drops it, ungrouping every toast
+	writeFileSync(
+		entry,
+		"[Desktop Entry]\nType=Application\nName=torus\nExec=torus\nNoDisplay=true\n",
+	);
+	await osnotify.osNotify(TOAST);
+	const text = readFileSync(entry, "utf8");
+	assert.ok(text.includes("Exec=/usr/bin/true"), `stale Exec survived: ${text}`);
+	assert.ok(text.includes("NoDisplay=true"));
 });
 
 test("osNotify returns the printed id, forwards replace-id, ensures the desktop entry", async () => {

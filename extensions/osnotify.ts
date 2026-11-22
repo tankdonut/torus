@@ -8,18 +8,21 @@
  * so GNOME groups them under a single source; a delegation's finishing toast
  * replaces its RUNNING_LATE_MS "still running" toast in place via
  * replaces-id; low-value toasts are transient (banner only, no tray pile-up)
- * while failures and monitor changes stay resident. Silently no-ops where
- * notify-send is absent; TORUS_NOTIFY=0 opts out entirely.
+ * while failures and monitor changes stay resident. Sends over a persistent
+ * session-bus connection (osnotify-dbus) so GNOME keeps the grouped source
+ * alive, falling back to notify-send where no bus is reachable. Silently
+ * no-ops without either path; TORUS_NOTIFY=0 opts out entirely.
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { runChild } from "./child-run.js";
 import { knobBoolean, parseZeroDisables } from "./config/knobs.js";
 import { formatDuration, formatTokens, shortModel, statusGlyphText } from "./fleet/theme-kit.js";
 import { MARKER } from "./markers.js";
+import { dbusNotify } from "./osnotify-dbus.js";
 import { previewLine } from "./text.js";
 
 /** Runs shorter than this never announce their start; completion always toasts. */
@@ -206,13 +209,16 @@ export function toastArgs(toast: Toast, replaceId?: number, canChain = true): st
 /**
  * GNOME groups toasts by desktop-entry identity, so all torus notifications
  * need one installed source entry. NoDisplay keeps it out of app grids while
- * remaining a valid notification source; written once, never overwritten.
+ * remaining a valid notification source. Exec must stay resolvable: GLib
+ * drops desktop entries whose Exec cannot be found on PATH at parse time,
+ * which silently ungroups every toast; the target is a no-op because a torus
+ * notification has nothing to open.
  */
 const DESKTOP_ENTRY = `[Desktop Entry]
 Type=Application
 Name=torus
 Comment=torus fleet delegation and monitor notifications
-Exec=torus
+Exec=/usr/bin/true
 Icon=utilities-terminal
 NoDisplay=true
 `;
@@ -224,7 +230,15 @@ function ensureDesktopEntry(): void {
 	const target = path.join(homedir(), ".local", "share", "applications", "torus.desktop");
 	try {
 		mkdirSync(path.dirname(target), { recursive: true });
-		if (!existsSync(target)) writeFileSync(target, DESKTOP_ENTRY, { mode: 0o644 });
+		let current: string | null = null;
+		try {
+			current = readFileSync(target, "utf8");
+		} catch {
+			current = null;
+		}
+		// regenerate on mismatch: entries written before the Exec fix carry an
+		// unresolvable command and get dropped by GLib, ungrouping every toast
+		if (current !== DESKTOP_ENTRY) writeFileSync(target, DESKTOP_ENTRY, { mode: 0o644 });
 	} catch {
 		// unwritable HOME — grouping falls back to the plain app name
 	}
@@ -234,8 +248,9 @@ function ensureDesktopEntry(): void {
  * Fire a toast without blocking the event loop; resolves to the server
  * notification id when chaining is supported, so a later toast can replace
  * this one in place. replaceId may be the promise from an earlier call —
- * thenable ids are awaited before the argv is built, so a stored result can
- * be passed straight through. A failed spawn or a 3s timeout resolves null.
+ * thenable ids are awaited before either transport builds its message, so a
+ * stored result can be passed straight through and replaces-id chaining keeps
+ * working across the async boundary. A failed send resolves null.
  */
 export async function osNotify(
 	toast: Toast,
@@ -243,16 +258,24 @@ export async function osNotify(
 ): Promise<number | null> {
 	if (!knobBoolean("TORUS_NOTIFY", "notify", "enabled", true, parseZeroDisables)) return null;
 	ensureDesktopEntry();
-	const canChain = canChainIds();
-	// callers store an earlier toast's result and pass it back here unchanged;
-	// a thenable id is awaited (null resolves to no replacement) before the argv
-	// is built, so -r chaining keeps working across the async boundary.
 	let chainId: number | undefined;
 	if (typeof replaceId === "number") {
 		chainId = replaceId;
 	} else if (replaceId !== undefined) {
 		chainId = (await replaceId) ?? undefined;
 	}
+	const viaBus = await dbusNotify({
+		summary: toast.summary,
+		body: toast.body,
+		urgency: toast.urgency,
+		expireMs: toast.expireMs,
+		transient: toast.transient,
+		replaceId: chainId,
+	});
+	if (viaBus !== null) return viaBus;
+	// fallback: notify-send's short-lived sender cannot keep a grouped GNOME
+	// source alive, but its banner still lands on desktops without a usable bus
+	const canChain = canChainIds();
 	const run = await runChild("notify-send", toastArgs(toast, chainId, canChain), {
 		timeoutMs: 3000,
 	});
