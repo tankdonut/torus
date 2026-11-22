@@ -161,7 +161,10 @@ test("applyHashlineEdits: beyond-EOF anchor reported as mismatch", () => {
 	const ref = `9#${computeLineHash("only")}`;
 	const out = applyHashlineEdits(lines, [{ op: "replace", pos: ref, lines: ["x"] }]);
 	assert.equal(out.ok, false);
-	if (!out.ok) assert.match(out.error, /beyond end of file/);
+	if (!out.ok) {
+		assert.match(out.error, /beyond end of file/);
+		assert.match(out.error, /that content is now at line 1/);
+	}
 });
 
 test("normalizeEdits: infers missing op and copies inputs", () => {

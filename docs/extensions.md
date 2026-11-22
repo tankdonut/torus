@@ -253,11 +253,11 @@ Anchored editing: read outputs carry per-line anchors, and edits address lines b
 |---|---|
 | `hashline_edit` | Batch edits by anchor: replace/append/prepend ops, ranges, EOF/BOF insertion, delete, rename, opt-in `rebase` |
 
-- **Hooks:** `tool_result`: rewrite read outputs so every line carries a `{line}#{hash}|` anchor
+- **Hooks:** `tool_result`: rewrite read outputs so every line carries a `{line}#{hash}|` anchor; append anchor-void notices to native `edit`/`write` and write-looking bash results
 - **Env:** `TORUS_HASHLINE=0` disables; `TORUS_FMT_CMD` = formatter command run after successful edits
 - **Interactions:** guards' write-overwrite block and recovery guidance point here by name
 
-`hashline_edit` applies batch edits with staleness detection: a hash mismatch self-heals by reporting current anchors, or remaps moved lines via the opt-in `rebase` flag. Reversed `pos`/`end` auto-swaps, and a missing `op` is inferred. Success returns a full-file anchor map, and successful native `edit`/`write` results carry an anchor-void notice so stale anchors are not reused.
+`hashline_edit` applies batch edits with staleness detection: a hash mismatch self-heals by classifying each bad anchor (moved to a unique line, ambiguous, or not from this file) and reporting current anchors, or remaps moved lines via the opt-in `rebase` flag. Reversed `pos`/`end` auto-swaps, a missing `op` is inferred, and inserts anchor at `pos` or `end`. `lines` is required on every op; `null`/`[]` with replace deletes the range. Read anchors always carry true file line numbers (offset reads number from their offset; the read tool's continuation notices stay bare), a uniform indent base is restored and flagged, and success returns per-edit regions plus a full-file anchor map in final line coordinates. Successful native `edit`/`write` results and bash results whose command plausibly writes files carry an anchor-void notice so stale anchors are not reused.
 
 ### `interactive`
 

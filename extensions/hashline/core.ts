@@ -40,10 +40,12 @@ export function normalizeEdits(raw: RawHashlineEdit[]): HashlineEditOp[] {
 
 export interface AppliedEdit {
 	label: string;
+	/** Final line coordinates in the resulting file. */
 	from: number;
 	to: number;
 	removed: string[];
 	added: string[];
+	indentAdjusted?: boolean;
 }
 
 export interface RebaseReport {
@@ -79,8 +81,8 @@ export function anchoredLine(number: number, content: string): string {
 	return `${number}#${computeLineHash(content)}|${content}`;
 }
 
-export function anchorAll(lines: string[]): string[] {
-	return lines.map((content, index) => anchoredLine(index + 1, content));
+export function anchorAll(lines: string[], startLine = 1): string[] {
+	return lines.map((content, index) => anchoredLine(startLine + index, content));
 }
 
 export function stripAnchorPrefix(line: string): string {
@@ -98,16 +100,48 @@ export function normalizeSubmittedLines(raw: string[] | string | null | undefine
 	return arr.map((line) => stripAnchorPrefix(line).replace(/^[+-] /, ""));
 }
 
-function restoreIndent(removed: string[], submitted: string[]): string[] {
-	if (submitted.length === 0 || removed.length === 0) return submitted;
-	if (!submitted.every((line) => line.length === 0 || !/^\s/.test(line))) return submitted;
-	const indents = removed
-		.filter((line) => /^\s/.test(line))
-		.map((line) => (line.match(/^\s*/) ?? [""])[0] ?? "");
-	if (indents.length === 0) return submitted;
+function leadingWs(line: string): string {
+	return (line.match(/^\s*/) ?? [""])[0] ?? "";
+}
+
+function commonPrefix(a: string, b: string): string {
+	let n = 0;
+	while (n < a.length && n < b.length && a[n] === b[n]) n += 1;
+	return a.slice(0, n);
+}
+
+interface IndentOutcome {
+	lines: string[];
+	adjusted: boolean;
+}
+
+/**
+ * Rebase submitted lines onto the removed block's uniform indent base. When
+ * the submission's own common leading-whitespace prefix differs from the
+ * removed base (spaces instead of tabs, lost nesting, no indent at all), the
+ * prefix is swapped for the base so relative nesting survives. Submissions
+ * already carrying the base, or blocks with no uniform removed base, pass
+ * through untouched.
+ */
+function restoreIndent(removed: string[], submitted: string[]): IndentOutcome {
+	if (submitted.length === 0 || removed.length === 0) return { lines: submitted, adjusted: false };
+	const indents = removed.filter((line) => /^\s/.test(line)).map(leadingWs);
+	if (indents.length === 0) return { lines: submitted, adjusted: false };
 	const base = indents[0] ?? "";
-	if (base.length === 0 || !indents.every((indent) => indent === base)) return submitted;
-	return submitted.map((line) => (line.length === 0 ? line : base + line));
+	if (base.length === 0 || !indents.every((indent) => indent === base))
+		return { lines: submitted, adjusted: false };
+	const nonEmpty = submitted.filter((line) => line.length > 0);
+	if (nonEmpty.length === 0) return { lines: submitted, adjusted: false };
+	let submittedBase = leadingWs(nonEmpty[0] ?? "");
+	for (const line of nonEmpty.slice(1))
+		submittedBase = commonPrefix(submittedBase, leadingWs(line));
+	if (submittedBase === base) return { lines: submitted, adjusted: false };
+	return {
+		lines: submitted.map((line) =>
+			line.length === 0 ? line : base + line.slice(submittedBase.length),
+		),
+		adjusted: true,
+	};
 }
 
 interface Span {
@@ -124,10 +158,23 @@ function overlap(a: Span, b: Span): boolean {
 	return a.start <= b.end && b.start <= a.end;
 }
 
+/** Index every line hash to its 1-based line numbers, in one pass. */
+function indexHashes(lines: string[]): Map<string, number[]> {
+	const index = new Map<string, number[]>();
+	for (let i = 0; i < lines.length; i += 1) {
+		const hash = computeLineHash(lines[i] ?? "");
+		const hits = index.get(hash);
+		if (hits === undefined) index.set(hash, [i + 1]);
+		else hits.push(i + 1);
+	}
+	return index;
+}
+
 /**
  * Verify anchors against current content; on drift, produce a mismatch error
- * with corrected anchors for the requested lines (±3 context) so the caller
- * can self-heal without a full re-read.
+ * that classifies each bad anchor (moved to a unique line, ambiguous, or not
+ * present anywhere in the file) and shows corrected anchors for the requested
+ * lines (±3 context) so the caller can self-heal without a full re-read.
  */
 export function verifyAnchors(
 	lines: string[],
@@ -135,19 +182,41 @@ export function verifyAnchors(
 ): string | null {
 	const problems: string[] = [];
 	const seen = new Set<string>();
+	let index: Map<string, number[]> | null = null;
 	for (const { ref, at } of refs) {
 		if (seen.has(ref)) continue;
 		seen.add(ref);
 		const current = lines[at.line - 1];
 		if (current === undefined) {
+			index ??= indexHashes(lines);
+			const hits = index.get(at.hash) ?? [];
+			const where =
+				hits.length === 1
+					? `; that content is now at line ${hits[0]}`
+					: hits.length > 1
+						? `; that content is now at lines ${hits.join(", ")}`
+						: "";
 			problems.push(
-				`  ${ref}: line ${at.line} is beyond end of file (file has ${lines.length} lines)`,
+				`  ${ref}: line ${at.line} is beyond end of file (file has ${lines.length} lines)${where}`,
 			);
 			continue;
 		}
 		const actual = computeLineHash(current);
 		if (actual !== at.hash) {
-			problems.push(`  ${ref}: expected content hash changed (file now ${at.line}#${actual})`);
+			index ??= indexHashes(lines);
+			const hits = index.get(at.hash) ?? [];
+			if (hits.length === 1)
+				problems.push(
+					`  ${ref}: content moved — now at line ${hits[0]} (file has ${at.line}#${actual}); retry with rebase:true or a fresh anchor`,
+				);
+			else if (hits.length > 1)
+				problems.push(
+					`  ${ref}: content appears at lines ${hits.join(", ")} — re-read and anchor the line you mean (file has ${at.line}#${actual})`,
+				);
+			else
+				problems.push(
+					`  ${ref}: no line in this file carries that hash — anchors must be copied verbatim from a read of this file (line ${at.line} is now ${at.line}#${actual})`,
+				);
 		}
 	}
 	if (problems.length === 0) return null;
@@ -165,7 +234,7 @@ export function verifyAnchors(
 		.sort((a, b) => a - b)
 		.map((n) => `  ${anchoredLine(n, lines[n - 1] ?? "")}`)
 		.join("\n");
-	return `>>> mismatch — file changed since your read; your submitted anchors are VOID.\n${problems.join("\n")}\nCurrent anchors:\n${anchored}\nCopy the updated LINE#ID tags from above (or re-read the file) and retry — re-sending the same stale anchors will fail again.`;
+	return `>>> mismatch — the submitted LINE#ID tags do not match the current file (they are VOID).\n${problems.join("\n")}\nCurrent anchors:\n${anchored}\nCopy fresh tags from the Current anchors block above (or re-read the file; offset reads carry true line numbers) and retry. For anchors marked “moved”, rebase:true remaps them automatically.`;
 }
 
 /**
@@ -181,20 +250,17 @@ function tryRebase(
 ): { remap: Map<string, LineRef>; moved: RebaseReport[] } | null {
 	const remap = new Map<string, LineRef>();
 	const moved: RebaseReport[] = [];
-	const index = new Map<string, { firstLine: number; matches: number }>();
-	for (let i = 0; i < lines.length; i += 1) {
-		const hash = computeLineHash(lines[i] ?? "");
-		const entry = index.get(hash);
-		if (entry === undefined) index.set(hash, { firstLine: i + 1, matches: 1 });
-		else entry.matches += 1;
-	}
+	const index = indexHashes(lines);
 	for (const { ref, at } of refs) {
 		const current = lines[at.line - 1];
 		if (current !== undefined && computeLineHash(current) === at.hash) continue;
-		const entry = index.get(at.hash);
-		if (entry === undefined || entry.matches !== 1) return null;
-		remap.set(ref, { line: entry.firstLine, hash: at.hash });
-		moved.push({ ref, fromLine: at.line, toLine: entry.firstLine });
+		if (remap.has(ref)) continue;
+		const hits = index.get(at.hash);
+		if (hits === undefined || hits.length !== 1) return null;
+		const toLine = hits[0];
+		if (toLine === undefined) return null;
+		remap.set(ref, { line: toLine, hash: at.hash });
+		moved.push({ ref, fromLine: at.line, toLine });
 	}
 	return { remap, moved };
 }
@@ -202,12 +268,15 @@ function tryRebase(
 /**
  * Apply a batch of hashline operations against the ORIGINAL snapshot,
  * bottom-up (highest line first) so earlier ops do not shift later anchors.
- * Replace spans must not overlap; insertions may not land strictly inside a
- * replaced span. Boundary-echo dedup drops submitted lines that exactly
- * duplicate the surviving neighbors of a replace range. Reversed pos/end is
- * normalized by swapping (the span is direction-agnostic). With
+ * Every op requires `lines` (null/[] with replace deletes the range). Inserts
+ * anchor at pos or end (one line, not both). Replace spans must not overlap;
+ * insertions may not land strictly inside a replaced span. Boundary-echo
+ * dedup drops submitted lines that exactly duplicate the surviving neighbors
+ * of a replace range; a uniform indent base is restored and flagged. Reversed
+ * pos/end is normalized by swapping (the span is direction-agnostic). With
  * options.rebase, mismatched anchors are remapped to the unique line that
- * still carries their content hash instead of failing.
+ * still carries their content hash instead of failing. AppliedEdit from/to
+ * carry FINAL coordinates in the resulting file.
  */
 export function applyHashlineEdits(
 	lines: string[],
@@ -220,6 +289,22 @@ export function applyHashlineEdits(
 	for (let op of ops) {
 		if (op.op === "replace" && !op.pos)
 			return { ok: false, error: "replace requires pos", mismatch: false };
+		if (op.lines === undefined)
+			return {
+				ok: false,
+				error: `${op.op} needs "lines" — a string or string[] (null or [] with replace deletes the range)`,
+				mismatch: false,
+			};
+		if (op.op !== "replace") {
+			const p0 = op.pos ? parseLineRef(op.pos) : null;
+			const e0 = op.end ? parseLineRef(op.end) : null;
+			if (p0 && e0 && p0.line !== e0.line)
+				return {
+					ok: false,
+					error: `${op.op} inserts at ONE anchor line — pos (${op.pos}) and end (${op.end}) name different lines; keep the anchor you mean`,
+					mismatch: false,
+				};
+		}
 		if (op.pos && op.end) {
 			const p = parseLineRef(op.pos);
 			const e = parseLineRef(op.end);
@@ -258,6 +343,18 @@ export function applyHashlineEdits(
 				};
 			}
 		}
+		// A remap can land range endpoints in inverted order (the anchors moved
+		// apart, not together), or pull a same-line insert's pos and end onto
+		// different lines; either way the span is not the one the caller meant,
+		// and splicing it corrupts silently. Abort the rebase and let the
+		// mismatch error's moved-line report guide a fresh read.
+		for (const op of normalized) {
+			const p = op.pos ? parseLineRef(op.pos) : null;
+			const e = op.end ? parseLineRef(op.end) : null;
+			if (p && e && e.line < p.line) return { ok: false, error: mismatch, mismatch: true };
+			if (p && e && op.op !== "replace" && p.line !== e.line)
+				return { ok: false, error: mismatch, mismatch: true };
+		}
 	}
 
 	const parsed: Array<{
@@ -271,6 +368,11 @@ export function applyHashlineEdits(
 		end: op.end ? parseLineRef(op.end) : null,
 		newLines: normalizeSubmittedLines(op.lines),
 	}));
+
+	for (const p of parsed) {
+		if (p.op.op !== "replace" && p.newLines.length === 0)
+			return { ok: false, error: `${p.op.op} needs at least one line`, mismatch: false };
+	}
 
 	const replaceSpans = parsed
 		.filter((p): p is typeof p & { pos: LineRef } => p.op.op === "replace" && p.pos !== null)
@@ -288,34 +390,43 @@ export function applyHashlineEdits(
 			}
 		}
 	}
+	const anchorOf = (p: (typeof parsed)[number]): number => {
+		const anchor = p.pos ?? p.end;
+		if (p.op.op === "replace") return p.pos?.line ?? 0;
+		// +0.25/-0.5 keep an append-after-N and a prepend-before-(N+1) at the
+		// same boundary on distinct anchors, so application order and final
+		// coordinates stay well-defined for the pair.
+		if (p.op.op === "append") return anchor ? anchor.line + 0.25 : Number.MAX_SAFE_INTEGER;
+		return anchor ? anchor.line - 0.5 : 0;
+	};
+
 	for (const p of parsed) {
-		if (
-			p.op.op !== "replace" &&
-			p.pos &&
-			replaceSpans.some((s) => p.pos && p.pos.line > s.start && p.pos.line < s.end)
-		) {
-			return {
-				ok: false,
-				error: "insertion anchor is strictly inside a replaced range in the same call",
-				mismatch: false,
-			};
+		if (p.op.op !== "replace") {
+			const at = anchorOf(p);
+			if (replaceSpans.some((s) => at > s.start && at < s.end)) {
+				return {
+					ok: false,
+					error: "insertion anchor is strictly inside a replaced range in the same call",
+					mismatch: false,
+				};
+			}
 		}
 	}
 
 	const result = [...lines];
 	const applied: AppliedEdit[] = [];
-	const order = [...parsed].sort((a, b) => {
-		const al = a.pos?.line ?? (a.op.op === "append" ? Number.MAX_SAFE_INTEGER : 0);
-		const bl = b.pos?.line ?? (b.op.op === "append" ? Number.MAX_SAFE_INTEGER : 0);
-		return bl - al;
-	});
+	const appliedAnchors: number[] = [];
+	const order = [...parsed]
+		.map((p) => ({ p, anchor: anchorOf(p) }))
+		.sort((a, b) => b.anchor - a.anchor);
 
-	for (const p of order) {
+	for (const { p, anchor } of order) {
 		if (p.op.op === "replace" && p.pos) {
 			const start = p.pos.line;
 			const end = p.end?.line ?? p.pos.line;
 			const removed = result.slice(start - 1, end);
-			let newLines = restoreIndent(removed, p.newLines);
+			const indent = restoreIndent(removed, p.newLines);
+			let newLines = indent.lines;
 			const before = result[start - 2];
 			const after = result[end];
 			while (newLines.length > 0 && before !== undefined && newLines[0] === before)
@@ -329,19 +440,22 @@ export function applyHashlineEdits(
 				to: start + newLines.length - 1,
 				removed,
 				added: [...newLines],
+				...(indent.adjusted ? { indentAdjusted: true } : {}),
 			});
+			appliedAnchors.push(anchor);
 		} else if (p.op.op === "append") {
-			const at = p.pos?.line ?? result.length;
+			const at = p.pos?.line ?? p.end?.line ?? result.length;
 			result.splice(at, 0, ...p.newLines);
 			applied.push({
-				label: `insert after ${at}`,
+				label: at === 0 ? "insert at 1" : `insert after ${at}`,
 				from: at + 1,
 				to: at + p.newLines.length,
 				removed: [],
 				added: [...p.newLines],
 			});
+			appliedAnchors.push(anchor);
 		} else if (p.op.op === "prepend") {
-			const at = p.pos?.line ?? 1;
+			const at = p.pos?.line ?? p.end?.line ?? 1;
 			result.splice(at - 1, 0, ...p.newLines);
 			applied.push({
 				label: `insert before ${at}`,
@@ -350,7 +464,35 @@ export function applyHashlineEdits(
 				removed: [],
 				added: [...p.newLines],
 			});
+			appliedAnchors.push(anchor);
 		}
+	}
+
+	// applied[] is in application order (descending anchor, ties keep
+	// submission order). An edit's final position shifts by the net delta of
+	// edits applied after it that landed above it: strictly-above edits (a
+	// smaller anchor), and same-anchor edits that spliced at or before the
+	// earlier edit's splice index (a later splice at the same index lands on
+	// top — stacked anchorless prepends; a strictly-larger index lands below,
+	// like stacked EOF appends). Rewrite from/to into final coordinates so
+	// region displays and anchor maps share one frame.
+	const appliedFrom = applied.map((e) => e.from);
+	for (let i = applied.length - 1; i >= 0; i -= 1) {
+		const edit = applied[i];
+		if (!edit) continue;
+		const myAnchor = appliedAnchors[i] ?? Number.MAX_SAFE_INTEGER;
+		let shift = 0;
+		for (let k = applied.length - 1; k > i; k -= 1) {
+			const above = applied[k];
+			if (!above) continue;
+			const anchorK = appliedAnchors[k] ?? 0;
+			const landedAbove =
+				anchorK < myAnchor ||
+				(anchorK === myAnchor && (appliedFrom[k] ?? 0) <= (appliedFrom[i] ?? 0));
+			if (landedAbove) shift += above.added.length - above.removed.length;
+		}
+		edit.from += shift;
+		edit.to += shift;
 	}
 
 	return moved?.length
