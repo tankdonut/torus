@@ -27,7 +27,16 @@
 		"rules": {
 			"preset": "recommended",
 			"complexity": {
-				"useLiteralKeys": "off"
+				"useLiteralKeys": "off",
+				"useOptionalChain": "error"
+			},
+			"correctness": {
+				"noUnusedFunctionParameters": "error",
+				"noUnusedImports": "error",
+				"noUnusedVariables": "error"
+			},
+			"style": {
+				"useTemplate": "error"
 			},
 			"suspicious": {
 				"noControlCharactersInRegex": "off"
