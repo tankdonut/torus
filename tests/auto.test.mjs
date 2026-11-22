@@ -453,7 +453,7 @@ test("the gate prompt carries the no-questions directive and the absolute gate-r
 	assert.match(prompt, /UNATTENDED one-shot run: there is no user to answer questions/);
 	assert.ok(
 		prompt.includes(
-			path.join(stateDir, "plans", "gates", "2026-01-01-gate-plan.gate.md") + " (absolute path)",
+			`${path.join(stateDir, "plans", "gates", "2026-01-01-gate-plan.gate.md")} (absolute path)`,
 		),
 		`prompt must carry the absolute gate-report path: ${prompt}`,
 	);
@@ -931,7 +931,6 @@ test("a passing chain with pr config branches, pushes to the bare remote, and ca
 		"# Plan: pr plan\n\n## Stopping condition\n\ndone.\n\n### Wave 1\n\n- [ ] 1. task\n  Acceptance: true\n\n### Final verification wave\n\n- [ ] F1. check\n",
 	);
 
-	const stages = [];
 	const originalPath = process.env.PATH;
 	process.env.PATH = [ghDir, originalPath].join(path.delimiter);
 	try {
@@ -944,7 +943,7 @@ test("a passing chain with pr config branches, pushes to the bare remote, and ca
 			runStage: async (stage) => ({ ok: true, artifact: stage === "plan" ? planPath : undefined }),
 		});
 		assert.equal(report.ok, true);
-		assert.ok(report.pr && report.pr.ok, "pr stage ok");
+		assert.ok(report.pr?.ok, "pr stage ok");
 		assert.ok((report.pr.url ?? "").startsWith("https://"), "pr url captured");
 	} finally {
 		process.env.PATH = originalPath;

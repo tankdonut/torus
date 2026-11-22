@@ -854,7 +854,7 @@ function subscribeSandboxHandlers(pi: ExtensionAPI): void {
 		return changed ? { content } : undefined;
 	});
 
-	pi.on("session_shutdown", (_event, ctx) => {
+	pi.on("session_shutdown", (_event, _ctx) => {
 		setSandboxStatus(undefined);
 		const relay = activeSignRelay;
 		activeSignRelay = null;

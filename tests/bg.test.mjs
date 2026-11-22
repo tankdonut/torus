@@ -121,7 +121,7 @@ test("timeoutSec escalates a stuck command and reports a timeout", async () => {
 }, 15_000);
 
 test("names validate, duplicates refuse, and the cap holds", async () => {
-	const customs = captureCustoms();
+	captureCustoms();
 	assert.notEqual(monitor.validateBgName("Bad Name"), null);
 	assert.notEqual(monitor.validateBgName("x".repeat(25)), null);
 

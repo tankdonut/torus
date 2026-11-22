@@ -317,6 +317,16 @@ pre code {
 	line-height: 1.5;
 }
 
+ul,
+ol {
+	margin: 1em 0;
+	padding-left: 1.5em;
+}
+
+li {
+	margin: 0.35em 0;
+}
+
 .toc ul {
 	margin: 0;
 	padding: 0;
@@ -407,16 +417,6 @@ a.cite:focus-visible {
 	min-width: 0;
 	margin-inline: auto;
 	padding: 2.3rem var(--pad) 0;
-}
-
-ul,
-ol {
-	margin: 1em 0;
-	padding-left: 1.5em;
-}
-
-li {
-	margin: 0.35em 0;
 }
 
 li::marker {

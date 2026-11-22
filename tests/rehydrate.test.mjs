@@ -97,12 +97,12 @@ test("onDelegationUsageChange fires for rehydrated records with their logged cos
 	const file = path.join(PROJECT_LOGS, `rehy-${STAMP}-obs.log`);
 	writeFileSync(
 		file,
-		[
+		`${[
 			'<torus:start agent="build" model="zai/glm-5.3" ts="2026-09-30T00:00:00.000Z" parent="parent-obs" />',
 			"--- turn 2 (120/480 tok · $0.0450) ---",
 			"did the thing",
 			'<torus:done session="sess-obs" ts="2026-09-30T00:01:00.000Z" />',
-		].join("\n") + "\n",
+		].join("\n")}\n`,
 		"utf8",
 	);
 	const seen = [];

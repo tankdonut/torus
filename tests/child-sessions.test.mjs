@@ -33,7 +33,7 @@ mkdirSync(defaultProject, { recursive: true });
 const childFile = path.join(childRoot, `2026-11-02T00-00-00-000Z_${CHILD_ID}.jsonl`);
 writeFileSync(
 	childFile,
-	[
+	`${[
 		JSON.stringify({
 			type: "session",
 			id: CHILD_ID,
@@ -48,14 +48,14 @@ writeFileSync(
 				content: [{ type: "text", text: "the delegated builder fixed the mailbox cursors" }],
 			},
 		}),
-	].join("\n") + "\n",
+	].join("\n")}\n`,
 	"utf8",
 );
 
 const parentFile = path.join(defaultProject, `2026-11-02T01-00-00-000Z_${PARENT_ID}.jsonl`);
 writeFileSync(
 	parentFile,
-	[
+	`${[
 		JSON.stringify({
 			type: "session",
 			id: PARENT_ID,
@@ -70,7 +70,7 @@ writeFileSync(
 				content: [{ type: "text", text: "the interactive lens review session" }],
 			},
 		}),
-	].join("\n") + "\n",
+	].join("\n")}\n`,
 	"utf8",
 );
 

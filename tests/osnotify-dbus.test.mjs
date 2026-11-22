@@ -27,8 +27,9 @@ async function startDaemon({ firstId = 7, hangNotify = false, recordHints = fals
 	const dbus = (await import("dbus-native")).default;
 	const broker = dbus.createBroker();
 	const address = await new Promise((resolve) =>
-		broker.listen({ socket: path.join(DIR, `broker-${firstId}-${Date.now()}.sock`) }, (err, addr) =>
-			resolve(addr),
+		broker.listen(
+			{ socket: path.join(DIR, `broker-${firstId}-${Date.now()}.sock`) },
+			(_err, addr) => resolve(addr),
 		),
 	);
 	process.env.DBUS_SESSION_BUS_ADDRESS = address;

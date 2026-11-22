@@ -719,7 +719,7 @@ async function fireAutoRun(
 		}
 		return result;
 	};
-	const run = startAuto({
+	startAuto({
 		objective,
 		cwd: github.cwd,
 		...(resume && persistedPlan !== null ? { planPath: persistedPlan } : {}),

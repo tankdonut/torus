@@ -17,7 +17,6 @@
 import { uuidv7 } from "@earendil-works/pi-ai";
 import {
 	type CompactionResult,
-	type ContextUsage,
 	convertToLlm,
 	type ExtensionAPI,
 	type ExtensionContext,
