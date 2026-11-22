@@ -48,6 +48,7 @@
       "./extensions/cc-safety-net",
       "./node_modules/pi-web-access/dist",
       "./node_modules/pi-lsp-client/src/index.ts",
+      "./extensions/handoff",
       "./extensions/sandbox",
       "./extensions/compact",
       "./extensions/automode"

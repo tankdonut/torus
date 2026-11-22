@@ -365,6 +365,14 @@ export async function pendingBgTasks(): Promise<void> {
 	await Promise.all([...bgTasks().values()].map((entry) => entry.closePromise));
 }
 
+/**
+ * Live monitor + bg task count. Both maps hold only live entries: bg tasks
+ * self-remove on close, monitors on stop or fire.
+ */
+export function liveTaskCount(): number {
+	return monitors().size + bgTasks().size;
+}
+
 const monitorTool = defineTool({
 	name: "torus_monitor",
 	label: "Torus Monitor",

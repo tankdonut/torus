@@ -138,6 +138,11 @@ export function wakeGateAgentSettled(): void {
 	flushWakeGate();
 }
 
+/** Entries currently held back by the gate (run-active queue or idle coalesce window). */
+export function wakeGatePendingCount(): number {
+	return gateState.pending.length;
+}
+
 /** Undelivered spool records older than this are dropped at drain time. */
 const SPOOL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 

@@ -617,6 +617,19 @@ State at `$TORUS_STATE_DIR/work/<slug>.json` (plan↔session binding, status, el
 
 Companion skill: `torus-execute` (writes checkboxes in the plan, journals via `work_note`, ends via `work_complete`). Plan coordinates (waves, tasks, slugs) stay in the plan and ledger; landed commits and code comments never carry them.
 
+### `handoff`
+
+Session handoff: continue a long-lived session in a fresh one at a slice boundary, instead of carrying a large transcript into work it no longer serves.
+
+| Surface | Purpose |
+| --- | --- |
+| `handoff_session` | Request the handoff from the model: records the brief and ends the run; the session is replaced after it settles |
+
+- **Commands:** `/handoff [brief]`: create a replacement session (`ctx.newSession` with the current session as parent), copy the goal state to the new session, rebind an active plan execution to it, and send a kickoff user message; the brief argument rides the kickoff verbatim, a bare `/handoff` sends a continue-as-before prompt, and a brief from `handoff_session` is used when args are empty
+- **Hooks:** `agent_settled`: dispatch the requested `/handoff` as a command (the engine's tool-requests-a-command pattern, since session replacement is command-context only); when nothing was requested, notify once when context use is at or above half the window after a plan completion or with an active goal
+
+The replacement gate is composite: idle with no queued messages, an empty wake gate, no running delegations, and no live monitor or bg tasks. Bare idleness is not enough, because the session idles while children run and the wake gate may hold entries that would wake the replaced session id and strand (spool files drain only when their own session starts again). Goal state and the work binding are keyed by session id, so only those two migrate; todos and memory re-inject per turn from disk, and plan and ledger files never move. In an autonomous goal session the model itself chooses the handoff via `handoff_session` at the slice boundary; threshold compaction stays the mid-flight fallback, since a handoff replaces compaction's summary call and cache-rebuild with a zero-cost rehydrate.
+
 ### `compact`
 
 Folds the torus session context into the engine's compaction summary, so the goal, work, todo, and memory context blocks survive compaction instead of vanishing with the summarized turns.
