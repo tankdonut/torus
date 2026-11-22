@@ -53,7 +53,12 @@ interface BusState {
 
 function busState(): BusState {
 	const holder = globalThis as { [BUS_SLOT]?: BusState };
-	return (holder[BUS_SLOT] ??= {});
+	let state = holder[BUS_SLOT];
+	if (!state) {
+		state = {};
+		holder[BUS_SLOT] = state;
+	}
+	return state;
 }
 
 /** Fresh transport state (for tests; the real process keeps one lifetime). */
@@ -93,7 +98,8 @@ export async function dbusNotify(message: DbusNotifyMessage): Promise<number | n
 	if (state.timedOut) return null;
 	let native: Native;
 	try {
-		native = state.dbus ??= await import("dbus-native");
+		native = state.dbus ?? (await import("dbus-native"));
+		state.dbus = native;
 	} catch {
 		return null;
 	}
