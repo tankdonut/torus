@@ -1256,16 +1256,21 @@ export function startTriggers(
 		};
 	});
 	const persist = () => {
-		const out: Record<string, { lastFired?: number; webhookSecret?: string }> = {};
+		// Read-modify-write: the state file also carries keys this scheduler
+		// does not own (persistAutoPlan's autoPlanPath crash-resume entries
+		// under the repo key) — a from-scratch rebuild would erase them on
+		// every fire. Merge the bookkeeping over what is already there.
+		const state = readJson<Record<string, WebhookSecretState>>(triggersStatePath(), {});
 		for (const entry of entries) {
 			if (entry.lastFired !== null || entry.webhookSecret !== null) {
-				out[entry.trigger.name] = {
+				state[entry.trigger.name] = {
+					...state[entry.trigger.name],
 					...(entry.lastFired !== null ? { lastFired: entry.lastFired } : {}),
 					...(entry.webhookSecret !== null ? { webhookSecret: entry.webhookSecret } : {}),
 				};
 			}
 		}
-		writeJson(triggersStatePath(), out);
+		writeJson(triggersStatePath(), state);
 		chmodSync(triggersStatePath(), 0o600);
 	};
 	const attemptFire = (entry: TriggerEntry): boolean => {

@@ -587,6 +587,11 @@ test("the launcher exits 2 on a parse refusal", () => {
 	);
 	assert.equal(run.status, 2, `stdout=${run.stdout} stderr=${run.stderr}`);
 	assert.match(run.stderr, /unknown flag: --bogus/);
+	// The refusal carries the full AUTO_USAGE flag table: the --pr and
+	// --pr-title rows must appear alongside the rest or the CLI's only
+	// user-facing route to those flags is undocumented on failure.
+	assert.match(run.stderr, /^ {2}--pr\s+open a PR from the executed work \(after lens passes\)$/m);
+	assert.match(run.stderr, /^ {2}--pr-title <t>\s+PR title override/m);
 });
 
 test("runAutoCli refuses a missing --cwd with exit 2 and names the flag", async () => {
@@ -1063,4 +1068,134 @@ test("the PR stage fails named when the driven repo has no origin remote", async
 	});
 	assert.equal(report.ok, false);
 	assert.ok((report.pr?.error ?? "").includes("no-origin-remote"));
+});
+
+// End-to-end CLI leg: the real chain through runAutoCli with the default
+// stage runner — the gate/lens one-shots against a stub launcher, the
+// execute delegation against an engine stub that flips the work state file,
+// the PR stage against a bare remote and a gh stub. Proves the --pr and
+// --pr-title parse (the flags' only CLI route) populate pr AND that the PR
+// stage consumes the parsed title.
+test("runAutoCli parses --pr/--pr-title and the PR stage consumes the parsed title end-to-end", async () => {
+	const S = mkdtempSync(path.join(tmpdir(), "auto-cli-pr-"));
+	const fixture = path.join(S, "repo");
+	const bare = path.join(S, "origin.git");
+	mkdirSync(fixture, { recursive: true });
+	execFileSync("git", ["init", "-q", "--bare", bare]);
+	execFileSync("git", ["init", "-q", fixture]);
+	writeFileSync(path.join(fixture, "fixture.txt"), "one\ntwo\n");
+	execFileSync("git", ["-C", fixture, "add", "-A"]);
+	execFileSync("git", [
+		"-C",
+		fixture,
+		"-c",
+		"user.email=t@x",
+		"-c",
+		"user.name=t",
+		"commit",
+		"-qm",
+		"init",
+	]);
+	execFileSync("git", ["-C", fixture, "remote", "add", "origin", bare]);
+
+	const ghDir = path.join(S, "ghbin");
+	mkdirSync(ghDir, { recursive: true });
+	const ghCaptured = path.join(S, "gh-args.txt");
+	writeFileSync(
+		path.join(ghDir, "gh"),
+		`#!/bin/sh\necho "$@" >> ${ghCaptured}\necho https://fake/pr/1\n`,
+	);
+	chmodSync(path.join(ghDir, "gh"), 0o755);
+
+	const stateDir = projectStateDir();
+	const plansDir = path.join(stateDir, "plans");
+	mkdirSync(plansDir, { recursive: true });
+	const planPath = path.join(plansDir, "2026-01-01-cli-pr-plan.md");
+	writeFileSync(planPath, "# Plan\n\ndone.\n", "utf8");
+
+	// Gate writes its report; lens lands the stdout VERDICT fallback.
+	const body = `
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const prompt = process.argv[process.argv.length - 1];
+const planPath = prompt.split(/\\s+/)[1];
+const stem = path.basename(planPath, ".md");
+if (prompt.includes("torus-plan-review")) {
+	const gateDir = path.join(process.env.TORUS_STATE_DIR, "plans", "gates");
+	mkdirSync(gateDir, { recursive: true });
+	writeFileSync(path.join(gateDir, stem + ".gate.md"), "GATE PASS\\n");
+} else {
+	console.log("VERDICT: OKAY");
+}
+`;
+	const { stubRoot } = stubLauncher(path.join(HOME, "stub"), body);
+
+	// The execute delegation spawns the engine directly (TORUS_ENGINE_BIN,
+	// not the launcher), so this variant also flips the work state file the
+	// execute stage polls for its machine signal.
+	const executeEngine = path.join(S, "execute-engine.mjs");
+	writeFileSync(
+		executeEngine,
+		`#!/usr/bin/env node
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const task = process.argv.slice(2).join(" ");
+const m = task.match(/work_start\\(([^,\\s)]+)/);
+if (m) {
+	const slug =
+		path.basename(m[1], ".md").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-").slice(0, 120) || "plan";
+	const workDir = path.join(process.env.TORUS_STATE_DIR, "work");
+	mkdirSync(workDir, { recursive: true });
+	writeFileSync(path.join(workDir, slug + ".json"), JSON.stringify({ status: "complete" }));
+}
+console.log('{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":10,"output":20}}}');
+`,
+		"utf8",
+	);
+	chmodSync(executeEngine, 0o755);
+
+	const prevEngine = process.env.TORUS_ENGINE_BIN;
+	const originalPath = process.env.PATH;
+	const chunks = [];
+	const origWrite = process.stdout.write;
+	try {
+		process.env.TORUS_ENGINE_BIN = executeEngine;
+		process.env.PATH = [ghDir, originalPath].join(path.delimiter);
+		process.stdout.write = (chunk) => {
+			chunks.push(String(chunk));
+			return true;
+		};
+		const code = await withStubRoot(stubRoot, async () =>
+			runAutoCli([
+				"--pr",
+				"--pr-title",
+				"WebhookTitle",
+				"--plan",
+				planPath,
+				"--cwd",
+				fixture,
+				"--stage-timeout-ms",
+				"30000",
+			]),
+		);
+		assert.equal(code, 0, chunks.join(""));
+	} finally {
+		process.stdout.write = origWrite;
+		process.env.TORUS_ENGINE_BIN = prevEngine;
+		process.env.PATH = originalPath;
+	}
+	const reportLine = chunks
+		.join("")
+		.split("\n")
+		.find((l) => l.startsWith("JSON: "));
+	const report = JSON.parse(reportLine.slice("JSON: ".length));
+	assert.equal(report.ok, true, reportLine);
+	assert.equal(report.pr.ok, true, reportLine);
+	const ghArgs = readFileSync(ghCaptured, "utf8");
+	assert.ok(
+		ghArgs.includes("--title WebhookTitle"),
+		`the parsed --pr-title must reach gh pr create, got: ${ghArgs}`,
+	);
+	rmSync(stubRoot, { recursive: true, force: true });
+	rmSync(path.join(HOME, "state"), { recursive: true, force: true });
 });

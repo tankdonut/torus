@@ -895,8 +895,8 @@ const AUTO_USAGE = [
 	"  --cwd <dir>             REQUIRED: the driven checkout",
 	"  --stage-timeout-ms <n>  per-stage timeout (default 600000)",
 	"  --skills <a,b>          skill names or paths passed to every stage",
-	"--pr                    open a PR from the executed work (after lens passes)",
-	"--pr-title <t>          PR title override (default: the plan H1 title)",
+	"  --pr                    open a PR from the executed work (after lens passes)",
+	"  --pr-title <t>          PR title override (default: the plan H1 title)",
 ].join("\n");
 
 /** Parse the CLI surface, run the chain, and print the report. */

@@ -1511,6 +1511,48 @@ test("a crash after the plan stage persists the plan at plan completion and resu
 	}
 });
 
+test("a scheduled fire's bookkeeping preserves the crash-resume plan entry in triggers-state", async () => {
+	registry.resetRegistryForTesting();
+	freshArgsDir();
+	freshTriggersState();
+	// Mixed-trigger shape: a driver-class fire already persisted its
+	// crash-resume plan under the repo key, and a scheduled trigger fires in
+	// the same process. The bookkeeping write must merge over the file's
+	// existing keys, not rebuild them from scratch — otherwise the plan
+	// entry is erased between the plan-stage persist and a crash and the
+	// next fire re-plans.
+	const planPath = path.join(HOME, "state", "plans", "2026-01-01-mixed-plan.md");
+	const before = Date.now();
+	writeFileSync(
+		triggersStateFile(),
+		JSON.stringify({
+			nightly: { lastFired: before - 301_000 },
+			"tankdonut/torus": { autoPlanPath: planPath },
+		}),
+		"utf8",
+	);
+	const runtime = serve.startTriggers([
+		{ name: "nightly", everyMinutes: 5, agent: "builder", task: "mixed-trigger probe" },
+	]);
+	try {
+		assert.equal(runtime.fireNow("nightly"), true, "stale lastFired allows firing");
+		const state = JSON.parse(readFileSync(triggersStateFile(), "utf8"));
+		assert.equal(
+			state["tankdonut/torus"]?.autoPlanPath,
+			planPath,
+			"the crash-resume plan entry survives the scheduled fire's persist",
+		);
+		const lastFired = state.nightly?.lastFired;
+		assert.equal(typeof lastFired, "number", "the fire still records its lastFired");
+		assert.ok(lastFired >= before, "lastFired is the fresh fire time, not the planted one");
+		const record = await findBuilderRecord();
+		assert.ok(record, "the scheduled fire started its delegation");
+		await waitForRunDone(record.id);
+	} finally {
+		runtime.stop();
+	}
+});
+
 test("driver fires serialize process-wide: a fire for a different repo also answers 409", async () => {
 	registry.resetRegistryForTesting();
 	freshTriggersState();
