@@ -9,6 +9,10 @@
  * notification source the moment the sender's connection vanishes — grouped
  * toasts would never outlive the banner.
  *
+ * The bus handle lives in a globalThis slot: pi's extension loader evaluates
+ * shared modules once per extension entry (jiti, moduleCache: false), so
+ * module-level state would give every toasting entry its own connection.
+ *
  * Fails closed: an unreachable bus yields null and the caller falls back to
  * notify-send (osnotify.ts). A connect failure is retried on the next toast;
  * a reply timeout latches the transport off for the process lifetime so later
@@ -38,20 +42,32 @@ export interface DbusNotifyMessage {
 	replaceId?: number;
 }
 
-let dbus: Native | null = null;
-let bus: MessageBus | null = null;
-let timedOut = false;
+/** Shared across the engine's duplicated module instances (see header). */
+const BUS_SLOT = Symbol.for("torus.notify.sessionBus");
+
+interface BusState {
+	dbus?: Native;
+	bus?: MessageBus;
+	timedOut?: boolean;
+}
+
+function busState(): BusState {
+	const holder = globalThis as { [BUS_SLOT]?: BusState };
+	return (holder[BUS_SLOT] ??= {});
+}
 
 /** Fresh transport state (for tests; the real process keeps one lifetime). */
 export function resetTransportForTests(): void {
-	dbus = null;
-	bus = null;
-	timedOut = false;
+	const state = busState();
+	state.dbus = undefined;
+	state.bus = undefined;
+	state.timedOut = undefined;
 }
 
 /** Open the session bus; null while unavailable (retry the next toast). */
 function openSession(native: Native): MessageBus | null {
-	if (bus) return bus;
+	const state = busState();
+	if (state.bus) return state.bus;
 	try {
 		const opened = native.sessionBus();
 		// the connection forwards stream errors; the bus intentionally does not
@@ -59,11 +75,11 @@ function openSession(native: Native): MessageBus | null {
 		// must — the failing call still observes its own rejection
 		opened.connection.on("error", () => {});
 		(opened.connection.stream as Socket).unref();
-		bus = opened;
+		state.bus = opened;
 	} catch {
 		// no session bus address — retry the next toast, nothing latched
 	}
-	return bus;
+	return state.bus ?? null;
 }
 
 /**
@@ -73,10 +89,11 @@ function openSession(native: Native): MessageBus | null {
  * replacement, or null when the bus is unavailable or the send failed.
  */
 export async function dbusNotify(message: DbusNotifyMessage): Promise<number | null> {
-	if (timedOut) return null;
+	const state = busState();
+	if (state.timedOut) return null;
 	let native: Native;
 	try {
-		native = dbus ??= await import("dbus-native");
+		native = state.dbus ??= await import("dbus-native");
 	} catch {
 		return null;
 	}
@@ -98,9 +115,9 @@ export async function dbusNotify(message: DbusNotifyMessage): Promise<number | n
 					message.body,
 					[],
 					{
-						urgency: new dbus.Variant("y", URGENCY[message.urgency]),
-						transient: new dbus.Variant("b", message.transient),
-						"desktop-entry": new dbus.Variant("s", "torus"),
+						urgency: new native.Variant("y", URGENCY[message.urgency]),
+						transient: new native.Variant("b", message.transient),
+						"desktop-entry": new native.Variant("s", "torus"),
 					},
 					message.expireMs,
 				],
@@ -110,9 +127,9 @@ export async function dbusNotify(message: DbusNotifyMessage): Promise<number | n
 		const id = typeof reply === "number" ? reply : Number.parseInt(String(reply), 10);
 		return Number.isInteger(id) && id > 0 ? id : null;
 	} catch (error) {
-		if (error instanceof native.TimeoutError) timedOut = true;
+		if (error instanceof native.TimeoutError) state.timedOut = true;
 		// reconnect on the next toast; only a reply timeout latches the transport off
-		bus = null;
+		state.bus = undefined;
 		return null;
 	}
 }
