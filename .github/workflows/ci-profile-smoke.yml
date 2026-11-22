@@ -37,7 +37,7 @@ jobs:
     # unprivileged-userns AppArmor restriction and its lift below.
     # ubuntu-latest could drift to a different base image and invalidate the
     # AppArmor step.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Refuse to run outside tankdonut/torus
         if: github.repository != 'tankdonut/torus'
