@@ -564,16 +564,16 @@ test("summaryRows: headline totals, overhead delta, and movement vs the prior co
 	const byKey = Object.fromEntries(first.map((r) => [r.key, r.cells]));
 	assert.deepEqual(byKey.tokensIn, ["120", "220", "+100", "first recorded run"]);
 	assert.deepEqual(byKey.cacheRead, ["500", "500", "0", "first recorded run"]);
-	assert.deepEqual(byKey.cost, ["$0.0010", "$0.0020", "+$0.0010", "first recorded run"]);
+	assert.deepEqual(byKey.cost, ["$0.001", "$0.002", "+$0.001", "first recorded run"]);
 
 	const withPrior = summaryRows(rollup, priorRunHistory());
 	const prior = Object.fromEntries(withPrior.map((r) => [r.key, r.cells]));
 	// current Δ tokensIn 100 vs prior 40 → +60; Δ ms 1,000 vs 600 → +400;
-	// Δ cacheRead 0 vs 0 → 0; Δ cost $0.0010 vs $0.0010 → $0.
+	// Δ cacheRead 0 vs 0 → 0; Δ cost $0.001 vs $0.001 → $0.
 	assert.deepEqual(prior.tokensIn, ["120", "220", "+100", "+60 vs torus 0.6.0"]);
 	assert.deepEqual(prior.ms, ["1,200 ms", "2,200 ms", "+1,000", "+400 vs torus 0.6.0"]);
 	assert.deepEqual(prior.cacheRead, ["500", "500", "0", "0 vs torus 0.6.0"]);
-	assert.deepEqual(prior.cost, ["$0.0010", "$0.0020", "+$0.0010", "$0 vs torus 0.6.0"]);
+	assert.deepEqual(prior.cost, ["$0.001", "$0.002", "+$0.001", "$0 vs torus 0.6.0"]);
 });
 
 test("buildMarkdown and buildHtml lead with the summary; single-config sweeps skip it", () => {

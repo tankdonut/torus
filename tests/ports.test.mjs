@@ -236,7 +236,7 @@ test("statusline cost chip: message_end costs accumulate via the shared tally re
 
 	assert.equal(
 		torusChips().get(COST_STATUS_KEY),
-		"cost:$0.0350",
+		"cost:$0.035",
 		"costs sum across message_end events",
 	);
 });
@@ -288,7 +288,7 @@ test("statusline cost chip: session_start seeds the tally from the session entri
 	handlers["session_start"]({ type: "session_start", reason: "resume" }, ctx);
 	assert.equal(
 		torusChips().get(COST_STATUS_KEY),
-		"cost:$0.0300",
+		"cost:$0.030",
 		"resumed session seeds past spend from its entries",
 	);
 
@@ -304,7 +304,7 @@ test("statusline cost chip: session_start seeds the tally from the session entri
 		},
 		ctx,
 	);
-	assert.equal(torusChips().get(COST_STATUS_KEY), "cost:$0.0350", "seeded past + live turn sum");
+	assert.equal(torusChips().get(COST_STATUS_KEY), "cost:$0.035", "seeded past + live turn sum");
 });
 
 test("statusline cost chip: registry spend appends as a colored +fleet suffix", async () => {
@@ -342,7 +342,7 @@ test("statusline cost chip: registry spend appends as a colored +fleet suffix", 
 	ownTurn(0.02);
 	assert.equal(
 		torusChips().get(COST_STATUS_KEY),
-		"cost:$0.0200+$0.0300",
+		"cost:$0.020+$0.030",
 		"delegation spend folds in as the fleet suffix",
 	);
 
@@ -351,7 +351,7 @@ test("statusline cost chip: registry spend appends as a colored +fleet suffix", 
 	ownTurn(0.005);
 	assert.equal(
 		torusChips().get(COST_STATUS_KEY),
-		"cost:$0.0250+$0.0300",
+		"cost:$0.025+$0.030",
 		"finished run's spend stays folded",
 	);
 
@@ -374,7 +374,7 @@ test("statusline cost chip: registry spend appends as a colored +fleet suffix", 
 		},
 		themed,
 	);
-	assert.equal(torusChips().get(COST_STATUS_KEY), "cost:$0.0260<warning>+$0.0300</warning>");
+	assert.equal(torusChips().get(COST_STATUS_KEY), "cost:$0.026<warning>+$0.030</warning>");
 	registry.resetRegistryForTesting();
 });
 
@@ -755,7 +755,7 @@ test("torus statusline wraps chips onto rows instead of truncating the line", ()
 	const line = createTorusStatusline();
 	torusChips().clear();
 	setTorusChip("torus", "torus · leader · glm-4.7 · high · zai|opencode-go · perm:default");
-	setTorusChip("torus:cost", "cost:$0.0147");
+	setTorusChip("torus:cost", "cost:$0.015");
 	setTorusChip("torus:sandbox", "sbx:off");
 	setTorusChip("torus:worktree", "wt:2");
 

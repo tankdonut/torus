@@ -248,6 +248,17 @@ test("formatCost renders negative cost as no cost at all", async () => {
 	assert.equal(formatCost(-5, true), "", "negative dollar-plus cost renders nothing");
 });
 
+test("formatCost rounds to 3 decimals at every magnitude like the engine footer", async () => {
+	const { formatCost } = await import("../extensions/fsutil.ts");
+	assert.equal(formatCost(0.00049, true), "$0.000", "sub-milli costs keep pi's 3-decimal rounding");
+	assert.equal(formatCost(0.123456, true), "$0.123", "sub-dollar costs round to the 3rd decimal");
+	assert.equal(
+		formatCost(1.23456, true),
+		"$1.235",
+		"dollar-plus costs keep 3 decimals like the engine footer",
+	);
+});
+
 test("flattenPreview flattens whitespace and truncates with ellipsis", async () => {
 	const { flattenPreview } = await import("../extensions/fleet/theme-kit.ts");
 	assert.equal(flattenPreview("a\n  b\t\tc", 20), "a b c");

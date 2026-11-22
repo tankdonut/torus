@@ -68,7 +68,7 @@ writeFileSync(
 chmodSync(NO_USAGE_ENGINE, 0o755);
 // Mirrors a live reviewer run whose model connection died mid-verdict: the
 // last message_end turn replays byte-identical cumulative usage
-// (13084/2050 tok · $0.0428) and byte-identical partial text AND carries the
+// (13084/2050 tok · $0.043) and byte-identical partial text AND carries the
 // engine's first-class failure signal (stopReason "error" + errorMessage),
 // then the child exits 0 — a clean exit over a dead, errored tail.
 const DEGENERATE_TAIL_ENGINE = path.join(ENGINE_DIR, "degenerate-tail-engine.sh");
@@ -446,10 +446,10 @@ test("delegation ending in an engine-signaled model error fails red with the err
 		"settling is not proof of work: a zero exit over a dead tail retries down-chain",
 	);
 	assert.match(log, /falling back to zai\/glm-5\.3-flash/, "the walk names the next candidate");
-	assert.match(log, /--- turn 2 \(13084\/2050 tok · \$0\.0428\) ---/);
+	assert.match(log, /--- turn 2 \(13084\/2050 tok · \$0\.043\) ---/);
 	assert.match(
 		log,
-		/--- turn 3 \(13084\/2050 tok · \$0\.0428\) ---/,
+		/--- turn 3 \(13084\/2050 tok · \$0\.043\) ---/,
 		"the log mirrors the observed pattern: identical cumulative turn lines",
 	);
 
@@ -1218,7 +1218,7 @@ test("engine-computed cache and cost ride the delegation pipeline end to end", a
 	const log = readFileSync(record.logFile, "utf8");
 	assert.match(
 		log,
-		/--- turn 1 \(10\/20 tok · \$0\.0315\) ---/,
+		/--- turn 1 \(10\/20 tok · \$0\.032\) ---/,
 		"delegation log turn line carries the dollar segment",
 	);
 	registry.setCustomSender(() => {});
@@ -1320,7 +1320,7 @@ test("a chain walk's snapshots and result carry cumulative spend across legs", a
 	assert.equal(record.cost, 0.068, "the registry record folds every leg's cost");
 	assert.match(
 		readFileSync(record.logFile, "utf8"),
-		/--- turn 6 \(13450\/2320 tok · \$0\.0680\) ---/,
+		/--- turn 6 \(13450\/2320 tok · \$0\.068\) ---/,
 		"the log's last turn line is the cumulative walk total",
 	);
 	registry.setCustomSender(() => {});
@@ -1666,7 +1666,7 @@ test("live-captured RPC usage shape folds cost into snapshots, records, and log 
 	const log = readFileSync(record.logFile, "utf8");
 	assert.match(
 		log,
-		/--- turn 1 \(12081\/18 tok · \$0\.0018\) ---/,
+		/--- turn 1 \(12081\/18 tok · \$0\.002\) ---/,
 		"turn line from the captured wire shape ends with the dollar segment",
 	);
 	assert.doesNotMatch(log, /NaN/, "no NaN anywhere in the log");
@@ -1726,13 +1726,13 @@ test("delegate headline renders the dollar segment for priced, free, and unprice
 
 	assert.match(
 		render({ input: 1000, output: 500, turns: 2, cost: 0.0123 }),
-		/1000\/500 tok · \$0\.0123/,
-		"sub-dollar cost keeps 4 decimal places",
+		/1000\/500 tok · \$0\.012/,
+		"sub-dollar cost rounds to the 3rd decimal place like the engine footer",
 	);
 	assert.match(
 		render({ input: 1000, output: 500, turns: 2, cost: 1.234 }),
-		/· \$1\.23/,
-		"cost at or above $1 trims to 2 decimal places",
+		/· \$1\.234/,
+		"cost at or above $1 keeps 3 decimal places like the engine footer",
 	);
 	assert.match(
 		render({ input: 1000, output: 500, turns: 2, cost: 0 }),
