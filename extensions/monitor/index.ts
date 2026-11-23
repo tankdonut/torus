@@ -8,12 +8,22 @@
  * monitors, TORUS_BG=0 background tasks, and the ci trust profile does not
  * register the tools at all (they execute model-supplied commands outside
  * the automode judgment and the sandbox).
+ *
+ * Two statusline chips count what is live, in the worktree chip's style:
+ * "bg:N" (torus:bg) from spawn until close, so a stopped task still counts
+ * through its kill grace window, and "mon:N" (torus:monitor) from arm until
+ * it fires or is stopped. The theme is captured at session start; without one
+ * the chips paint plain.
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	defineTool,
+	type ExtensionAPI,
+	type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { resolveProfileSource } from "../automode/config.js";
 import { runChild } from "../child-run.js";
@@ -24,6 +34,7 @@ import { incognitoActive, incognitoSweep } from "../incognito.js";
 import { MARKER } from "../markers.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
 import { BG_KEY, MONITORS_KEY } from "../shared-state.js";
+import { setTorusChip } from "../ui/index.js";
 import { deliverWake, torusWake } from "../wake-gate.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = {
@@ -177,6 +188,7 @@ export function stopMonitor(name: string): boolean {
 	if (!entry) return false;
 	clearInterval(entry.timer);
 	monitors().delete(name);
+	refreshTaskChips();
 	return true;
 }
 
@@ -325,6 +337,7 @@ export function startBgTask(
 		if (entry.killTimer !== null) clearTimeout(entry.killTimer);
 		// The entry holds its name until close, so a successor cannot exist.
 		bgTasks().delete(spec.name);
+		refreshTaskChips();
 		emitBgExit(entry, code, signal);
 		resolveClosed();
 	};
@@ -349,6 +362,7 @@ export function startBgTask(
 		entry.timeoutTimer.unref();
 	}
 	bgTasks().set(spec.name, entry);
+	refreshTaskChips();
 	return { ok: true, pid: child.pid, logFile };
 }
 
@@ -371,6 +385,24 @@ export async function pendingBgTasks(): Promise<void> {
  */
 export function liveTaskCount(): number {
 	return monitors().size + bgTasks().size;
+}
+
+const BG_STATUS_KEY = "torus:bg";
+const MONITOR_STATUS_KEY = "torus:monitor";
+
+/** The session theme, captured at session start so the count chips paint warning like the worktree chip. */
+let chipTheme: ExtensionContext["ui"]["theme"] | null = null;
+
+function countChip(count: number, label: string): string | undefined {
+	if (count === 0) return undefined;
+	const text = `${label}:${count}`;
+	return chipTheme === null ? text : chipTheme.fg("warning", text);
+}
+
+/** Both count chips from the live maps, each cleared at zero. */
+function refreshTaskChips(): void {
+	setTorusChip(BG_STATUS_KEY, countChip(bgTasks().size, "bg"));
+	setTorusChip(MONITOR_STATUS_KEY, countChip(monitors().size, "mon"));
 }
 
 const monitorTool = defineTool({
@@ -425,6 +457,7 @@ const monitorTool = defineTool({
 			checkPromise: null,
 		};
 		monitors().set(params.name, entry);
+		refreshTaskChips();
 		// First check runs detached: the tool returns immediately instead of
 		// freezing the engine for the command's full runtime.
 		scheduleCheck(entry);
@@ -540,6 +573,11 @@ export function registerMonitor(pi: ExtensionAPI): void {
 	pi.registerTool(monitorStopTool);
 	pi.registerTool(bgTool);
 	pi.registerTool(bgStopTool);
+	// The maps live on globalThis: a reloaded or fresh session re-derives both chips from what is live.
+	pi.on("session_start", (_event, ctx) => {
+		chipTheme = ctx.ui.theme;
+		refreshTaskChips();
+	});
 	pi.on("session_shutdown", () => {
 		for (const name of [...monitors().keys()]) stopMonitor(name);
 		for (const entry of [...bgTasks().values()]) killBg(entry);

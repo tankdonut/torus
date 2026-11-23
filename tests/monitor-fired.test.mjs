@@ -93,7 +93,7 @@ test("registration: without the profile all four monitor tools register", () => 
 			"torus_bg",
 			"torus_bg_stop",
 		]);
-		assert.deepEqual(calls.on, ["session_shutdown"]);
+		assert.deepEqual(calls.on, ["session_start", "session_shutdown"]);
 	});
 });
 
@@ -127,6 +127,88 @@ test("TORUS_BG=0 disables torus_bg at execute time", async () => {
 		assert.equal(result.isError, true);
 		assert.equal(result.content[0].text, "background tasks disabled (TORUS_BG=0)");
 	});
+});
+
+function handlerPi() {
+	const tools = [];
+	const handlers = {};
+	monitor.registerMonitor({
+		registerTool: (tool) => tools.push(tool),
+		on: (name, handler) => {
+			handlers[name] = handler;
+		},
+	});
+	return { byName: Object.fromEntries(tools.map((t) => [t.name, t])), handlers };
+}
+
+test("startBgTask paints bg:N with no theme captured; closing clears it", async () => {
+	// Runs before any session_start hands the monitor a theme, so the chip is plain.
+	const { torusChips } = await import("../extensions/ui/index.ts");
+	torusChips().clear();
+
+	monitor.startBgTask({ name: "chip-plain", command: "true" });
+	assert.equal(torusChips().get("torus:bg"), "bg:1");
+	assert.equal(torusChips().has("torus:monitor"), false, "no monitor, no chip");
+
+	await monitor.pendingBgTasks();
+	assert.equal(torusChips().has("torus:bg"), false, "the last task closing clears the chip");
+});
+
+test("live monitors and bg tasks ride the statusline as mon:N and bg:N", async () => {
+	captureCustoms();
+	const { torusChips } = await import("../extensions/ui/index.ts");
+	torusChips().clear();
+	const { byName, handlers } = handlerPi();
+	const theme = { fg: (key, text) => `<${key}>${text}</${key}>` };
+	handlers.session_start({}, { ui: { theme } });
+	assert.equal(torusChips().size, 0, "nothing live paints nothing");
+
+	const armed = await byName.torus_monitor.execute("c1", {
+		name: "chip-a",
+		command: "echo one",
+		intervalSec: 5,
+	});
+	assert.match(armed.content[0].text, /running every 5s/);
+	assert.equal(torusChips().get("torus:monitor"), "<warning>mon:1</warning>");
+
+	await byName.torus_monitor.execute("c2", {
+		name: "chip-b",
+		command: "echo bad; exit 9",
+		stopOn: "fail",
+	});
+	assert.equal(torusChips().get("torus:monitor"), "<warning>mon:2</warning>");
+	await monitor.pendingChecks();
+	assert.equal(
+		torusChips().get("torus:monitor"),
+		"<warning>mon:1</warning>",
+		"a fired monitor leaves the count",
+	);
+
+	await byName.torus_monitor_stop.execute("c3", { name: "chip-a" });
+	assert.equal(
+		torusChips().has("torus:monitor"),
+		false,
+		"the last monitor stopped clears the chip",
+	);
+
+	const first = await byName.torus_bg.execute("c4", { name: "chip-bg", command: "exec sleep 30" });
+	assert.match(first.content[0].text, /started \(pid \d+\)/);
+	assert.equal(torusChips().get("torus:bg"), "<warning>bg:1</warning>");
+
+	await byName.torus_bg.execute("c5", { name: "chip-bg-2", command: "exec sleep 30" });
+	assert.equal(torusChips().get("torus:bg"), "<warning>bg:2</warning>");
+
+	const stopped = await byName.torus_bg_stop.execute("c6", { name: "chip-bg" });
+	assert.equal(stopped.details.outcome, "stopped");
+	assert.equal(
+		torusChips().get("torus:bg"),
+		"<warning>bg:2</warning>",
+		"a stopping task counts until it closes",
+	);
+
+	await byName.torus_bg_stop.execute("c7", { name: "chip-bg-2" });
+	await monitor.pendingBgTasks();
+	assert.equal(torusChips().has("torus:bg"), false, "the last task closing clears the chip");
 });
 
 test("stopOn change: first check records the hash, changed output fires torus.monitor-fired", async () => {
