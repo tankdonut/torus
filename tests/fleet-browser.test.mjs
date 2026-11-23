@@ -24,6 +24,9 @@ const fleet = await import("../extensions/fleet/index.ts");
 // need the shared theme initialized before their first render.
 const { initTheme } = await import("@earendil-works/pi-coding-agent");
 initTheme();
+// Engine tool renderers hyperlink paths (OSC 8) on capable terminals, so
+// visible-text assertions strip every terminal sequence, not only SGR color.
+const { stripTerminalSequences } = await import("@earendil-works/pi-tui");
 
 const ENGINE_DIR = mkdtempSync(path.join(tmpdir(), "torus-fleet-fake-engines-"));
 const EVENT_ENGINE = path.join(ENGINE_DIR, "event-engine.sh");
@@ -1174,7 +1177,7 @@ test("detail transcript: edit success renders its diff from persisted result det
 	try {
 		const rendered = component
 			.render(100)
-			.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""))
+			.map((line) => stripTerminalSequences(line))
 			.join("\n");
 		assert.ok(rendered.includes("edit src/a.ts"), "edit call header renders");
 		assert.ok(
