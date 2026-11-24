@@ -1,32 +1,32 @@
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[39m [3m[38;2;150;160;164mStill need registry.ts chunks: lines ~630-946 (pidAlive through startDelegation etc.), and 1020-1543 (finishDelegation onward). Let me
-[0m [3m[38;2;150;160;164mread those two chunks.[0m
-
- Two more chunks of registry.ts remain.
-
-[48;2;37;65;49m
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:631-950[39m
+[39m[48;2;37;65;49m [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:840-1379[39m
 
 
+[49m [3m[38;2;150;160;164mI still have a gap in registry.ts between lines ~429-558 (updateRunRecord, pruneRunBeacons, pidAlive, expireBeaconCacheForTesting) and
+[0m [3m[38;2;150;160;164m~1100-1145 (parseLastTurnText, readFullRecordText), and 1486-1546 (SessionEndReason, registryShutdown). Let me read those regions.[0m
 
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:1020-1549[39m
-
-
-[49m [3m[38;2;150;160;164mI still haven't seen a couple of registry exports in detail: attachControl (275-306), attachChildPid, stopDelegation,
-[0m [3m[38;2;150;160;164mdelegationStopRequested, steerLogLine, steerDelegation (321-346), and recoverRun/recoverSession (1366-1486). I have enough context
-[0m [3m[38;2;150;160;164mfrom grep + surrounding comments to summarize them, but let me quickly check the small gap 233-346 and 1366-1430 for accuracy.
-[0m [3m[38;2;150;160;164mActually I read lines 233-251 partially truncated. The gap 1020 was covered. Let me read 234-346 and 1366-1430 to be safe.[0m
-
- One small gap remains (controls/steer helpers and recover functions) — let me read it for accuracy.
+ A few registry exports still need their doc context (lines 430–720, 1090–1180, 1486–1546).
 
 [48;2;37;65;49m
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:233-347[39m
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:540-679[39m
 
 
 
- [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:1366-1465[39m
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:1088-1177[39m
+
+
+
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:1480-1549[39m
+
+
+[49m [3m[38;2;150;160;164mOne more small gap: expireBeaconCacheForTesting (line 683) — I saw the doc about the cache TTL. Also
+[0m [3m[38;2;150;160;164mgetTeam/listTeams/dropTeam/repoRoot/listDelegations/resetRegistryForTesting lines 794-840 — mostly obvious. And the doc for
+[0m [3m[38;2;150;160;164mexpireBeaconCacheForTesting. Let me quickly read 680-840.[0m
+
+[48;2;37;65;49m
+ [1m[38;2;222;224;225mread[0m[48;2;37;65;49m [38;2;167;152;215mextensions/registry.ts[38;2;205;154;34m:680-839[39m
 
 
 [38;2;205;154;34m[49m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠦ live[39m [38;2;126;136;142mt5 · 36.6k→733 · $0.008 · 50s · j/k scroll · g/G ends · [38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[39m
+[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠧ live[39m [38;2;126;136;142mt5 · 35.7k→750 · $0.008 · 50s · j/k scroll · g/G ends · [38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[39m
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

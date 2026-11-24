@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+// buildStatus keys its head padding off fleet liveness: isolate the beacon
+// scan root so sessions running on the operator's machine cannot flip it
+process.env.TORUS_HOME = mkdtempSync(path.join(tmpdir(), "torus-ports-test-"));
+process.env.TORUS_STATE_DIR ??= tmpdir();
+
 const { formatDoctorReport } = await import("../extensions/doctor/index.ts");
 const { buildAstgrepArgs } = await import("../extensions/astgrep/index.ts");
 const { searchSessions, findSessionFile } = await import("../extensions/sessions/index.ts");
@@ -57,11 +62,7 @@ test("buildStatus: plain mode keeps separators; themed mode paints segments and 
 	};
 	const plain = buildStatus();
 	assert.match(plain, /leader/);
-	const head = "◉ torus".padEnd(STATUS_HEAD_WIDTH);
-	assert.ok(
-		plain.startsWith(`${head} · `),
-		"the ring head pads to the band column before the first separator",
-	);
+	assert.ok(plain.startsWith("◉ torus · "), "alone in the band, the head carries no pad");
 	assert.ok(!plain.includes("persona:"), "verbose persona prefix should be gone");
 	assert.ok(!plain.includes("[pi]"), "stock engine tag should be hidden");
 	assert.ok(plain.includes(" · "), "plain separator missing");
@@ -537,13 +538,26 @@ test("status band: torus and goal row heads pad to one column so separators alig
 	// as columns, so alignment is measured on an unstyled render
 	const flat = { fg: (_color, text) => text, bold: (text) => text };
 	setSessionPersona("leader");
-	const torusDot = buildStatus(flat).indexOf("·");
 	setStatusGoal({ status: "active", head: "align the band" });
+	const torusDot = buildStatus(flat).indexOf("·");
 	const goalDot = createGoalBanner(flat).render(80)[0].indexOf("·");
 	assert.equal(torusDot, STATUS_HEAD_WIDTH + 1, "torus row separator column");
 	assert.equal(goalDot, STATUS_HEAD_WIDTH + 1, "goal row separator column");
 	setSessionPersona(null);
 	setStatusGoal(undefined);
+});
+
+test("status band: a live fleet row expands the torus head pad, its exit collapses it", () => {
+	setSessionPersona("leader");
+	assert.ok(buildStatus().startsWith("◉ torus · "), "no companions, no pad");
+	registry.startDelegation("band-pad-1", "builder", "zai/glm-5.3-flash", "sess", "probe");
+	assert.ok(
+		buildStatus().startsWith(`◉ torus${" ".repeat(STATUS_HEAD_WIDTH - 7)} · `),
+		"a running delegation pads the head to the band column",
+	);
+	registry.resetRegistryForTesting();
+	assert.ok(buildStatus().startsWith("◉ torus · "), "companions gone, pad collapses");
+	setSessionPersona(null);
 });
 
 test("built-in keywords: trio present, user file overrides same key, new keys merge", () => {

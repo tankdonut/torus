@@ -1,32 +1,32 @@
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[39m [38;2;167;152;215m- pruneRunBeacons(now): void[39m — prune the store: finished by age, running count-capped, dead-writer zombies removed.
- [38;2;167;152;215m- externalRunAgeSeconds(run): number[39m — display age: banked active time for members, wall clock otherwise.
- [38;2;167;152;215m- type RunRecordView[39m — RunRecord with display fields ([38;2;167;152;215msource[39m, [38;2;167;152;215mlabel[39m) guaranteed.
- [38;2;167;152;215m- listExternalRuns(): RunRecordView[][39m — THE fleet list API: local records deduped against foreign running beacons, newest first.
- [38;2;167;152;215m- expireBeaconCacheForTesting(): void[39m — test-only: drop the beacon-scan TTL cache.
-
- [1mTeams[0m
- [38;2;167;152;215m- type TeamStatus[39m — [38;2;167;152;215m"active" | "shutdown"[39m.
- [38;2;167;152;215m- interface TeamMemberRecord[39m — one team member: id, name, agent, model, status, session, mailbox dir.
- [38;2;167;152;215m- interface TeamRecord[39m — a team: id, name, objective, status, dir, members, createdAt.
- [38;2;167;152;215m- registerTeam(record): void[39m / [38;2;167;152;215mgetTeam(id)[39m / [38;2;167;152;215mlistTeams()[39m / [38;2;167;152;215mdropTeam(id)[39m — CRUD over the shared teams map.
+[39m [1mTeams[0m
+ [38;2;167;152;215m- registerTeam(record)[39m / [38;2;167;152;215mgetTeam(id)[39m / [38;2;167;152;215mlistTeams()[39m / [38;2;167;152;215mdropTeam(id)[39m — CRUD over the in-memory team registry (newest-first listing).
 
  [1mMisc[0m
- [38;2;167;152;215m- repoRoot(): string[39m — resolve the torus repo root via [38;2;167;152;215mTORUS_ROOT[39m, else find-up for the torus package.json.
- [38;2;167;152;215m- recoverRun(id, sessionId?): DelegationRecord | undefined[39m — store-first single-run recovery (beacon store, then legacy log scan).
- [38;2;167;152;215m- recoverSession(sessionId): void[39m — session-start bulk recovery of the session's runs from beacons/logs.
- [38;2;167;152;215m- rehydrateFromLogs(currentSessionId?): void[39m — rebuild records from delegation logs on resume so alt+t and the fleet survive restarts.
- [38;2;167;152;215m- async registryShutdown(reason?): Promise<void>[39m — session-shutdown cleanup: clear toasts/controls, kill panes, incognito sweep, and
-   drop the registry on session-replacement reasons.
+ [38;2;167;152;215m- repoRoot()[39m — resolves the torus repo root via [38;2;167;152;215mTORUS_ROOT[39m, falling back to a find-up scan for the package.json.
+ [38;2;167;152;215m- listDelegations()[39m — all in-memory delegation records, newest first.
+ [38;2;167;152;215m- resetRegistryForTesting()[39m — test-only: clears the registry, controls, toasts, beacon throttles, and the external-runs cache.
 
+ <results>
+ <files>
+ - /home/user/torus/extensions/fsutil.ts - shared filesystem/formatting/timing helpers (20
+ exports)
+ - /home/user/torus/extensions/registry.ts - delegation registry: records, logs, beacons,
+ controls, teams (49 exports)
+ </files>
+
+ <answer>
+ fsutil.ts exports 20 symbols (path/env resolution, atomic JSON I/O, pruning, read cache, small utilities); registry.ts exports 49 (the
+ delegation lifecycle from startDelegation through finishDelegation/registryShutdown, log rehydration and recovery, the on-disk
+ run-beacon store API, and the team registry). Full one-line summaries for every export are listed above, verified against the source
+ rather than inference.
  </answer>
 
  <next_steps>
- Ready to proceed — no follow-up needed. If you want per-export exact line anchors, every export listed above can be jumped to via the
- line numbers in the grep output (fsutil.ts lines 33-421, registry.ts lines 41-1506).
+ Ready to proceed - no follow-up needed.
  </next_steps>
  </results>
 
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;104;183;141m✓ done[39m [38;2;126;136;142m6t · 42.5k→3.4k · $0.011 · 39s · j/k scroll · g/G ends · [38;2;167;152;215m[esc] back[38;2;126;136;142m · 01a20ef8-6304-7471-89[39m…
+[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;104;183;141m✓ done[39m [38;2;126;136;142m6t · 44.3k→3.5k · $0.011 · 34s · j/k scroll · g/G ends · [38;2;167;152;215m[esc] back[38;2;126;136;142m · 01a20f37-e51d-7479-bd[39m…
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

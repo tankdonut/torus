@@ -22,7 +22,7 @@ import {
 import { knobBoolean, parseZeroDisables } from "../config/knobs.js";
 import { installCursorBlink } from "../cursor-blink.js";
 import { type EngineTally, reduceEngineEvent } from "../engine-child.js";
-import { createFleetStrip, FLEET_WIDGET_KEY } from "../fleet/index.js";
+import { createFleetStrip, FLEET_WIDGET_KEY, fleetRowLive } from "../fleet/index.js";
 import { formatCost } from "../fsutil.js";
 import { connectedServerCount, mcpStatusText } from "../mcp/index.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
@@ -492,10 +492,15 @@ export function buildStatus(theme?: StatusPainter): string {
 
 	const sep = theme ? theme.fg("dim", " · ") : " · ";
 	// the ring glyph echoes the torus mark; the head pads to the band's shared
-	// column so this row's separator lines up with the fleet and goal rows'
-	const brand = padStatusHead("◉ torus", (head) =>
-		theme ? theme.fg("accent", theme.bold(head)) : head,
-	);
+	// column so this row's separator lines up with the fleet and goal rows',
+	// but only while those rows share the band (alone, the pad is dead columns).
+	// Liveness reads registry and goal state, not the strip's last render, so
+	// every row agrees within one repaint pass.
+	const styleBrand = (head: string) => (theme ? theme.fg("accent", theme.bold(head)) : head);
+	const brand =
+		goalChip() !== undefined || fleetRowLive()
+			? padStatusHead("◉ torus", styleBrand)
+			: styleBrand("◉ torus");
 
 	const segments = [brand];
 	// identity block: persona, model, and thinking effort share the persona

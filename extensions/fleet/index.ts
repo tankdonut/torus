@@ -66,6 +66,20 @@ function stableRunning(): DelegationRecord[] {
 }
 
 /**
+ * Whether the strip renders a row: any running delegation, or any running
+ * external beacon the delegation rows do not already cover. Derived from
+ * registry state rather than the last render so other band rows (the torus
+ * chip row's head padding) key off the same truth without tearing a frame.
+ */
+export function fleetRowLive(): boolean {
+	if (stableRunning().length > 0) return true;
+	const delegated = new Set(listDelegations().map((record) => record.id));
+	return listExternalRuns().some(
+		(record) => record.status === "running" && !delegated.has(record.id),
+	);
+}
+
+/**
  * A segment's age slot: `idle` while a member rests, else the run's age —
  * banked active time for runs the registry tracks (so the clock pauses over
  * idle spells), wall clock for plain delegations.
