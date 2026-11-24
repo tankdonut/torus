@@ -262,6 +262,15 @@ test("tool: creating a file writes exact content with no leading blank", async (
 });
 
 test("hook: write-ish bash results carry a re-read note, read-only ones do not", () => {
+	// Anchors must be live for the note to fire, so arm before each command:
+	// the verdict under test is the regex classification, not the gating.
+	const arm = () =>
+		hook({
+			toolName: "read",
+			isError: false,
+			input: { path: "/f" },
+			content: [{ type: "text", text: "arm" }],
+		});
 	const note = (command) =>
 		hook({
 			toolName: "bash",
@@ -287,7 +296,14 @@ test("hook: write-ish bash results carry a re-read note, read-only ones do not",
 		"pnpm add lodash",
 		"mv a b",
 	]) {
-		assert.ok(note(cmd) !== undefined, cmd);
+		arm();
+		const out = note(cmd);
+		assert.ok(out !== undefined, cmd);
+		assert.match(
+			out.content.at(-1).text,
+			/\[hashline\] writes files — re-read before hashline_edit\./,
+			cmd,
+		);
 	}
 	for (const cmd of [
 		"ls -la",
@@ -295,7 +311,10 @@ test("hook: write-ish bash results carry a re-read note, read-only ones do not",
 		"node t.mjs 2>&1 | head",
 		"npm test",
 		"test 1 -eq 1",
+		"npm test > /dev/null 2>&1",
+		"node t.mjs 2>/dev/null",
 	]) {
+		arm();
 		assert.equal(note(cmd), undefined, cmd);
 	}
 	assert.equal(

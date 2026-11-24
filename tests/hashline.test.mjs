@@ -14,7 +14,7 @@ const {
 	stripAnchorPrefix,
 	verifyAnchors,
 } = await import("../extensions/hashline/core.ts");
-const { runFormatter } = await import("../extensions/hashline/index.ts");
+const { registerHashline, runFormatter } = await import("../extensions/hashline/index.ts");
 
 test("computeLineHash: deterministic, 4 dict chars, distinguishes content", () => {
 	const a = computeLineHash("const x = 1;");
@@ -275,4 +275,133 @@ test("runFormatter: TORUS_FMT_CMD=true resolves async with the ok note", async (
 		if (prev === undefined) delete process.env.TORUS_FMT_CMD;
 		else process.env.TORUS_FMT_CMD = prev;
 	}
+});
+
+const NOTE_TEXT = "[hashline] writes files — re-read before hashline_edit.";
+
+function makeToolResultHandler() {
+	const handlers = {};
+	registerHashline({
+		on: (name, fn) => {
+			handlers[name] = fn;
+		},
+		registerTool: () => {},
+	});
+	assert.equal(typeof handlers.tool_result, "function");
+	return handlers.tool_result;
+}
+
+const bashResult = (command) => ({
+	type: "tool_result",
+	toolCallId: "bash-1",
+	toolName: "bash",
+	input: { command },
+	content: [{ type: "text", text: "ok" }],
+	details: undefined,
+	isError: false,
+});
+
+const readResult = (text) => ({
+	type: "tool_result",
+	toolCallId: "read-1",
+	toolName: "read",
+	input: { path: "/w/fixture.ts" },
+	content: [{ type: "text", text }],
+	details: undefined,
+	isError: false,
+});
+
+const editResult = (path) => ({
+	type: "tool_result",
+	toolCallId: "edit-1",
+	toolName: "edit",
+	input: { path },
+	content: [{ type: "text", text: "done" }],
+	details: undefined,
+	isError: false,
+});
+
+const hashlineEditResult = (input, isError = false) => ({
+	type: "tool_result",
+	toolCallId: "hle-1",
+	toolName: "hashline_edit",
+	input,
+	content: [{ type: "text", text: isError ? "mismatch" : "applied 1 op(s)" }],
+	details: undefined,
+	isError,
+});
+
+function lastText(result) {
+	const texts = (result?.content ?? []).filter((b) => b.type === "text");
+	return texts.at(-1)?.text;
+}
+
+test("tool_result notes: mutating bash results stay silent until a read arms anchors", () => {
+	const handle = makeToolResultHandler();
+	assert.equal(handle(bashResult("git checkout main")), undefined);
+	assert.equal(handle(bashResult("npm install")), undefined);
+
+	const read = handle(readResult("alpha\nbeta"));
+	assert.ok(read);
+	assert.match(read.content[0].text, /^1#[A-Z]{4}\|alpha\n2#[A-Z]{4}\|beta$/);
+
+	const noted = handle(bashResult("cp a b"));
+	assert.ok(noted);
+	assert.equal(noted.content.length, 2);
+	assert.deepEqual(noted.content[0], { type: "text", text: "ok" });
+	assert.equal(lastText(noted), NOTE_TEXT);
+});
+
+test("tool_result notes: the bash mutation note fires once per arming", () => {
+	const handle = makeToolResultHandler();
+	handle(readResult("alpha\n"));
+	assert.ok(handle(bashResult("mv a b")));
+	assert.equal(handle(bashResult("rm c")), undefined);
+	assert.equal(handle(bashResult("git stash")), undefined);
+	handle(readResult("beta\n"));
+	assert.ok(handle(bashResult("rm c")));
+});
+
+test("tool_result notes: successful hashline_edit re-arms, delete and errors do not", () => {
+	const handle = makeToolResultHandler();
+	handle(readResult("alpha\n"));
+	assert.ok(handle(bashResult("cp a b")));
+	assert.equal(
+		handle(hashlineEditResult({ path: "/w/fixture.ts", edits: [{ op: "append", lines: ["x"] }] })),
+		undefined,
+	);
+	assert.ok(handle(bashResult("git checkout main")));
+
+	handle(readResult("beta\n"));
+	assert.ok(handle(bashResult("cp a b")));
+	handle(hashlineEditResult({ path: "/w/fixture.ts", delete: true }));
+	assert.equal(handle(bashResult("rm c")), undefined);
+	handle(
+		hashlineEditResult({ path: "/w/fixture.ts", edits: [{ op: "append", lines: ["x"] }] }, true),
+	);
+	assert.equal(handle(bashResult("rm c")), undefined);
+});
+
+test("tool_result notes: /dev/null redirects and error results never note", () => {
+	const handle = makeToolResultHandler();
+	handle(readResult("alpha\n"));
+	assert.equal(handle(bashResult("npm test > /dev/null 2>&1")), undefined);
+	assert.equal(handle(bashResult("node x.js 2>/dev/null")), undefined);
+	assert.equal(handle(bashResult("cmd >>/dev/null")), undefined);
+	assert.equal(handle({ ...bashResult("cp a b"), isError: true }), undefined);
+	assert.equal(handle({ ...readResult("x\n"), isError: true }), undefined);
+	assert.ok(handle(bashResult("echo hi > /tmp/out")));
+	assert.equal(handle(bashResult("echo hi >> build.log")), undefined);
+	handle(readResult("beta"));
+	assert.ok(handle(bashResult("echo hi >> build.log")));
+});
+
+test("tool_result notes: native edit results keep the per-file void notice", () => {
+	const handle = makeToolResultHandler();
+	const noted = handle(editResult("/w/fixture.ts"));
+	assert.ok(noted);
+	assert.equal(
+		lastText(noted),
+		"[hashline] anchors for /w/fixture.ts are void — re-read before hashline_edit.",
+	);
 });

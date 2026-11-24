@@ -322,11 +322,24 @@ function enhanceReadResult(
  * notice to successful native edit/write results, and to successful bash
  * results whose command plausibly writes files (sed -i, redirects, mv, git
  * checkout, package installs), so the model re-reads before its next
- * hashline_edit instead of burning a mismatch round trip. False positives
- * only cost a re-read; false negatives self-heal via the mismatch error.
+ * hashline_edit instead of burning a mismatch round trip. Redirects to
+ * /dev/null are excluded as no-op writes. False positives only cost a
+ * re-read; false negatives self-heal via the mismatch error.
  */
 const BASH_WRITE_RE =
-	/(?<![\w>])(?:sed|perl|awk|gawk)\b[^\n|;&]*(?:--in-place\b|-n\s+inplace\b|-[a-zA-Z]*i[a-zA-Z]*\b)|(?<![\w>])(?:tee|mv|cp|rm|rmdir|truncate|shred|dd|rsync|install|patch)\b|(?<![\w>])(?:\d)?>{1,2}(?=\s*[^&\s])|(?<![\w>])git\s+(?:apply|checkout|restore|clean|stash|merge|rebase|cherry-pick|reset)\b|(?<![\w>])(?:npm|pnpm|yarn|bun)\s+(?:install|ci|add|update|uninstall|link)\b/;
+	/(?<![\w>])(?:sed|perl|awk|gawk)\b[^\n|;&]*(?:--in-place\b|-n\s+inplace\b|-[a-zA-Z]*i[a-zA-Z]*\b)|(?<![\w>])(?:tee|mv|cp|rm|rmdir|truncate|shred|dd|rsync|install|patch)\b|(?<![\w>])(?:\d)?>{1,2}(?=\s*(?!\/dev\/null\b)[^&\s>])|(?<![\w>])git\s+(?:apply|checkout|restore|clean|stash|merge|rebase|cherry-pick|reset)\b|(?<![\w>])(?:npm|pnpm|yarn|bun)\s+(?:install|ci|add|update|uninstall|link)\b/;
+
+/**
+ * Whether anchored content is live in the conversation: armed by a read that
+ * gained anchors (or a successful hashline_edit, whose result carries a
+ * fresh anchor map), disarmed when the bash mutation note fires. Sessions
+ * that never hold anchors pay no notes, and a run of mutating commands
+ * warns once instead of on every command — the mismatch error self-heals
+ * whatever the single notice misses.
+ */
+interface AnchorState {
+	live: boolean;
+}
 
 function staleAnchorNote(
 	event: ToolResultEvent,
@@ -347,16 +360,19 @@ function staleAnchorNote(
 
 function bashMutationNote(
 	event: ToolResultEvent,
+	state: AnchorState,
 ): { content: ToolResultEvent["content"] } | undefined {
 	if (event.isError || event.toolName !== "bash") return undefined;
 	const command = event.input?.["command"];
 	if (typeof command !== "string" || !BASH_WRITE_RE.test(command)) return undefined;
+	if (!state.live) return undefined;
+	state.live = false;
 	return {
 		content: [
 			...event.content,
 			{
 				type: "text",
-				text: "[hashline] this command may write files — anchors from earlier reads may be stale; re-read before hashline_edit.",
+				text: "[hashline] writes files — re-read before hashline_edit.",
 			},
 		],
 	};
@@ -364,11 +380,19 @@ function bashMutationNote(
 
 export function registerHashline(pi: ExtensionAPI): void {
 	if (!knobBoolean("TORUS_HASHLINE", "hashline", "enabled", true, parseZeroDisables)) return;
-	pi.on(
-		"tool_result",
-		(event: ToolResultEvent) =>
-			enhanceReadResult(event) ?? staleAnchorNote(event) ?? bashMutationNote(event),
-	);
+	const anchors: AnchorState = { live: false };
+	pi.on("tool_result", (event: ToolResultEvent) => {
+		const enhanced = enhanceReadResult(event);
+		if (enhanced) {
+			anchors.live = true;
+			return enhanced;
+		}
+		// A successful hashline_edit result carries a fresh anchor map.
+		if (!event.isError && event.toolName === "hashline_edit" && event.input?.["delete"] !== true) {
+			anchors.live = true;
+		}
+		return staleAnchorNote(event) ?? bashMutationNote(event, anchors);
+	});
 	pi.registerTool(hashlineEditTool);
 }
 
