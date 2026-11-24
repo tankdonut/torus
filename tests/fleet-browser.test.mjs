@@ -194,6 +194,59 @@ test("alt+t flow: detail opened from the list still backs out to the list first"
 	component.dispose();
 });
 
+test("kitty keyboard protocol: esc and ctrl+c act in their CSI-u encodings", () => {
+	registry.resetRegistryForTesting();
+	const theme = { fg: (_c, t) => t, bold: (t) => `*${t}*` };
+	registry.startDelegation("fb-kitty-1", "builder", "zai/glm-5.3", null, "kitty");
+	const { shortcuts } = registerExtension();
+	const driver = makeCtx("fullscreen", theme);
+	shortcuts.get("alt+t").handler(driver.ctx);
+	const component = driver.component();
+	try {
+		// Ghostty sends Escape as CSI 27u (a held key as CSI 27;1:2u) and ctrl+c as
+		// CSI 99;5u once the engine negotiates the protocol; no 0x1b / 0x03 byte
+		// ever arrives.
+		component.items = [{ kind: "delegation", record: registry.listDelegations()[0] }];
+		component.handleInput(ENTER);
+		assert.equal(component.mode, "detail");
+		component.handleInput("\x1b[27u");
+		assert.equal(component.mode, "list", "CSI-u esc backs detail out to the list");
+		component.handleInput(ENTER);
+		assert.equal(component.mode, "detail");
+		component.handleInput("\x1b[27;1:2u");
+		assert.equal(component.mode, "list", "a repeated CSI-u esc backs out too");
+
+		component.handleInput(ENTER);
+		component.handleInput("x");
+		assert.ok(
+			component.render(160).some((l) => l.includes("y/n")),
+			"x arms the stop prompt",
+		);
+		component.handleInput("\x1b[99;5u");
+		assert.ok(
+			!component.render(160).some((l) => l.includes("y/n")),
+			"CSI-u ctrl+c cancels the stop prompt",
+		);
+
+		component.handleInput("s");
+		assert.ok(
+			component.render(160).some((l) => l.includes("steer>")),
+			"s opens steer mode",
+		);
+		component.handleInput("\x1b[27u");
+		assert.ok(
+			!component.render(160).some((l) => l.includes("steer>")),
+			"CSI-u esc leaves steer mode",
+		);
+		component.handleInput("\x1b[27u");
+		assert.equal(component.mode, "list");
+		component.handleInput("\x1b[99;5u");
+		assert.equal(driver.doneCount(), 1, "CSI-u ctrl+c closes the fleet list");
+	} finally {
+		component.dispose();
+	}
+});
+
 test("FLEET_OPENER focuses a team member's external run in the detail view", () => {
 	registry.resetRegistryForTesting();
 	registry.startDelegation("fb-mem-1", "builder", "zai/glm-5.3", null, "delegate-row");

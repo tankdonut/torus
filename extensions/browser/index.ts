@@ -16,6 +16,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
+	matchesKey,
 	Text,
 	type TUI,
 	type TuiMouseEvent,
@@ -158,8 +159,15 @@ function builtinToolDefinition(name: string): ToolDefinitionLike | undefined {
 const UP = "\x1b[A";
 const DOWN = "\x1b[B";
 const ENTER = "\r";
-const ESC = "\x1b";
-const CTRL_C = "\x03";
+/**
+ * Escape and ctrl+c are matched by key, not by byte: the engine negotiates the
+ * Kitty keyboard protocol at startup, so on terminals that implement it
+ * (Ghostty, kitty, foot, WezTerm) Escape arrives as `CSI 27u` and ctrl+c as
+ * `CSI 99;5u`, never as `0x1b` / `0x03`. Enter and the arrows keep their
+ * legacy bytes under the protocol and stay plain compares.
+ */
+const isEscape = (data: string): boolean => matchesKey(data, "escape");
+const isCtrlC = (data: string): boolean => matchesKey(data, "ctrl+c");
 
 // Scoped mouse takeover: SGR wheel reporting on while the overlay owns the screen.
 // Fullscreen never writes these: the host TUI owns the mouse mode set
@@ -372,7 +380,7 @@ class FleetBrowser implements Component {
 				if (selected?.kind === "delegation" && selected.record.status === "running")
 					stopDelegation(selected.record.id);
 				this.stopConfirm = false;
-			} else if (data === "n" || data === "N" || data === ESC || data === "q" || data === CTRL_C) {
+			} else if (data === "n" || data === "N" || isEscape(data) || data === "q" || isCtrlC(data)) {
 				this.stopConfirm = false;
 			}
 			this.tui.requestRender();
@@ -387,7 +395,7 @@ class FleetBrowser implements Component {
 					}
 					this.steerMode = false;
 					this.steerText = "";
-				} else if (data === ESC) {
+				} else if (isEscape(data)) {
 					this.steerMode = false;
 					this.steerText = "";
 				} else if (data.startsWith("\x1b")) {
@@ -404,7 +412,7 @@ class FleetBrowser implements Component {
 				this.tui.requestRender();
 				return;
 			}
-			if (data === ESC || data === "q" || data === CTRL_C || data === ENTER) {
+			if (isEscape(data) || data === "q" || isCtrlC(data) || data === ENTER) {
 				// Back to the list only when the user came through it; a detail opened
 				// directly from a strip click returns straight to the main TUI.
 				if (this.listSeen) this.mode = "list";
@@ -437,7 +445,7 @@ class FleetBrowser implements Component {
 			return;
 		}
 
-		if (data === ESC || data === "q" || data === CTRL_C) {
+		if (isEscape(data) || data === "q" || isCtrlC(data)) {
 			this.close();
 		} else if (data === ENTER) {
 			if (this.items.length > 0) {
