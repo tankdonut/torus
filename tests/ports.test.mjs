@@ -30,6 +30,7 @@ const { GOAL_CHIP_KEY } = await import("../extensions/shared-state.ts");
 const { AGENTS } = await import("../extensions/roster/index.ts");
 const registry = await import("../extensions/registry.ts");
 const { setSessionPersona } = await import("../extensions/registry.js");
+const { STATUS_HEAD_WIDTH } = await import("../extensions/text.ts");
 
 test("persona colors: every roster agent has a distinct RGB assignment", () => {
 	for (const agent of AGENTS) {
@@ -56,12 +57,17 @@ test("buildStatus: plain mode keeps separators; themed mode paints segments and 
 	};
 	const plain = buildStatus();
 	assert.match(plain, /leader/);
+	const head = "◉ torus".padEnd(STATUS_HEAD_WIDTH);
+	assert.ok(
+		plain.startsWith(`${head} · `),
+		"the ring head pads to the band column before the first separator",
+	);
 	assert.ok(!plain.includes("persona:"), "verbose persona prefix should be gone");
 	assert.ok(!plain.includes("[pi]"), "stock engine tag should be hidden");
 	assert.ok(plain.includes(" · "), "plain separator missing");
 
 	const themed = buildStatus(fakeTheme);
-	assert.ok(themed.includes("<accent>*torus*</accent>"), "brand not accent-bold");
+	assert.ok(themed.includes("<accent>*◉ torus*</accent>"), "brand not accent-bold");
 	assert.ok(themed.includes("<dim> · </dim>"), "separator not dimmed");
 	assert.ok(themed.includes(personaFg("leader", "leader")), "persona chip not RGB-painted");
 	assert.ok(!themed.includes("<warning>"), "goal gold leaked into status");
@@ -524,6 +530,20 @@ test("goal banner: renders only with a goal, truncates to width, state rides the
 	assert.equal(plain.length, 40, "banner fits the terminal width exactly");
 
 	setStatusExtras(null, null);
+});
+
+test("status band: torus and goal row heads pad to one column so separators align", () => {
+	// identity painter: fake-theme literal tags and bold asterisks would count
+	// as columns, so alignment is measured on an unstyled render
+	const flat = { fg: (_color, text) => text, bold: (text) => text };
+	setSessionPersona("leader");
+	const torusDot = buildStatus(flat).indexOf("·");
+	setStatusGoal({ status: "active", head: "align the band" });
+	const goalDot = createGoalBanner(flat).render(80)[0].indexOf("·");
+	assert.equal(torusDot, STATUS_HEAD_WIDTH + 1, "torus row separator column");
+	assert.equal(goalDot, STATUS_HEAD_WIDTH + 1, "goal row separator column");
+	setSessionPersona(null);
+	setStatusGoal(undefined);
 });
 
 test("built-in keywords: trio present, user file overrides same key, new keys merge", () => {

@@ -7,6 +7,8 @@
  * sanitizeRender before it reaches a renderer.
  */
 
+import { visibleWidth } from "@earendil-works/pi-tui";
+
 /** Strip ANSI escape sequences and C1 control chars before text reaches the TUI. */
 export function sanitizeRender(text: string): string {
 	return text
@@ -29,4 +31,28 @@ export function previewLine(text: string, max = 140): string {
 		return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 	}
 	return "";
+}
+
+/**
+ * The status band's head column: every banded row (the torus chip row, the
+ * fleet strip, the goal banner) opens with a glyph plus a word, and heads
+ * are padded to this many columns so the dim " · " separators stack into one
+ * vertical line. Sized for "◆ fleet NN"; a wider head (a three-digit fleet
+ * count) shifts only its own dot, never the other rows'.
+ */
+export const STATUS_HEAD_WIDTH = 10;
+
+/**
+ * Pad a status band row head to the head column: the width keys off the
+ * plain head (a styled one cannot be measured; test painters wrap literal
+ * tags no width helper strips), the style hook paints it, and plain spaces
+ * fill the remainder so every row's separator lands in the same column.
+ */
+export function padStatusHead(
+	head: string,
+	style: (head: string) => string = (text) => text,
+	width: number = STATUS_HEAD_WIDTH,
+): string {
+	const pad = width - visibleWidth(head);
+	return style(head) + (pad > 0 ? " ".repeat(pad) : "");
 }

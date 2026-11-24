@@ -40,6 +40,7 @@ import {
 	setSharedState,
 	sharedState,
 } from "../shared-state.js";
+import { padStatusHead, STATUS_HEAD_WIDTH } from "../text.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
@@ -216,19 +217,20 @@ class GoalBanner implements Component {
 		const color = chip.status === "active" ? "warning" : "dim";
 		const fg = (text: string) => (this.painter ? this.painter.fg(color, text) : text);
 		// play while active, stop while paused; both glyphs are one column, so
-		// the truncation budget keys off either label. The head joins with the
-		// same dim separator the statusline chips use.
+		// either label pads to the band's shared head column. The head joins with
+		// the same dim separator the statusline chips use.
 		const label = chip.status === "active" ? "▶ goal" : "■ goal";
 		const sep = this.painter ? this.painter.fg("dim", " · ") : " · ";
-		// budget in visible columns: key it off the plain separator, not the
-		// styled one (test painters wrap in literal tags visibleWidth would count)
-		const budget = Math.max(0, width - visibleWidth("▶ goal") - " · ".length);
+		// budget in visible columns: the padded head column plus the plain
+		// separator, not the styled one (test painters wrap in literal tags
+		// visibleWidth would count)
+		const budget = Math.max(0, width - STATUS_HEAD_WIDTH - " · ".length);
 		// truncate before styling so the ellipsis is not buried under a closing SGR tag
 		const head =
 			chip.status === "paused"
 				? fg(truncateToWidth(chip.head, budget))
 				: truncateToWidth(chip.head, budget);
-		return [`${fg(label)}${sep}${head}`];
+		return [`${padStatusHead(label, fg)}${sep}${head}`];
 	}
 
 	invalidate(): void {}
@@ -489,7 +491,11 @@ export function buildStatus(theme?: StatusPainter): string {
 	const persona = sessionPersona();
 
 	const sep = theme ? theme.fg("dim", " · ") : " · ";
-	const brand = theme ? theme.fg("accent", theme.bold("torus")) : "torus";
+	// the ring glyph echoes the torus mark; the head pads to the band's shared
+	// column so this row's separator lines up with the fleet and goal rows'
+	const brand = padStatusHead("◉ torus", (head) =>
+		theme ? theme.fg("accent", theme.bold(head)) : head,
+	);
 
 	const segments = [brand];
 	// identity block: persona, model, and thinking effort share the persona

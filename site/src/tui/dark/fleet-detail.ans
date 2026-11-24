@@ -1,32 +1,32 @@
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[39m[48;2;37;65;49m [38;2;157;165;169mregistry.ts:107: export function shellQuote(value: string): string {
-[39m [38;2;157;165;169m... (264 more lines,[39m [38;2;126;136;142mctrl+o[38;2;157;165;169m to expand)[39m
+[39m [38;2;167;152;215m- pruneRunBeacons(now): void[39m — prune the store: finished by age, running count-capped, dead-writer zombies removed.
+ [38;2;167;152;215m- externalRunAgeSeconds(run): number[39m — display age: banked active time for members, wall clock otherwise.
+ [38;2;167;152;215m- type RunRecordView[39m — RunRecord with display fields ([38;2;167;152;215msource[39m, [38;2;167;152;215mlabel[39m) guaranteed.
+ [38;2;167;152;215m- listExternalRuns(): RunRecordView[][39m — THE fleet list API: local records deduped against foreign running beacons, newest first.
+ [38;2;167;152;215m- expireBeaconCacheForTesting(): void[39m — test-only: drop the beacon-scan TTL cache.
 
+ [1mTeams[0m
+ [38;2;167;152;215m- type TeamStatus[39m — [38;2;167;152;215m"active" | "shutdown"[39m.
+ [38;2;167;152;215m- interface TeamMemberRecord[39m — one team member: id, name, agent, model, status, session, mailbox dir.
+ [38;2;167;152;215m- interface TeamRecord[39m — a team: id, name, objective, status, dir, members, createdAt.
+ [38;2;167;152;215m- registerTeam(record): void[39m / [38;2;167;152;215mgetTeam(id)[39m / [38;2;167;152;215mlistTeams()[39m / [38;2;167;152;215mdropTeam(id)[39m — CRUD over the shared teams map.
 
-[49m [3m[38;2;150;160;164mLet me check remaining exports I may have missed. In fsutil.ts, also there may be exports between lines 50-115 (canonicalProjectDir
-[0m [3m[38;2;150;160;164mmaybe not exported? It said "export function projectKeyFor" and canonicalProjectDir used but maybe internal). Check for exports like
-[0m [38;2;167;152;215mexport const[3m[38;2;150;160;164m elsewhere in fsutil — grep ^export caught all at line starts. fsutil exports list: torusHome, projectKey, projectKeyFor,
-[0m [3m[38;2;150;160;164mprojectStateDir, TORUS_STATE_DIR_ENV, childSessionsRoot, TORUS_SCRATCH_DIR_ENV, ensureStateDirEnv, scratchDir, displayPath, readJson,
-[0m [3m[38;2;150;160;164mwriteJson, pruneOrphanSessionFiles, pruneScratch, readHead, readFileCached, _readCacheStats, sleep, splitList, formatCost. Check
-[0m [3m[38;2;150;160;164mformatCost end and any after line 417.[0m
+ [1mMisc[0m
+ [38;2;167;152;215m- repoRoot(): string[39m — resolve the torus repo root via [38;2;167;152;215mTORUS_ROOT[39m, else find-up for the torus package.json.
+ [38;2;167;152;215m- recoverRun(id, sessionId?): DelegationRecord | undefined[39m — store-first single-run recovery (beacon store, then legacy log scan).
+ [38;2;167;152;215m- recoverSession(sessionId): void[39m — session-start bulk recovery of the session's runs from beacons/logs.
+ [38;2;167;152;215m- rehydrateFromLogs(currentSessionId?): void[39m — rebuild records from delegation logs on resume so alt+t and the fleet survive restarts.
+ [38;2;167;152;215m- async registryShutdown(reason?): Promise<void>[39m — session-shutdown cleanup: clear toasts/controls, kill panes, incognito sweep, and
+   drop the registry on session-replacement reasons.
 
- [3m[38;2;150;160;164mregistry.ts: check after 1508 and also exports not at line start? grep only line-start; there may be [0m[38;2;167;152;215mexport const[3m[38;2;150;160;164m mid... all shown.
-[0m [3m[38;2;150;160;164mAlso check registry exports between lines 400-556 (e.g., RUNS_DIR? externalRunAgeSeconds at 346; RunRecord at 370; something between
-[0m [3m[38;2;150;160;164m400-556 like externalRuns?). Let me grep for export with not-line-start too, and read the tail of registry (after 1508) and the
-[0m [3m[38;2;150;160;164msection 400-560.[0m
+ </answer>
 
-[48;2;37;65;49m
- [1m[38;2;222;224;225m$ grep -n "export" extensions/fsutil.ts | grep -v "^\s*[0-9]*:\s*\*" ; echo ---; grep -n "export" extensions/registry.ts | grep -v
-[0m[48;2;37;65;49m [1m[38;2;222;224;225m"^\s*[0-9]*:\s*\*"[0m[38;2;157;165;169m[48;2;37;65;49m (timeout 30s)[39m
+ <next_steps>
+ Ready to proceed — no follow-up needed. If you want per-export exact line anchors, every export listed above can be jumped to via the
+ line numbers in the grep output (fsutil.ts lines 33-421, registry.ts lines 41-1506).
+ </next_steps>
+ </results>
 
- [38;2;157;165;169m... (75 earlier lines,[39m [38;2;126;136;142mctrl+o[38;2;157;165;169m to expand)[39m
- [38;2;157;165;169m1145:export function rehydrateFromLogs(currentSessionId?: string): void {[39m
- [38;2;157;165;169m1366:export function recoverRun(id: string, sessionId?: string): DelegationRecord | undefined {[39m
- [38;2;157;165;169m1393:export function recoverSession(sessionId: string): void {[39m
- [38;2;157;165;169m1486:export type SessionEndReason = "quit" | "reload" | "new" | "resume" | "fork";[39m
- [38;2;157;165;169m1506:export async function registryShutdown(reason: SessionEndReason = "quit"): Promise<void> {[39m
-
-
-[38;2;205;154;34m[49m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;205;154;34m⠇ live[39m [38;2;126;136;142mt3 · 14.7k→552 · $0.0029 · 20s · j/k scroll · g/G ends · [38;2;167;152;215m[s] steer[38;2;126;136;142m · [38;2;234;127;129m[x] stop[38;2;126;136;142m · [38;2;167;152;215m[esc] back[39m
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[1m[39mtorus fleet[0m [38;2;126;136;142m·[39m [38;2;205;154;34mexplorer[39m [38;2;126;136;142mglm-5.3-flash[39m [38;2;104;183;141m✓ done[39m [38;2;126;136;142m6t · 42.5k→3.4k · $0.011 · 39s · j/k scroll · g/G ends · [38;2;167;152;215m[esc] back[38;2;126;136;142m · 01a20ef8-6304-7471-89[39m…
 [38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

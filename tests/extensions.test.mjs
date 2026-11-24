@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 const { normalizeHandle, shellQuote, AGENT_NAME_RE, redactSecrets } = await import(
 	"../extensions/registry.ts"
 );
-const { sanitizeRender } = await import("../extensions/text.ts");
+const { padStatusHead, sanitizeRender, STATUS_HEAD_WIDTH } = await import("../extensions/text.ts");
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -204,6 +204,18 @@ test("team spec persists shutdown status for post-restart hydration", () => {
 });
 
 // ---- untrusted-input sanitization + secret redaction ----
+test("padStatusHead: styled heads pad to the shared status band column", () => {
+	assert.equal(padStatusHead("◆ fleet 1"), "◆ fleet 1 ");
+	assert.equal(
+		padStatusHead("◉ torus", (head) => `<accent>*${head}*</accent>`),
+		"<accent>*◉ torus*</accent>   ",
+	);
+	assert.equal(padStatusHead("▶ goal"), "▶ goal    ");
+	assert.equal(padStatusHead("◆ fleet 12"), "◆ fleet 12");
+	assert.equal(padStatusHead("◆ fleet 100"), "◆ fleet 100", "a wider head never truncates");
+	assert.equal(STATUS_HEAD_WIDTH, 10);
+});
+
 test("sanitizeRender strips OSC/CSI escapes and C1 controls from rendered strings", () => {
 	assert.equal(sanitizeRender("\u001b]52;c;aGk=\u001b\\plain"), "plain");
 	assert.equal(sanitizeRender("\u001b[31mred\u001b[0m"), "red");

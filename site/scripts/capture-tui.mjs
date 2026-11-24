@@ -260,7 +260,7 @@ const setEngineTheme = (theme) => {
 	merged.theme = theme;
 	writeFileSync(agentSettingsPath, `${JSON.stringify(merged, null, "\t")}\n`);
 	tmux(["send-keys", "-t", `${SESSION}.0`, "/reload", "Enter"]);
-	waitFor(`${SESSION}.0`, "torus · leader", 150_000, `theme switch to ${theme}`);
+	waitFor(`${SESSION}.0`, /◉ torus\s+· leader/, 150_000, `theme switch to ${theme}`);
 	sleep(1500);
 };
 
@@ -374,7 +374,7 @@ function runDispatchScenes() {
 	// Session 1: the stateless roster scene in both themes around one flip,
 	// then the light fleet pass riding a fresh dispatch.
 	boot();
-	waitFor(`${SESSION}.0`, "torus · leader", 60_000, "TUI boot (statusline)");
+	waitFor(`${SESSION}.0`, /◉ torus\s+· leader/, 60_000, "TUI boot (statusline)");
 	setMainPaneWidth(MAIN_COLS);
 	const openRoster = () => {
 		tmux(["send-keys", "-t", `${SESSION}.0`, "/roster", "Enter"]);
@@ -398,7 +398,7 @@ function runDispatchScenes() {
 	// Session 2: the dark fleet pass, no flip needed (dark is the boot
 	// theme).
 	boot();
-	waitFor(`${SESSION}.0`, "torus · leader", 60_000, "TUI boot (fleet pass)");
+	waitFor(`${SESSION}.0`, /◉ torus\s+· leader/, 60_000, "TUI boot (fleet pass)");
 	fleetPass("dark");
 	settle();
 }
@@ -408,7 +408,7 @@ function runTeamScene() {
 	// explorer's deferred result turn owns the lead, and the team message
 	// queues behind it.
 	boot();
-	waitFor(`${SESSION}.0`, "torus · leader", 60_000, "TUI boot (team session)");
+	waitFor(`${SESSION}.0`, /◉ torus\s+· leader/, 60_000, "TUI boot (team session)");
 	tmux(["send-keys", "-t", `${SESSION}.0`, TEAM_MESSAGE, "Enter"]);
 	// The strip carries member rows once they run; its permanent "alt+t all"
 	// tail is the marker (the ⧉ badge is browser-only now, and the prompt

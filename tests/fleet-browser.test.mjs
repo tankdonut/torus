@@ -434,6 +434,11 @@ test("strip: one line — count chip, entity segments with slot numbers, +N over
 		assert.equal(lines.length, 1, "the strip is a single line");
 		const line = lines[0];
 		assert.match(line, /fleet 2/, "count chip carries every running entity");
+		// "◆ fleet 2" is 9 columns: one pad space, then the separator's own
+		assert.ok(
+			line.startsWith("*◆ fleet 2*  · "),
+			"the diamond head pads to the band column before the first separator",
+		);
 		assert.match(line, /1 · @scout idle/, "idle member rests on the dim dot and shows idle");
 		assert.doesNotMatch(line, /@scout \d/, "idle member shows no ticking age");
 		assert.match(line, /[·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] @solo/, "external segment carries no slot number");
@@ -537,7 +542,7 @@ test("strip: count chip, segments, overflow, and alt+t-all are click-routed", ()
 	const colored = factory(tui, styled);
 	try {
 		const line = colored.render(200)[0];
-		assert.match(line, /^\{accent\}\*fleet 2\*\{\/\}/, "count chip leads in accent");
+		assert.match(line, /^\{accent\}\*◆ fleet 2\*\{\/\}/, "count chip leads in accent");
 		assert.match(line, /\{accent\}alt\+t all\{\/\}$/, "all-hint closes the line in accent");
 	} finally {
 		colored.dispose();

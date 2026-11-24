@@ -15,7 +15,7 @@ import {
 	listExternalRuns,
 	type RunRecord,
 } from "../registry.js";
-import { sanitizeRender } from "../text.js";
+import { padStatusHead, sanitizeRender } from "../text.js";
 import {
 	delegationIcon,
 	entityColor,
@@ -191,7 +191,11 @@ class FleetStrip implements Component {
 		}
 
 		const sep = this.theme.fg("dim", " · ");
-		const countChip = this.theme.fg("accent", this.theme.bold(`fleet ${candidates.length}`));
+		// the diamond head pads to the band's shared column so this row's
+		// separator lines up with the torus and goal rows'
+		const countChip = padStatusHead(`◆ fleet ${candidates.length}`, (head) =>
+			this.theme.fg("accent", this.theme.bold(head)),
+		);
 		const allHint = this.theme.fg("accent", ALL_HINT);
 		// The count chip and the all-hint are permanent; agent segments fill the
 		// remaining width, newest-dropped-first, and everything that no longer
