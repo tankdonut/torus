@@ -60,7 +60,7 @@ test("memberModelCandidates: explicit model first, deduped, chain fallback for k
 	assert.equal(explicit[0], "zai/glm-5.3-flash", "explicit model leads the candidates");
 	assert.ok(new Set(explicit).size === explicit.length, "no duplicate models");
 	assert.ok(
-		explicit.includes("zai/glm-5.3"),
+		explicit.includes("zai/glm-5.4"),
 		"primary chain head reachable after the explicit model",
 	);
 
@@ -77,7 +77,7 @@ test("memberModelCandidates: explicit model first, deduped, chain fallback for k
 		"zai/glm-5.3-flash",
 		"unknown agents fall back to the default member model",
 	);
-	assert.ok(unknown.includes("zai/glm-5.3"), "primary chain backs an unknown role");
+	assert.ok(unknown.includes("zai/glm-5.4"), "primary chain backs an unknown role");
 });
 
 test("spawnMember walks the model chain when the engine dies with zero work", async () => {
@@ -303,7 +303,7 @@ test("a mail run that dies on its model rotates the member onto the next candida
 		await handle.exited;
 		const log = readFileSync(logPath, "utf8");
 		assert.ok(rotated, "the dead mail run rotated the member");
-		assert.match(log, /429 weekly limit exhausted\) — rotating to zai\/glm-5\.3/);
+		assert.match(log, /429 weekly limit exhausted\) — rotating to zai\/glm-5\.4/);
 		assert.equal(
 			log.includes("chain exhausted, member idle"),
 			false,

@@ -1698,7 +1698,7 @@ const delegateTool = defineTool({
 		model: Type.Optional(
 			Type.String({
 				description:
-					"Model for this run: 'primary' or 'fast' (chain shorthands) or an exact id like zai/glm-5.3 — starts the chain walk there, falls back down the agent's chain on no-work failures",
+					"Model for this run: 'primary' or 'fast' (chain shorthands) or an exact id like zai/glm-5.4 — starts the chain walk there, falls back down the agent's chain on no-work failures",
 			}),
 		),
 		background: Type.Optional(

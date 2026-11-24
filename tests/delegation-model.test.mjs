@@ -179,7 +179,7 @@ test("model 'fast' spawns on the fast head with --model before --tools", async (
 		"--model zai/glm-5.3-flash must precede --tools in spawn args",
 	);
 	assert.ok(
-		!spawnedOnModelBeforeTools(batches, "zai/glm-5.3"),
+		!spawnedOnModelBeforeTools(batches, "zai/glm-5.4"),
 		"primary head must not have been attempted",
 	);
 });
@@ -203,13 +203,13 @@ test("shorthand 'primary' resolves to the concrete chain head", async () => {
 			{ model: "primary" },
 		);
 		assert.equal(outcome.ok, true);
-		assert.equal(outcome.details.model, "zai/glm-5.3");
+		assert.equal(outcome.details.model, "zai/glm-5.4");
 		const record = registry.listDelegations().find((r) => r.id === outcome.delegationId);
-		assert.equal(record?.model, "zai/glm-5.3", "registry record carries the resolved id");
+		assert.equal(record?.model, "zai/glm-5.4", "registry record carries the resolved id");
 	});
 
 	assert.ok(
-		spawnedOnModelBeforeTools(spawnBatches(dir), "zai/glm-5.3"),
+		spawnedOnModelBeforeTools(spawnBatches(dir), "zai/glm-5.4"),
 		"spawn must lead with the resolved primary head",
 	);
 });
@@ -354,7 +354,7 @@ test("fan-out runs mix per-run models across one batch", async () => {
 		"run A must spawn on the fast head",
 	);
 	assert.ok(
-		spawnedOnModelBeforeTools(batches, "zai/glm-5.3"),
+		spawnedOnModelBeforeTools(batches, "zai/glm-5.4"),
 		"run B must spawn on the primary head",
 	);
 });

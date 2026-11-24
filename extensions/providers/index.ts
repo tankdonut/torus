@@ -35,7 +35,7 @@ import { gateExtension, type PlatformSupport } from "../platform.js";
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
 
 export const MODEL_CHAINS = {
-	primary: ["zai/glm-5.3", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
+	primary: ["zai/glm-5.4", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
 	fast: ["zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
 } as const satisfies Record<string, readonly string[]>;
 
@@ -258,13 +258,13 @@ export const DEFAULT_MEMBER_MODEL = MODEL_CHAINS.fast[0];
  * numbers (its rate-limits docs page redirects to the account console; the
  * caps are per-account, per-model, in-flight request counts, tier-dependent
  * and dynamically adjusted), so these mirror widely reported GLM Coding
- * Plan figures — roughly 5 concurrent sessions on glm-5.3 versus far more
+ * Plan figures — roughly 5 concurrent sessions on glm-5.4 versus far more
  * on the flash tier. They are scheduling hints for delegation sizing, not a
  * request rate limiter; override per model via the chains section's
  * `concurrency` map to match your account tier.
  */
 export const MODEL_CONCURRENCY_DEFAULTS: Readonly<Record<string, number>> = {
-	"zai/glm-5.3": 5,
+	"zai/glm-5.4": 5,
 	"zai/glm-5.3-flash": 50,
 };
 

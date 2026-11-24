@@ -68,7 +68,7 @@ writeFileSync(
 process.env.TORUS_ROOT = ROOT;
 
 const CONFIG_JSON = path.join(HOME, "config.json");
-const DEFAULT_PRIMARY = ["zai/glm-5.3", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"];
+const DEFAULT_PRIMARY = ["zai/glm-5.4", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"];
 const DEFAULT_FAST = ["zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"];
 
 const ENGINE_DIR = mkdtempSync(path.join(tmpdir(), "torus-chains-fake-engines-"));
@@ -165,7 +165,7 @@ test("no chains section → built-in defaults, byte-identical", () => {
 	assert.equal(roster.personaModel("worker"), DEFAULT_PRIMARY[0]);
 	assert.deepEqual(
 		roster.availableModels(),
-		["zai/glm-5.3", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
+		["zai/glm-5.4", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
 		"deduped union of both chains",
 	);
 });
@@ -562,25 +562,25 @@ test("frontmatter model: still wins over the overridden chain head", async () =>
 
 test("no config → built-in concurrency defaults, unknown models uncapped", () => {
 	removeConfig();
-	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 5);
+	assert.equal(providers.modelConcurrency("zai/glm-5.4"), 5);
 	assert.equal(providers.modelConcurrency("zai/glm-5.3-flash"), 50);
 	assert.equal(providers.modelConcurrency("opencode-go/glm-5.3-flash"), undefined);
 	assert.equal(providers.modelConcurrency("ollama/gemma3:12b"), undefined);
 });
 
 test("concurrency map overrides per model; defaults fill the rest", () => {
-	writeConfig({ chains: { concurrency: { "zai/glm-5.3": 3 } } });
-	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 3);
+	writeConfig({ chains: { concurrency: { "zai/glm-5.4": 3 } } });
+	assert.equal(providers.modelConcurrency("zai/glm-5.4"), 3);
 	assert.equal(providers.modelConcurrency("zai/glm-5.3-flash"), 50);
 	removeConfig();
 });
 
 test("one chains section carries tiers and concurrency together; a rewrite replaces it wholesale", () => {
-	writeConfig({ chains: { fast: ["zai/custom-model"], concurrency: { "zai/glm-5.3": 9 } } });
+	writeConfig({ chains: { fast: ["zai/custom-model"], concurrency: { "zai/glm-5.4": 9 } } });
 	assert.deepEqual(roster.resolveModels("fast"), ["zai/custom-model"]);
-	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 9);
-	writeConfig({ chains: { concurrency: { "zai/glm-5.3": 2 } } });
-	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 2);
+	assert.equal(providers.modelConcurrency("zai/glm-5.4"), 9);
+	writeConfig({ chains: { concurrency: { "zai/glm-5.4": 2 } } });
+	assert.equal(providers.modelConcurrency("zai/glm-5.4"), 2);
 	assert.deepEqual(roster.resolveModels("fast"), DEFAULT_FAST, "the rewrite replaced the section");
 	removeConfig();
 });
@@ -588,13 +588,13 @@ test("one chains section carries tiers and concurrency together; a rewrite repla
 test("malformed concurrency map warns and is ignored (defaults hold)", () => {
 	writeConfig({ chains: { concurrency: "five" } });
 	const lines = captureStderr(() => providers.modelConcurrencyMap());
-	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 5);
+	assert.equal(providers.modelConcurrency("zai/glm-5.4"), 5);
 	assert.ok(lines.some((l) => l.includes('"concurrency" must be an object')));
 	removeConfig();
 
 	writeConfig({ chains: { concurrency: { "zai/glm-5.3": 0, "zai/glm-5.3-flash": "many" } } });
 	const entryLines = captureStderr(() => providers.modelConcurrencyMap());
-	assert.equal(providers.modelConcurrency("zai/glm-5.3"), 5);
+	assert.equal(providers.modelConcurrency("zai/glm-5.4"), 5);
 	assert.equal(providers.modelConcurrency("zai/glm-5.3-flash"), 50);
 	assert.equal(entryLines.filter((l) => l.includes("concurrency cap for")).length, 2);
 	removeConfig();
@@ -604,14 +604,14 @@ test("rosterText reports caps for available models", () => {
 	removeConfig();
 	const text = roster.rosterText();
 	assert.ok(text.includes("concurrency caps"));
-	assert.ok(text.includes("zai/glm-5.3=5"));
+	assert.ok(text.includes("zai/glm-5.4=5"));
 	assert.ok(text.includes("zai/glm-5.3-flash=50"));
 	assert.ok(text.includes("opencode-go/glm-5.3-flash=uncapped"));
 });
 
 test("plannedRunModel mirrors runDelegation's first-model resolution", () => {
 	removeConfig();
-	assert.equal(roster.plannedRunModel("worker"), "zai/glm-5.3");
+	assert.equal(roster.plannedRunModel("worker"), "zai/glm-5.4");
 	assert.equal(roster.plannedRunModel("pinned"), "zai/glm-5.3-flash");
 	assert.equal(roster.plannedRunModel("worker", "fast"), "zai/glm-5.3-flash");
 	assert.equal(
@@ -626,16 +626,16 @@ test("concurrencyWarning flags only models pushed over cap", () => {
 	removeConfig();
 	const warning = roster.concurrencyWarning(
 		[
-			"zai/glm-5.3",
-			"zai/glm-5.3",
+			"zai/glm-5.4",
+			"zai/glm-5.4",
 			"zai/glm-5.3-flash",
 			"zai/glm-5.3-flash",
 			"opencode-go/glm-5.3-flash",
 		],
-		{ "zai/glm-5.3": 4, "zai/glm-5.3-flash": 48, "opencode-go/glm-5.3-flash": 99 },
+		{ "zai/glm-5.4": 4, "zai/glm-5.3-flash": 48, "opencode-go/glm-5.3-flash": 99 },
 	);
 	assert.ok(typeof warning === "string");
-	assert.ok(warning.includes("zai/glm-5.3: 6 parallel runs vs cap 5"));
+	assert.ok(warning.includes("zai/glm-5.4: 6 parallel runs vs cap 5"));
 	assert.ok(!warning.includes("zai/glm-5.3-flash: "));
 	assert.ok(!warning.includes("opencode-go"));
 	// Exactly at cap (48 + 2 = 50) is not over, and uncapped models never flag.
@@ -773,22 +773,22 @@ test("startup notice: credential-less built-ins each print one line naming provi
 test("no-work cooldown: a memoized head drops from resolution until the TTL expires", () => {
 	removeConfig();
 	roster.resetFailureMemoForTesting();
-	assert.equal(roster.resolveModels("primary")[0], "zai/glm-5.3");
+	assert.equal(roster.resolveModels("primary")[0], "zai/glm-5.4");
 	// Pin the mark time: a default Date.now() mark races the query below into
 	// the same millisecond under load.
 	const now = Date.now();
-	roster.markModelFailed("zai/glm-5.3", now);
+	roster.markModelFailed("zai/glm-5.4", now);
 	assert.equal(roster.resolveModels("primary")[0], "zai/glm-5.3-flash");
 	assert.equal(roster.plannedRunModel("worker"), "zai/glm-5.3-flash");
-	assert.equal(roster.isModelMemoFailed("zai/glm-5.3", now + 299_999), true, "just inside the TTL");
+	assert.equal(roster.isModelMemoFailed("zai/glm-5.4", now + 299_999), true, "just inside the TTL");
 	assert.equal(
-		roster.isModelMemoFailed("zai/glm-5.3", now + 300_000),
+		roster.isModelMemoFailed("zai/glm-5.4", now + 300_000),
 		false,
 		"at the TTL it expires",
 	);
 	// A mark older than the TTL is inert: expiry restores the head.
-	roster.markModelFailed("zai/glm-5.3", now - 300_000);
-	assert.equal(roster.resolveModels("primary")[0], "zai/glm-5.3", "expiry restores the head");
+	roster.markModelFailed("zai/glm-5.4", now - 300_000);
+	assert.equal(roster.resolveModels("primary")[0], "zai/glm-5.4", "expiry restores the head");
 	roster.resetFailureMemoForTesting();
 });
 
@@ -798,16 +798,16 @@ test("no-work cooldown: memoizing every chain entry falls back to the availabili
 	for (const model of [...DEFAULT_PRIMARY, ...DEFAULT_FAST]) roster.markModelFailed(model);
 	assert.deepEqual(roster.resolveModels("primary"), DEFAULT_PRIMARY);
 	assert.deepEqual(roster.resolveModels("fast"), DEFAULT_FAST);
-	assert.ok(roster.availableModels().includes("zai/glm-5.3"));
+	assert.ok(roster.availableModels().includes("zai/glm-5.4"));
 	roster.resetFailureMemoForTesting();
 });
 
 test("no-work cooldown: exact-id overrides bypass the memo, chain shorthands ride it", () => {
 	removeConfig();
 	roster.resetFailureMemoForTesting();
-	roster.markModelFailed("zai/glm-5.3");
-	assert.equal(roster.resolveRequestedModel("zai/glm-5.3"), "zai/glm-5.3");
+	roster.markModelFailed("zai/glm-5.4");
+	assert.equal(roster.resolveRequestedModel("zai/glm-5.4"), "zai/glm-5.4");
 	assert.equal(roster.resolveRequestedModel("primary"), "zai/glm-5.3-flash");
-	assert.equal(roster.plannedRunModel("worker", "zai/glm-5.3"), "zai/glm-5.3");
+	assert.equal(roster.plannedRunModel("worker", "zai/glm-5.4"), "zai/glm-5.4");
 	roster.resetFailureMemoForTesting();
 });

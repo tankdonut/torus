@@ -675,7 +675,7 @@ test("personaModel maps personas to session models (explicit model field honored
 	const { personaModel, parseAgentFile } = await import("../extensions/roster/index.ts");
 	const leader = personaModel("leader");
 	const explorer = personaModel("explorer");
-	assert.ok(leader?.includes("glm-5.3"), `leader maps to a glm-5.3 model, got ${String(leader)}`);
+	assert.ok(leader?.includes("glm-5.4"), `leader maps to a glm-5.4 model, got ${String(leader)}`);
 	assert.ok(
 		explorer?.includes("flash"),
 		`explorer maps to the flash chain, got ${String(explorer)}`,

@@ -196,7 +196,7 @@ test("POST /run with wait:true awaits the outcome and returns ok/text/usage/mode
 	assert.equal(body.text, "done");
 	assert.equal(body.usage?.input, 10);
 	assert.equal(body.usage?.output, 20);
-	assert.equal(body.model, "zai/glm-5.3");
+	assert.equal(body.model, "zai/glm-5.4");
 	assert.equal(typeof body.delegationId, "string");
 	assert.ok(
 		body.verdict && typeof body.verdict === "object",

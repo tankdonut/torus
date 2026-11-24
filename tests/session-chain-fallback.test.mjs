@@ -19,7 +19,7 @@ process.env["OPENCODE_API_KEY"] = "torus-test-dummy";
 
 const providers = await import("../extensions/providers/index.ts");
 
-const DEFAULT_PRIMARY = ["zai/glm-5.3", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"];
+const DEFAULT_PRIMARY = ["zai/glm-5.4", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"];
 
 function erroredAssistant(overrides = {}) {
 	return {
@@ -27,7 +27,7 @@ function erroredAssistant(overrides = {}) {
 		content: [],
 		api: "openai-completions",
 		provider: "zai",
-		model: "glm-5.3",
+		model: "glm-5.4",
 		usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
 		stopReason: "error",
 		errorMessage: '429: {"code":"1310","message":"Weekly/Monthly Limit Exhausted."}',
@@ -36,7 +36,7 @@ function erroredAssistant(overrides = {}) {
 	};
 }
 
-function harness(model = { provider: "zai", id: "glm-5.3", contextWindow: 128000 }) {
+function harness(model = { provider: "zai", id: "glm-5.4", contextWindow: 128000 }) {
 	const handlers = {};
 	const setModelCalls = [];
 	const notifies = [];
@@ -137,7 +137,7 @@ test("quota-exhausted head falls back to the next chain model and re-runs the tu
 			"the fallback surfaces as a warning",
 		);
 		assert.ok(
-			notifies[0].message.includes("zai/glm-5.3") &&
+			notifies[0].message.includes("zai/glm-5.4") &&
 				notifies[0].message.includes("zai/glm-5.3-flash"),
 		);
 	}));
@@ -147,7 +147,7 @@ test("failed model joins the no-work cooldown children skip", () =>
 		const { handlers, ctx } = harness();
 		handlers["turn_end"](turnEndEvent(erroredAssistant()), ctx);
 		await handlers["agent_before_settle"](settleEvent(), ctx);
-		assert.equal(providers.isModelMemoFailed("zai/glm-5.3"), true);
+		assert.equal(providers.isModelMemoFailed("zai/glm-5.4"), true);
 	}));
 
 test("a completed turn clears the pending failure: settle is a no-op", async () => {
@@ -247,7 +247,7 @@ test("setModel refusing (no auth) leaves the error alone without touching the me
 		const result = await handlers2["agent_before_settle"](settleEvent(), ctx);
 		assert.equal(result, undefined);
 		assert.deepEqual(setModelCalls, []);
-		assert.equal(providers.isModelMemoFailed("zai/glm-5.3"), false);
+		assert.equal(providers.isModelMemoFailed("zai/glm-5.4"), false);
 	} finally {
 		providers.resetFailureMemoForTesting();
 	}

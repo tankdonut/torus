@@ -48,7 +48,7 @@ writeFileSync(
 		'model=""; prev="";',
 		'for a in "$@"; do [ "$prev" = "--model" ] && model="$a"; prev="$a"; done',
 		'case "$model" in',
-		"  zai/glm-5.3)",
+		"  zai/glm-5.4)",
 		'    echo \'{"type":"session","id":"child-leg-head"}\'',
 		'    echo \'{"type":"error","error":"429 rate limited"}\'',
 		"    exit 0",
@@ -169,10 +169,10 @@ test("a head rejection fires onFallback with from/to/lastError and marks the coo
 	assert.equal(outcome.details.model, "zai/glm-5.3-flash");
 	assert.deepEqual(
 		events.map((e) => [e.from, e.to, e.exitCode, e.lastError, e.isLast]),
-		[["zai/glm-5.3", "zai/glm-5.3-flash", 0, "429 rate limited", false]],
+		[["zai/glm-5.4", "zai/glm-5.3-flash", 0, "429 rate limited", false]],
 		"one event: the rejected head moving down-chain",
 	);
-	assert.equal(roster.isModelMemoFailed("zai/glm-5.3"), true, "the rejected head sits out");
+	assert.equal(roster.isModelMemoFailed("zai/glm-5.4"), true, "the rejected head sits out");
 	assert.equal(roster.isModelMemoFailed("zai/glm-5.3-flash"), false);
 	const record = registry.listDelegations().find((r) => r.agent === "worker");
 	assert.ok(record, "the delegation record exists");
@@ -206,7 +206,7 @@ test("an exhausted walk marks the last candidate with isLast and to null", async
 	assert.equal(events.length, 3, "every rejected candidate including the last fired");
 	assert.deepEqual(
 		events.map((e) => e.from),
-		["zai/glm-5.3", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
+		["zai/glm-5.4", "zai/glm-5.3-flash", "opencode-go/glm-5.3-flash"],
 		"the events follow the primary chain in order",
 	);
 	const last = events[events.length - 1];
@@ -254,7 +254,7 @@ test("torus_delegate streams the note live and carries it in the result + detail
 	const live = updates.map((u) => String(u.content?.[0]?.text ?? "")).join("\n");
 	assert.match(
 		live,
-		/↻ zai\/glm-5\.3 produced no work \(429 rate limited\) — falling back to zai\/glm-5\.3-flash/,
+		/↻ zai\/glm-5\.4 produced no work \(429 rate limited\) — falling back to zai\/glm-5\.3-flash/,
 		"a mid-run update carries the fallback note",
 	);
 	assert.match(
@@ -265,7 +265,7 @@ test("torus_delegate streams the note live and carries it in the result + detail
 	const text = String(result.content?.[0]?.text ?? "");
 	assert.match(
 		text,
-		/↻ zai\/glm-5\.3 produced no work \(429 rate limited\)/,
+		/↻ zai\/glm-5\.4 produced no work \(429 rate limited\)/,
 		"durable note trails the result text",
 	);
 	const fallbacks = result.details?.fallbacks;
@@ -273,7 +273,7 @@ test("torus_delegate streams the note live and carries it in the result + detail
 		Array.isArray(fallbacks) && fallbacks.length === 1,
 		"details.fallbacks carries the event",
 	);
-	assert.equal(fallbacks[0].from, "zai/glm-5.3");
+	assert.equal(fallbacks[0].from, "zai/glm-5.4");
 	assert.equal(fallbacks[0].to, "zai/glm-5.3-flash");
 	assert.equal(fallbacks[0].lastError, "429 rate limited");
 	assert.ok(

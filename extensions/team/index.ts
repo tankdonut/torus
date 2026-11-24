@@ -133,7 +133,7 @@ const fanoutTool = defineTool({
 				model: Type.Optional(
 					Type.String({
 						description:
-							"Model for this run: 'primary' or 'fast' (chain shorthands) or an exact id like zai/glm-5.3",
+							"Model for this run: 'primary' or 'fast' (chain shorthands) or an exact id like zai/glm-5.4",
 					}),
 				),
 			}),
@@ -448,7 +448,7 @@ const chainTool = defineTool({
 				model: Type.Optional(
 					Type.String({
 						description:
-							"Model for this step: 'primary' or 'fast' (chain shorthands) or an exact id like zai/glm-5.3",
+							"Model for this step: 'primary' or 'fast' (chain shorthands) or an exact id like zai/glm-5.4",
 					}),
 				),
 			}),

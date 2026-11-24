@@ -70,7 +70,7 @@ test("member model shorthands resolve before records are written", async () => {
 			members: [
 				{ name: "captain", agent: "reviewer", model: "primary" },
 				{ name: "scout", agent: "explorer", model: "fast" },
-				{ name: "pinned", agent: "builder", model: "zai/glm-5.3" },
+				{ name: "pinned", agent: "builder", model: "zai/glm-5.4" },
 			],
 		},
 		undefined,
@@ -84,7 +84,7 @@ test("member model shorthands resolve before records are written", async () => {
 	);
 	assert.equal(
 		delegationModels.captain,
-		"zai/glm-5.3",
+		"zai/glm-5.4",
 		"'primary' resolves to the chain head in the delegation record",
 	);
 	assert.equal(
@@ -92,12 +92,12 @@ test("member model shorthands resolve before records are written", async () => {
 		"zai/glm-5.3-flash",
 		"'fast' resolves to the fast chain head",
 	);
-	assert.equal(delegationModels.pinned, "zai/glm-5.3", "exact ids pass through");
+	assert.equal(delegationModels.pinned, "zai/glm-5.4", "exact ids pass through");
 
 	const runModels = Object.fromEntries(registry.listExternalRuns().map((r) => [r.handle, r.model]));
-	assert.equal(runModels.captain, "zai/glm-5.3", "fleet run row carries the resolved id");
+	assert.equal(runModels.captain, "zai/glm-5.4", "fleet run row carries the resolved id");
 
 	const spawnedModels = Object.fromEntries(spawned.map((s) => [s.spec.name, s.spec.model]));
-	assert.equal(spawnedModels.captain, "zai/glm-5.3", "spawner receives the resolved model");
-	assert.equal(spawnedModels.pinned, "zai/glm-5.3", "explicit ids reach the engine unchanged");
+	assert.equal(spawnedModels.captain, "zai/glm-5.4", "spawner receives the resolved model");
+	assert.equal(spawnedModels.pinned, "zai/glm-5.4", "explicit ids reach the engine unchanged");
 });
