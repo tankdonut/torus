@@ -8,8 +8,9 @@
  * spinner multi-line rewrites — collapse to their final text instead of
  * piling up, and escape sequences split across chunk boundaries parse
  * correctly because the emulator is stateful. In the TUI the output streams
- * into a bottom dialog that replaces the chat editor — raw keystrokes are
- * forwarded to the child (user takeover); ctrl-] detaches; child exit holds
+ * into a bottom dialog that replaces the chat editor — keystrokes are
+ * forwarded to the child in legacy xterm bytes (user takeover); ctrl-]
+ * detaches; child exit holds
  * the final frame briefly (any key closes it early), then returns the
  * captured tail. Bracketed-paste markers are
  * unwrapped before forwarding, the PTY always gets a winsize (script leaves
@@ -34,7 +35,7 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Component, parseKey, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ITerminalInitOnlyOptions, ITerminalOptions, Terminal } from "@xterm/headless";
 import * as xtermHeadless from "@xterm/headless";
 import { Type } from "typebox";
@@ -152,6 +153,73 @@ export function isDetachKey(data: string): boolean {
 }
 
 /**
+ * A Kitty keyboard protocol key event: `CSI codepoint[:shifted[:base]][;mods[:event]]u`.
+ * The engine negotiates the protocol at startup, so on Ghostty, kitty, foot or
+ * WezTerm Escape, ctrl+key and alt+key arrive in this form, while the child
+ * speaks plain xterm (TERM=xterm-256color, no negotiation) and ignores them:
+ * Esc would never reach a prompt and ctrl+c would never raise SIGINT.
+ */
+const CSI_U = /^\x1b\[\d+(?::\d*)?(?::\d+)?(?:;\d+)?(?::\d+)?u$/;
+/** Modifier prefixes `parseKey` emits. */
+const KEY_MODIFIERS = ["shift", "ctrl", "alt", "super"] as const;
+/** Legacy ctrl mapping of the ASCII keys beyond a-z (`@ A-Z [ \ ] ^ _ ?`). */
+const CTRL_SYMBOL_CODES: Record<string, number> = {
+	"@": 0,
+	"[": 27,
+	"\\": 28,
+	"]": 29,
+	"^": 30,
+	_: 31,
+	"?": 127,
+};
+
+/**
+ * Re-encode a Kitty-protocol key event in the legacy bytes an xterm child
+ * understands; every other keystroke passes through untouched. Keys with no
+ * legacy form (modified arrows, F-keys, numpad keys) keep their CSI-u bytes.
+ */
+export function legacyKeystroke(data: string): string {
+	if (!CSI_U.test(data)) return data;
+	const { mods, base } = splitKeyId(parseKey(data) ?? "");
+	const alt = mods.has("alt") ? "\x1b" : "";
+	const ctrl = mods.has("ctrl");
+	switch (base) {
+		case "escape":
+			return mods.size === 0 ? "\x1b" : data;
+		case "enter":
+			return alt + (ctrl ? "\n" : "\r");
+		case "tab":
+			if (mods.size === 1 && mods.has("shift")) return "\x1b[Z";
+			return `${alt}\t`;
+		case "backspace":
+			return alt + (ctrl ? "\x08" : "\x7f");
+		case "space":
+			return alt + (ctrl ? "\x00" : " ");
+	}
+	if (base.length !== 1) return data;
+	if (ctrl) {
+		const code =
+			CTRL_SYMBOL_CODES[base] ?? (base >= "a" && base <= "z" ? base.charCodeAt(0) - 96 : undefined);
+		if (code === undefined) return data;
+		return alt + String.fromCharCode(code);
+	}
+	if (alt) return alt + (mods.has("shift") ? base.toUpperCase() : base);
+	return data;
+}
+
+function splitKeyId(key: string): { mods: Set<string>; base: string } {
+	const mods = new Set<string>();
+	let base = key;
+	for (;;) {
+		const mod = KEY_MODIFIERS.find((m) => base.startsWith(`${m}+`) && base.length > m.length + 1);
+		if (mod === undefined || mods.has(mod)) break;
+		mods.add(mod);
+		base = base.slice(mod.length + 1);
+	}
+	return { mods, base };
+}
+
+/**
  * Child env: NO_COLOR keeps prompt frameworks from probing the terminal,
  * and TERM states the emulator's actual identity (what the headless xterm speaks).
  */
@@ -265,7 +333,7 @@ export class PtyOverlay implements Component {
 			this.complete();
 			return;
 		}
-		const unwrapped = unwrapPaste(data);
+		const unwrapped = unwrapPaste(legacyKeystroke(data));
 		if (unwrapped.length > 0 && this.child.stdin?.writable) {
 			this.child.stdin.write(unwrapped);
 		}

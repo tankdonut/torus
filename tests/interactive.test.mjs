@@ -12,6 +12,7 @@ const {
 	createTerm,
 	headlessRun,
 	isDetachKey,
+	legacyKeystroke,
 	settleTerm,
 	termTail,
 	unwrapPaste,
@@ -216,6 +217,37 @@ test("isDetachKey matches legacy and kitty encodings of ctrl-]", () => {
 	assert.equal(isDetachKey("]"), false);
 	assert.equal(isDetachKey("\x1b[A"), false);
 	assert.equal(isDetachKey("x"), false);
+});
+
+test("legacyKeystroke re-encodes Kitty-protocol keys in xterm bytes, passes the rest through", () => {
+	// Ghostty, once the engine negotiates the protocol: Escape is CSI 27u (its
+	// repeat CSI 27;1:2u), ctrl+c CSI 99;5u, and the legacy bytes never arrive.
+	assert.equal(legacyKeystroke("\x1b[27u"), "\x1b");
+	assert.equal(legacyKeystroke("\x1b[27;1:2u"), "\x1b");
+	assert.equal(legacyKeystroke("\x1b[99;5u"), "\x03");
+	assert.equal(legacyKeystroke("\x1b[97;5u"), "\x01");
+	assert.equal(legacyKeystroke("\x1b[120;3u"), "\x1bx");
+	assert.equal(legacyKeystroke("\x1b[97:65;4u"), "\x1bA");
+	assert.equal(legacyKeystroke("\x1b[99;7u"), "\x1b\x03");
+	assert.equal(legacyKeystroke("\x1b[13;2u"), "\r");
+	assert.equal(legacyKeystroke("\x1b[9;2u"), "\x1b[Z");
+	assert.equal(legacyKeystroke("\x1b[127;5u"), "\x08");
+	assert.equal(legacyKeystroke("\x1b[32;5u"), "\x00");
+	assert.equal(legacyKeystroke("\x1b[A"), "\x1b[A");
+	assert.equal(legacyKeystroke("\x1b[1;5A"), "\x1b[1;5A");
+	assert.equal(legacyKeystroke("print(1)\n"), "print(1)\n");
+	assert.equal(legacyKeystroke("\x1b[200~token\x1b[201~"), "\x1b[200~token\x1b[201~");
+	assert.equal(legacyKeystroke("\x1b[57428u"), "\x1b[57428u");
+});
+
+test("PtyOverlay: forwards Kitty-protocol keys to the child as legacy bytes", () => {
+	const { child, written } = stubChild();
+	const { overlay } = mountOverlay(child);
+	overlay.handleInput("\x1b[27u");
+	overlay.handleInput("\x1b[99;5u");
+	overlay.handleInput("\x1b[120;3u");
+	assert.deepEqual(written, ["\x1b", "\x03", "\x1bx"]);
+	overlay.dispose();
 });
 
 test("buildPtyCommand always sets a winsize, falling back to 24x80", () => {
