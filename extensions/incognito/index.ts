@@ -5,14 +5,20 @@
  * memory's dreamer and reflection paths gate off inside the memory extension,
  * and the incognito sweep clears the project state dir's derived artifacts on
  * shutdown. A plain run (no flag) writes everything normally — the mode is
- * opt-in per session, never ambient.
+ * opt-in per session, never ambient. Inside the mode a warning `incognito`
+ * statusline chip keeps the memoryless state visible for the whole session.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { childSessionPaths, incognitoActive, incognitoSweep } from "../incognito.js";
 import { gateExtension, type PlatformSupport } from "../platform.js";
+import { setTorusChip } from "../ui/index.js";
 
 export const PLATFORM_SUPPORT: PlatformSupport = { platforms: ["linux", "darwin", "win32"] };
+
+/** Statusline chip key; `torus:`-prefixed like the other extension-owned chips. */
+export const INCOGNITO_STATUS_KEY = "torus:incognito";
+const INCOGNITO_CHIP_TEXT = "incognito";
 
 export default function incognitoExtension(pi: ExtensionAPI): void {
 	if (!gateExtension("incognito", PLATFORM_SUPPORT)) return;
@@ -34,6 +40,13 @@ export default function incognitoExtension(pi: ExtensionAPI): void {
 	// non-incognito) incarnation of the same session id, so the start sweep
 	// runs before this session writes anything of its own.
 	incognitoSweep();
+
+	// Never cleared: the mode is fixed for the process lifetime, and the
+	// session_start rewrite a rebind (/reload, /resume) triggers is a no-op on
+	// the shared Symbol.for chip store.
+	pi.on("session_start", (_event, ctx) => {
+		setTorusChip(INCOGNITO_STATUS_KEY, ctx.ui.theme.fg("warning", INCOGNITO_CHIP_TEXT));
+	});
 
 	pi.on("session_shutdown", () => {
 		incognitoSweep();

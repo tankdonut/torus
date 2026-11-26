@@ -13,9 +13,9 @@ import path from "node:path";
 import { after, test } from "node:test";
 
 // Incognito mode: the launcher flag extractor, the sweep helper, the memory
-// reflection gate, and the registry's finish-time sweep. The suite sandboxes
-// ALL torus user state via TORUS_HOME before importing any extension, so
-// sweeps never touch real user state.
+// reflection gate, the registry's finish-time sweep, and the statusline chip.
+// The suite sandboxes ALL torus user state via TORUS_HOME before importing any
+// extension, so sweeps never touch real user state.
 const HOME = mkdtempSync(path.join(tmpdir(), "torus-incognito-test-"));
 process.env["TORUS_HOME"] = HOME;
 
@@ -118,4 +118,34 @@ test("registry: a non-incognito finish keeps the log", async () => {
 	);
 	await registry.finishDelegation("plain1", true, "done", "sess");
 	assert.equal(existsSync(record.logFile), true);
+});
+
+async function paintChipForSessionStart() {
+	const handlers = {};
+	const fakePi = {
+		on: (event, handler) => {
+			handlers[event] = handler;
+		},
+		registerCommand: () => {},
+	};
+	const { default: incognitoExtension, INCOGNITO_STATUS_KEY } = await import(
+		"../extensions/incognito/index.ts"
+	);
+	const { torusChips } = await import("../extensions/ui/index.ts");
+	torusChips().clear();
+	incognitoExtension(fakePi);
+	const ctx = { ui: { theme: { fg: (color, text) => `<${color}>${text}</${color}>` } } };
+	// outside the mode the factory registers no session_start, so a missing
+	// handler means the chip can never have been painted
+	await handlers.session_start?.({ type: "session_start" }, ctx);
+	return torusChips().get(INCOGNITO_STATUS_KEY);
+}
+
+test("statusline chip: warning incognito inside the mode, absent outside it", async () => {
+	delete process.env["TORUS_INCOGNITO"];
+	assert.equal(await paintChipForSessionStart(), undefined, "no flag, no chip");
+
+	process.env["TORUS_INCOGNITO"] = "1";
+	assert.equal(await paintChipForSessionStart(), "<warning>incognito</warning>");
+	delete process.env["TORUS_INCOGNITO"];
 });
