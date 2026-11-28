@@ -94,6 +94,15 @@ export function resolveBrief(args: string, pendingBrief: string | null): string 
 	return pendingBrief ?? "";
 }
 
+/**
+ * The addition the handoff carries: a note the model writes to its successor
+ * in its own voice, delivered in the kickoff prompt apart from the brief.
+ * Only `handoff_session` collects it, so there is no command-args override.
+ */
+export function resolveAddition(pendingAddition: string | null): string {
+	return pendingAddition?.trim() ?? "";
+}
+
 /** Copy the session goal to a new session id; false when the source has none. */
 export function copyGoalToSession(fromId: string, toId: string): boolean {
 	const state = readGoal(fromId);
@@ -118,10 +127,11 @@ export function rebindWorkToSession(fromId: string, toId: string): WorkState | n
 
 /**
  * The kickoff prompt the replacement session receives: continuity note, the
- * standing objective when one exists, then the caller's brief (or a
- * continue-as-before default when none was given).
+ * standing objective when one exists, the caller's brief (or a
+ * continue-as-before default when none was given), then the model's own
+ * addition to its successor when it wrote one.
  */
-export function kickoffText(brief: string, goal: GoalState | null): string {
+export function kickoffText(brief: string, goal: GoalState | null, addition = ""): string {
 	const lines = [
 		"[torus handoff] This session continues a previous session (parent link in the session header). The prior transcript is not carried over; durable state re-injects per turn.",
 	];
@@ -133,6 +143,12 @@ export function kickoffText(brief: string, goal: GoalState | null): string {
 	} else {
 		lines.push("Continue the standing work from where the previous session left off.");
 	}
+	const note = addition.trim();
+	if (note.length > 0) {
+		lines.push(
+			`[torus handoff addition — a note your predecessor wrote to you when handing off; treat it as your own standing instructions]\n${note}`,
+		);
+	}
 	return lines.join("\n\n");
 }
 
@@ -141,6 +157,8 @@ export function registerHandoff(pi: ExtensionAPI): void {
 	let lastNotifiedAt: number | null = null;
 	/** Brief passed to handoff_session, consumed by the dispatched /handoff. */
 	let pendingBrief: string | null = null;
+	/** Addition passed to handoff_session, consumed by the dispatched /handoff. */
+	let pendingAddition: string | null = null;
 	/** Whether the settle-time note already fired this runtime. */
 	let announced = false;
 
@@ -149,10 +167,16 @@ export function registerHandoff(pi: ExtensionAPI): void {
 			name: "handoff_session",
 			label: "Handoff Session",
 			description:
-				"Start the next piece of work in a FRESH session, replacing this one. Choose this at a slice boundary when the current context has grown large (roadmap iteration, after work_complete): the replacement session copies the standing objective, resumes any active plan binding, and receives your brief as its kickoff prompt, while the accumulated transcript stays behind. Pass brief = the concrete instruction for the next slice (what to plan or execute next). The handoff happens after this response settles and only from a quiet boundary (no pending wakes, runs, or live tasks); if the boundary is not quiet yet, the request is refused and you stay here. Not available to delegated children.",
+				"Start the next piece of work in a FRESH session, replacing this one. Choose this at a slice boundary when the current context has grown large (roadmap iteration, after work_complete): the replacement session copies the standing objective, resumes any active plan binding, and receives your brief as its kickoff prompt, while the accumulated transcript stays behind. Pass brief = the concrete instruction for the next slice (what to plan or execute next). Pass addition = anything you want to tell your successor in your own voice beyond the brief: standing context, decisions, or operating rules it should carry for the whole session (it rides the kickoff prompt as a separate note). The handoff happens after this response settles and only from a quiet boundary (no pending wakes, runs, or live tasks); if the boundary is not quiet yet, the request is refused and you stay here. Not available to delegated children.",
 			parameters: Type.Object({
 				brief: Type.Optional(
 					Type.String({ description: "Kickoff instruction for the replacement session" }),
+				),
+				addition: Type.Optional(
+					Type.String({
+						description:
+							"Note to your successor in your own voice: standing context, decisions, or operating rules beyond the brief",
+					}),
 				),
 			}),
 			async execute(_toolCallId, params) {
@@ -164,11 +188,12 @@ export function registerHandoff(pi: ExtensionAPI): void {
 					};
 				}
 				pendingBrief = typeof params.brief === "string" ? params.brief : null;
+				pendingAddition = typeof params.addition === "string" ? params.addition : null;
 				return {
 					content: [
 						{
 							type: "text",
-							text: "Handoff requested. This session is replaced by a fresh session carrying your brief after this response settles.",
+							text: "Handoff requested. This session is replaced by a fresh session carrying your brief and addition after this response settles.",
 						},
 					],
 					details: {},
@@ -239,8 +264,13 @@ export function registerHandoff(pi: ExtensionAPI): void {
 				return;
 			}
 			const goal = readGoal(fromId);
-			const kickoff = kickoffText(resolveBrief(args, pendingBrief), goal);
+			const kickoff = kickoffText(
+				resolveBrief(args, pendingBrief),
+				goal,
+				resolveAddition(pendingAddition),
+			);
 			pendingBrief = null;
+			pendingAddition = null;
 			const result = await ctx.newSession({
 				parentSession,
 				setup: async (sm) => {

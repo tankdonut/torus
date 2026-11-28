@@ -11,6 +11,7 @@ const {
 	handoffRecommendation,
 	handoffBlocker,
 	resolveBrief,
+	resolveAddition,
 	copyGoalToSession,
 	rebindWorkToSession,
 	kickoffText,
@@ -85,6 +86,12 @@ test("resolveBrief prefers explicit command args over a tool request", () => {
 	assert.equal(resolveBrief("", null), "");
 });
 
+test("resolveAddition trims a tool request and reads absence as empty", () => {
+	assert.equal(resolveAddition("  keep the API additive  "), "keep the API additive");
+	assert.equal(resolveAddition("   "), "");
+	assert.equal(resolveAddition(null), "");
+});
+
 test("copyGoalToSession clones the goal state and reports a missing source", () => {
 	const state = { goal: "ship the thing", status: "active", createdAt: 7, notes: ["a"] };
 	goal.writeGoal(A, state);
@@ -140,4 +147,18 @@ test("kickoffText composes continuity note, objective, and brief", () => {
 	const withoutBrief = kickoffText("", goalState);
 	assert.match(withoutBrief, /Continue the standing work/);
 	assert.doesNotMatch(withoutBrief, /Start slice 3\./);
+});
+
+test("kickoffText appends the model's addition as its own labeled section after the brief", () => {
+	const withAddition = kickoffText("Start slice 3.", null, "  Prefer additive changes.  ");
+	assert.match(withAddition, /\[torus handoff addition[^\]]*\]/);
+	assert.match(withAddition, /Prefer additive changes\./);
+	// The brief still leads; the addition follows it, never replaces it.
+	assert.ok(
+		withAddition.indexOf("Start slice 3.") < withAddition.indexOf("Prefer additive changes."),
+	);
+	// No addition: no section header leaks into the kickoff.
+	const withoutAddition = kickoffText("Start slice 3.", null);
+	assert.doesNotMatch(withoutAddition, /torus handoff addition/);
+	assert.doesNotMatch(kickoffText("Start slice 3.", null, "   "), /torus handoff addition/);
 });
