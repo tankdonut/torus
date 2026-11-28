@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.25.0](https://github.com/tankdonut/torus/compare/v0.24.0...v0.25.0) (2026-11-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** engine 1.6.1 replaces the showCacheMissNotices setting with notices.cacheMisses, notices.cacheWarming, notices.compactionCosts and notices.reasoningDrops (an existing value migrates automatically) and removes SettingsManager.getShowCacheMissNotices() and setShowCacheMissNotices(); no bundled extension calls them.
+
+### Features
+
+* **deps:** bump the engine pin to 1.6.0 ([161952b](https://github.com/tankdonut/torus/commit/161952bc1fa1687016d55fae0f1dfdaf5db70392))
+* **deps:** bump the engine pin to 1.6.1 ([bb43e42](https://github.com/tankdonut/torus/commit/bb43e42ac108160e4a988d36a43413b49c20224f))
+* **extensions/automode:** ci baseline deny floor ([a7ff2cb](https://github.com/tankdonut/torus/commit/a7ff2cb6be8488bf6f41bb3637eb7892d8deb9e6))
+* **extensions/automode:** ci trust profile parser ([39506b0](https://github.com/tankdonut/torus/commit/39506b0370043cc257562b00682f22609756bd22))
+* **extensions/automode:** wire ci trust profile into verdict gating ([ff4e32d](https://github.com/tankdonut/torus/commit/ff4e32dc768e6045f557dfc8edd81d88338184fb))
+* **extensions/auto:** the optional PR stage for the unattended loop ([fa032d4](https://github.com/tankdonut/torus/commit/fa032d486dd170c94dbadfaec068d47794c4b0c1))
+* **extensions/auto:** unattended stage-chain driver ([aadaf46](https://github.com/tankdonut/torus/commit/aadaf46e9d9e92b67a132155a1adfa24f4ac3fe2))
+* **extensions/handoff:** let handoff_session carry a note to the successor session ([5d93c40](https://github.com/tankdonut/torus/commit/5d93c40b268187babbbfa8efb087c5f43fe09f0e))
+* **extensions/incognito:** show an incognito chip in the status line ([513a8df](https://github.com/tankdonut/torus/commit/513a8df7cfbc80794a282ec251dd2dbb63554346))
+* **extensions/monitor:** add bg:N and mon:N statusline chips ([11adb1d](https://github.com/tankdonut/torus/commit/11adb1d3ce15274f100a3b09dd903a4e2c2cc20e))
+* **extensions/providers:** head the primary chain with zai/glm-5.4 ([b0dd058](https://github.com/tankdonut/torus/commit/b0dd0588698a7631f2acc4a7117abcb74e2139cc))
+* **extensions/roster:** fold run verdict fields into beacons and responses ([ec3b792](https://github.com/tankdonut/torus/commit/ec3b792f1544616e12d098790e818c1028633b87))
+* **extensions/sandbox:** enforce sandbox under ci trust profile ([8664202](https://github.com/tankdonut/torus/commit/866420276ee760eaf2b4cb135c521a3b8c221d29))
+* **extensions/serve:** fence webhook payload rendering ([a6d50fa](https://github.com/tankdonut/torus/commit/a6d50fa9b3e957e8744e6d44187bf80197819ddb))
+* **extensions/serve:** github webhook trigger class with HMAC verification ([bb46fd6](https://github.com/tankdonut/torus/commit/bb46fd665ad06affc40af5eb7765da3096dae48f))
+* **extensions/serve:** skills param and per-run lookup on the run API ([5a9a532](https://github.com/tankdonut/torus/commit/5a9a5320b53a7c5fadee33e7ce4b7ca3c3206104))
+* **extensions/serve:** webhook-driven auto stage chain ([9ab28c4](https://github.com/tankdonut/torus/commit/9ab28c4e60420680edddaf43d0d29ff7e2cf532b))
+* **extensions/ui:** state glyphs on the goal banner ([38ed769](https://github.com/tankdonut/torus/commit/38ed7699e0f3d74faf55bc13a7a0831556b7a805))
+* **extensions/ui:** status-band placement and chip separator for the goal banner ([0e65c07](https://github.com/tankdonut/torus/commit/0e65c07997b3f1a227c5c0100e78b16bcf2046f5))
+* **extensions/work:** refuse to bind plans that fail the plan lint ([4313393](https://github.com/tankdonut/torus/commit/431339356046bc8d7a908b116b635908703937d7))
+* **extensions/work:** typed lens verdict rows ([bb54bac](https://github.com/tankdonut/torus/commit/bb54bacc37c8f07e56e0227456b15a06d1821926))
+* **extensions:** add session handoff for slice-boundary continuation ([e11e848](https://github.com/tankdonut/torus/commit/e11e848f66c3fe00ece2e32e21da5e1aea48ea53))
+* **extensions:** align the status band on glyph heads padded to one column ([a5f3adb](https://github.com/tankdonut/torus/commit/a5f3adbba0d48c639fad5116618f4707eaf7635c))
+* **extensions:** plan grammar lint ([7c1c5f9](https://github.com/tankdonut/torus/commit/7c1c5f958b8e97612b6ba5aa42cba40e83a353fd))
+* **extensions:** untrusted-input fence module ([4afc2dd](https://github.com/tankdonut/torus/commit/4afc2dd1b303a60830e1dcda75bff02ab91673f9))
+* paint the active goal as a full-width banner above the editor ([ab690fc](https://github.com/tankdonut/torus/commit/ab690fcb678d91818453821f0188dc11ba9edceb))
+* **runtime:** fence CLI for untrusted event fields ([d371007](https://github.com/tankdonut/torus/commit/d37100737f37d40ea6fe5113c5ef359df2017695))
+
+
+### Bug Fixes
+
+* **ci:** re-verify the live head sha before approval and merge ([65cb5eb](https://github.com/tankdonut/torus/commit/65cb5eb7bce0800e64e22378fa6e3f5c61668f72))
+* **ci:** verify the torus reviewer's identity before auto-approval ([243197a](https://github.com/tankdonut/torus/commit/243197af314e8a48381473b3c7bee3af6918edda))
+* **deps:** update dependency @anthropic-ai/sandbox-runtime to v0.0.83 ([#134](https://github.com/tankdonut/torus/issues/134)) ([687ae48](https://github.com/tankdonut/torus/commit/687ae48668bfe3da57d795070dd5d0149ca36d43))
+* **deps:** update dependency pi-web-access to ^0.48.0 ([#139](https://github.com/tankdonut/torus/issues/139)) ([dae62ce](https://github.com/tankdonut/torus/commit/dae62ce444d542aff2e06438f99e80aa6a3cc13b))
+* **extensions/auto:** anchor gate and lens one-shots to the driver's project ([4a39dc7](https://github.com/tankdonut/torus/commit/4a39dc7fd94db821f5cc511ceb875ff9c10afeff))
+* **extensions/auto:** bind-first execute-stage task contract ([133c473](https://github.com/tankdonut/torus/commit/133c473c414d14bfe043bea479798f5bec88240f))
+* **extensions/auto:** directive plan-stage task and early artifact failure ([13117aa](https://github.com/tankdonut/torus/commit/13117aa067ed4075deac3be5be9c237a99fb3f32))
+* **extensions/auto:** freshen the gate signal and honor usage refusals ([ab61e5c](https://github.com/tankdonut/torus/commit/ab61e5c31e93822710071e196ae52b8826ce7fd7))
+* **extensions/automode:** keep trust guards registered under bypass with the ci profile ([bdcb3ae](https://github.com/tankdonut/torus/commit/bdcb3aece4ff69fb5d19d166068d565e2268c600))
+* **extensions/auto:** one state root for the driver's coordination artifacts ([6056679](https://github.com/tankdonut/torus/commit/6056679409adbbf02ffe1d54ae0c0f7fc779fc18))
+* **extensions/auto:** stop one-shot children when their stage resolves ([c545740](https://github.com/tankdonut/torus/commit/c5457406fde7598dd680448b8b0c522188dd4be1))
+* **extensions/auto:** unattended gate-stage prompt contract ([7160b2b](https://github.com/tankdonut/torus/commit/7160b2b0b2c788c0288ab43fce29da281aa55d25))
+* **extensions/browser:** match esc and ctrl+c through the kitty keyboard protocol ([5135325](https://github.com/tankdonut/torus/commit/5135325f7f570cb8a7c061c016dd256daef3643b))
+* **extensions/hashline:** gate the bash mutation note on live anchors and dedupe it ([a75c329](https://github.com/tankdonut/torus/commit/a75c32978bdfc6f5373b99933dbd3306f44e145e))
+* **extensions/hashline:** make every emitted anchor addressable and truthful ([c0632a7](https://github.com/tankdonut/torus/commit/c0632a7c0c5102ee5e5be163fd2e2667fa2407e8))
+* **extensions/interactive:** forward kitty-protocol keys to the child as legacy bytes ([1a7b5a5](https://github.com/tankdonut/torus/commit/1a7b5a5caec1e14682932763e6ef43ba192a36ac))
+* **extensions/osnotify:** drop assignment-in-expression leftovers from the bus slot ([d24cfcb](https://github.com/tankdonut/torus/commit/d24cfcb1bc9acd8c975972b7e18617516f9fdad1))
+* **extensions/osnotify:** persistent session-bus sender so GNOME groups the toasts ([11cab5e](https://github.com/tankdonut/torus/commit/11cab5eba889b9ea53461f0180633378cb63ddbb))
+* **extensions/osnotify:** share the notification bus handle across module instances ([07f31c3](https://github.com/tankdonut/torus/commit/07f31c3f764e56148d66c2a0bafbcb5aece2b965))
+* **extensions/providers:** walk the model chain when the main session's model fails ([8388b15](https://github.com/tankdonut/torus/commit/8388b15cfcaa8de054cb4587e101218c97177cea))
+* **extensions/serve:** crash-resume persistence, process-wide auto serialization, and the webhook PR plumbing ([06e7086](https://github.com/tankdonut/torus/commit/06e7086bb952fbf81085daa20553d40320873d2f))
+* **extensions:** carry the goal banner payload across module roots ([c294eec](https://github.com/tankdonut/torus/commit/c294eec0c9e8e043d187683c8e6567a766032358))
+* **extensions:** keep command-executing tools out of ci-profile sessions ([4a852be](https://github.com/tankdonut/torus/commit/4a852be86c150f495c30f7d25482c67e937c23e3))
+* **extensions:** pad the torus head only while fleet or goal rows share the band ([2ab0870](https://github.com/tankdonut/torus/commit/2ab0870e773a21efe2302b4696563b750b3f6cf0))
+* **extensions:** preserve crash-resume plan state across trigger bookkeeping ([e24e2c9](https://github.com/tankdonut/torus/commit/e24e2c9db92ca1280cdcc2d46166a9fbc0a0b60c))
+* **extensions:** round cost chips to 3 decimals like the engine footer ([abfeef7](https://github.com/tankdonut/torus/commit/abfeef7b05f798176945d05105b79ec4db464b5c))
+* **scripts/audit-gate:** drop the shipped picomatch allowlist entry ([6cf0609](https://github.com/tankdonut/torus/commit/6cf0609970015a529d42d61f192a2c78af7f906b))
+
 ## [0.24.0](https://github.com/tankdonut/torus/compare/v0.23.0...v0.24.0) (2026-11-18)
 
 
